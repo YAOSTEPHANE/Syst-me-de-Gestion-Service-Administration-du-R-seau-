@@ -1,11 +1,11 @@
-export const ADM_ROLES = [
+export const ADMR_ROLES = [
   "AGENT",
   "CHEF_SECTION",
   "ASSIST_CDS",
   "CHEF_SERVICE",
 ] as const;
 
-export type AdmrRole = (typeof ADM_ROLES)[number];
+export type AdmrRole = (typeof ADMR_ROLES)[number];
 
 export const DOSSIER_STATUSES = [
   "BROUILLON",
