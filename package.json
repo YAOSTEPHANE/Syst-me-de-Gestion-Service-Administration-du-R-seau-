@@ -12,7 +12,8 @@
     "seed:admin": "tsx scripts/seed-admin.ts",
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:test": "tsx scripts/seed-test-data.ts",
-    "seed": "npm run seed:test"
+    "seed": "npm run seed:test",
+    "import:data": "tsx scripts/import-data.ts"
   },
   "dependencies": {
     "@prisma/client": "6.19.2",
