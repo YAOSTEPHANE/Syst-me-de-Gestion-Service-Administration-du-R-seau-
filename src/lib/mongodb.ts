@@ -11,46 +11,37 @@ const client = new MongoClient(env.mongodbUri, {
     strict: true,
     deprecationErrors: true,
   },
+  /** Configurable via MONGODB_* (voir `src/lib/env.ts`). Défaut 30s pour Atlas / scripts seed. */
+  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+  connectTimeoutMS: env.mongodbConnectTimeoutMs,
 });
 
-const clientPromise = global.__mongoClientPromise ?? client.connect();
+function connectClient() {
+  const promise = client.connect().catch((error) => {
+    // Evite les unhandled rejections et permet un nouvel essai au prochain appel.
+    if (process.env.NODE_ENV !== "production") {
+      global.__mongoClientPromise = undefined;
+    }
+    throw error;
+  });
+  if (process.env.NODE_ENV !== "production") {
+    global.__mongoClientPromise = promise;
+  }
+  return promise;
+}
 
-if (process.env.NODE_ENV !== "production") {
-  global.__mongoClientPromise = clientPromise;
+function getClientPromise() {
+  if (process.env.NODE_ENV !== "production" && global.__mongoClientPromise) {
+    return global.__mongoClientPromise;
+  }
+  return connectClient();
+}
+
+export async function getMongoClient() {
+  return getClientPromise();
 }
 
 export async function getDatabase() {
-  const connectedClient = await clientPromise;
+  const connectedClient = await getClientPromise();
   return connectedClient.db(env.mongodbDb);
 }
-
-export { clientPromise };
-import { MongoClient, ServerApiVersion } from "mongodb";
-
-import { env } from "@/lib/env";
-
-declare global {
-  // eslint-disable-next-line no-var
-  var __mongoClientPromise: Promise<MongoClient> | undefined;
-}
-
-const client = new MongoClient(env.mongodbUri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-});
-
-const clientPromise = global.__mongoClientPromise ?? client.connect();
-
-if (process.env.NODE_ENV !== "production") {
-  global.__mongoClientPromise = clientPromise;
-}
-
-export async function getDatabase() {
-  const connectedClient = await clientPromise;
-  return connectedClient.db(env.mongodbDb);
-}
-
-export { clientPromise };

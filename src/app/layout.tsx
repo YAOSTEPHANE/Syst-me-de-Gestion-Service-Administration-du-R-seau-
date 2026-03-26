@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "ADMR - LONACI",
-  description: "MVP ADMR base Next.js et MongoDB",
+  title: "LONACI",
+  description: "Base Next.js et MongoDB",
 };
 
 export default function RootLayout({

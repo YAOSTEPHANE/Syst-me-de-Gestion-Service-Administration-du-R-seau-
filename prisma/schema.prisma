@@ -1,0 +1,127 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String    @id @default(auto()) @map("_id") @db.ObjectId
+  email            String    @unique
+  matricule        String?   @unique
+  passwordHash     String
+  nom              String
+  prenom           String
+  role             String
+  agenceId         String?
+  agencesAutorisees String[]
+  modulesAutorises String[]
+  produitsAutorises String[]
+  actif            Boolean   @default(true)
+  currentSessionId String?
+  derniereConnexion DateTime?
+  lastActivityAt   DateTime?
+  resetPasswordTokenHash String?
+  resetPasswordExpiresAt DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  deletedAt        DateTime?
+
+  @@map("users")
+  @@index([role], map: "idx_role")
+  @@index([actif], map: "idx_actif")
+}
+
+model Counter {
+  id  String @id @map("_id")
+  seq Int    @default(0)
+
+  @@map("counters")
+}
+
+model Concessionnaire {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  codePdv         String    @unique
+  nomComplet      String?
+  raisonSociale   String
+  cniNumero       String?
+  photoUrl        String?
+  email           String?
+  telephonePrincipal String?
+  telephoneSecondaire String?
+  telephone       String?
+  adresse         String?
+  ville           String?
+  codePostal      String?
+  agenceId        String?
+  produitsAutorises String[]
+  statut          String
+  statutBancarisation String?
+  compteBancaire  String?
+  banqueEtablissement String?
+  gps             Json?
+  piecesJointes   Json      @default("[]")
+  observations    String?
+  notesInternes   String?
+  createdByUserId String
+  updatedByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@map("concessionnaires")
+  @@index([agenceId], map: "idx_agence")
+  @@index([statut], map: "idx_statut")
+  @@index([statutBancarisation], map: "idx_statut_bancarisation")
+  @@index([deletedAt], map: "idx_deleted")
+  @@index([raisonSociale], map: "idx_raison")
+  @@index([agenceId, statut, statutBancarisation, deletedAt], map: "idx_filters_combo")
+}
+
+model BancarisationRequest {
+  id                  String   @id @default(auto()) @map("_id") @db.ObjectId
+  concessionnaireId   String
+  agenceId            String?
+  produitCode         String?
+  statutActuel        String
+  nouveauStatut       String
+  compteBancaire      String?
+  banqueEtablissement String?
+  dateEffet           DateTime
+  justificatif        Json?
+  status              String
+  validationComment   String?
+  validatedByUserId   String?
+  validatedAt         DateTime?
+  createdByUserId     String
+  updatedByUserId     String
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@map("bancarisation_requests")
+  @@index([status], map: "idx_status")
+  @@index([agenceId], map: "idx_agence")
+  @@index([concessionnaireId, status], map: "idx_concessionnaire_status")
+  @@index([dateEffet], map: "idx_date_effet")
+}
+
+model Contrat {
+  id               String   @id @default(auto()) @map("_id") @db.ObjectId
+  reference        String   @unique
+  concessionnaireId String
+  produitCode      String
+  operationType    String
+  status           String
+  dateEffet        DateTime
+  dossierId        String   @unique
+  createdByUserId  String
+  updatedByUserId  String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  deletedAt        DateTime?
+
+  @@map("contrats")
+  @@index([concessionnaireId, produitCode, status, deletedAt], map: "idx_unique_active_check")
+}
