@@ -8,6 +8,7 @@ export type LonaciNavItem = {
 
 export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", section: "Principal" },
+  { href: "/import", label: "Import fichiers" },
   { href: "/concessionnaires", label: "Concessionnaires" },
   { href: "/contrats", label: "Contrats", badge: "contracts" },
   { href: "/cautions", label: "Cautions", badge: "cautions" },
@@ -61,6 +62,14 @@ export function LonaciNavIcon({ label }: { label: string }) {
         <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" />
         <circle cx="9" cy="7" r="4" />
         <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75" />
+      </svg>
+    );
+  }
+  if (label.includes("Import")) {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
+        <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
       </svg>
     );
   }

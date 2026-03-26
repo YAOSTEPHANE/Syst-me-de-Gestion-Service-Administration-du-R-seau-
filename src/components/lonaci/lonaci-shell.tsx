@@ -140,10 +140,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo">SGAR</div>
+              <div className="lonaci-db-logo">SG</div>
               <div>
-                <div className="lonaci-db-logo-title">Système de Gestion Service et Administration</div>
-                <div className="lonaci-db-logo-sub">Réseau</div>
+                <div className="lonaci-db-logo-title">Système de Gestion</div>
               </div>
             </div>
           </div>
