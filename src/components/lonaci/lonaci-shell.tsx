@@ -140,9 +140,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo">L</div>
+              <div className="lonaci-db-logo">SGAR</div>
               <div>
-                <div className="lonaci-db-logo-title">LONACI</div>
+                <div className="lonaci-db-logo-title">Système de Gestion Service et Administration</div>
                 <div className="lonaci-db-logo-sub">Réseau</div>
               </div>
             </div>
@@ -286,9 +286,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <aside className={`lonaci-db-mobile-drawer ${mobileMenuOpen ? "lonaci-db-mobile-drawer-open" : ""}`}>
           <div className="lonaci-db-mobile-drawer-head">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo">L</div>
+              <div className="lonaci-db-logo">SGAR</div>
               <div>
-                <div className="lonaci-db-logo-title">LONACI</div>
+                <div className="lonaci-db-logo-title">Système de Gestion Service et Administration</div>
                 <div className="lonaci-db-logo-sub">Réseau</div>
               </div>
             </div>

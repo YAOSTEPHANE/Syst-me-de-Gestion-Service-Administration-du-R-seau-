@@ -261,6 +261,7 @@ export default function ContratsPanel() {
   const [listReloadTick, setListReloadTick] = useState(0);
 
   const [dossierActionBusyId, setDossierActionBusyId] = useState<string | null>(null);
+  const [signatureLinkBusyId, setSignatureLinkBusyId] = useState<string | null>(null);
 
   type ContratsChartsRow = { produitCode: string; weekly: number; monthly: number };
   type PendingByLevelDto = { n1: number; n2: number; final: number };
@@ -724,6 +725,38 @@ export default function ContratsPanel() {
     return false;
   }
 
+  async function generateClientSignatureLink(dossierId: string) {
+    setSignatureLinkBusyId(dossierId);
+    try {
+      const res = await fetch(`/api/dossiers/${encodeURIComponent(dossierId)}/signature-link`, {
+        method: "POST",
+        credentials: "include",
+      });
+      const payload = (await res.json().catch(() => null)) as
+        | { message?: string; link?: { url?: string } }
+        | null;
+      if (!res.ok) {
+        throw new Error(payload?.message ?? "Génération du lien impossible.");
+      }
+
+      const url = payload?.link?.url;
+      if (!url) {
+        throw new Error("Lien de signature introuvable.");
+      }
+
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        setToast({ type: "success", message: "Lien de signature copié dans le presse-papiers." });
+      } else {
+        setToast({ type: "success", message: `Lien de signature: ${url}` });
+      }
+    } catch (err) {
+      setToast({ type: "error", message: err instanceof Error ? err.message : "Erreur" });
+    } finally {
+      setSignatureLinkBusyId(null);
+    }
+  }
+
   function openDecision(dossierId: string, etape: string) {
     setDecisionDossierId(dossierId);
     setDecisionEtape(etape);
@@ -1133,6 +1166,14 @@ export default function ContratsPanel() {
                           >
                             PDF
                           </a>
+                          <button
+                            type="button"
+                            onClick={() => void generateClientSignatureLink(row.dossierId)}
+                            disabled={signatureLinkBusyId === row.dossierId}
+                            className="text-xs font-medium text-violet-800 underline hover:text-violet-950 disabled:opacity-60"
+                          >
+                            {signatureLinkBusyId === row.dossierId ? "Lien..." : "Lien signature client"}
+                          </button>
                         </div>
                       </td>
                     </tr>
