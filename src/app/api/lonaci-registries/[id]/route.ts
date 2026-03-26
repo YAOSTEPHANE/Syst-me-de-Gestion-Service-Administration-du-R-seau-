@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { ensureRegistryIndexes, updateRegistry } from "@/lib/lonaci/lonaci-registries";
+import { ensureRegistryIndexes, softDeleteRegistry, updateRegistry } from "@/lib/lonaci/lonaci-registries";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const patchSchema = z.object({
@@ -48,4 +48,19 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     },
     { status: 200 },
   );
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  const auth = await requireApiAuth(request, {
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+  });
+  if ("error" in auth) return auth.error;
+
+  const { id } = await context.params;
+  await ensureRegistryIndexes();
+  const deleted = await softDeleteRegistry(id, auth.user._id ?? "");
+  if (!deleted) {
+    return NextResponse.json({ message: "Entree introuvable" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true }, { status: 200 });
 }

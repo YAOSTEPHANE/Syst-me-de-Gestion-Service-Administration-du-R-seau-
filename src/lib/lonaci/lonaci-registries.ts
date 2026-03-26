@@ -68,9 +68,26 @@ async function nextRef(module: RegistryModule): Promise<string> {
   return `${prefix}-${String(seq).padStart(6, "0")}`;
 }
 
-export async function listRegistries(module: RegistryModule, page: number, pageSize: number) {
+export async function listRegistries(
+  module: RegistryModule,
+  page: number,
+  pageSize: number,
+  filters?: { q?: string; statut?: string; agenceId?: string },
+) {
   const db = await getDatabase();
-  const filter = { module, deletedAt: null };
+  const q = filters?.q?.trim();
+  const statut = filters?.statut?.trim();
+  const agenceId = filters?.agenceId?.trim();
+  const filter: Record<string, unknown> = { module, deletedAt: null };
+  if (statut) filter.statut = statut;
+  if (agenceId) filter.agenceId = agenceId;
+  if (q) {
+    filter.$or = [
+      { reference: { $regex: q, $options: "i" } },
+      { titre: { $regex: q, $options: "i" } },
+      { commentaire: { $regex: q, $options: "i" } },
+    ];
+  }
   const skip = (page - 1) * pageSize;
   const [totalPrimary, rows] = await Promise.all([
     db.collection<Stored>(COLLECTION).countDocuments(filter),
@@ -137,4 +154,15 @@ export async function updateRegistry(
     return row ? mapDoc(row) : null;
   }
   return null;
+}
+
+export async function softDeleteRegistry(id: string, actorId: string): Promise<boolean> {
+  if (!ObjectId.isValid(id)) return false;
+  const db = await getDatabase();
+  const now = new Date();
+  const up = await db.collection(COLLECTION).updateOne(
+    { _id: new ObjectId(id), deletedAt: null },
+    { $set: { deletedAt: now, updatedAt: now, updatedByUserId: actorId } },
+  );
+  return up.matchedCount > 0;
 }

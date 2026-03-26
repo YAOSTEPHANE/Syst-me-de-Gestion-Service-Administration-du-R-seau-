@@ -10,6 +10,9 @@ const listSchema = z.object({
   module: moduleEnum,
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  q: z.string().max(120).optional(),
+  statut: z.string().min(1).max(64).optional(),
+  agenceId: z.string().min(1).max(64).optional(),
 });
 
 const createSchema = z.object({
@@ -34,7 +37,11 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureRegistryIndexes();
-  const result = await listRegistries(parsed.data.module, parsed.data.page, parsed.data.pageSize);
+  const result = await listRegistries(parsed.data.module, parsed.data.page, parsed.data.pageSize, {
+    q: parsed.data.q,
+    statut: parsed.data.statut,
+    agenceId: parsed.data.agenceId,
+  });
   return NextResponse.json(
     {
       items: result.items.map((d) => ({
