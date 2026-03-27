@@ -270,3 +270,191 @@ export function canRole(input: RbacCheckInput): RbacCheckResult {
 export function isGlobalRole(role: LonaciRole): boolean {
   return role === "CHEF_SERVICE" || role === "AUDITEUR";
 }
+
+/**
+ * Matrice métier par module (A/C/V/S/R) fournie par la direction.
+ * Légende:
+ * - A = Action / Saisie
+ * - C = Contrôle
+ * - V = Validation finale
+ * - S = Suivi / Lecture
+ * - R = Rapport
+ * - — = Pas d'accès
+ *
+ * NOTE:
+ * Cette matrice complète la RBAC technique ci-dessus.
+ * La RBAC technique reste la source d'autorisation API actuelle.
+ */
+export type CoreLonaciRole = "AGENT" | "CHEF_SECTION" | "ASSIST_CDS" | "CHEF_SERVICE";
+
+export type ModulePermissionCode = string;
+
+export interface RoleModulePermissionRow {
+  module: string;
+  permissions: Record<CoreLonaciRole, ModulePermissionCode>;
+}
+
+export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
+  {
+    module: "Contrats & Actualisations",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "C, S, R",
+      ASSIST_CDS: "C, S, Synthèse",
+      CHEF_SERVICE: "C, S, V",
+    },
+  },
+  {
+    module: "Cautions",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "C, S, R",
+      ASSIST_CDS: "C, S, Synthèse",
+      CHEF_SERVICE: "C, S, V",
+    },
+  },
+  {
+    module: "Intégrations PDV",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "A, C, S",
+      ASSIST_CDS: "S, C",
+      CHEF_SERVICE: "S",
+    },
+  },
+  {
+    module: "Agréments",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "C, Synthèse",
+      ASSIST_CDS: "S, C",
+      CHEF_SERVICE: "—",
+    },
+  },
+  {
+    module: "Cessions & Délocalisations",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "S, C",
+      ASSIST_CDS: "—",
+      CHEF_SERVICE: "V, Transfert",
+    },
+  },
+  {
+    module: "Résiliations",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "—",
+      CHEF_SERVICE: "—",
+    },
+  },
+  {
+    module: "Attestations & Domiciliation",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "C, Transmission",
+      CHEF_SERVICE: "C, S",
+    },
+  },
+  {
+    module: "Décès & Ayant Droit",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "C, S",
+      ASSIST_CDS: "C, S",
+      CHEF_SERVICE: "V",
+    },
+  },
+  {
+    module: "Bancarisation",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "S, C",
+      CHEF_SERVICE: "V, Transfert",
+    },
+  },
+  {
+    module: "GPR & Codes Grattage",
+    permissions: {
+      AGENT: "A",
+      CHEF_SECTION: "C N1",
+      ASSIST_CDS: "C N2",
+      CHEF_SERVICE: "S, C",
+    },
+  },
+  {
+    module: "Rapports journaliers",
+    permissions: {
+      AGENT: "A (saisie)",
+      CHEF_SECTION: "C, S",
+      ASSIST_CDS: "C, V",
+      CHEF_SERVICE: "Finalisation",
+    },
+  },
+  {
+    module: "Rapports hebdo / trimestriels",
+    permissions: {
+      AGENT: "S",
+      CHEF_SECTION: "R (production)",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "S",
+    },
+  },
+  {
+    module: "Rapports mensuels / annuels",
+    permissions: {
+      AGENT: "—",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "R (production)",
+      CHEF_SERVICE: "S",
+    },
+  },
+  {
+    module: "Notifications",
+    permissions: {
+      AGENT: "S",
+      CHEF_SECTION: "S",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "S, Config",
+    },
+  },
+  {
+    module: "Gestion des comptes utilisateurs",
+    permissions: {
+      AGENT: "—",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "—",
+      CHEF_SERVICE: "CRUD complet",
+    },
+  },
+  {
+    module: "Référentiel concessionnaires",
+    permissions: {
+      AGENT: "A, S",
+      CHEF_SECTION: "S, C",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "CRUD complet",
+    },
+  },
+  {
+    module: "Audit logs",
+    permissions: {
+      AGENT: "—",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "S complet",
+    },
+  },
+];
+
+export function getRoleModulePermission(
+  moduleName: string,
+  role: CoreLonaciRole,
+): ModulePermissionCode | null {
+  const hit = ROLE_MODULE_PERMISSION_MATRIX.find((row) => row.module === moduleName);
+  if (!hit) return null;
+  return hit.permissions[role] ?? null;
+}

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { LONACI_ROLES, LONACI_ROLE_LABELS, getLonaciRoleLabel } from "@/lib/lonaci/constants";
+import { LONACI_ROLES, LONACI_ROLE_LABELS, getLonaciRoleLabel, getLonaciRoleProfile } from "@/lib/lonaci/constants";
 
 interface AdminUser {
   id: string;
@@ -85,6 +85,8 @@ export default function UsersAdminPanel() {
   const [editActif, setEditActif] = useState(true);
 
   const searchParams = useSearchParams();
+  const createRoleProfile = getLonaciRoleProfile(createRole);
+  const editRoleProfile = getLonaciRoleProfile(editRole);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -484,7 +486,12 @@ export default function UsersAdminPanel() {
                       <div className="text-xs text-slate-600">{u.email}</div>
                       {u.matricule ? <div className="text-[11px] text-slate-500">Matricule: {u.matricule}</div> : null}
                     </td>
-                    <td className="px-3 py-3">{getLonaciRoleLabel(u.role)}</td>
+                    <td className="px-3 py-3">
+                      <div className="font-medium">{getLonaciRoleLabel(u.role)}</div>
+                      {getLonaciRoleProfile(u.role)?.responsabilite ? (
+                        <div className="text-[11px] text-slate-500">{getLonaciRoleProfile(u.role)?.responsabilite}</div>
+                      ) : null}
+                    </td>
                     <td className="px-3 py-3">{u.agenceId ?? "—"}</td>
                     <td className="px-3 py-3">{u.actif ? "ACTIF" : "INACTIF"}</td>
                     <td className="px-3 py-3">
@@ -683,6 +690,11 @@ export default function UsersAdminPanel() {
                     </option>
                   ))}
                 </select>
+                {editRoleProfile ? (
+                  <span className="text-[11px] text-slate-500">
+                    {editRoleProfile.designation} — {editRoleProfile.responsabilite}
+                  </span>
+                ) : null}
               </label>
 
               <label className="grid gap-1">
@@ -828,6 +840,11 @@ export default function UsersAdminPanel() {
                   </option>
                 ))}
               </select>
+              {createRoleProfile ? (
+                <p className="text-[11px] text-slate-500 md:col-span-2">
+                  {createRoleProfile.designation} — {createRoleProfile.responsabilite}
+                </p>
+              ) : null}
               <input value={createAgenceId} onChange={(e) => setCreateAgenceId(e.target.value)} placeholder="Agence de rattachement (ex: YOPOUGON_1 ou ObjectId 24 hex)" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
               <input value={createProduits} onChange={(e) => setCreateProduits(e.target.value)} placeholder="Produits autorisés CSV" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />
               <input value={createAgencesAutorisees} onChange={(e) => setCreateAgencesAutorisees(e.target.value)} placeholder="Agences autorisées CSV (ex: YOPOUGON_1, ABOBO)" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />

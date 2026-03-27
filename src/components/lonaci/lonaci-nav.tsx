@@ -8,7 +8,6 @@ export type LonaciNavItem = {
 
 export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", section: "Principal" },
-  { href: "/import", label: "Import fichiers" },
   { href: "/concessionnaires", label: "Concessionnaires" },
   { href: "/contrats", label: "Contrats", badge: "contracts" },
   { href: "/cautions", label: "Cautions", badge: "cautions" },

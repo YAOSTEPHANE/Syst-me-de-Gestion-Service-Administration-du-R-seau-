@@ -13,6 +13,7 @@ import {
   type BancarisationStatut,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
+import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
@@ -140,6 +141,210 @@ interface ProduitRef {
   actif: boolean;
 }
 
+type ExtractedConcessionnaireDraft = {
+  codePdv?: string;
+  nomComplet?: string;
+  cniNumero?: string;
+  telephonePrincipal?: string;
+  telephoneSecondaire?: string;
+  agenceRaw?: string;
+  produitsRaw?: string;
+  statut?: string;
+  statutBancarisation?: string;
+  compteBancaire?: string;
+  observations?: string;
+  lat?: string;
+  lng?: string;
+};
+
+function normalizeToken(value: string): string {
+  return value
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "")
+    .trim();
+}
+
+function pickRecordValue(record: Record<string, unknown>, aliases: string[]): string | null {
+  const normalizedMap = new Map<string, string>();
+  for (const key of Object.keys(record)) {
+    normalizedMap.set(normalizeToken(key), key);
+  }
+  for (const alias of aliases) {
+    const hitKey = normalizedMap.get(normalizeToken(alias));
+    if (!hitKey) continue;
+    const raw = record[hitKey];
+    if (raw === undefined || raw === null) continue;
+    const text = String(raw).trim();
+    if (!text) continue;
+    return text;
+  }
+  return null;
+}
+
+function extractDraftFromRecord(record: Record<string, unknown>): ExtractedConcessionnaireDraft {
+  const codePdv = pickRecordValue(record, ["codePdv", "code pdv", "pdv", "reference"]);
+  const nomComplet = pickRecordValue(record, ["nomComplet", "nom complet", "nom", "raisonSociale", "raison sociale"]);
+  const cniNumero = pickRecordValue(record, ["cniNumero", "cni", "numero cni", "piece identite"]);
+  const telephonePrincipal = pickRecordValue(record, [
+    "telephonePrincipal",
+    "telephone principal",
+    "telephone",
+    "tel",
+    "phone",
+  ]);
+  const telephoneSecondaire = pickRecordValue(record, [
+    "telephoneSecondaire",
+    "telephone secondaire",
+    "tel secondaire",
+    "phone2",
+  ]);
+  const agenceRaw = pickRecordValue(record, ["agenceId", "agence", "code agence", "agence code"]);
+  const produitsRaw = pickRecordValue(record, ["produitsAutorises", "produits", "produit", "product"]);
+  const statut = pickRecordValue(record, ["statut"]);
+  const statutBancarisation = pickRecordValue(record, ["statutBancarisation", "bancarisation", "statut bancarisation"]);
+  const compteBancaire = pickRecordValue(record, ["compteBancaire", "compte bancaire", "iban", "numero compte"]);
+  const observations = pickRecordValue(record, ["observations", "notes", "commentaire"]);
+  const lat = pickRecordValue(record, ["lat", "latitude", "gps lat", "gps.latitude"]);
+  const lng = pickRecordValue(record, ["lng", "longitude", "gps lng", "gps.longitude"]);
+  return {
+    codePdv: codePdv ?? undefined,
+    nomComplet: nomComplet ?? undefined,
+    cniNumero: cniNumero ?? undefined,
+    telephonePrincipal: telephonePrincipal ?? undefined,
+    telephoneSecondaire: telephoneSecondaire ?? undefined,
+    agenceRaw: agenceRaw ?? undefined,
+    produitsRaw: produitsRaw ?? undefined,
+    statut: statut ?? undefined,
+    statutBancarisation: statutBancarisation ?? undefined,
+    compteBancaire: compteBancaire ?? undefined,
+    observations: observations ?? undefined,
+    lat: lat ?? undefined,
+    lng: lng ?? undefined,
+  };
+}
+
+async function extractDraftFromExcel(file: File): Promise<ExtractedConcessionnaireDraft> {
+  const XLSX = await import("xlsx");
+  const buf = await file.arrayBuffer();
+  const workbook = XLSX.read(buf, { type: "array" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error("Aucune feuille trouvée dans le fichier Excel.");
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  if (!rows.length) throw new Error("Le fichier Excel est vide.");
+  return extractDraftFromRecord(rows[0]);
+}
+
+async function downloadConcessionnaireExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "nomComplet",
+    "cniNumero",
+    "telephonePrincipal",
+    "telephoneSecondaire",
+    "agence",
+    "produitsAutorises",
+    "statut",
+    "statutBancarisation",
+    "compteBancaire",
+    "latitude",
+    "longitude",
+    "observations",
+  ];
+  const sample = {
+    nomComplet: "KOUASSI JEAN",
+    cniNumero: "CNI123456789",
+    telephonePrincipal: "+2250700000000",
+    telephoneSecondaire: "",
+    agence: "ABOBO",
+    produitsAutorises: "LOTO;PMU",
+    statut: "ACTIF",
+    statutBancarisation: "NON_BANCARISE",
+    compteBancaire: "",
+    latitude: "5.3599",
+    longitude: "-4.0083",
+    observations: "Exemple de ligne",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "concessionnaires");
+  XLSX.writeFile(wb, "modele-concessionnaires.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    nomComplet: (raw.nomComplet as string | null) ?? null,
+    cniNumero: (raw.cniNumero as string | null) ?? null,
+    telephonePrincipal: (raw.telephonePrincipal as string | null) ?? null,
+    telephoneSecondaire: (raw.telephoneSecondaire as string | null) ?? null,
+    agenceId: (raw.agenceId as string | null) ?? null,
+    produitsAutorises: raw.produitsAutorises ?? [],
+    statut: (raw.statut as string | null) ?? "ACTIF",
+    statutBancarisation: (raw.statutBancarisation as string | null) ?? "NON_BANCARISE",
+    compteBancaire: (raw.compteBancaire as string | null) ?? null,
+    observations: (raw.observations as string | null) ?? null,
+    gps: raw.gps ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const draft = await extractDraftFromPdf(file);
+    const row: Record<string, unknown> = sanitize({
+      nomComplet: draft.nomComplet ?? null,
+      cniNumero: draft.cniNumero ?? null,
+      telephonePrincipal: draft.telephonePrincipal ?? null,
+      telephoneSecondaire: draft.telephoneSecondaire ?? null,
+      agenceId: draft.agenceRaw ?? null,
+      produitsAutorises: draft.produitsRaw ? draft.produitsRaw.split(/[,;|/]/).map((x) => x.trim()).filter(Boolean) : [],
+      statut: draft.statut ?? "ACTIF",
+      statutBancarisation: draft.statutBancarisation ?? "NON_BANCARISE",
+      compteBancaire: draft.compteBancaire ?? null,
+      observations: draft.observations ?? null,
+      gps:
+        draft.lat && draft.lng
+          ? { lat: Number(draft.lat.replace(",", ".")), lng: Number(draft.lng.replace(",", ".")) }
+          : null,
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
+async function extractDraftFromPdf(file: File): Promise<ExtractedConcessionnaireDraft> {
+  const text = await extractPdfText(file, 8);
+  return {
+    codePdv: captureByAliases(text, ["code pdv", "pdv", "reference"], "[a-z0-9\\-_/]{3,60}") ?? undefined,
+    nomComplet:
+      captureByAliases(text, ["nom complet", "nom", "raison sociale", "raisonsociale"], "[^|;]{2,120}") ?? undefined,
+    cniNumero: captureByAliases(text, ["cni", "numero cni", "piece identite"], "[a-z0-9\\-_/]{3,80}") ?? undefined,
+    telephonePrincipal:
+      captureByAliases(text, ["telephone principal", "telephone", "tel", "phone"], "[+0-9 ]{8,20}") ?? undefined,
+    telephoneSecondaire:
+      captureByAliases(text, ["telephone secondaire", "tel 2", "phone2"], "[+0-9 ]{8,20}") ?? undefined,
+    agenceRaw: captureByAliases(text, ["agence", "code agence", "agence id"], "[a-z0-9_ \\-]{2,80}") ?? undefined,
+    produitsRaw: captureByAliases(text, ["produits autorises", "produits", "produit"], "[^|;]{2,180}") ?? undefined,
+    statut: captureByAliases(text, ["statut"], "[a-z_]{3,40}") ?? undefined,
+    statutBancarisation: captureByAliases(text, ["statut bancarisation", "bancarisation"], "[a-z_]{3,40}") ?? undefined,
+    compteBancaire: captureByAliases(text, ["compte bancaire", "iban", "numero compte"], "[a-z0-9 \\-]{3,80}") ?? undefined,
+    observations: captureByAliases(text, ["observations", "notes", "commentaire"], "[^|;]{2,300}") ?? undefined,
+    lat: captureByAliases(text, ["lat", "latitude", "gps lat"], "-?[0-9]+(?:[.,][0-9]+)?") ?? undefined,
+    lng: captureByAliases(text, ["lng", "long", "longitude", "gps lng"], "-?[0-9]+(?:[.,][0-9]+)?") ?? undefined,
+  };
+}
+
 export default function ConcessionnairesPanel() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -170,7 +375,11 @@ export default function ConcessionnairesPanel() {
   const [me, setMe] = useState<{ agenceId: string | null; role: string } | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const directImportInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
   const [lastSearchMs, setLastSearchMs] = useState<number | null>(null);
   /** Heure affichée après chargement réussi — évite l’écart SSR/client (new Date() au rendu). */
   const [lastSyncLabel, setLastSyncLabel] = useState<string | null>(null);
@@ -233,6 +442,15 @@ export default function ConcessionnairesPanel() {
     void load(1, aid ? { agenceId: aid, q: "" } : undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    const onDataImported = () => {
+      void load(page, { q, agenceId: filterAgenceId });
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page, q, filterAgenceId]);
 
   async function refreshMapPointsTotal(qEff: string, agenceEff: string) {
     try {
@@ -473,6 +691,104 @@ export default function ConcessionnairesPanel() {
   }
   const photoFile = photoInputRef.current?.files?.[0] ?? null;
 
+  async function onImportConcessionnaireFileChange(ev: ChangeEvent<HTMLInputElement>) {
+    const file = ev.target.files?.[0];
+    if (!file) return;
+    setExtracting(true);
+    try {
+      const lower = file.name.toLowerCase();
+      let draft: ExtractedConcessionnaireDraft;
+      if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+        draft = await extractDraftFromExcel(file);
+      } else if (lower.endsWith(".pdf")) {
+        draft = await extractDraftFromPdf(file);
+      } else {
+        throw new Error("Format non supporté. Utilisez .xlsx, .xls ou .pdf.");
+      }
+
+      if (draft.nomComplet) setRs(draft.nomComplet);
+      if (draft.cniNumero) setCniNumero(draft.cniNumero);
+      if (draft.telephonePrincipal) setTel(draft.telephonePrincipal);
+      if (draft.telephoneSecondaire) setTelSecondary(draft.telephoneSecondaire);
+      if (draft.compteBancaire) setCompteBancaire(draft.compteBancaire);
+      if (draft.observations) setObservations(draft.observations);
+      if (draft.lat) setLat(draft.lat.replace(",", "."));
+      if (draft.lng) setLng(draft.lng.replace(",", "."));
+
+      if (draft.agenceRaw) {
+        const token = normalizeToken(draft.agenceRaw);
+        const matched =
+          agencesActives.find((a) => normalizeToken(a.id) === token) ??
+          agencesActives.find((a) => normalizeToken(a.code) === token) ??
+          agencesActives.find((a) => normalizeToken(a.libelle) === token);
+        if (matched) setAgenceId(matched.id);
+      }
+
+      if (draft.produitsRaw) {
+        const tokens = draft.produitsRaw
+          .split(/[,;|/]/)
+          .map((t) => t.trim())
+          .filter(Boolean);
+        const selectedCodes = new Set<string>();
+        for (const t of tokens) {
+          const tk = normalizeToken(t);
+          const matched =
+            produits.find((p) => normalizeToken(p.code) === tk) ??
+            produits.find((p) => normalizeToken(p.libelle) === tk);
+          if (matched) selectedCodes.add(matched.code);
+        }
+        if (selectedCodes.size > 0) setProduitsAutorises([...selectedCodes]);
+      }
+
+      if (draft.statut) {
+        const s = normalizeToken(draft.statut);
+        const matched = CONCESSIONNAIRE_STATUTS.find((x) => normalizeToken(x) === s);
+        if (matched) setCreateStatut(matched);
+      }
+      if (draft.statutBancarisation) {
+        const s = normalizeToken(draft.statutBancarisation);
+        const matched = BANCARISATION_STATUTS.find((x) => normalizeToken(x) === s);
+        if (matched) setBancarisation(matched);
+      }
+
+      setToast({ type: "success", message: "Fichier analysé. Les champs reconnus ont été préremplis." });
+    } catch (e) {
+      setToast({ type: "error", message: e instanceof Error ? e.message : "Extraction impossible." });
+    } finally {
+      setExtracting(false);
+      ev.target.value = "";
+    }
+  }
+
+  async function onDirectImportConcessionnaireFileChange(ev: ChangeEvent<HTMLInputElement>) {
+    const source = ev.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "concessionnaires");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; inserted?: number; skippedExistingDuplicates?: number }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1, { q, agenceId: filterAgenceId });
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import concessionnaires terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      });
+    } catch (err) {
+      setToast({ type: "error", message: err instanceof Error ? err.message : "Import impossible." });
+    } finally {
+      setImportingFile(false);
+      ev.target.value = "";
+    }
+  }
+
   const paginationBtnBase =
     "inline-flex items-center justify-center gap-1 rounded-lg border text-xs font-semibold transition focus-visible:outline focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:pointer-events-none disabled:opacity-40";
   const paginationBtnGhost = `${paginationBtnBase} border-slate-200 bg-white px-2.5 py-2 text-slate-700 hover:border-slate-300 hover:bg-slate-50 sm:px-3`;
@@ -606,62 +922,62 @@ export default function ConcessionnairesPanel() {
         </div>
         </div>
 
-        <div className="relative mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="relative overflow-hidden rounded-2xl border border-blue-200/90 bg-gradient-to-br from-blue-50 via-white to-sky-50 p-4 shadow-sm transition hover:shadow-md">
+        <div className="relative mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="relative overflow-hidden rounded-lg border border-blue-200/90 bg-gradient-to-br from-blue-50 via-white to-sky-50 p-2 shadow-sm transition hover:shadow-md">
             <div
-              className="pointer-events-none absolute -right-8 -top-8 h-28 w-28 rounded-full bg-slate-300/25"
+              className="pointer-events-none absolute -right-6 -top-6 h-20 w-20 rounded-full bg-slate-300/25"
               aria-hidden
             />
             <div className="relative flex gap-3">
               <span
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-blue-600 text-white shadow-md"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-blue-600 text-white shadow-md"
                 aria-hidden
               >
-                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
                   <path d="M4 6h16M4 10h16M4 14h10M4 18h10" strokeLinecap="round" />
                 </svg>
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-blue-700">Total PDV</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-blue-950">{total}</p>
-                <p className="mt-1 text-[11px] leading-snug text-blue-700/80">Selon recherche et agence</p>
+                <p className="mt-1 text-xl font-bold tabular-nums tracking-tight text-blue-950">{total}</p>
+                <p className="mt-1 text-[10px] leading-snug text-blue-700/80">Selon recherche et agence</p>
               </div>
             </div>
           </div>
 
-          <div className="relative overflow-hidden rounded-3xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 p-4 shadow-sm transition hover:shadow-md">
+          <div className="relative overflow-hidden rounded-lg border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-teal-50/60 p-2 shadow-sm transition hover:shadow-md">
             <div
-              className="pointer-events-none absolute -left-6 bottom-0 h-24 w-24 rounded-full bg-emerald-400/15"
+              className="pointer-events-none absolute -left-6 bottom-0 h-16 w-16 rounded-full bg-emerald-400/15"
               aria-hidden
             />
             <div className="relative flex gap-3">
               <span
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md ring-4 ring-emerald-100"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-md ring-4 ring-emerald-100"
                 aria-hidden
               >
-                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M5 13l4 4L19 7" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-emerald-700">Actifs</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-emerald-950">{activeCount}</p>
-                <p className="mt-1 text-[11px] leading-snug text-emerald-800/80">Sur la page affichée</p>
+                <p className="mt-1 text-xl font-bold tabular-nums tracking-tight text-emerald-950">{activeCount}</p>
+                <p className="mt-1 text-[10px] leading-snug text-emerald-800/80">Sur la page affichée</p>
               </div>
             </div>
           </div>
 
-          <div className="relative overflow-hidden rounded-2xl border border-cyan-200/80 bg-gradient-to-b from-cyan-50 to-white p-4 shadow-sm transition hover:shadow-md">
+          <div className="relative overflow-hidden rounded-lg border border-cyan-200/80 bg-gradient-to-b from-cyan-50 to-white p-2 shadow-sm transition hover:shadow-md">
             <div
-              className="pointer-events-none absolute right-2 top-1/2 h-20 w-20 -translate-y-1/2 rounded-2xl bg-sky-400/10 rotate-12"
+              className="pointer-events-none absolute right-1 top-1/2 h-14 w-14 -translate-y-1/2 rounded-2xl bg-sky-400/10 rotate-12"
               aria-hidden
             />
             <div className="relative flex gap-3">
               <span
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cyan-500 text-white shadow-md"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-cyan-500 text-white shadow-md"
                 aria-hidden
               >
-                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
                   <path
                     d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07 19.5 19.5 0 01-6-6 19.79 19.79 0 01-3.07-8.67A2 2 0 014.11 2h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L8.09 9.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 16.92z"
                     strokeLinecap="round"
@@ -671,23 +987,23 @@ export default function ConcessionnairesPanel() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-cyan-700">Contacts</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-cyan-950">{withContactCount}</p>
-                <p className="mt-1 text-[11px] leading-snug text-cyan-800/80">Tél. renseigné sur la page</p>
+                <p className="mt-1 text-xl font-bold tabular-nums tracking-tight text-cyan-950">{withContactCount}</p>
+                <p className="mt-1 text-[10px] leading-snug text-cyan-800/80">Tél. renseigné sur la page</p>
               </div>
             </div>
           </div>
 
-          <div className="relative overflow-hidden rounded-xl border-2 border-violet-300/70 bg-gradient-to-tr from-violet-100/40 via-white to-fuchsia-50/50 p-4 shadow-sm transition hover:shadow-md">
+          <div className="relative overflow-hidden rounded-lg border-2 border-violet-300/70 bg-gradient-to-tr from-violet-100/40 via-white to-fuchsia-50/50 p-2 shadow-sm transition hover:shadow-md">
             <div
               className="pointer-events-none absolute inset-x-4 top-0 h-1 rounded-b-full bg-gradient-to-r from-violet-500 to-fuchsia-500 opacity-80"
               aria-hidden
             />
-            <div className="relative flex gap-3 pt-1">
+            <div className="relative flex gap-2 pt-0.5">
               <span
-                className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border-2 border-violet-200 bg-white text-violet-600 shadow-sm"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border-2 border-violet-200 bg-white text-violet-600 shadow-sm"
                 aria-hidden
               >
-                <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
+                <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75">
                   <path d="M4 19.5A2.5 2.5 0 016.5 17H20" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M6.5 2H20v20H6.5A2.5 2.5 0 014 19.5v-15A2.5 2.5 0 016.5 2z" strokeLinecap="round" strokeLinejoin="round" />
                   <path d="M8 7h8M8 11h6" strokeLinecap="round" />
@@ -695,11 +1011,11 @@ export default function ConcessionnairesPanel() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-violet-800">Pagination</p>
-                <p className="mt-1 text-3xl font-bold tabular-nums tracking-tight text-violet-950">
+                <p className="mt-1 text-xl font-bold tabular-nums tracking-tight text-violet-950">
                   {page}
-                  <span className="text-xl font-semibold text-violet-600/90">/{totalPages}</span>
+                  <span className="text-base font-semibold text-violet-600/90">/{totalPages}</span>
                 </p>
-                <p className="mt-1 text-[11px] leading-snug text-violet-800/80">Page courante · total pages</p>
+                <p className="mt-1 text-[10px] leading-snug text-violet-800/80">Page courante · total pages</p>
               </div>
             </div>
           </div>
@@ -816,6 +1132,49 @@ export default function ConcessionnairesPanel() {
                       </code>
                     </p>
                     <p className="mt-1 text-slate-500">{pdvFormatHint}</p>
+                    <div className="mt-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2">
+                      <p className="text-[11px] font-semibold text-cyan-900">Préremplir via fichier (Excel / PDF)</p>
+                      <p className="mt-0.5 text-[11px] text-slate-600">
+                        Téléchargez un fichier pour extraire automatiquement les informations détectables.
+                      </p>
+                      <input
+                        ref={importInputRef}
+                        type="file"
+                        accept=".xlsx,.xls,application/pdf"
+                        className="sr-only"
+                        onChange={(e) => void onImportConcessionnaireFileChange(e)}
+                      />
+                      <input
+                        ref={directImportInputRef}
+                        type="file"
+                        accept=".json,.csv,.xlsx,.xls,.pdf"
+                        className="sr-only"
+                        onChange={(e) => void onDirectImportConcessionnaireFileChange(e)}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => importInputRef.current?.click()}
+                        disabled={extracting}
+                        className="mt-2 inline-flex items-center rounded-md border border-cyan-300 bg-cyan-50 px-2.5 py-1 text-[11px] font-semibold text-cyan-900 hover:bg-cyan-100 disabled:opacity-60"
+                      >
+                        {extracting ? "Extraction..." : "Télécharger un fichier"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void downloadConcessionnaireExcelTemplate()}
+                        className="mt-2 ml-2 inline-flex items-center rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        Télécharger le modèle Excel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => directImportInputRef.current?.click()}
+                        disabled={importingFile}
+                        className="mt-2 ml-2 inline-flex items-center rounded-md border border-indigo-300 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-800 hover:bg-indigo-100 disabled:opacity-60"
+                      >
+                        {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+                      </button>
+                    </div>
                   </section>
 
                   <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">

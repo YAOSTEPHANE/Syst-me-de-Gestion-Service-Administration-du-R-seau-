@@ -144,7 +144,7 @@ body.lonaci-db-no-scroll {
 
 .lonaci-db-nav-section {
   font-size: 9.5px;
-  color: #94a3b8;
+  color: #475569;
   letter-spacing: 0.1em;
   padding: 12px 10px 3px;
   font-weight: 500;
@@ -158,7 +158,7 @@ body.lonaci-db-no-scroll {
   padding: 7px 10px;
   border-radius: 6px;
   font-size: 12.5px;
-  color: #64748b;
+  color: #334155;
   text-decoration: none;
   transition:
     background 0.12s,
@@ -167,20 +167,22 @@ body.lonaci-db-no-scroll {
 
 .lonaci-db-nav-item:hover {
   background: #f1f5f9;
-  color: #334155;
+  color: #0f172a;
 }
 
 .lonaci-db-nav-item svg {
-  color: #0ea5e9;
+  color: var(--lonaci-nav-icon-color, #0ea5e9);
+  width: 16px;
+  height: 16px;
 }
 
 .lonaci-db-nav-item.lonaci-db-active {
   background: #fffbeb;
-  color: #b45309;
+  color: #92400e;
 }
 
 .lonaci-db-nav-item.lonaci-db-active svg {
-  color: #d97706;
+  color: var(--lonaci-nav-icon-color, #0ea5e9);
 }
 
 .lonaci-db-nav-badge {
@@ -905,6 +907,7 @@ body.lonaci-db-no-scroll {
   width: 100%;
   max-width: 1120px;
   margin: 0 auto;
+  font-size: 12.5px;
 }
 
 .lonaci-db-kpi {

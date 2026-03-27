@@ -20,12 +20,59 @@ export const LONACI_ROLE_LABELS: Record<LonaciRole, string> = {
   LECTURE_SEULE: "Lecture seule",
 };
 
+export interface LonaciRoleProfile {
+  designation: string;
+  responsabilite: string;
+}
+
+export const LONACI_ROLE_PROFILES: Record<LonaciRole, LonaciRoleProfile> = {
+  AGENT: {
+    designation: "Agent opérationnel",
+    responsabilite: "Saisie des dossiers. Accès limité à son agence et ses modules assignés.",
+  },
+  CHEF_SECTION: {
+    designation: "Chef(fe) de Section",
+    responsabilite:
+      "Contrôle N1. Valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
+  },
+  ASSIST_CDS: {
+    designation: "Assistant(e) Chef(fe) de Service",
+    responsabilite:
+      "Contrôle N2. Synthèse des états. Produit les rapports mensuels, semestriels et annuels.",
+  },
+  CHEF_SERVICE: {
+    designation: "Chef(fe) de Service",
+    responsabilite:
+      "Validation finale. Accès complet à tous les modules. Finalise tous les dossiers. Paramètre le système.",
+  },
+  SUPERVISEUR_REGIONAL: {
+    designation: "Superviseur régional",
+    responsabilite: "Supervision transverse. Consultation et pilotage inter-agences selon périmètre attribué.",
+  },
+  AUDITEUR: {
+    designation: "Auditeur",
+    responsabilite: "Contrôle et audit. Accès en lecture globale pour vérification de conformité.",
+  },
+  LECTURE_SEULE: {
+    designation: "Lecture seule",
+    responsabilite: "Consultation uniquement. Aucun droit de création, validation ou paramétrage.",
+  },
+};
+
 export function getLonaciRoleLabel(role: string | null | undefined): string {
   if (!role) return "";
   if ((LONACI_ROLES as readonly string[]).includes(role)) {
     return LONACI_ROLE_LABELS[role as LonaciRole];
   }
   return role;
+}
+
+export function getLonaciRoleProfile(role: string | null | undefined): LonaciRoleProfile | null {
+  if (!role) return null;
+  if ((LONACI_ROLES as readonly string[]).includes(role)) {
+    return LONACI_ROLE_PROFILES[role as LonaciRole];
+  }
+  return null;
 }
 
 export const DOSSIER_STATUSES = [

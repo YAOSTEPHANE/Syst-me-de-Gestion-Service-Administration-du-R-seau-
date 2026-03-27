@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -87,6 +88,95 @@ function statusClass(status: PdvStatus): string {
   }
 }
 
+async function downloadPdvIntegrationsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "agenceId",
+    "produitCode",
+    "nombreDemandes",
+    "dateDemande",
+    "gps.lat",
+    "gps.lng",
+    "observations",
+  ];
+  const sample = {
+    agenceId: "ID_AGENCE",
+    produitCode: "LOTO",
+    nombreDemandes: 2,
+    dateDemande: new Date().toISOString(),
+    "gps.lat": 5.3599,
+    "gps.lng": -4.0083,
+    observations: "Exemple import integration PDV",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "pdv_integrations");
+  XLSX.writeFile(wb, "modele-pdv-integrations.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    agenceId: (raw.agenceId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null) ?? null,
+    nombreDemandes: raw.nombreDemandes ?? null,
+    dateDemande: (raw.dateDemande as string | null) ?? null,
+    gps: raw.gps ?? null,
+    observations: (raw.observations as string | null) ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: null });
+    const normalizedRows = rows.map((row) => {
+      const rec = row as Record<string, unknown>;
+      const gpsLat = rec["gps.lat"];
+      const gpsLng = rec["gps.lng"];
+      const next = { ...rec } as Record<string, unknown>;
+      if (gpsLat !== undefined || gpsLng !== undefined) {
+        next.gps = {
+          lat: Number(gpsLat ?? 0),
+          lng: Number(gpsLng ?? 0),
+        };
+      }
+      delete next["gps.lat"];
+      delete next["gps.lng"];
+      return sanitize(next);
+    });
+    const json = JSON.stringify(normalizedRows);
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const lat = normalizeNumericString(
+      captureByAliases(source, ["lat", "latitude", "gps lat"], "-?[0-9]+(?:[.,][0-9]+)?"),
+    );
+    const lng = normalizeNumericString(
+      captureByAliases(source, ["lng", "long", "longitude", "gps lng"], "-?[0-9]+(?:[.,][0-9]+)?"),
+    );
+    const row = sanitize({
+      agenceId: captureByAliases(source, ["agence id", "id agence"], "[a-z0-9]{8,}"),
+      produitCode:
+        captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase() ?? null,
+      nombreDemandes: normalizeNumericString(
+        captureByAliases(source, ["nombre demandes", "nombre demande", "quantite"], "[0-9]+"),
+      ) ?? 1,
+      dateDemande: normalizeDateToIso(
+        captureByAliases(source, ["date demande", "date integration", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+      ),
+      gps: { lat: lat ?? 0, lng: lng ?? 0 },
+      observations: captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 export default function PdvIntegrationsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -115,6 +205,8 @@ export default function PdvIntegrationsPanel() {
   const [lng, setLng] = useState("");
   const [observations, setObservations] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [finalizingId, setFinalizingId] = useState<string | null>(null);
@@ -152,6 +244,15 @@ export default function PdvIntegrationsPanel() {
 
   useEffect(() => {
     void load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterAgenceId, filterProduit, filterStatus, filterDateFrom, filterDateTo]);
+
+  useEffect(() => {
+    const onDataImported = () => {
+      void load(1);
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAgenceId, filterProduit, filterStatus, filterDateFrom, filterDateTo]);
 
@@ -225,6 +326,38 @@ export default function PdvIntegrationsPanel() {
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    setCreateFormError(null);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "pdv_integrations");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; inserted?: number; skippedExistingDuplicates?: number }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import PDV terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Import impossible";
+      setCreateFormError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -738,7 +871,29 @@ export default function PdvIntegrationsPanel() {
                       {createFormError}
                     </div>
                   ) : null}
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".json,.csv,.xlsx,.xls,.pdf"
+                    className="sr-only"
+                    onChange={(e) => void onImportFileChange(e)}
+                  />
                   <div className="flex flex-wrap justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={importingFile}
+                      onClick={() => importFileInputRef.current?.click()}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
+                    >
+                      {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void downloadPdvIntegrationsExcelTemplate()}
+                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                    >
+                      Télécharger le modèle Excel
+                    </button>
                     <button
                       type="button"
                       onClick={closeCreate}

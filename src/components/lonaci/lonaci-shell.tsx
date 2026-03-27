@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 import {
@@ -71,7 +71,22 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
 
   const navItems = useMemo(() => {
     let last = "";
-    return LONACI_NAV.map((item: LonaciNavItem) => {
+    const palette = [
+      "#0ea5e9", // sky
+      "#10b981", // emerald
+      "#f59e0b", // amber
+      "#ef4444", // red
+      "#8b5cf6", // violet
+      "#6366f1", // indigo
+      "#14b8a6", // teal
+      "#22c55e", // green
+      "#3b82f6", // blue
+      "#f97316", // orange
+      "#a855f7", // purple
+      "#64748b", // slate
+    ];
+
+    return LONACI_NAV.map((item: LonaciNavItem, idx: number) => {
       const showSection = Boolean(item.section && item.section !== last);
       if (item.section) last = item.section;
       const active = !item.disabled && pathname === item.href;
@@ -82,7 +97,8 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (kpi && item.badge === "pdv") badgeCount = kpi.dossierValidation.pdvNonFinalise;
       if (kpi && item.badge === "agrements") badgeCount = kpi.dossierValidation.agrementsEnAttente;
       if (kpi && item.badge === "bancarisation") badgeCount = kpi.bancarisation.enCours + kpi.bancarisation.nonBancarise;
-      return { item, showSection, active, badgeCount };
+      const iconColor = palette[idx % palette.length];
+      return { item, showSection, active, badgeCount, iconColor };
     });
   }, [pathname, kpi]);
 
@@ -148,7 +164,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
           </div>
 
           <nav className="lonaci-db-nav">
-            {navItems.map(({ item, showSection, active, badgeCount }) => (
+            {navItems.map(({ item, showSection, active, badgeCount, iconColor }) => (
               <div key={`${item.href}-${item.label}`}>
                 {showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
                 {item.disabled ? (
@@ -157,7 +173,11 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                     <span>{item.label}</span>
                   </span>
                 ) : (
-                  <Link href={item.href} className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}>
+                  <Link
+                    href={item.href}
+                    className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
+                    style={{ ["--lonaci-nav-icon-color" as any]: iconColor } as CSSProperties}
+                  >
                     <LonaciNavIcon label={item.label} />
                     <span>{item.label}</span>
                     {active && item.href === "/dashboard" ? <span className="lonaci-db-nav-active-dot" /> : null}
@@ -303,7 +323,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
             </button>
           </div>
           <nav className="lonaci-db-mobile-nav">
-            {navItems.map(({ item, showSection, active, badgeCount }) => (
+            {navItems.map(({ item, showSection, active, badgeCount, iconColor }) => (
               <div key={`mobile-${item.href}-${item.label}`}>
                 {showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
                 {item.disabled ? (
@@ -312,7 +332,11 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                     <span>{item.label}</span>
                   </span>
                 ) : (
-                  <Link href={item.href} className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}>
+                  <Link
+                    href={item.href}
+                    className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
+                    style={{ ["--lonaci-nav-icon-color" as any]: iconColor } as CSSProperties}
+                  >
                     <LonaciNavIcon label={item.label} />
                     <span>{item.label}</span>
                     {badgeCount && badgeCount > 0 && item.badge ? (

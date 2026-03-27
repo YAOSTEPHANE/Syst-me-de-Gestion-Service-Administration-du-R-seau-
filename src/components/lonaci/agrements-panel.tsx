@@ -1,6 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 
 type AgrementStatus = "RECU" | "CONTROLE" | "TRANSMIS" | "FINALISE";
 interface AgrementItem {
@@ -32,6 +33,76 @@ function statusPillClass(status: AgrementStatus): string {
   }
 }
 
+async function downloadAgrementsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "produitCode",
+    "dateReception",
+    "referenceOfficielle",
+    "agenceId",
+    "concessionnaireId",
+    "observations",
+    "documentPdfName",
+  ];
+  const sample = {
+    produitCode: "LOTO",
+    dateReception: new Date().toISOString(),
+    referenceOfficielle: "AGR-2026-001",
+    agenceId: "ID_AGENCE",
+    concessionnaireId: "ID_CONCESSIONNAIRE",
+    observations: "Exemple import agrement",
+    documentPdfName: "obligatoire-via-formulaire.pdf",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "agrements");
+  XLSX.writeFile(wb, "modele-agrements.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    produitCode: (raw.produitCode as string | null) ?? null,
+    dateReception: (raw.dateReception as string | null) ?? null,
+    referenceOfficielle: (raw.referenceOfficielle as string | null) ?? null,
+    agenceId: (raw.agenceId as string | null) ?? null,
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    observations: (raw.observations as string | null) ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const row = sanitize({
+      produitCode:
+        captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase() ?? null,
+      dateReception: normalizeDateToIso(
+        captureByAliases(source, ["date reception", "date agrement", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+      ),
+      referenceOfficielle: captureByAliases(
+        source,
+        ["reference officielle", "numero officielle", "num agrement"],
+        "[a-z0-9\\-_/]{3,80}",
+      ),
+      agenceId: captureByAliases(source, ["agence id", "id agence"], "[a-z0-9]{8,}"),
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id", "id pdv"], "[a-z0-9]{8,}"),
+      observations: captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 export default function AgrementsPanel() {
   const [items, setItems] = useState<AgrementItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -45,6 +116,8 @@ export default function AgrementsPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
 
   const [filterAgence, setFilterAgence] = useState("");
   const [filterProduit, setFilterProduit] = useState("");
@@ -104,6 +177,15 @@ export default function AgrementsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAgence, filterProduit, filterStatut, filterDateFrom, filterDateTo]);
 
+  useEffect(() => {
+    const onDataImported = () => {
+      void load(1);
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filterAgence, filterProduit, filterStatut, filterDateFrom, filterDateTo]);
+
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!pdfFile) {
@@ -144,6 +226,38 @@ export default function AgrementsPanel() {
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    setCreateError(null);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "agreements");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; inserted?: number; skippedExistingDuplicates?: number }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import agréments terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Import impossible";
+      setCreateError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -683,6 +797,28 @@ export default function AgrementsPanel() {
               </div>
 
               <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
+                <input
+                  ref={importFileInputRef}
+                  type="file"
+                  accept=".json,.csv,.xlsx,.xls,.pdf"
+                  className="sr-only"
+                  onChange={(e) => void onImportFileChange(e)}
+                />
+                <button
+                  type="button"
+                  disabled={importingFile}
+                  onClick={() => importFileInputRef.current?.click()}
+                  className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
+                >
+                  {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void downloadAgrementsExcelTemplate()}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                >
+                  Télécharger le modèle Excel
+                </button>
                 <button
                   type="button"
                   onClick={closeCreate}

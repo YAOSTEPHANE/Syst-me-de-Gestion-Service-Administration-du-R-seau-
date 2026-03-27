@@ -15,7 +15,6 @@ import {
 import { Bar, Doughnut } from "react-chartjs-2";
 
 import DashboardAgencesStrip from "@/components/lonaci/dashboard-agences-strip";
-import DashboardDataImportCard from "@/components/lonaci/dashboard-data-import-card";
 import DashboardNotifications from "@/components/lonaci/dashboard-notifications";
 import { useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 
@@ -137,7 +136,6 @@ export default function LonaciDashboardHome() {
     <div className="lonaci-db-dashboard space-y-4">
       <DashboardAgencesStrip items={kpi?.agencesOverview30j ?? null} loading={!kpi && !error} />
       <DashboardNotifications />
-      <DashboardDataImportCard />
       {error ? <p className="lonaci-db-error-text">{error}</p> : null}
       {!kpi ? <p className="lonaci-db-muted">Chargement...</p> : null}
 

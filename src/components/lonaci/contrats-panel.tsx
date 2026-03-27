@@ -1,9 +1,10 @@
 "use client";
 
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
+import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type OperationType = "NOUVEAU" | "ACTUALISATION";
 
@@ -100,6 +101,75 @@ function labelDossierEtape(status: string) {
     default:
       return status;
   }
+}
+
+async function downloadContratsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "concessionnaireId",
+    "agenceId",
+    "produitCode",
+    "operationType",
+    "dateOperation",
+    "parentContratId",
+    "observations",
+  ];
+  const sample = {
+    concessionnaireId: "ID_CONCESSIONNAIRE",
+    agenceId: "ID_AGENCE",
+    produitCode: "LOTO",
+    operationType: "NOUVEAU",
+    dateOperation: new Date().toISOString(),
+    parentContratId: "",
+    observations: "Exemple import contrat",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "contrats");
+  XLSX.writeFile(wb, "modele-contrats.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    agenceId: (raw.agenceId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null) ?? null,
+    operationType: (raw.operationType as string | null) ?? "NOUVEAU",
+    dateOperation: (raw.dateOperation as string | null) ?? null,
+    parentContratId: (raw.parentContratId as string | null) ?? null,
+    observations: (raw.observations as string | null) ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const dateOperationRaw = captureByAliases(source, ["date operation", "date", "date contrat"], "[0-9/\\- :tTzZ.+]{8,40}");
+    const row = sanitize({
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id", "id concessionnaire"], "[a-z0-9]{8,}"),
+      agenceId: captureByAliases(source, ["agence id", "id agence"], "[a-z0-9]{8,}"),
+      produitCode:
+        captureByAliases(source, ["code produit", "produit", "product"], "[a-z0-9_ -]{2,20}")?.toUpperCase() ?? null,
+      operationType:
+        captureByAliases(source, ["type operation", "operation", "type"], "(nouveau|actualisation)")?.toUpperCase() ??
+        "NOUVEAU",
+      dateOperation: normalizeDateToIso(dateOperationRaw),
+      parentContratId: captureByAliases(source, ["parent contrat id", "contrat parent", "id parent"], "[a-z0-9]{8,}"),
+      observations: captureByAliases(source, ["observations", "observation", "commentaires", "commentaire"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
 }
 
 type ContratSuiviEtat = "VALIDE" | "EN_ATTENTE" | "REFUSE" | "EN_RETARD";
@@ -219,6 +289,8 @@ export default function ContratsPanel() {
 
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   /** Erreurs du formulaire « Nouveau contrat » : affichées dans la modale (les toasts passent sous le backdrop z-50). */
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -369,6 +441,14 @@ export default function ContratsPanel() {
   useEffect(() => {
     void loadContratsListe();
   }, [loadContratsListe, listReloadTick]);
+
+  useEffect(() => {
+    const onDataImported = () => {
+      setListReloadTick((n) => n + 1);
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
+  }, []);
 
   useEffect(() => {
     void (async () => {
@@ -678,6 +758,40 @@ export default function ContratsPanel() {
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    setCreateFormError(null);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "dossiers");
+      fd.set("mode", "insert");
+
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; inserted?: number; skippedExistingDuplicates?: number }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+
+      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import contrats terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Import impossible";
+      setCreateFormError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -1784,13 +1898,37 @@ export default function ContratsPanel() {
                     {createFormError}
                   </div>
                 ) : null}
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="w-full rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2.5 text-sm font-medium text-white transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60 sm:w-auto sm:min-w-[200px]"
-                >
-                  {creating ? "Création…" : "Créer le dossier"}
-                </button>
+                <input
+                  ref={importFileInputRef}
+                  type="file"
+                  accept=".json,.csv,.xlsx,.xls,.pdf"
+                  className="sr-only"
+                  onChange={(e) => void onImportFileChange(e)}
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={importingFile}
+                    onClick={() => importFileInputRef.current?.click()}
+                    className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadContratsExcelTemplate()}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    Télécharger le modèle Excel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creating}
+                    className="w-full rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2.5 text-sm font-medium text-white transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60 sm:w-auto sm:min-w-[200px]"
+                  >
+                    {creating ? "Création…" : "Créer le dossier"}
+                  </button>
+                </div>
               </div>
             </form>
           </div>

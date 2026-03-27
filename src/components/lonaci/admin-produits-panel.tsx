@@ -48,6 +48,14 @@ export default function AdminProduitsPanel() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const onDataImported = () => {
+      void load();
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
+  }, [load]);
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);

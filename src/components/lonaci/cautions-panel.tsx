@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { CAUTION_PAYMENT_MODES, type CautionStatus } from "@/lib/lonaci/constants";
+import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 
 type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
@@ -103,6 +104,73 @@ function labelModeReglement(m: CautionPaymentMode): string {
   }
 }
 
+async function downloadCautionsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = ["contratId", "montant", "modeReglement", "dueDate", "paymentReference", "observations"];
+  const sample = {
+    contratId: "ID_CONTRAT",
+    montant: 250000,
+    modeReglement: "VIREMENT",
+    dueDate: new Date().toISOString(),
+    paymentReference: "TX-123456",
+    observations: "Exemple import caution",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "cautions");
+  XLSX.writeFile(wb, "modele-cautions.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    contratId: (raw.contratId as string | null) ?? null,
+    montant: raw.montant ?? null,
+    modeReglement: (raw.modeReglement as string | null) ?? null,
+    dueDate: (raw.dueDate as string | null) ?? null,
+    paymentReference: (raw.paymentReference as string | null) ?? null,
+    observations: (raw.observations as string | null) ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const montant = normalizeNumericString(
+      captureByAliases(source, ["montant", "somme", "amount"], "[0-9]+(?:[.,][0-9]+)?"),
+    );
+    const dueDate = normalizeDateToIso(
+      captureByAliases(source, ["date paiement", "due date", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+    );
+    const row = sanitize({
+      contratId: captureByAliases(source, ["contrat id", "id contrat"], "[a-z0-9]{8,}"),
+      montant: montant ?? 0,
+      modeReglement:
+        captureByAliases(source, ["mode reglement", "mode paiement", "reglement"], "(especes|virement|mobile[_ ]money|cheque)")
+          ?.toUpperCase()
+          .replace(" ", "_") ?? "VIREMENT",
+      dueDate,
+      paymentReference: captureByAliases(
+        source,
+        ["reference paiement", "payment reference", "reference", "ref paiement"],
+        "[a-z0-9\\-_/]{3,80}",
+      ),
+      observations: captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 async function fetchAlerts(): Promise<AlertItem[]> {
   const response = await fetch("/api/cautions/alerts", {
     credentials: "include",
@@ -190,6 +258,8 @@ export default function CautionsPanel() {
   const [finalizeComment, setFinalizeComment] = useState("");
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (contratPrefill) {
@@ -253,7 +323,12 @@ export default function CautionsPanel() {
   }, [pageSize, tab]);
 
   useEffect(() => {
+    const onDataImported = () => {
+      void load();
+    };
+    window.addEventListener("lonaci:data-imported", onDataImported);
     void load();
+    return () => window.removeEventListener("lonaci:data-imported", onDataImported);
   }, [load]);
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
@@ -307,6 +382,38 @@ export default function CautionsPanel() {
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    setError(null);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "cautions");
+      fd.set("mode", "upsert");
+      fd.set("upsertBy", "contratId");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; upserted?: number; modified?: number }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(tab);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import cautions terminé: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Import impossible";
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -627,6 +734,28 @@ export default function CautionsPanel() {
                 </section>
 
                 <div className="flex flex-wrap justify-end gap-2">
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".json,.csv,.xlsx,.xls,.pdf"
+                    className="sr-only"
+                    onChange={(e) => void onImportFileChange(e)}
+                  />
+                  <button
+                    type="button"
+                    disabled={importingFile}
+                    onClick={() => importFileInputRef.current?.click()}
+                    className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
+                  >
+                    {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void downloadCautionsExcelTemplate()}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
+                  >
+                    Télécharger le modèle Excel
+                  </button>
                   <button
                     type="button"
                     onClick={() => closeCreate()}

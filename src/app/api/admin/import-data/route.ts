@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { MongoBulkWriteError } from "mongodb";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getDatabase } from "@/lib/mongodb";
@@ -40,6 +41,56 @@ function coerceCsvValue(value: string): unknown {
     if (!Number.isNaN(n)) return n;
   }
   return value;
+}
+
+function isIsoDateString(v: string): boolean {
+  // Accepte: YYYY-MM-DD, ou YYYY-MM-DDTHH:mm:ss(.sss)Z(+/-HH:mm)
+  return /^(\d{4}-\d{2}-\d{2})([T ][0-9:.+-Z]+)?$/.test(v.trim());
+}
+
+const DATE_KEYS_TO_COERCE = new Set<string>([
+  "createdAt",
+  "updatedAt",
+  "deletedAt",
+  "dateReception",
+  "dateDemande",
+  "dateOperation",
+  "dateEffet",
+  "dateDeces",
+  "dueDate",
+  "paidAt",
+  "finalizedAt",
+  "controlledAt",
+  "transmittedAt",
+  "expiresAt",
+  "signedAt",
+  "actedAt",
+]);
+
+function coerceDatesInValue(value: unknown, keyName?: string): unknown {
+  if (Array.isArray(value)) {
+    return value.map((v) => coerceDatesInValue(v));
+  }
+  if (value && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      out[k] = coerceDatesInValue(v, k);
+    }
+    return out;
+  }
+  if (typeof value === "string" && keyName && DATE_KEYS_TO_COERCE.has(keyName) && isIsoDateString(value)) {
+    const t = Date.parse(value);
+    if (!Number.isNaN(t)) return new Date(t);
+  }
+  return value;
+}
+
+function coerceDatesInRecord(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(row)) {
+    out[k] = coerceDatesInValue(v, k);
+  }
+  return out;
 }
 
 function parseCsv(content: string): Record<string, unknown>[] {
@@ -84,7 +135,9 @@ function parseFromFile(fileName: string, content: string): Record<string, unknow
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, {
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+  });
   if ("error" in auth) {
     return auth.error;
   }
@@ -98,6 +151,7 @@ export async function POST(request: NextRequest) {
   const collection = String(formData.get("collection") ?? "").trim();
   const modeRaw = String(formData.get("mode") ?? "insert").trim().toLowerCase();
   const upsertByRaw = String(formData.get("upsertBy") ?? "").trim();
+  const agenceIdRaw = String(formData.get("agenceId") ?? "").trim();
 
   if (!(file instanceof File)) {
     return NextResponse.json({ message: "Fichier manquant" }, { status: 400 });
@@ -128,18 +182,124 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Aucune ligne à importer", inserted: 0 }, { status: 200 });
   }
 
+  // Conversion ISO string -> Date sur les champs de date connus.
+  rows = rows.map((r) => coerceDatesInRecord(r));
+
   const db = await getDatabase();
   const now = new Date();
+  const agencePatch = agenceIdRaw ? { agenceId: agenceIdRaw } : {};
+
+  function normalizeCode(value: unknown): string | null {
+    if (typeof value !== "string") return null;
+    const v = value.trim();
+    return v.length > 0 ? v : null;
+  }
 
   if (modeRaw === "insert") {
+    if (collection === "agences") {
+      const rowsWithCode = rows.filter((row) => normalizeCode(row.code) !== null);
+      const skippedInvalidCode = rows.length - rowsWithCode.length;
+
+      // Deduplique les lignes par code dans le fichier (on garde la premiere occurrence).
+      const seenCodes = new Set<string>();
+      const dedupedRows: Record<string, unknown>[] = [];
+      let skippedFileDuplicates = 0;
+      for (const row of rowsWithCode) {
+        const code = normalizeCode(row.code) as string;
+        if (seenCodes.has(code)) {
+          skippedFileDuplicates += 1;
+          continue;
+        }
+        seenCodes.add(code);
+        dedupedRows.push(row);
+      }
+
+      // Ignore aussi les codes deja presents en base pour eviter les collisions unique index.
+      const existingRows = await db
+        .collection(collection)
+        .find({ code: { $in: [...seenCodes] } }, { projection: { code: 1 } })
+        .toArray();
+      const existingCodes = new Set(
+        existingRows
+          .map((row) => normalizeCode((row as Record<string, unknown>).code))
+          .filter((code): code is string => code !== null),
+      );
+      const finalRows = dedupedRows.filter((row) => !existingCodes.has(normalizeCode(row.code) as string));
+      const skippedExistingDuplicates = dedupedRows.length - finalRows.length;
+
+      if (finalRows.length === 0) {
+        return NextResponse.json(
+          {
+            message: "Import terminé: aucune nouvelle ligne à insérer.",
+            mode: "insert",
+            collection,
+            inserted: 0,
+            skippedInvalidCode,
+            skippedFileDuplicates,
+            skippedExistingDuplicates,
+          },
+          { status: 200 },
+        );
+      }
+
+      const docs = finalRows.map((row) => ({
+        ...row,
+        ...agencePatch,
+        createdAt: (row.createdAt as unknown) ?? now,
+        updatedAt: (row.updatedAt as unknown) ?? now,
+      }));
+      let insertedCount = 0;
+      let skippedDbDuplicates = 0;
+      try {
+        const res = await db.collection(collection).insertMany(docs, { ordered: false });
+        insertedCount = res.insertedCount;
+      } catch (error) {
+        if (error instanceof MongoBulkWriteError && error.code === 11000) {
+          insertedCount = error.result.insertedCount;
+          skippedDbDuplicates = Array.isArray(error.writeErrors)
+            ? error.writeErrors.filter((w) => w.code === 11000).length
+            : 0;
+        } else {
+          throw error;
+        }
+      }
+      return NextResponse.json(
+        {
+          message: "Import terminé",
+          mode: "insert",
+          collection,
+          inserted: insertedCount,
+          skippedInvalidCode,
+          skippedFileDuplicates,
+          skippedExistingDuplicates: skippedExistingDuplicates + skippedDbDuplicates,
+        },
+        { status: 200 },
+      );
+    }
+
     const docs = rows.map((row) => ({
       ...row,
+      ...agencePatch,
       createdAt: (row.createdAt as unknown) ?? now,
       updatedAt: (row.updatedAt as unknown) ?? now,
     }));
-    const res = await db.collection(collection).insertMany(docs);
+    let insertedCount = 0;
+    let skippedExistingDuplicates = 0;
+    try {
+      const res = await db.collection(collection).insertMany(docs, { ordered: false });
+      insertedCount = res.insertedCount;
+    } catch (error) {
+      if (error instanceof MongoBulkWriteError && error.code === 11000) {
+        insertedCount = error.result.insertedCount;
+        skippedExistingDuplicates = Array.isArray(error.writeErrors)
+          ? error.writeErrors.filter((w) => w.code === 11000).length
+          : 0;
+      } else {
+        throw error;
+      }
+    }
     return NextResponse.json(
-      { message: "Import terminé", mode: "insert", collection, inserted: res.insertedCount },
+      { message: "Import terminé", mode: "insert", collection, inserted: insertedCount, skippedExistingDuplicates },
       { status: 200 },
     );
   }
@@ -156,7 +316,7 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
-    const updateData: Record<string, unknown> = { ...row, updatedAt: now };
+    const updateData: Record<string, unknown> = { ...row, ...agencePatch, updatedAt: now };
     const res = await db.collection(collection).updateOne(
       { [upsertKey]: keyValue },
       {
