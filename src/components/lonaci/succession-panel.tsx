@@ -113,6 +113,21 @@ export default function SuccessionPanel() {
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
 
+  function friendlySuccessionError(raw: string): string {
+    switch (raw) {
+      case "CASE_NOT_FOUND":
+        return "Dossier de succession introuvable (ID invalide ou dossier supprimé).";
+      case "CONCESSIONNAIRE_NOT_FOUND":
+        return "Le concessionnaire lié au dossier n’a pas été trouvé.";
+      case "AGENCE_FORBIDDEN":
+        return "Accès refusé : vous n’avez pas les droits sur ce dossier.";
+      case "ACTE_DECES_REQUIRED":
+        return "Acte de décès obligatoire pour ouvrir le dossier.";
+      default:
+        return raw;
+    }
+  }
+
   async function load(nextPage = page) {
     setLoading(true);
     setError(null);
@@ -127,7 +142,10 @@ export default function SuccessionPanel() {
         fetch(`/api/succession-cases?${params.toString()}`, { credentials: "include", cache: "no-store" }),
         fetch("/api/succession-cases/alerts/stale", { credentials: "include", cache: "no-store" }),
       ]);
-      if (!listRes.ok) throw new Error("Liste succession inaccessible");
+      if (!listRes.ok) {
+        const b = (await listRes.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(b?.message ?? `Liste succession inaccessible (HTTP ${listRes.status}).`);
+      }
       const listData = (await listRes.json()) as { items: CaseRow[]; total: number; page: number };
       setItems(listData.items);
       setTotal(listData.total);
@@ -139,7 +157,8 @@ export default function SuccessionPanel() {
         setStale([]);
       }
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const raw = e instanceof Error ? e.message : "Erreur";
+      const message = friendlySuccessionError(raw);
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -160,13 +179,14 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(b?.message ?? "Fiche dossier inaccessible");
+        const raw = b?.message ?? `Fiche dossier inaccessible (HTTP ${res.status})`;
+        throw new Error(friendlySuccessionError(raw));
       }
       const payload = (await res.json()) as CaseDetailResponse;
       setDetail(payload.case);
     } catch (e) {
       setDetail(null);
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
       setToast({ type: "error", message });
     } finally {
       setDetailLoading(false);
@@ -204,7 +224,7 @@ export default function SuccessionPanel() {
         });
         if (!cancelled) setConcessionnaires(next);
       } catch (e) {
-        if (!cancelled) setConcessionnairesError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setConcessionnairesError(friendlySuccessionError(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setConcessionnairesLoading(false);
       }
@@ -242,7 +262,8 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(b?.message ?? "Création impossible");
+        const raw = b?.message ?? `Création impossible (HTTP ${res.status})`;
+        throw new Error(friendlySuccessionError(raw));
       }
       setConcId("");
       setDateDeces("");
@@ -250,9 +271,9 @@ export default function SuccessionPanel() {
       setActeDecesFile(null);
       setCreateOpen(false);
       await load();
-      setToast({ type: "success", message: "Dossier succession ouvert (étape 1 enregistrée)." });
+      setToast({ type: "success", message: "Dossier de succession ouvert. Étape 1 enregistrée." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
@@ -290,7 +311,8 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(b?.message ?? "Avancement impossible");
+        const raw = b?.message ?? `Avancement impossible (HTTP ${res.status})`;
+        throw new Error(friendlySuccessionError(raw));
       }
       setAdvComment("");
       setAyantNom("");
@@ -302,9 +324,9 @@ export default function SuccessionPanel() {
       if (selectedCaseId && selectedCaseId === caseId) {
         await loadDetail(caseId);
       }
-      setToast({ type: "success", message: "Étape enregistrée." });
+      setToast({ type: "success", message: "Étape enregistrée. Le dossier a été mis à jour." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
       setToast({ type: "error", message });
     } finally {
       setAdvancingId(null);
@@ -329,16 +351,17 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(b?.message ?? "Upload impossible");
+        const raw = b?.message ?? `Upload impossible (HTTP ${res.status})`;
+        throw new Error(friendlySuccessionError(raw));
       }
       setDocFile(null);
       await load();
       if (selectedCaseId && selectedCaseId === docCaseId) {
         await loadDetail(selectedCaseId);
       }
-      setToast({ type: "success", message: "Document de succession ajouté." });
+      setToast({ type: "success", message: `Document ajouté : ${docFile.name}` });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
       setToast({ type: "error", message });
     } finally {
       setUploadingDoc(false);

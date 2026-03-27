@@ -31,11 +31,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "AGENCE_FORBIDDEN" }, { status: 403 });
   }
 
+  const stepHistory = Array.isArray(doc.stepHistory) ? doc.stepHistory : [];
+  const documents = Array.isArray(doc.documents) ? doc.documents : [];
+
   const allUserIds = new Set<string>();
-  for (const step of doc.stepHistory) {
+  for (const step of stepHistory) {
     if (step.completedByUserId) allUserIds.add(step.completedByUserId);
   }
-  for (const file of doc.documents) {
+  for (const file of documents) {
     if (file.uploadedByUserId) allUserIds.add(file.uploadedByUserId);
   }
   if (doc.acteDeces?.uploadedByUserId) allUserIds.add(doc.acteDeces.uploadedByUserId);
@@ -78,9 +81,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
           telephone: doc.ayantDroitTelephone,
           email: doc.ayantDroitEmail,
         },
-        documents: doc.documents.map((d) => ({
+        documents: documents.map((d) => ({
           ...d,
-          uploadedAt: d.uploadedAt.toISOString(),
+          uploadedAt: d.uploadedAt ? d.uploadedAt.toISOString() : "",
           uploadedByUser: userMap.get(d.uploadedByUserId)
             ? {
                 id: userMap.get(d.uploadedByUserId)?._id ?? "",
@@ -90,9 +93,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
               }
             : null,
         })),
-        stepHistory: doc.stepHistory.map((s) => ({
+        stepHistory: stepHistory.map((s) => ({
           ...s,
-          completedAt: s.completedAt.toISOString(),
+          completedAt: s.completedAt ? s.completedAt.toISOString() : "",
           completedByUser: userMap.get(s.completedByUserId)
             ? {
                 id: userMap.get(s.completedByUserId)?._id ?? "",

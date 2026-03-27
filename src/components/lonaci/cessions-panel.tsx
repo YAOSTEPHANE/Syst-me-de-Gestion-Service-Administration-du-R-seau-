@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
+import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type CessionStatus = "SAISIE_AGENT" | "CONTROLE_CHEF_SECTION" | "VALIDEE_CHEF_SERVICE" | "REJETEE";
 type CessionKind = "CESSION" | "DELOCALISATION";
@@ -50,6 +53,106 @@ interface AgenceRef {
   actif: boolean;
 }
 
+async function downloadCessionsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "kind",
+    "concessionnaireId",
+    "cedantId",
+    "beneficiaireId",
+    "produitCode",
+    "oldAdresse",
+    "oldAgenceId",
+    "newAdresse",
+    "newAgenceId",
+    "newGpsLat",
+    "newGpsLng",
+    "dateDemande",
+    "motif",
+    "commentaire",
+  ];
+  const sample = {
+    kind: "CESSION",
+    concessionnaireId: "",
+    cedantId: "ID_CEDANT",
+    beneficiaireId: "ID_BENEFICIAIRE",
+    produitCode: "LOTO",
+    oldAdresse: "",
+    oldAgenceId: "",
+    newAdresse: "",
+    newAgenceId: "",
+    newGpsLat: "",
+    newGpsLng: "",
+    dateDemande: new Date().toISOString(),
+    motif: "Exemple import cession",
+    commentaire: "",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "cessions");
+  XLSX.writeFile(wb, "modele-cessions.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    kind: ((raw.kind as string | null) ?? "CESSION").toUpperCase(),
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    cedantId: (raw.cedantId as string | null) ?? null,
+    beneficiaireId: (raw.beneficiaireId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null)?.toUpperCase() ?? null,
+    oldAdresse: (raw.oldAdresse as string | null) ?? null,
+    oldAgenceId: (raw.oldAgenceId as string | null) ?? null,
+    newAdresse: (raw.newAdresse as string | null) ?? null,
+    newAgenceId: (raw.newAgenceId as string | null) ?? null,
+    newGps:
+      raw.newGpsLat != null && raw.newGpsLng != null
+        ? {
+            lat: normalizeNumericString(String(raw.newGpsLat)) ?? null,
+            lng: normalizeNumericString(String(raw.newGpsLng)) ?? null,
+          }
+        : null,
+    dateDemande: (raw.dateDemande as string | null) ?? null,
+    motif: (raw.motif as string | null) ?? null,
+    commentaire: (raw.commentaire as string | null) ?? null,
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const row = sanitize({
+      kind: captureByAliases(source, ["type", "kind", "operation"], "(cession|delocalisation|délocalisation)")?.toUpperCase() ?? "CESSION",
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id"], "[a-z0-9]{8,}"),
+      cedantId: captureByAliases(source, ["cedant id", "cédant id"], "[a-z0-9]{8,}"),
+      beneficiaireId: captureByAliases(source, ["beneficiaire id", "bénéficiaire id"], "[a-z0-9]{8,}"),
+      produitCode: captureByAliases(source, ["produit", "code produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase(),
+      oldAdresse: captureByAliases(source, ["ancienne adresse", "old adresse"], "[^|;]{1,200}"),
+      oldAgenceId: captureByAliases(source, ["ancienne agence id", "old agence id"], "[a-z0-9]{8,}"),
+      newAdresse: captureByAliases(source, ["nouvelle adresse", "new adresse"], "[^|;]{1,200}"),
+      newAgenceId: captureByAliases(source, ["nouvelle agence id", "new agence id"], "[a-z0-9]{8,}"),
+      newGpsLat: captureByAliases(source, ["latitude", "lat"], "[-0-9.,]{3,20}"),
+      newGpsLng: captureByAliases(source, ["longitude", "lng"], "[-0-9.,]{3,20}"),
+      dateDemande: normalizeDateToIso(
+        captureByAliases(source, ["date demande", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+      ),
+      motif: captureByAliases(source, ["motif"], "[^|;]{1,300}"),
+      commentaire: captureByAliases(source, ["commentaire", "observations"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 function statusLabel(status: CessionStatus) {
   switch (status) {
     case "SAISIE_AGENT":
@@ -94,6 +197,8 @@ export default function CessionsPanel() {
   const [commentaire, setCommentaire] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
   const docsInputRef = useRef<HTMLInputElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
 
   const [concessionnaires, setConcessionnaires] = useState<ConcessionnaireOption[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
@@ -117,7 +222,7 @@ export default function CessionsPanel() {
       setTotal(data.total);
       setPage(data.page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setLoading(false);
     }
@@ -157,7 +262,7 @@ export default function CessionsPanel() {
           setConcessionnaires(c.items ?? []);
         }
       } catch (e) {
-        if (!cancelled) setRefError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setRefError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setRefLoading(false);
       }
@@ -226,7 +331,7 @@ export default function CessionsPanel() {
       });
       await load(1);
     } catch (e) {
-      setCreateError(e instanceof Error ? e.message : "Erreur");
+      setCreateError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setCreating(false);
     }
@@ -249,10 +354,49 @@ export default function CessionsPanel() {
       setToast({ type: "success", message: "Transition appliquée." });
       await load(page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
-      setToast({ type: "error", message: e instanceof Error ? e.message : "Erreur" });
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
+      setError(message);
+      setToast({ type: "error", message });
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "cessions");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            message?: string;
+            inserted?: number;
+            skippedExistingDuplicates?: number;
+            skippedInvalidRows?: number;
+            invalidRows?: Array<{ index: number; reason: string }>;
+          }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import cessions terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+          data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
+        }.`,
+      });
+    } catch (err) {
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -296,6 +440,28 @@ export default function CessionsPanel() {
             className="inline-flex items-center justify-center rounded-xl border border-indigo-600 bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700"
           >
             {kind === "CESSION" ? "Créer demande de cession" : "Créer demande de délocalisation"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadCessionsExcelTemplate()}
+            className="rounded-xl border border-emerald-600 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50"
+          >
+            Télécharger modèle Excel
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".json,.csv,.xlsx,.xls,.pdf"
+            className="hidden"
+            onChange={(e) => void onImportFileChange(e)}
+          />
+          <button
+            type="button"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={importingFile}
+            className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
+          >
+            {importingFile ? "Import..." : "Importer fichier vers le tableau"}
           </button>
         </div>
       </div>

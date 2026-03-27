@@ -1,7 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import type { ChangeEvent } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type Banc = "NON_BANCARISE" | "EN_COURS" | "BANCARISE";
 type RequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
@@ -74,6 +77,82 @@ const REQUEST_STATUS_TOKENS = {
   REJETE: "bg-rose-100 text-rose-950 ring-1 ring-rose-400",
 } as const;
 
+async function downloadBancarisationExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = [
+    "concessionnaireId",
+    "agenceId",
+    "produitCode",
+    "statutActuel",
+    "nouveauStatut",
+    "compteBancaire",
+    "banqueEtablissement",
+    "dateEffet",
+    "status",
+    "validationComment",
+  ];
+  const sample = {
+    concessionnaireId: "ID_CONCESSIONNAIRE",
+    agenceId: "ID_AGENCE",
+    produitCode: "LOTO",
+    statutActuel: "NON_BANCARISE",
+    nouveauStatut: "EN_COURS",
+    compteBancaire: "",
+    banqueEtablissement: "",
+    dateEffet: new Date().toISOString(),
+    status: "SOUMIS",
+    validationComment: "",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "bancarisation_requests");
+  XLSX.writeFile(wb, "modele-bancarisation.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    agenceId: (raw.agenceId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null)?.toUpperCase() ?? null,
+    statutActuel: (raw.statutActuel as string | null) ?? "NON_BANCARISE",
+    nouveauStatut: (raw.nouveauStatut as string | null) ?? "EN_COURS",
+    compteBancaire: (raw.compteBancaire as string | null) ?? null,
+    banqueEtablissement: (raw.banqueEtablissement as string | null) ?? null,
+    dateEffet: (raw.dateEffet as string | null) ?? null,
+    status: (raw.status as string | null) ?? "SOUMIS",
+    validationComment: (raw.validationComment as string | null) ?? null,
+    justificatif: { url: "#", filename: "import-manuel" },
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const row = sanitize({
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id"], "[a-z0-9]{8,}"),
+      agenceId: captureByAliases(source, ["agence id"], "[a-z0-9]{8,}"),
+      produitCode: captureByAliases(source, ["produit", "code produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase(),
+      statutActuel: captureByAliases(source, ["statut actuel"], "(non_bancarise|en_cours|bancarise)")?.toUpperCase(),
+      nouveauStatut: captureByAliases(source, ["nouveau statut", "statut cible"], "(non_bancarise|en_cours|bancarise)")?.toUpperCase(),
+      compteBancaire: captureByAliases(source, ["compte bancaire", "rib", "iban"], "[^|;]{4,120}"),
+      banqueEtablissement: captureByAliases(source, ["banque", "etablissement"], "[^|;]{2,120}"),
+      dateEffet: normalizeDateToIso(captureByAliases(source, ["date effet", "date"], "[0-9/\\- :tTzZ.+]{8,40}")),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 function statutBancBadge(statut: Banc) {
   return STATUS_TOKENS[statut].badge;
 }
@@ -113,6 +192,8 @@ export default function BancarisationPanel() {
   const [dateEffet, setDateEffet] = useState("");
   const [produitCode, setProduitCode] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const pageSize = 15;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -220,7 +301,7 @@ export default function BancarisationPanel() {
       setFile(null);
       await load();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -254,11 +335,49 @@ export default function BancarisationPanel() {
       setDecisionAck(false);
       await load();
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
       setValidating(false);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "bancarisation_requests");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            message?: string;
+            inserted?: number;
+            skippedExistingDuplicates?: number;
+            skippedInvalidRows?: number;
+            invalidRows?: Array<{ index: number; reason: string }>;
+          }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load();
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import bancarisation terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+          data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
+        }.`,
+      });
+    } catch (err) {
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -309,6 +428,28 @@ export default function BancarisationPanel() {
               className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
             >
               Export PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => void downloadBancarisationExcelTemplate()}
+              className="rounded-xl border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+            >
+              Modèle Excel
+            </button>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".json,.csv,.xlsx,.xls,.pdf"
+              className="hidden"
+              onChange={(e) => void onImportFileChange(e)}
+            />
+            <button
+              type="button"
+              onClick={() => importFileInputRef.current?.click()}
+              disabled={importingFile}
+              className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:opacity-60"
+            >
+              {importingFile ? "Import..." : "Importer fichier vers le tableau"}
             </button>
           </div>
         </div>

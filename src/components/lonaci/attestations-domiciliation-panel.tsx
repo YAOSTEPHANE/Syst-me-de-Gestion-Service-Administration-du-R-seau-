@@ -1,6 +1,9 @@
 "use client";
 
+import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DemandeType = "ATTESTATION_REVENU" | "DOMICILIATION_PRODUIT";
 type DemandeStatut = "DEMANDE_RECUE" | "TRANSMIS" | "FINALISE";
@@ -29,6 +32,62 @@ function typeBadgeClass(type: DemandeType): string {
     : "border-cyan-200 bg-cyan-50 text-cyan-900";
 }
 
+async function downloadAttestationsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = ["type", "concessionnaireId", "produitCode", "dateDemande", "observations"];
+  const sample = {
+    type: "ATTESTATION_REVENU",
+    concessionnaireId: "ID_CONCESSIONNAIRE",
+    produitCode: "LOTO",
+    dateDemande: new Date().toISOString(),
+    observations: "Exemple import attestation/domiciliation",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "attestations_domiciliation");
+  XLSX.writeFile(wb, "modele-attestations-domiciliation.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    type: ((raw.type as string | null) ?? "ATTESTATION_REVENU").toUpperCase(),
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null)?.toUpperCase() ?? null,
+    dateDemande: (raw.dateDemande as string | null) ?? null,
+    observations: (raw.observations as string | null) ?? null,
+    statut: (raw.statut as string | null) ?? "DEMANDE_RECUE",
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const row = sanitize({
+      type:
+        captureByAliases(source, ["type", "demande type"], "(attestation_revenu|domiciliation_produit)")?.toUpperCase() ??
+        "ATTESTATION_REVENU",
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id"], "[a-z0-9]{8,}"),
+      produitCode: captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase(),
+      dateDemande: normalizeDateToIso(
+        captureByAliases(source, ["date demande", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+      ),
+      observations: captureByAliases(source, ["observations", "commentaire"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 export default function AttestationsDomiciliationPanel() {
   const [items, setItems] = useState<DemandeItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -40,6 +99,8 @@ export default function AttestationsDomiciliationPanel() {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
+  const [importingFile, setImportingFile] = useState(false);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -84,7 +145,7 @@ export default function AttestationsDomiciliationPanel() {
       setTotal(data.total);
       setPage(data.page);
     } catch (e) {
-      setListError(e instanceof Error ? e.message : "Erreur");
+      setListError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setLoading(false);
     }
@@ -121,7 +182,7 @@ export default function AttestationsDomiciliationPanel() {
       setToast({ type: "success", message: "Demande enregistrée (statut DEMANDE_RECUE)." });
       await load(1);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
       setToast({ type: "error", message });
     } finally {
@@ -146,11 +207,49 @@ export default function AttestationsDomiciliationPanel() {
       await load(page);
       setToast({ type: "success", message: "Transition effectuée." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
       setToast({ type: "error", message });
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "attestations_domiciliation");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            message?: string;
+            inserted?: number;
+            skippedExistingDuplicates?: number;
+            skippedInvalidRows?: number;
+            invalidRows?: Array<{ index: number; reason: string }>;
+          }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import attestations/domiciliation terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+          data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
+        }.`,
+      });
+    } catch (err) {
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -223,7 +322,7 @@ export default function AttestationsDomiciliationPanel() {
         const next = (data.produits ?? []).slice().sort((a, b) => a.code.localeCompare(b.code, "fr"));
         if (!cancelled) setProduits(next);
       } catch (e) {
-        if (!cancelled) setReferentialsError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setReferentialsError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setReferentialsLoading(false);
       }
@@ -258,7 +357,7 @@ export default function AttestationsDomiciliationPanel() {
         next.sort((a, b) => a.label.localeCompare(b.label, "fr"));
         if (!cancelled) setConcessionnaires(next);
       } catch (e) {
-        if (!cancelled) setConcessionnairesError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setConcessionnairesError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setConcessionnairesLoading(false);
       }
@@ -302,6 +401,28 @@ export default function AttestationsDomiciliationPanel() {
           >
             <span className="text-lg font-light leading-none">+</span>
             Nouvelle demande
+          </button>
+          <button
+            type="button"
+            onClick={() => void downloadAttestationsExcelTemplate()}
+            className="inline-flex items-center justify-center rounded-xl border border-emerald-600 bg-white px-3 py-2.5 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50"
+          >
+            Télécharger modèle Excel
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".json,.csv,.xlsx,.xls,.pdf"
+            className="hidden"
+            onChange={(e) => void onImportFileChange(e)}
+          />
+          <button
+            type="button"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={importingFile}
+            className="inline-flex items-center justify-center rounded-xl border border-cyan-500 bg-cyan-50 px-3 py-2.5 text-sm font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
+          >
+            {importingFile ? "Import..." : "Importer fichier vers le tableau"}
           </button>
         </div>
       </div>

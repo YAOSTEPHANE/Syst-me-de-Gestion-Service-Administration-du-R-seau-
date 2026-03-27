@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
 import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 import {
@@ -26,6 +26,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const [meUser, setMeUser] = useState<{ role: string; prenom: string; nom: string } | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const inactivityTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
     setMobileMenuOpen(false);
@@ -102,7 +103,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
     });
   }, [pathname, kpi]);
 
-  async function handleLogout() {
+  const handleLogout = useCallback(async () => {
     if (loggingOut) return;
     setLoggingOut(true);
     setUserMenuOpen(false);
@@ -113,7 +114,45 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       router.replace("/login");
       router.refresh();
     }
-  }
+  }, [loggingOut, router]);
+
+  useEffect(() => {
+    if (!meUser?.role) return;
+
+    const INACTIVITY_MS = 30 * 60 * 1000;
+
+    const resetTimer = () => {
+      if (inactivityTimeoutRef.current != null) {
+        window.clearTimeout(inactivityTimeoutRef.current);
+      }
+      inactivityTimeoutRef.current = window.setTimeout(() => {
+        void handleLogout();
+      }, INACTIVITY_MS);
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      "mousemove",
+      "mousedown",
+      "keydown",
+      "scroll",
+      "touchstart",
+      "pointerdown",
+    ];
+
+    for (const ev of activityEvents) {
+      window.addEventListener(ev, resetTimer, { passive: true });
+    }
+    resetTimer();
+
+    return () => {
+      for (const ev of activityEvents) {
+        window.removeEventListener(ev, resetTimer);
+      }
+      if (inactivityTimeoutRef.current != null) {
+        window.clearTimeout(inactivityTimeoutRef.current);
+      }
+    };
+  }, [meUser?.role, handleLogout]);
 
   useEffect(() => {
     if (!userMenuOpen) return;

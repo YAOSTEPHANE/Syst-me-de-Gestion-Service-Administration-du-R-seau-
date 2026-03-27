@@ -6,6 +6,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 
 import { CAUTION_PAYMENT_MODES, type CautionStatus } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
@@ -314,7 +315,7 @@ export default function CautionsPanel() {
         setCounters(null);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -377,7 +378,7 @@ export default function CautionsPanel() {
       await load();
       setToast({ type: "success", message: "Caution créée." });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -409,7 +410,7 @@ export default function CautionsPanel() {
         message: `Import cautions terminé: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Import impossible";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setToast({ type: "error", message });
     } finally {
       setImportingFile(false);
@@ -451,7 +452,7 @@ export default function CautionsPanel() {
               : "Caution retournée pour correction.",
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {

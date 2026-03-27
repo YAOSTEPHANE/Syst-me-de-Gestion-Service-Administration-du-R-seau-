@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DossierStatus =
   | "BROUILLON"
@@ -171,10 +172,11 @@ export default function DossiersPanel() {
       const data = await fetchDossiers(statusFilter === "ALL" ? undefined : statusFilter);
       setItems(data.items);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur de chargement");
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de chargement");
+      setError(message);
       setToast({
         type: "error",
-        message: err instanceof Error ? err.message : "Erreur de chargement",
+        message,
       });
     } finally {
       setLoading(false);
@@ -209,7 +211,7 @@ export default function DossiersPanel() {
       setToast({ type: "success", message: "Transition effectuée avec succès." });
       return true;
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur de transition";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de transition");
       setError(message);
       setToast({ type: "error", message });
       return false;
@@ -242,7 +244,12 @@ export default function DossiersPanel() {
       const body = (await res.json()) as { dossier: DossierDetailItem };
       setDetailItem(body.dossier);
     } catch (err) {
-      setToast({ type: "error", message: err instanceof Error ? err.message : "Erreur de chargement du détail" });
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(
+          err instanceof Error ? err.message : "Erreur de chargement du détail",
+        ),
+      });
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);

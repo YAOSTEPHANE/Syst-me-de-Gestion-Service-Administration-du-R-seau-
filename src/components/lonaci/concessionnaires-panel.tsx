@@ -14,6 +14,7 @@ import {
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
@@ -481,7 +482,7 @@ export default function ConcessionnairesPanel() {
       } catch (e) {
         setToast({
           type: "error",
-          message: e instanceof Error ? e.message : "Erreur de chargement des référentiels",
+          message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement des référentiels"),
         });
       }
     })();
@@ -497,7 +498,7 @@ export default function ConcessionnairesPanel() {
       } catch (e) {
         setToast({
           type: "error",
-          message: e instanceof Error ? e.message : "Erreur de chargement du profil",
+          message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement du profil"),
         });
       }
     })();
@@ -622,7 +623,7 @@ export default function ConcessionnairesPanel() {
       setCreateOpen(false);
       setToast({ type: "success", message: "Concessionnaire créé." });
     } catch (e) {
-      setToast({ type: "error", message: e instanceof Error ? e.message : "Erreur" });
+      setToast({ type: "error", message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur") });
     } finally {
       setCreating(false);
     }
@@ -753,7 +754,7 @@ export default function ConcessionnairesPanel() {
 
       setToast({ type: "success", message: "Fichier analysé. Les champs reconnus ont été préremplis." });
     } catch (e) {
-      setToast({ type: "error", message: e instanceof Error ? e.message : "Extraction impossible." });
+      setToast({ type: "error", message: friendlyErrorMessage(e instanceof Error ? e.message : "Extraction impossible.") });
     } finally {
       setExtracting(false);
       ev.target.value = "";
@@ -782,7 +783,7 @@ export default function ConcessionnairesPanel() {
         message: `Import concessionnaires terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
       });
     } catch (err) {
-      setToast({ type: "error", message: err instanceof Error ? err.message : "Import impossible." });
+      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible.") });
     } finally {
       setImportingFile(false);
       ev.target.value = "";

@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type AgrementStatus = "RECU" | "CONTROLE" | "TRANSMIS" | "FINALISE";
 interface AgrementItem {
@@ -166,7 +167,7 @@ export default function AgrementsPanel() {
       setTotal(data.total);
       setPage(data.page);
     } catch (e) {
-      setListError(e instanceof Error ? e.message : "Erreur");
+      setListError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setLoading(false);
     }
@@ -221,7 +222,7 @@ export default function AgrementsPanel() {
       setToast({ type: "success", message: "Agrément enregistré (statut RECU)." });
       await load(1);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
       setToast({ type: "error", message });
     } finally {
@@ -252,7 +253,7 @@ export default function AgrementsPanel() {
         message: `Import agréments terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Import impossible";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateError(message);
       setToast({ type: "error", message });
     } finally {
@@ -278,7 +279,7 @@ export default function AgrementsPanel() {
       await load(page);
       setToast({ type: "success", message: "Transition effectuée." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
       setToast({ type: "error", message });
     } finally {
@@ -358,7 +359,7 @@ export default function AgrementsPanel() {
           setAgences(nextAgences);
         }
       } catch (e) {
-        if (!cancelled) setReferentialsError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setReferentialsError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setReferentialsLoading(false);
       }

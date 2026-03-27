@@ -2,6 +2,7 @@
 
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -234,7 +235,7 @@ export default function PdvIntegrationsPanel() {
       setTotal(data.total);
       setPage(data.page);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -271,7 +272,7 @@ export default function PdvIntegrationsPanel() {
           setProduits((data.produits ?? []).filter((p) => p.actif));
         }
       } catch (e) {
-        if (!cancelled) setRefError(e instanceof Error ? e.message : "Erreur");
+        if (!cancelled) setRefError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       } finally {
         if (!cancelled) setRefLoading(false);
       }
@@ -320,7 +321,7 @@ export default function PdvIntegrationsPanel() {
       await load(1);
       setToast({ type: "success", message: "Intégration PDV créée." });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
       setError(message);
       setToast({ type: "error", message });
@@ -352,7 +353,7 @@ export default function PdvIntegrationsPanel() {
         message: `Import PDV terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Import impossible";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateFormError(message);
       setToast({ type: "error", message });
     } finally {
@@ -402,7 +403,7 @@ export default function PdvIntegrationsPanel() {
       closeFinalizeModal();
       setToast({ type: "success", message: "Intégration PDV finalisée." });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -432,7 +433,7 @@ export default function PdvIntegrationsPanel() {
       await load(page);
       setToast({ type: "success", message: "Transition de statut effectuée." });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {

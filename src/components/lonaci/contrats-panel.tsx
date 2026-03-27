@@ -2,6 +2,7 @@
 
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -753,7 +754,7 @@ export default function ContratsPanel() {
       setToast({ type: "success", message: "Contrat créé avec succès." });
       setListReloadTick((n) => n + 1);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Erreur";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
       setToast({ type: "error", message });
     } finally {
@@ -786,7 +787,7 @@ export default function ContratsPanel() {
         message: `Import contrats terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Import impossible";
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateFormError(message);
       setToast({ type: "error", message });
     } finally {
@@ -831,7 +832,7 @@ export default function ContratsPanel() {
       closeDecision();
       return true;
     } catch (err) {
-      setToast({ type: "error", message: err instanceof Error ? err.message : "Erreur" });
+      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
       return false;
     } finally {
       setDossierActionBusyId(null);
@@ -865,7 +866,7 @@ export default function ContratsPanel() {
         setToast({ type: "success", message: `Lien de signature: ${url}` });
       }
     } catch (err) {
-      setToast({ type: "error", message: err instanceof Error ? err.message : "Erreur" });
+      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
     } finally {
       setSignatureLinkBusyId(null);
     }

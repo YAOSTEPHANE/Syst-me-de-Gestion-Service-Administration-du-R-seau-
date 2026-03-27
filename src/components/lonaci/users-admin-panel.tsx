@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { LONACI_ROLES, LONACI_ROLE_LABELS, getLonaciRoleLabel, getLonaciRoleProfile } from "@/lib/lonaci/constants";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 interface AdminUser {
   id: string;
@@ -112,7 +113,7 @@ export default function UsersAdminPanel() {
         setAuthLogs(logsData.logs);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setLoading(false);
     }
@@ -184,7 +185,7 @@ export default function UsersAdminPanel() {
       await load();
       setToast({ type: "success", message: !u.actif ? "Compte réactivé." : "Compte désactivé." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -212,7 +213,7 @@ export default function UsersAdminPanel() {
           : body?.message ?? "Lien de reset envoyé.",
       });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -317,7 +318,7 @@ export default function UsersAdminPanel() {
       setEditTarget(null);
       setToast({ type: "success", message: "Compte mis à jour." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -380,7 +381,7 @@ export default function UsersAdminPanel() {
       await load();
       setToast({ type: "success", message: "Compte utilisateur créé." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -404,7 +405,7 @@ export default function UsersAdminPanel() {
       setConfirmTarget(null);
       setToast({ type: "success", message: "Déconnexion forcée effectuée avec succès." });
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {

@@ -226,7 +226,7 @@ export default function GprModulePage() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          lotId,
+          lotId: lotId.trim() ? lotId.trim() : undefined,
           nombreCodes: Number(lotCodes),
           concessionnaireId: lotConcessionnaireId,
           produitCode: lotProduitCode,
@@ -481,12 +481,11 @@ export default function GprModulePage() {
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Informations lot</p>
                     <div className="grid gap-2 sm:grid-cols-2">
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Identifiant lot *</span>
+                        <span className="text-xs font-medium text-slate-700">Identifiant lot (optionnel)</span>
                         <input
-                          required
                           value={lotId}
                           onChange={(e) => setLotId(e.target.value)}
-                          placeholder="Ex: LOT-GR-2026-03-001"
+                          placeholder="Laisser vide pour génération automatique"
                           className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
                         />
                       </label>

@@ -10,7 +10,7 @@ const listSchema = z.object({
 });
 
 const createSchema = z.object({
-  lotId: z.string().min(2).max(64),
+  lotId: z.string().trim().min(2).max(64).optional(),
   nombreCodes: z.number().int().min(1).max(5000),
   concessionnaireId: z.string().min(1),
   produitCode: z.string().min(1),
@@ -36,12 +36,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
   }
   await ensureGprGrattageIndexes();
-  await createScratchLot({
-    lotId: parsed.data.lotId.trim().toUpperCase(),
+  const created = await createScratchLot({
+    lotId: parsed.data.lotId?.trim().toUpperCase(),
     nombreCodes: parsed.data.nombreCodes,
     concessionnaireId: parsed.data.concessionnaireId,
     produitCode: parsed.data.produitCode.trim().toUpperCase(),
     actor: auth.user,
   });
-  return NextResponse.json({ ok: true }, { status: 201 });
+  return NextResponse.json({ ok: true, lotId: created.lotId, generatedCount: created.generatedCount }, { status: 201 });
 }

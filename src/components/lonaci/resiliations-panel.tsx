@@ -1,6 +1,9 @@
 "use client";
 
+import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type ResiliationStatus = "DOSSIER_RECU" | "RESILIE";
 
@@ -29,6 +32,61 @@ interface ProduitRef {
   actif: boolean;
 }
 
+async function downloadResiliationsExcelTemplate() {
+  const XLSX = await import("xlsx");
+  const headers = ["concessionnaireId", "produitCode", "dateReception", "motif", "commentaire"];
+  const sample = {
+    concessionnaireId: "ID_CONCESSIONNAIRE",
+    produitCode: "LOTO",
+    dateReception: new Date().toISOString(),
+    motif: "Exemple import résiliation",
+    commentaire: "",
+  };
+  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, "resiliations");
+  XLSX.writeFile(wb, "modele-resiliations.xlsx");
+}
+
+async function normalizeImportFileForApi(file: File): Promise<File> {
+  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
+    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    produitCode: (raw.produitCode as string | null)?.toUpperCase() ?? null,
+    dateReception: (raw.dateReception as string | null) ?? null,
+    motif: (raw.motif as string | null) ?? null,
+    commentaire: (raw.commentaire as string | null) ?? null,
+    statut: (raw.statut as string | null) ?? "DOSSIER_RECU",
+    attachments: [],
+  });
+  const lower = file.name.toLowerCase();
+  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    const XLSX = await import("xlsx");
+    const buffer = await file.arrayBuffer();
+    const wb = XLSX.read(buffer, { type: "array" });
+    const firstSheet = wb.Sheets[wb.SheetNames[0]];
+    if (!firstSheet) throw new Error("Fichier Excel vide.");
+    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const json = JSON.stringify(rows.map((r) => sanitize(r)));
+    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+  }
+  if (lower.endsWith(".pdf")) {
+    const source = await extractPdfText(file, 8);
+    const row = sanitize({
+      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id"], "[a-z0-9]{8,}"),
+      produitCode: captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase(),
+      dateReception: normalizeDateToIso(
+        captureByAliases(source, ["date reception", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+      ),
+      motif: captureByAliases(source, ["motif"], "[^|;]{1,300}"),
+      commentaire: captureByAliases(source, ["commentaire", "observations"], "[^|;]{1,300}"),
+    });
+    const json = JSON.stringify([row]);
+    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+  }
+  throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+}
+
 export default function ResiliationsPanel() {
   const [items, setItems] = useState<ResiliationItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -52,6 +110,8 @@ export default function ResiliationsPanel() {
   const [commentaire, setCommentaire] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
   const docsRef = useRef<HTMLInputElement | null>(null);
+  const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [importingFile, setImportingFile] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const [fStatus, setFStatus] = useState<ResiliationStatus | "">("");
@@ -80,7 +140,7 @@ export default function ResiliationsPanel() {
       setTotal(d.total);
       setPage(d.page);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setLoading(false);
     }
@@ -143,7 +203,7 @@ export default function ResiliationsPanel() {
       setToast({ type: "success", message: "Dossier de résiliation créé (statut DOSSIER_REÇU)." });
       await load(1);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
@@ -167,11 +227,49 @@ export default function ResiliationsPanel() {
       setToast({ type: "success", message: "Résiliation validée (statut RÉSILIÉ)." });
       await load(page);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Erreur";
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
       setToast({ type: "error", message });
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
+    const source = e.target.files?.[0];
+    if (!source) return;
+    setImportingFile(true);
+    try {
+      const file = await normalizeImportFileForApi(source);
+      const fd = new FormData();
+      fd.set("file", file);
+      fd.set("collection", "resiliations");
+      fd.set("mode", "insert");
+      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const data = (await res.json().catch(() => null)) as
+        | {
+            message?: string;
+            inserted?: number;
+            skippedExistingDuplicates?: number;
+            skippedInvalidRows?: number;
+            invalidRows?: Array<{ index: number; reason: string }>;
+          }
+        | null;
+      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      await load(1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      setToast({
+        type: "success",
+        message: `Import résiliations terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+          data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
+        }.`,
+      });
+    } catch (err) {
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
+      setToast({ type: "error", message });
+    } finally {
+      setImportingFile(false);
+      e.target.value = "";
     }
   }
 
@@ -244,6 +342,28 @@ export default function ResiliationsPanel() {
           >
             Export PDF (imprimable)
           </a>
+          <button
+            type="button"
+            onClick={() => void downloadResiliationsExcelTemplate()}
+            className="rounded-xl border border-emerald-600 bg-white px-3 py-2 text-xs font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50"
+          >
+            Télécharger modèle Excel
+          </button>
+          <input
+            ref={importFileInputRef}
+            type="file"
+            accept=".json,.csv,.xlsx,.xls,.pdf"
+            className="hidden"
+            onChange={(e) => void onImportFileChange(e)}
+          />
+          <button
+            type="button"
+            onClick={() => importFileInputRef.current?.click()}
+            disabled={importingFile}
+            className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
+          >
+            {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+          </button>
         </div>
       </div>
 

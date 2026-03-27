@@ -13,6 +13,7 @@ const SCRATCH_LOTS_COLLECTION = "scratch_code_lots";
 const SCRATCH_CODES_COLLECTION = "scratch_codes";
 const COUNTERS_COLLECTION = "counters";
 const GPR_COUNTER_ID = "gpr_registration_ref";
+const SCRATCH_LOT_COUNTER_ID = "scratch_lot_ref";
 
 export const GPR_REGISTRATION_STATUSES = [
   "SOUMIS_AGENT",
@@ -138,6 +139,19 @@ async function nextGprReference() {
   );
   const counter = await db.collection<{ _id: string; seq: number }>(COUNTERS_COLLECTION).findOne({ _id: GPR_COUNTER_ID });
   return `GPR-${String(counter?.seq ?? 1).padStart(7, "0")}`;
+}
+
+async function nextScratchLotId() {
+  const db = await getDatabase();
+  await db.collection<{ _id: string; seq: number }>(COUNTERS_COLLECTION).updateOne(
+    { _id: SCRATCH_LOT_COUNTER_ID },
+    { $inc: { seq: 1 } },
+    { upsert: true },
+  );
+  const counter = await db
+    .collection<{ _id: string; seq: number }>(COUNTERS_COLLECTION)
+    .findOne({ _id: SCRATCH_LOT_COUNTER_ID });
+  return `LOT-GR-${String(counter?.seq ?? 1).padStart(7, "0")}`;
 }
 
 export async function createGprRegistration(input: {
@@ -413,7 +427,7 @@ function makeScratchCode() {
 }
 
 export async function createScratchLot(input: {
-  lotId: string;
+  lotId?: string;
   nombreCodes: number;
   concessionnaireId: string;
   produitCode: string;
@@ -421,8 +435,9 @@ export async function createScratchLot(input: {
 }) {
   const db = await getDatabase();
   const now = new Date();
+  const resolvedLotId = input.lotId?.trim() ? input.lotId.trim().toUpperCase() : await nextScratchLotId();
   const lotDoc: Omit<StoredScratchLot, "_id"> = {
-    lotId: input.lotId,
+    lotId: resolvedLotId,
     concessionnaireId: input.concessionnaireId,
     produitCode: input.produitCode,
     requestedCount: input.nombreCodes,
@@ -447,8 +462,8 @@ export async function createScratchLot(input: {
   };
   await db.collection<Omit<StoredScratchLot, "_id">>(SCRATCH_LOTS_COLLECTION).insertOne(lotDoc);
   const codeDocs: Omit<StoredScratchCode, "_id">[] = Array.from({ length: input.nombreCodes }).map(() => ({
-    lotId: input.lotId,
-    code: `${input.lotId}-${makeScratchCode()}`,
+    lotId: resolvedLotId,
+    code: `${resolvedLotId}-${makeScratchCode()}`,
     concessionnaireId: input.concessionnaireId,
     produitCode: input.produitCode,
     status: "GENERE",
@@ -458,6 +473,7 @@ export async function createScratchLot(input: {
   if (codeDocs.length > 0) {
     await db.collection<Omit<StoredScratchCode, "_id">>(SCRATCH_CODES_COLLECTION).insertMany(codeDocs, { ordered: false });
   }
+  return { lotId: resolvedLotId, generatedCount: input.nombreCodes };
 }
 
 function canTransitionLot(role: LonaciRole, from: ScratchCodeStatus, to: ScratchCodeStatus) {

@@ -134,6 +134,113 @@ function parseFromFile(fileName: string, content: string): Record<string, unknow
   throw new Error("Format non supporté. Utilisez .json ou .csv");
 }
 
+function isNonEmptyString(v: unknown): v is string {
+  return typeof v === "string" && v.trim().length > 0;
+}
+
+function isObjectIdLike(v: unknown): boolean {
+  return typeof v === "string" && /^[a-f\d]{24}$/i.test(v.trim());
+}
+
+function normalizeEnum<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  if (!isNonEmptyString(value)) return null;
+  const upper = value.trim().toUpperCase();
+  const found = allowed.find((a) => a === upper);
+  return found ?? null;
+}
+
+function validateAndNormalizeImportRow(
+  collection: string,
+  row: Record<string, unknown>,
+): { row: Record<string, unknown> | null; error?: string } {
+  const normalized = { ...row };
+
+  if (collection === "cessions") {
+    const kind = normalizeEnum(normalized.kind, ["CESSION", "DELOCALISATION"] as const);
+    if (!kind) return { row: null, error: "kind invalide (CESSION|DELOCALISATION)" };
+    normalized.kind = kind;
+
+    const statut = normalizeEnum(
+      normalized.statut ?? "SAISIE_AGENT",
+      ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"] as const,
+    );
+    if (!statut) return { row: null, error: "statut invalide pour cession" };
+    normalized.statut = statut;
+
+    if (kind === "CESSION") {
+      if (!isObjectIdLike(normalized.cedantId)) return { row: null, error: "cedantId requis (ObjectId)" };
+      if (!isObjectIdLike(normalized.beneficiaireId))
+        return { row: null, error: "beneficiaireId requis (ObjectId)" };
+      if (!isNonEmptyString(normalized.produitCode)) return { row: null, error: "produitCode requis" };
+      normalized.produitCode = normalized.produitCode.trim().toUpperCase();
+    }
+    if (kind === "DELOCALISATION") {
+      if (!isObjectIdLike(normalized.concessionnaireId))
+        return { row: null, error: "concessionnaireId requis (ObjectId)" };
+      if (!isObjectIdLike(normalized.oldAgenceId)) return { row: null, error: "oldAgenceId requis (ObjectId)" };
+      if (!isObjectIdLike(normalized.newAgenceId)) return { row: null, error: "newAgenceId requis (ObjectId)" };
+      if (!isNonEmptyString(normalized.oldAdresse) || !isNonEmptyString(normalized.newAdresse)) {
+        return { row: null, error: "oldAdresse/newAdresse requis" };
+      }
+    }
+    if (!isNonEmptyString(normalized.motif)) return { row: null, error: "motif requis" };
+    return { row: normalized };
+  }
+
+  if (collection === "resiliations") {
+    if (!isObjectIdLike(normalized.concessionnaireId))
+      return { row: null, error: "concessionnaireId requis (ObjectId)" };
+    if (!isNonEmptyString(normalized.produitCode)) return { row: null, error: "produitCode requis" };
+    normalized.produitCode = normalized.produitCode.trim().toUpperCase();
+    if (!isNonEmptyString(normalized.motif)) return { row: null, error: "motif requis" };
+    const statut = normalizeEnum(normalized.statut ?? "DOSSIER_RECU", ["DOSSIER_RECU", "RESILIE"] as const);
+    if (!statut) return { row: null, error: "statut invalide pour résiliation" };
+    normalized.statut = statut;
+    return { row: normalized };
+  }
+
+  if (collection === "attestations_domiciliation") {
+    const type = normalizeEnum(
+      normalized.type ?? "ATTESTATION_REVENU",
+      ["ATTESTATION_REVENU", "DOMICILIATION_PRODUIT"] as const,
+    );
+    if (!type) return { row: null, error: "type invalide (ATTESTATION_REVENU|DOMICILIATION_PRODUIT)" };
+    normalized.type = type;
+    if (normalized.concessionnaireId != null && normalized.concessionnaireId !== "" && !isObjectIdLike(normalized.concessionnaireId)) {
+      return { row: null, error: "concessionnaireId invalide (ObjectId)" };
+    }
+    if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
+    const statut = normalizeEnum(normalized.statut ?? "DEMANDE_RECUE", ["DEMANDE_RECUE", "TRANSMIS", "FINALISE"] as const);
+    if (!statut) return { row: null, error: "statut invalide pour attestation/domiciliation" };
+    normalized.statut = statut;
+    return { row: normalized };
+  }
+
+  if (collection === "bancarisation_requests") {
+    if (!isObjectIdLike(normalized.concessionnaireId))
+      return { row: null, error: "concessionnaireId requis (ObjectId)" };
+    if (normalized.agenceId != null && normalized.agenceId !== "" && !isObjectIdLike(normalized.agenceId)) {
+      return { row: null, error: "agenceId invalide (ObjectId)" };
+    }
+    if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
+    const statutActuel = normalizeEnum(normalized.statutActuel ?? "NON_BANCARISE", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
+    const nouveauStatut = normalizeEnum(normalized.nouveauStatut ?? "EN_COURS", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
+    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS", "VALIDE", "REJETE"] as const);
+    if (!statutActuel || !nouveauStatut || !status) {
+      return { row: null, error: "statuts bancarisation invalides" };
+    }
+    normalized.statutActuel = statutActuel;
+    normalized.nouveauStatut = nouveauStatut;
+    normalized.status = status;
+    if (nouveauStatut === "BANCARISE" && !isNonEmptyString(normalized.compteBancaire)) {
+      return { row: null, error: "compteBancaire requis pour nouveauStatut=BANCARISE" };
+    }
+    return { row: normalized };
+  }
+
+  return { row: normalized };
+}
+
 export async function POST(request: NextRequest) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -185,6 +292,35 @@ export async function POST(request: NextRequest) {
   // Conversion ISO string -> Date sur les champs de date connus.
   rows = rows.map((r) => coerceDatesInRecord(r));
 
+  // Validation métier collection-spécifique : on écarte les lignes invalides,
+  // puis on renvoie un rapport (index + raison) pour faciliter la correction du fichier.
+  const invalidRows: Array<{ index: number; reason: string }> = [];
+  const validRows: Record<string, unknown>[] = [];
+  rows.forEach((row, idx) => {
+    const checked = validateAndNormalizeImportRow(collection, row);
+    if (!checked.row) {
+      invalidRows.push({ index: idx + 1, reason: checked.error ?? "Ligne invalide" });
+      return;
+    }
+    validRows.push(checked.row);
+  });
+  rows = validRows;
+  if (rows.length === 0) {
+    return NextResponse.json(
+      {
+        message: "Aucune ligne valide à importer",
+        mode: modeRaw,
+        collection,
+        inserted: 0,
+        upserted: 0,
+        modified: 0,
+        skippedInvalidRows: invalidRows.length,
+        invalidRows: invalidRows.slice(0, 25),
+      },
+      { status: 400 },
+    );
+  }
+
   const db = await getDatabase();
   const now = new Date();
   const agencePatch = agenceIdRaw ? { agenceId: agenceIdRaw } : {};
@@ -234,6 +370,8 @@ export async function POST(request: NextRequest) {
             mode: "insert",
             collection,
             inserted: 0,
+            skippedInvalidRows: invalidRows.length,
+            invalidRows: invalidRows.slice(0, 25),
             skippedInvalidCode,
             skippedFileDuplicates,
             skippedExistingDuplicates,
@@ -269,6 +407,8 @@ export async function POST(request: NextRequest) {
           mode: "insert",
           collection,
           inserted: insertedCount,
+          skippedInvalidRows: invalidRows.length,
+          invalidRows: invalidRows.slice(0, 25),
           skippedInvalidCode,
           skippedFileDuplicates,
           skippedExistingDuplicates: skippedExistingDuplicates + skippedDbDuplicates,
@@ -299,7 +439,15 @@ export async function POST(request: NextRequest) {
       }
     }
     return NextResponse.json(
-      { message: "Import terminé", mode: "insert", collection, inserted: insertedCount, skippedExistingDuplicates },
+      {
+        message: "Import terminé",
+        mode: "insert",
+        collection,
+        inserted: insertedCount,
+        skippedInvalidRows: invalidRows.length,
+        invalidRows: invalidRows.slice(0, 25),
+        skippedExistingDuplicates,
+      },
       { status: 200 },
     );
   }
@@ -330,7 +478,15 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json(
-    { message: "Import terminé", mode: "upsert", collection, upserted, modified },
+    {
+      message: "Import terminé",
+      mode: "upsert",
+      collection,
+      upserted,
+      modified,
+      skippedInvalidRows: invalidRows.length,
+      invalidRows: invalidRows.slice(0, 25),
+    },
     { status: 200 },
   );
 }
