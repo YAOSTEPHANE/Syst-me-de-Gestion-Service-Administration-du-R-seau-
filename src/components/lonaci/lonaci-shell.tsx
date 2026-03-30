@@ -16,6 +16,10 @@ import NotificationBell from "@/components/lonaci/notification-bell";
 import { lonaciShellHeader } from "@/lib/lonaci/lonaci-shell-header";
 import { getLonaciRoleLabel } from "@/lib/lonaci/constants";
 
+type NavIconLinkStyle = CSSProperties & {
+  "--lonaci-nav-icon-color"?: string;
+};
+
 function LonaciShellChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -215,7 +219,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                   <Link
                     href={item.href}
                     className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
-                    style={{ ["--lonaci-nav-icon-color" as any]: iconColor } as CSSProperties}
+                    style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
                   >
                     <LonaciNavIcon label={item.label} />
                     <span>{item.label}</span>
@@ -374,7 +378,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                   <Link
                     href={item.href}
                     className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
-                    style={{ ["--lonaci-nav-icon-color" as any]: iconColor } as CSSProperties}
+                    style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
                   >
                     <LonaciNavIcon label={item.label} />
                     <span>{item.label}</span>

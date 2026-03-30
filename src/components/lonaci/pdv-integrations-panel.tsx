@@ -214,9 +214,6 @@ export default function PdvIntegrationsPanel() {
   const [finalizeModal, setFinalizeModal] = useState<PdvItem | null>(null);
   const [finalizeAck, setFinalizeAck] = useState(false);
 
-  const inputClass =
-    "w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
-
   async function load(nextPage = page) {
     setLoading(true);
     setError(null);

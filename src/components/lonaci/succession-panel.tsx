@@ -3,7 +3,7 @@
 import { getLonaciRoleLabel, SUCCESSION_STEP_LABELS } from "@/lib/lonaci/constants";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 
 interface CaseRow {
   id: string;
@@ -71,6 +71,21 @@ interface CaseDetailResponse {
   };
 }
 
+function friendlySuccessionError(raw: string): string {
+  switch (raw) {
+    case "CASE_NOT_FOUND":
+      return "Dossier de succession introuvable (ID invalide ou dossier supprimé).";
+    case "CONCESSIONNAIRE_NOT_FOUND":
+      return "Le concessionnaire lié au dossier n’a pas été trouvé.";
+    case "AGENCE_FORBIDDEN":
+      return "Accès refusé : vous n’avez pas les droits sur ce dossier.";
+    case "ACTE_DECES_REQUIRED":
+      return "Acte de décès obligatoire pour ouvrir le dossier.";
+    default:
+      return raw;
+  }
+}
+
 export default function SuccessionPanel() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
@@ -113,21 +128,6 @@ export default function SuccessionPanel() {
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
 
-  function friendlySuccessionError(raw: string): string {
-    switch (raw) {
-      case "CASE_NOT_FOUND":
-        return "Dossier de succession introuvable (ID invalide ou dossier supprimé).";
-      case "CONCESSIONNAIRE_NOT_FOUND":
-        return "Le concessionnaire lié au dossier n’a pas été trouvé.";
-      case "AGENCE_FORBIDDEN":
-        return "Accès refusé : vous n’avez pas les droits sur ce dossier.";
-      case "ACTE_DECES_REQUIRED":
-        return "Acte de décès obligatoire pour ouvrir le dossier.";
-      default:
-        return raw;
-    }
-  }
-
   async function load(nextPage = page) {
     setLoading(true);
     setError(null);
@@ -166,7 +166,7 @@ export default function SuccessionPanel() {
     }
   }
 
-  async function loadDetail(caseId: string) {
+  const loadDetail = useCallback(async (caseId: string) => {
     if (!caseId) {
       setDetail(null);
       return;
@@ -191,7 +191,7 @@ export default function SuccessionPanel() {
     } finally {
       setDetailLoading(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void load(1);
@@ -204,7 +204,7 @@ export default function SuccessionPanel() {
     } else {
       setDetail(null);
     }
-  }, [selectedCaseId]);
+  }, [selectedCaseId, loadDetail]);
 
   useEffect(() => {
     let cancelled = false;

@@ -238,12 +238,27 @@ function validateAndNormalizeImportRow(
     return { row: normalized };
   }
 
+  if (collection === "agences") {
+    const codeRaw = normalized.code;
+    const codeStr =
+      typeof codeRaw === "number" && Number.isFinite(codeRaw)
+        ? String(codeRaw)
+        : typeof codeRaw === "string"
+          ? codeRaw.trim()
+          : "";
+    if (!codeStr) {
+      return { row: null, error: "code requis (non vide, index unique Mongo)" };
+    }
+    normalized.code = codeStr;
+    return { row: normalized };
+  }
+
   return { row: normalized };
 }
 
 export async function POST(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["CHEF_SERVICE"],
   });
   if ("error" in auth) {
     return auth.error;

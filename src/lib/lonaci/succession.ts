@@ -5,7 +5,7 @@ import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
-import type { ContratDocument, SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
+import type { SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 

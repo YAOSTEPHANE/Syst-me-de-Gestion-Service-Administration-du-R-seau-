@@ -1,10 +1,11 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
+import { LONACI_SESSION_COOKIE_NAME } from "@/lib/auth/cookie-name";
 import { sessionMaxAgeSeconds, signSessionToken, verifySessionToken } from "@/lib/auth/jwt";
 import type { SessionPayload } from "@/lib/auth/jwt";
 
-export const LONACI_SESSION_COOKIE_NAME = "lonaci_session";
+export { LONACI_SESSION_COOKIE_NAME };
 export const SESSION_COOKIE_NAME = LONACI_SESSION_COOKIE_NAME;
 
 export async function createSessionCookie(payload: SessionPayload) {

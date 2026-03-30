@@ -25,6 +25,25 @@ function getRequiredEnvVar(name: RequiredServerEnvKey): string {
   throw new Error(`Variable d'environnement manquante: ${name}`);
 }
 
+const JWT_SECRET_MIN_LENGTH_PROD = 32;
+
+function resolveJwtSecret(): string {
+  const secret = getRequiredEnvVar("JWT_SECRET");
+  if (process.env.NODE_ENV === "production") {
+    if (secret.length < JWT_SECRET_MIN_LENGTH_PROD) {
+      throw new Error(
+        `JWT_SECRET doit comporter au moins ${JWT_SECRET_MIN_LENGTH_PROD} caractères en production.`,
+      );
+    }
+    if (secret === DEV_ENV_DEFAULTS.JWT_SECRET) {
+      throw new Error(
+        "JWT_SECRET ne peut pas être la valeur de développement par défaut en production.",
+      );
+    }
+  }
+  return secret;
+}
+
 /** Nom de base après l’hôte (ex. .../lonaci?retryWrites=...) */
 function parseDbNameFromMongoUri(uri: string): string | null {
   const withoutQuery = uri.split("?")[0] ?? uri;
@@ -92,12 +111,18 @@ export const env = {
     "MONGODB_SERVER_SELECTION_TIMEOUT_MS",
     MONGODB_SERVER_SELECTION_TIMEOUT_MS_DEFAULT,
   ),
-  jwtSecret: getRequiredEnvVar("JWT_SECRET"),
+  jwtSecret: resolveJwtSecret(),
   appName: process.env.NEXT_PUBLIC_APP_NAME ?? "LONACI",
 };
 
 if (usedDevEnvFallback && process.env.NODE_ENV === "development") {
   console.warn(
     "[env] JWT_SECRET absent, ou Mongo sans URL : valeurs par défaut de développement. Pour la prod, définissez JWT_SECRET, DATABASE_URL (Prisma) et optionnellement MONGODB_URI / MONGODB_DB."
+  );
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.SMTP_HOST?.trim()) {
+  console.warn(
+    "[env] SMTP_HOST absent : les envois d'e-mail (réinitialisation mot de passe, alertes workflow) peuvent être désactivés ou dégradés."
   );
 }
