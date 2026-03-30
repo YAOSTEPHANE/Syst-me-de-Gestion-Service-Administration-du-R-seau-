@@ -100,26 +100,58 @@ function parsePositiveInt(name: string, fallback: number): number {
 const MONGODB_CONNECT_TIMEOUT_MS_DEFAULT = 30_000;
 const MONGODB_SERVER_SELECTION_TIMEOUT_MS_DEFAULT = 30_000;
 
-export const env = {
-  mongodbUri: resolveMongoUri(),
-  mongodbDb: resolveMongoDb(),
-  mongodbConnectTimeoutMs: parsePositiveInt(
-    "MONGODB_CONNECT_TIMEOUT_MS",
-    MONGODB_CONNECT_TIMEOUT_MS_DEFAULT,
-  ),
-  mongodbServerSelectionTimeoutMs: parsePositiveInt(
-    "MONGODB_SERVER_SELECTION_TIMEOUT_MS",
-    MONGODB_SERVER_SELECTION_TIMEOUT_MS_DEFAULT,
-  ),
-  jwtSecret: resolveJwtSecret(),
-  appName: process.env.NEXT_PUBLIC_APP_NAME ?? "LONACI",
-};
+let devFallbackWarned = false;
 
-if (usedDevEnvFallback && process.env.NODE_ENV === "development") {
+function warnDevFallbackIfNeeded() {
+  if (
+    devFallbackWarned ||
+    !usedDevEnvFallback ||
+    process.env.NODE_ENV !== "development"
+  ) {
+    return;
+  }
+  devFallbackWarned = true;
   console.warn(
-    "[env] JWT_SECRET absent, ou Mongo sans URL : valeurs par défaut de développement. Pour la prod, définissez JWT_SECRET, DATABASE_URL (Prisma) et optionnellement MONGODB_URI / MONGODB_DB."
+    "[env] JWT_SECRET absent, ou Mongo sans URL : valeurs par défaut de développement. Pour la prod, définissez JWT_SECRET, DATABASE_URL (Prisma) et optionnellement MONGODB_URI / MONGODB_DB.",
   );
 }
+
+/**
+ * Accès paresseux : évite les `throw` au chargement des modules pendant `next build`
+ * lorsque les routes n'utilisent pas encore Mongo / JWT (CI sans secrets complets).
+ */
+export const env = {
+  get mongodbUri() {
+    const v = resolveMongoUri();
+    warnDevFallbackIfNeeded();
+    return v;
+  },
+  get mongodbDb() {
+    const v = resolveMongoDb();
+    warnDevFallbackIfNeeded();
+    return v;
+  },
+  get mongodbConnectTimeoutMs() {
+    return parsePositiveInt(
+      "MONGODB_CONNECT_TIMEOUT_MS",
+      MONGODB_CONNECT_TIMEOUT_MS_DEFAULT,
+    );
+  },
+  get mongodbServerSelectionTimeoutMs() {
+    return parsePositiveInt(
+      "MONGODB_SERVER_SELECTION_TIMEOUT_MS",
+      MONGODB_SERVER_SELECTION_TIMEOUT_MS_DEFAULT,
+    );
+  },
+  get jwtSecret() {
+    const v = resolveJwtSecret();
+    warnDevFallbackIfNeeded();
+    return v;
+  },
+  get appName() {
+    return process.env.NEXT_PUBLIC_APP_NAME ?? "LONACI";
+  },
+};
 
 if (process.env.NODE_ENV === "production" && !process.env.SMTP_HOST?.trim()) {
   console.warn(
