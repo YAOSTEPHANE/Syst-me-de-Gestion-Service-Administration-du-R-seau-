@@ -7,6 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check:api-routes": "tsx scripts/check-api-route-auth.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "seed:admin": "tsx scripts/seed-admin.ts",
@@ -16,7 +19,7 @@
     "import:data": "tsx scripts/import-data.ts"
   },
   "dependencies": {
-    "@prisma/client": "6.19.2",
+    "@prisma/client": "6.19.3",
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "jose": "^6.2.2",
@@ -26,7 +29,7 @@
     "nodemailer": "^8.0.4",
     "pdfjs-dist": "^5.5.207",
     "pdfkit": "^0.18.0",
-    "prisma": "6.19.2",
+    "prisma": "6.19.3",
     "react": "19.2.4",
     "react-chartjs-2": "^5.3.1",
     "react-dom": "19.2.4",
@@ -45,6 +48,7 @@
     "eslint-config-next": "16.2.1",
     "tailwindcss": "^4",
     "tsx": "^4.20.6",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^3.2.4"
   }
 }

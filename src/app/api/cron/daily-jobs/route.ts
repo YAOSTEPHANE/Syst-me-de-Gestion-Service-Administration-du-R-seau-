@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { verifyCronSecretFromHeaders } from "@/lib/security/cron-auth";
 import { ensureAppSettingsIndexes, getAppSettings } from "@/lib/lonaci/app-settings";
 import { broadcastCriticalEmailToRole } from "@/lib/lonaci/critical-email";
 import { buildReportSummary, summaryToCsv } from "@/lib/lonaci/reports";
@@ -10,11 +11,11 @@ import { getDatabase } from "@/lib/mongodb";
 const RUNS = "report_cron_runs";
 
 function authorizeCron(request: NextRequest): boolean {
-  const secret = process.env.CRON_SECRET?.trim();
-  if (!secret) return false;
-  const bearer = request.headers.get("authorization");
-  if (bearer === `Bearer ${secret}`) return true;
-  return request.headers.get("x-cron-secret") === secret;
+  return verifyCronSecretFromHeaders(
+    request.headers.get("authorization"),
+    request.headers.get("x-cron-secret"),
+    process.env.CRON_SECRET,
+  );
 }
 
 export async function POST(request: NextRequest) {

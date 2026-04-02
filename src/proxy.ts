@@ -3,9 +3,14 @@ import type { NextRequest } from "next/server";
 
 import { LONACI_SESSION_COOKIE_NAME } from "@/lib/auth/cookie-name";
 
+function withRequestId(response: NextResponse): NextResponse {
+  response.headers.set("X-Request-Id", globalThis.crypto.randomUUID());
+  return response;
+}
+
 /**
- * Routes API accessibles sans cookie de session (aligné sur les handlers sans requireApiAuth
- * ou protégés par un autre mécanisme : token, CRON_SECRET, etc.).
+ * Chemins API accessibles sans cookie de session (aligné avec
+ * `src/config/public-api-routes.ts` — exécuter `npm run check:api-routes` en CI).
  */
 function isPublicApiPath(pathname: string): boolean {
   if (pathname === "/api/health") return true;
@@ -17,27 +22,36 @@ function isPublicApiPath(pathname: string): boolean {
 }
 
 export function proxy(request: NextRequest) {
+  if (request.method === "TRACE" || request.method === "TRACK") {
+    return withRequestId(new NextResponse(null, { status: 405 }));
+  }
+
   if (request.method === "OPTIONS") {
-    return NextResponse.next();
+    return withRequestId(NextResponse.next());
   }
 
   const { pathname } = request.nextUrl;
+
   if (!pathname.startsWith("/api/")) {
-    return NextResponse.next();
+    return withRequestId(NextResponse.next());
   }
 
   if (isPublicApiPath(pathname)) {
-    return NextResponse.next();
+    return withRequestId(NextResponse.next());
   }
 
   const token = request.cookies.get(LONACI_SESSION_COOKIE_NAME)?.value;
   if (!token?.trim()) {
-    return NextResponse.json({ message: "Non authentifié" }, { status: 401 });
+    return withRequestId(
+      NextResponse.json({ message: "Non authentifié" }, { status: 401 }),
+    );
   }
 
-  return NextResponse.next();
+  return withRequestId(NextResponse.next());
 }
 
 export const config = {
-  matcher: "/api/:path*",
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+  ],
 };

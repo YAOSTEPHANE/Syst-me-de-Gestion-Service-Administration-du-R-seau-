@@ -84,7 +84,7 @@ Les **profils** suivants sont définis dans l’application (libellés métier) 
 - **API** : la plupart des handlers appellent **`requireApiAuth`** : vérification JWT, utilisateur actif, **session serveur** (`currentSessionId`), **inactivité 30 minutes** (basée sur `lastActivityAt` en base), puis **rôles**, **agence**, **modules** et **produits** autorisés selon le profil.
 - **Déconnexion automatique (UX)** : après **30 minutes d’inactivité** côté navigateur (clavier / souris / défilement), l’UI peut fermer la session — complémentaire au contrôle serveur.
 - **Réinitialisation mot de passe** : champs en base (`resetPasswordTokenHash`, `resetPasswordExpiresAt`) et routes API dédiées sous `/api/auth/reset-password`.
-- **Chemins API publics** (sans session cookie) : santé (`/api/health`), **login** / **logout**, **reset password**, **cron** quotidien (secret dédié), liens de **signature** dossier par token — référence centralisée dans `src/proxy.ts` (base pour un futur middleware Edge si besoin).
+- **Chemins API publics** (sans session cookie) : santé (`/api/health`), **login** / **logout**, **reset password**, **cron** quotidien (secret dédié), liens de **signature** dossier par token — liste alignée avec `src/config/public-api-routes.ts` et `isPublicApiPath` dans `src/proxy.ts` (également **X-Request-Id**, blocage **TRACE**/**TRACK**).
 
 *À préciser avec l’équipe infra* : hébergement, sauvegardes MongoDB, politique de secrets (`DATABASE_URL`, `JWT_SECRET`, `CRON_SECRET`), et éventuelle **homologation** interne.
 

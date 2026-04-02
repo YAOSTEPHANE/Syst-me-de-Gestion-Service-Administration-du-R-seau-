@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 /** CSP en observation uniquement : n’applique pas de blocage, permet d’affiner la politique sans casser l’app. */
-const cspReportOnly = [
+const cspDirectives = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
@@ -13,6 +13,9 @@ const cspReportOnly = [
   "form-action 'self'",
 ].join("; ");
 
+/** À `true` au build : applique `Content-Security-Policy` (bloquant) au lieu de Report-Only. */
+const cspEnforce = process.env.ENABLE_CSP_ENFORCE === "true";
+
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
@@ -22,7 +25,9 @@ const securityHeaders = [
     key: "Permissions-Policy",
     value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   },
-  { key: "Content-Security-Policy-Report-Only", value: cspReportOnly },
+  cspEnforce
+    ? { key: "Content-Security-Policy", value: cspDirectives }
+    : { key: "Content-Security-Policy-Report-Only", value: cspDirectives },
 ];
 
 const nextConfig: NextConfig = {

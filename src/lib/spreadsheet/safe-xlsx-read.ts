@@ -6,6 +6,8 @@ import type { WorkBook, WorkSheet } from "xlsx";
 
 export const SPREADSHEET_IMPORT_MAX_BYTES = 5 * 1024 * 1024;
 export const SPREADSHEET_IMPORT_MAX_ROWS = 10_000;
+/** Limite le coût de parsing et les classeurs anormalement fragmentés. */
+export const SPREADSHEET_IMPORT_MAX_SHEETS = 32;
 
 function sheetRowCount(sheet: WorkSheet, XLSX: typeof import("xlsx")): number {
   const ref = sheet["!ref"];
@@ -19,7 +21,13 @@ export async function readWorkbookFromArrayBuffer(buffer: ArrayBuffer): Promise<
     throw new Error("Fichier Excel trop volumineux (maximum 5 Mo).");
   }
   const XLSX = await import("xlsx");
-  return XLSX.read(buffer, { type: "array", dense: true });
+  const wb = XLSX.read(buffer, { type: "array", dense: true });
+  if (wb.SheetNames.length > SPREADSHEET_IMPORT_MAX_SHEETS) {
+    throw new Error(
+      `Trop de feuilles dans le classeur (maximum ${SPREADSHEET_IMPORT_MAX_SHEETS}).`,
+    );
+  }
+  return wb;
 }
 
 export async function sheetToJsonFirstSheet<T extends Record<string, unknown>>(

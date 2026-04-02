@@ -153,8 +153,35 @@ export const env = {
   },
 };
 
-if (process.env.NODE_ENV === "production" && !process.env.SMTP_HOST?.trim()) {
-  console.warn(
-    "[env] SMTP_HOST absent : les envois d'e-mail (réinitialisation mot de passe, alertes workflow) peuvent être désactivés ou dégradés."
-  );
+/**
+ * Hints prod : une fois par processus Node. Pour des logs CI plus propres pendant
+ * `next build` (plusieurs workers), définir SKIP_PROD_ENV_CONSOLE=true.
+ */
+const g = globalThis as typeof globalThis & {
+  __lonaciProdEnvHintsLogged?: boolean;
+};
+
+function logProductionEnvHintsOnce() {
+  if (process.env.NODE_ENV !== "production") return;
+  if (process.env.SKIP_PROD_ENV_CONSOLE === "true") return;
+  if (g.__lonaciProdEnvHintsLogged) return;
+  g.__lonaciProdEnvHintsLogged = true;
+
+  if (!process.env.SMTP_HOST?.trim()) {
+    console.warn(
+      "[env] SMTP_HOST absent : les envois d'e-mail (réinitialisation mot de passe, alertes workflow) peuvent être désactivés ou dégradés.",
+    );
+  }
+  if (!process.env.CRON_SECRET?.trim()) {
+    console.warn(
+      "[env] CRON_SECRET absent : POST /api/cron/daily-jobs répondra 503 (jobs planifiés inopérants).",
+    );
+  }
+  if (process.env.RATE_LIMIT_FAIL_CLOSED !== "true") {
+    console.warn(
+      "[env] RATE_LIMIT_FAIL_CLOSED != true : si le store Mongo du rate limit est indisponible, les routes concernées peuvent rester accessibles (fail-open).",
+    );
+  }
 }
+
+logProductionEnvHintsOnce();
