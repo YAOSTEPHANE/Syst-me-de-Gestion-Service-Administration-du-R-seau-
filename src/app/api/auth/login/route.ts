@@ -4,21 +4,15 @@ import { z } from "zod";
 
 import { createSessionCookie } from "@/lib/auth/session";
 import { verifyPassword } from "@/lib/auth/password";
-import { findUserByIdentifier, updateLastLogin, sanitizeUser } from "@/lib/lonaci/users";
+import { findUserByIdentifier, sanitizeUser, updateLastLogin } from "@/lib/lonaci/users";
 import { logAuthAttempt } from "@/lib/lonaci/auth-logs";
+import { getClientIp } from "@/lib/security/client-ip";
+import { consumeRateLimit } from "@/lib/security/mongo-rate-limit";
 
 const bodySchema = z.object({
   identifier: z.string().min(1),
   password: z.string().min(8),
 });
-
-function getIpAddress(request: NextRequest): string | null {
-  const xForwardedFor = request.headers.get("x-forwarded-for");
-  if (xForwardedFor) {
-    return xForwardedFor.split(",")[0]?.trim() ?? null;
-  }
-  return null;
-}
 
 async function safeLogAuthAttempt(payload: Parameters<typeof logAuthAttempt>[0]) {
   try {
@@ -40,6 +34,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
   }
 
+  const ip = getClientIp(request);
+  const rl = await consumeRateLimit("login", ip, 30, 10 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { message: "Trop de tentatives. Réessayez plus tard." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   const { identifier, password } = parsed.data;
   let user: Awaited<ReturnType<typeof findUserByIdentifier>>;
   try {
@@ -51,7 +54,7 @@ export async function POST(request: NextRequest) {
       { status: 503 },
     );
   }
-  const ipAddress = getIpAddress(request);
+  const ipAddress = ip === "unknown" ? null : ip;
   const userAgent = request.headers.get("user-agent");
 
   if (!user || !user.actif) {

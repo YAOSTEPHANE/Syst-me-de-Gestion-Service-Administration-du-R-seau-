@@ -7,6 +7,8 @@ import {
 } from "@/lib/lonaci/dossier-signatures";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { getClientIp } from "@/lib/security/client-ip";
+import { consumeRateLimit } from "@/lib/security/mongo-rate-limit";
 
 interface RouteContext {
   params: Promise<{ token: string }>;
@@ -18,12 +20,20 @@ const signSchema = z.object({
 });
 
 function getIpAddress(request: NextRequest): string | null {
-  const xForwardedFor = request.headers.get("x-forwarded-for");
-  if (xForwardedFor) return xForwardedFor.split(",")[0]?.trim() ?? null;
-  return null;
+  const ip = getClientIp(request);
+  return ip === "unknown" ? null : ip;
 }
 
-export async function GET(_request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: RouteContext) {
+  const ip = getClientIp(request);
+  const rl = await consumeRateLimit("signatures-dossier-get", ip, 120, 15 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { message: "Trop de requêtes. Réessayez plus tard." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   const { token } = await context.params;
   const signature = await getDossierSignatureByToken(token);
   if (!signature) {
@@ -64,6 +74,15 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const ip = getClientIp(request);
+  const rl = await consumeRateLimit("signatures-dossier-post", ip, 40, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { message: "Trop de tentatives. Réessayez plus tard." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
+  }
+
   const { token } = await context.params;
   const parsed = signSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

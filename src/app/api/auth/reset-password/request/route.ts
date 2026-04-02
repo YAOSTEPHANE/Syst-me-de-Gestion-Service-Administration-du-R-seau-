@@ -2,8 +2,10 @@ import { randomBytes, createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { findUserByIdentifier, setResetPasswordToken } from "@/lib/lonaci/users";
 import { sendSmtpEmail } from "@/lib/email/smtp";
+import { findUserByIdentifier, setResetPasswordToken } from "@/lib/lonaci/users";
+import { getClientIp } from "@/lib/security/client-ip";
+import { consumeRateLimit } from "@/lib/security/mongo-rate-limit";
 
 const bodySchema = z.object({
   identifier: z.string().min(1),
@@ -13,6 +15,15 @@ export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+  }
+
+  const ip = getClientIp(request);
+  const rl = await consumeRateLimit("password-reset-request", ip, 5, 60 * 60 * 1000);
+  if (!rl.allowed) {
+    return NextResponse.json(
+      { message: "Trop de demandes. Réessayez plus tard." },
+      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+    );
   }
 
   const user = await findUserByIdentifier(parsed.data.identifier);
@@ -34,13 +45,13 @@ export async function POST(request: NextRequest) {
     `Bonjour ${user.prenom},\n\nVoici votre lien de réinitialisation (valable 1 heure):\n${resetLink}\n\nSi vous n'êtes pas à l'origine de cette demande, ignorez ce message.`,
   );
 
+  if (!emailResult.sent) {
+    console.error("[reset-password/request] échec envoi SMTP (token jamais exposé au client)");
+  }
+
+  // Ne jamais renvoyer resetToken / expiresAt : un attaquant pourrait réinitialiser sans accès mail.
   return NextResponse.json(
-    {
-      ok: true,
-      message: "Si le compte existe, un lien a été envoyé.",
-      resetToken: emailResult.sent ? undefined : rawToken,
-      expiresAt: expiresAt.toISOString(),
-    },
+    { ok: true, message: "Si le compte existe, un lien a été envoyé." },
     { status: 200 },
   );
 }

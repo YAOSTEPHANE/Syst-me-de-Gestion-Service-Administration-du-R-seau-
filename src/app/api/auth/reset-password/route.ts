@@ -5,6 +5,8 @@ import { z } from "zod";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { findUserById, findUserByResetPasswordTokenHash, updateUserPassword } from "@/lib/lonaci/users";
+import { getClientIp } from "@/lib/security/client-ip";
+import { consumeRateLimit } from "@/lib/security/mongo-rate-limit";
 
 const bodySchema = z.object({
   token: z.string().min(16).optional(),
@@ -28,6 +30,14 @@ export async function POST(request: NextRequest) {
 
   // Flux 1: reset via token (email/admin)
   if (token) {
+    const ip = getClientIp(request);
+    const rl = await consumeRateLimit("reset-password-token", ip, 15, 15 * 60 * 1000);
+    if (!rl.allowed) {
+      return NextResponse.json(
+        { message: "Trop de tentatives. Réessayez plus tard." },
+        { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+      );
+    }
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const userByToken = await findUserByResetPasswordTokenHash(tokenHash);
     if (!userByToken) {
@@ -45,6 +55,19 @@ export async function POST(request: NextRequest) {
   const auth = await requireApiAuth(request);
   if ("error" in auth) {
     return auth.error;
+  }
+  const ipAuthed = getClientIp(request);
+  const rlAuthed = await consumeRateLimit(
+    "password-change-authed",
+    `${auth.user._id ?? "anon"}:${ipAuthed}`,
+    20,
+    60 * 60 * 1000,
+  );
+  if (!rlAuthed.allowed) {
+    return NextResponse.json(
+      { message: "Trop de tentatives. Réessayez plus tard." },
+      { status: 429, headers: { "Retry-After": String(rlAuthed.retryAfterSec) } },
+    );
   }
   if (!currentPassword) {
     return NextResponse.json({ message: "Mot de passe actuel requis" }, { status: 400 });

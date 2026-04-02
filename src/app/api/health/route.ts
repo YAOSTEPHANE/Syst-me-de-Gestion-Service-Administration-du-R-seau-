@@ -16,14 +16,12 @@ export async function GET() {
       { status: 200 },
     );
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Erreur de connexion MongoDB";
+    console.error("[health] MongoDB indisponible", error);
 
     return NextResponse.json(
       {
         status: "error",
         mongodb: "disconnected",
-        message,
         timestamp: new Date().toISOString(),
       },
       { status: 503 },

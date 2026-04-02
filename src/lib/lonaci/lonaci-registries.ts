@@ -1,6 +1,9 @@
 import { ObjectId } from "mongodb";
 
 import { getDatabase } from "@/lib/mongodb";
+import { escapeRegexLiteral } from "@/lib/security/escape-regex";
+
+const MAX_SEARCH_Q_LENGTH = 200;
 
 export const REGISTRY_MODULES = ["AGREMENT", "CESSION", "GPR"] as const;
 export type RegistryModule = (typeof REGISTRY_MODULES)[number];
@@ -75,17 +78,19 @@ export async function listRegistries(
   filters?: { q?: string; statut?: string; agenceId?: string },
 ) {
   const db = await getDatabase();
-  const q = filters?.q?.trim();
+  const qRaw = filters?.q?.trim();
+  const q = qRaw && qRaw.length > MAX_SEARCH_Q_LENGTH ? qRaw.slice(0, MAX_SEARCH_Q_LENGTH) : qRaw;
   const statut = filters?.statut?.trim();
   const agenceId = filters?.agenceId?.trim();
   const filter: Record<string, unknown> = { module, deletedAt: null };
   if (statut) filter.statut = statut;
   if (agenceId) filter.agenceId = agenceId;
   if (q) {
+    const safe = escapeRegexLiteral(q);
     filter.$or = [
-      { reference: { $regex: q, $options: "i" } },
-      { titre: { $regex: q, $options: "i" } },
-      { commentaire: { $regex: q, $options: "i" } },
+      { reference: { $regex: safe, $options: "i" } },
+      { titre: { $regex: safe, $options: "i" } },
+      { commentaire: { $regex: safe, $options: "i" } },
     ];
   }
   const skip = (page - 1) * pageSize;

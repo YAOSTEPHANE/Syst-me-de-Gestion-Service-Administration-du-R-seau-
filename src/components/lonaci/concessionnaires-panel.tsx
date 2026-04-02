@@ -227,13 +227,11 @@ function extractDraftFromRecord(record: Record<string, unknown>): ExtractedConce
 }
 
 async function extractDraftFromExcel(file: File): Promise<ExtractedConcessionnaireDraft> {
-  const XLSX = await import("xlsx");
-  const buf = await file.arrayBuffer();
-  const workbook = XLSX.read(buf, { type: "array" });
-  const firstSheetName = workbook.SheetNames[0];
-  if (!firstSheetName) throw new Error("Aucune feuille trouvée dans le fichier Excel.");
-  const sheet = workbook.Sheets[firstSheetName];
-  const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" });
+  const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+    "@/lib/spreadsheet/safe-xlsx-read",
+  );
+  const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+  const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb, { defval: "" });
   if (!rows.length) throw new Error("Le fichier Excel est vide.");
   return extractDraftFromRecord(rows[0]);
 }
@@ -291,12 +289,11 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    if (!firstSheet) throw new Error("Fichier Excel vide.");
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+      "@/lib/spreadsheet/safe-xlsx-read",
+    );
+    const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
     const json = JSON.stringify(rows.map((r) => sanitize(r)));
     return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
   }
