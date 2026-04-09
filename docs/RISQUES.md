@@ -9,6 +9,7 @@ Ce document prolonge l’audit sécurité / exploitation : pour chaque famille d
 | Risque | Mesures dans le projet |
 |--------|-------------------------|
 | Nouvelle route API sans garde | Liste des routes **sans** `requireApiAuth` centralisée dans `src/config/public-api-routes.ts`. **`npm run check:api-routes`** échoue si un `route.ts` n’est ni protégé ni listé (à lancer en CI). |
+| IDOR sur exports / pièces jointes | Inventaire et correctifs documentés dans **[SECURITY-IDOR-AUDIT.md](./SECURITY-IDOR-AUDIT.md)** (exports PDF dossier, documents agrément, PJ cession / résiliation). |
 | Auth uniquement par handler | **`src/proxy.ts`** (Next.js 16, incompatible avec `middleware.ts` simultané) : **cookie obligatoire** sur `/api/*` sauf chemins publics listés ; en-tête **`X-Request-Id`** ; blocage **TRACE** / **TRACK**. Les handlers gardent **`requireApiAuth`** (JWT, rôles, modules) en double filet. |
 | CSP trop permissive / XSS | Par défaut **Report-Only** dans `next.config.ts`. Pour durcir après tests : **`ENABLE_CSP_ENFORCE=true`** au **build** (passe en `Content-Security-Policy` bloquant). |
 | Secrets dans le dépôt | Ne versionner que **`.env.example`** avec des placeholders. Rotation immédiate si fuite. |

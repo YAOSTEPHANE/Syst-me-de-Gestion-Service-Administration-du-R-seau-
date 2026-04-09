@@ -2,25 +2,80 @@
 
 import Link from "next/link";
 import { useMemo } from "react";
-import type { ChartOptions } from "chart.js";
+import type { ChartArea, ChartOptions, TooltipItem, TooltipOptions } from "chart.js";
 import {
   ArcElement,
   BarElement,
   CategoryScale,
   Chart as ChartJS,
+  Filler,
   Legend,
   LinearScale,
+  LineElement,
+  PointElement,
   Tooltip,
 } from "chart.js";
-import { Bar, Doughnut } from "react-chartjs-2";
+import { Bar, Doughnut, Line } from "react-chartjs-2";
 
 import DashboardAgencesStrip from "@/components/lonaci/dashboard-agences-strip";
 import DashboardNotifications from "@/components/lonaci/dashboard-notifications";
 import { useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 
-ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  LineElement,
+  PointElement,
+  ArcElement,
+  Filler,
+  Tooltip,
+  Legend,
+);
 
-const DONUT_COLORS = ["#2563EB", "#0D9488", "#F59E0B", "#7C3AED", "#64748B"] as const;
+const DONUT_COLORS = ["#0ea5e9", "#14b8a6", "#d97706", "#8b5cf6", "#64748b"] as const;
+
+const BAR_GRADIENTS = [
+  { top: "#7dd3fc", bottom: "#0369a1" },
+  { top: "#5eead4", bottom: "#0f766e" },
+  { top: "#fde047", bottom: "#ca8a04" },
+] as const;
+
+function verticalGradient(
+  ctx: CanvasRenderingContext2D,
+  chartArea: ChartArea | undefined,
+  top: string,
+  bottom: string,
+): CanvasGradient | string {
+  if (!chartArea) return top;
+  const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+  g.addColorStop(0, top);
+  g.addColorStop(0.55, bottom);
+  g.addColorStop(1, bottom);
+  return g;
+}
+
+const PREMIUM_ANIMATION = {
+  duration: 1100,
+  easing: "easeOutQuart" as const,
+};
+
+const premiumTooltipDefaults = {
+  backgroundColor: "rgba(255, 255, 255, 0.98)",
+  titleColor: "#0f172a",
+  bodyColor: "#475569",
+  borderColor: "rgba(148, 163, 184, 0.35)",
+  borderWidth: 1,
+  padding: 14,
+  cornerRadius: 12,
+  boxPadding: 6,
+  displayColors: true,
+  usePointStyle: true,
+  titleFont: { size: 12, weight: "bold" },
+  bodyFont: { size: 12 },
+  caretSize: 8,
+  caretPadding: 10,
+} satisfies Partial<TooltipOptions<"bar">>;
 
 function formatDelayHours(h: number): string {
   if (h <= 0) return "—";
@@ -42,14 +97,62 @@ function formatTrendPct(pct: number): string {
 export default function LonaciDashboardHome() {
   const { kpi, error } = useLonaciKpi();
 
-  const barData = useMemo(() => {
+  const barDataPremium = useMemo(() => {
+    const rows = kpi?.activity7d ?? [];
+    const defs = [
+      { label: "Contrats", pick: (r: (typeof rows)[number]) => r.contracts },
+      { label: "Cautions", pick: (r: (typeof rows)[number]) => r.cautions },
+      { label: "Intégrations", pick: (r: (typeof rows)[number]) => r.integrations },
+    ] as const;
+    return {
+      labels: rows.map((r) => r.label),
+      datasets: defs.map((d, j) => {
+        const { top, bottom } = BAR_GRADIENTS[j] ?? BAR_GRADIENTS[0];
+        return {
+          label: d.label,
+          data: rows.map((r) => d.pick(r)),
+          borderRadius: { topLeft: 8, topRight: 8, bottomLeft: 2, bottomRight: 2 } as const,
+          borderSkipped: false as const,
+          maxBarThickness: 14,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, top, bottom);
+          },
+        };
+      }),
+    };
+  }, [kpi]);
+
+  const lineActivityData = useMemo(() => {
     const rows = kpi?.activity7d ?? [];
     return {
       labels: rows.map((r) => r.label),
       datasets: [
-        { label: "Contrats", data: rows.map((r) => r.contracts), backgroundColor: "#2563EB", borderRadius: 3, barThickness: 10 },
-        { label: "Cautions", data: rows.map((r) => r.cautions), backgroundColor: "#0D9488", borderRadius: 3, barThickness: 10 },
-        { label: "Integrations", data: rows.map((r) => r.integrations), backgroundColor: "#F59E0B", borderRadius: 3, barThickness: 10 },
+        {
+          label: "Volume agrégé",
+          data: rows.map((r) => r.contracts + r.cautions + r.integrations),
+          fill: true,
+          tension: 0.4,
+          borderWidth: 2.75,
+          pointRadius: 4,
+          pointHoverRadius: 8,
+          pointBackgroundColor: "#ffffff",
+          pointBorderColor: "#0284c7",
+          pointBorderWidth: 2,
+          pointHoverBackgroundColor: "#0284c7",
+          pointHoverBorderColor: "#ffffff",
+          pointHoverBorderWidth: 2,
+          borderColor: "#0284c7",
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            if (!chartArea) return "rgba(2, 132, 199, 0.08)";
+            const g = ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+            g.addColorStop(0, "rgba(2, 132, 199, 0.35)");
+            g.addColorStop(0.5, "rgba(2, 132, 199, 0.1)");
+            g.addColorStop(1, "rgba(255, 255, 255, 0)");
+            return g;
+          },
+        },
       ],
     };
   }, [kpi]);
@@ -63,7 +166,8 @@ export default function LonaciDashboardHome() {
           data: slices.map((s) => s.count),
           backgroundColor: slices.map((_, i) => DONUT_COLORS[i % DONUT_COLORS.length]),
           borderWidth: 0,
-          hoverOffset: 4,
+          hoverOffset: 12,
+          spacing: 2,
         },
       ],
     };
@@ -83,16 +187,115 @@ export default function LonaciDashboardHome() {
     () => ({
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
+      interaction: { mode: "index", intersect: false },
+      animation: PREMIUM_ANIMATION,
+      datasets: {
+        bar: {
+          barPercentage: 0.85,
+          categoryPercentage: 0.74,
+        },
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...premiumTooltipDefaults,
+          callbacks: {
+            footer: (items: TooltipItem<"bar">[]) => {
+              if (!items.length) return "";
+              const sum = items.reduce((s, it) => s + (Number(it.parsed.y) || 0), 0);
+              return `Total : ${sum}`;
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          stacked: false,
+          grid: { display: false, drawTicks: true },
+          ticks: { font: { size: 10 }, color: "#64748b", padding: 8 },
+          border: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          border: { display: false },
+          grid: { color: "rgba(148, 163, 184, 0.18)", lineWidth: 1 },
+          ticks: { font: { size: 10 }, color: "#94a3b8", padding: 10 },
+        },
+      },
+    }),
+    [],
+  );
+
+  const lineChartOptions = useMemo<ChartOptions<"line">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: "index", intersect: false },
+      animation: PREMIUM_ANIMATION,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...premiumTooltipDefaults,
+          callbacks: {
+            label: (ctx: TooltipItem<"line">) => {
+              const v = ctx.parsed.y;
+              const n = typeof v === "number" ? v : 0;
+              return ` ${n} événement${n > 1 ? "s" : ""}`;
+            },
+          },
+        },
+      },
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 9 }, color: "#4b6280" },
+          ticks: { font: { size: 10 }, color: "#64748b", padding: 8 },
+          border: { display: false },
         },
         y: {
-          grid: { color: "rgba(255,255,255,0.05)" },
-          ticks: { font: { size: 9 }, color: "#4b6280" },
           beginAtZero: true,
+          border: { display: false },
+          grid: { color: "rgba(148, 163, 184, 0.16)" },
+          ticks: { font: { size: 10 }, color: "#94a3b8", padding: 8 },
+        },
+      },
+      elements: {
+        line: { borderCapStyle: "round", borderJoinStyle: "round" },
+        point: { hoverBorderWidth: 2 },
+      },
+    }),
+    [],
+  );
+
+  const donutChartOptions = useMemo<ChartOptions<"doughnut">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: "68%",
+      rotation: -88,
+      circumference: 360,
+      animation: { ...PREMIUM_ANIMATION, animateRotate: true },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...premiumTooltipDefaults,
+          callbacks: {
+            label: (ctx: TooltipItem<"doughnut">) => {
+              const raw = ctx.raw;
+              const n = typeof raw === "number" ? raw : Number(raw) || 0;
+              const arr = ctx.dataset.data as number[];
+              const total = arr.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? Math.round((n / total) * 100) : 0;
+              return ` ${String(ctx.label)} : ${n} (${pct}%)`;
+            },
+          },
+        },
+      },
+      elements: {
+        arc: {
+          borderWidth: 5,
+          borderColor: "#ffffff",
+          hoverBorderWidth: 4,
+          hoverBorderColor: "#ffffff",
         },
       },
     }),
@@ -133,60 +336,86 @@ export default function LonaciDashboardHome() {
   const pdvToday = kpi?.daily?.pdvIntegrations?.nonFinalise ?? 0;
 
   return (
-    <div className="lonaci-db-dashboard space-y-4">
+    <div className="lonaci-db-dashboard lonaci-db-dashboard--premium space-y-5">
       <DashboardAgencesStrip items={kpi?.agencesOverview30j ?? null} loading={!kpi && !error} />
       <DashboardNotifications />
-      {error ? <p className="lonaci-db-error-text">{error}</p> : null}
-      {!kpi ? <p className="lonaci-db-muted">Chargement...</p> : null}
+      {error ? <p className="lonaci-db-dashboard--premium__error">{error}</p> : null}
+
+      {!kpi && !error ? (
+        <div className="lonaci-db-prem-skeleton" aria-busy aria-label="Chargement du tableau de bord">
+          <div className="lonaci-db-prem-skeleton-hero">
+            <div className="lonaci-db-prem-skel-line lonaci-db-prem-skel-line--lg" />
+            <div className="lonaci-db-prem-skel-line lonaci-db-prem-skel-line--md" />
+            <div className="lonaci-db-prem-skeleton-stats">
+              <div className="lonaci-db-prem-skel-block" />
+              <div className="lonaci-db-prem-skel-block" />
+              <div className="lonaci-db-prem-skel-block" />
+              <div className="lonaci-db-prem-skel-block" />
+            </div>
+          </div>
+          <div className="lonaci-db-prem-skeleton-grid">
+            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
+            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
+            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
+            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
+          </div>
+        </div>
+      ) : null}
 
       {kpi ? (
         <>
-          <section className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-r from-slate-900 via-slate-800 to-cyan-900 p-5 shadow-sm">
-            <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl" />
-            <div className="pointer-events-none absolute -bottom-16 left-20 h-44 w-44 rounded-full bg-indigo-300/20 blur-2xl" />
-            <div className="relative flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100">
-                  Tableau de bord
-                </p>
-                <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">Pilotage premium des opérations</h1>
-                <p className="mt-1 text-sm text-cyan-100/90">
-                  Vue consolidée des contrats, cautions, intégrations PDV, alertes critiques et performance réseau.
+          <section className="lonaci-db-prem-hero" aria-labelledby="lonaci-prem-hero-title">
+            <div className="lonaci-db-prem-hero__mesh" aria-hidden />
+            <div className="lonaci-db-prem-hero__inner">
+              <div className="lonaci-db-prem-hero__intro">
+                <p className="lonaci-db-prem-eyebrow">Executive overview</p>
+                <h1 id="lonaci-prem-hero-title" className="lonaci-db-prem-hero__title">
+                  Pilotage opérations
+                </h1>
+                <p className="lonaci-db-prem-hero__lede">
+                  Contrats, cautions, intégrations PDV et signaux critiques — vue consolidée du réseau en temps réel.
                 </p>
               </div>
-              <div className="grid w-full gap-2 sm:grid-cols-2 lg:max-w-[440px]">
-                <div className="rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white">
-                  <p className="text-[11px] uppercase tracking-wide text-cyan-100/90">Finalisation contrats</p>
-                  <p className="mt-1 text-2xl font-bold">{finalisationRate}%</p>
+              <div className="lonaci-db-prem-hero__stats" role="group" aria-label="Indicateurs clés">
+                <div className="lonaci-db-prem-stat">
+                  <span className="lonaci-db-prem-stat__label">Finalisation</span>
+                  <span className="lonaci-db-prem-stat__value">{finalisationRate}%</span>
+                  <span className="lonaci-db-prem-stat__hint">contrats</span>
                 </div>
-                <div className="rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white">
-                  <p className="text-[11px] uppercase tracking-wide text-cyan-100/90">PDV actifs</p>
-                  <p className="mt-1 text-2xl font-bold">{totalActifReseau}</p>
+                <div className="lonaci-db-prem-stat">
+                  <span className="lonaci-db-prem-stat__label">PDV actifs</span>
+                  <span className="lonaci-db-prem-stat__value">{totalActifReseau}</span>
+                  <span className="lonaci-db-prem-stat__hint">réseau</span>
                 </div>
-                <div className="rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white">
-                  <p className="text-[11px] uppercase tracking-wide text-cyan-100/90">Urgences actives</p>
-                  <p className="mt-1 text-2xl font-bold">{urgentCount}</p>
+                <div className="lonaci-db-prem-stat lonaci-db-prem-stat--alert">
+                  <span className="lonaci-db-prem-stat__label">Urgences</span>
+                  <span className="lonaci-db-prem-stat__value">{urgentCount}</span>
+                  <span className="lonaci-db-prem-stat__hint">à traiter</span>
                 </div>
-                <div className="rounded-xl border border-white/25 bg-white/10 px-3 py-2 text-white">
-                  <p className="text-[11px] uppercase tracking-wide text-cyan-100/90">Dossiers en attente</p>
-                  <p className="mt-1 text-2xl font-bold">{totalPending}</p>
+                <div className="lonaci-db-prem-stat">
+                  <span className="lonaci-db-prem-stat__label">En attente</span>
+                  <span className="lonaci-db-prem-stat__value">{totalPending}</span>
+                  <span className="lonaci-db-prem-stat__hint">dossiers</span>
                 </div>
               </div>
             </div>
-            <div className="relative mt-3 flex flex-wrap gap-2">
-              <Link href="/contrats" className="rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20">
-                Contrats ({contratsToday})
+            <nav className="lonaci-db-prem-hero__actions" aria-label="Raccourcis modules">
+              <Link href="/contrats" className="lonaci-db-prem-pill">
+                Contrats
+                <span className="lonaci-db-prem-pill__meta">{contratsToday}</span>
               </Link>
-              <Link href="/cautions" className="rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20">
-                Cautions ({cautionsToday})
+              <Link href="/cautions" className="lonaci-db-prem-pill">
+                Cautions
+                <span className="lonaci-db-prem-pill__meta">{cautionsToday}</span>
               </Link>
-              <Link href="/pdv-integrations" className="rounded-full border border-white/30 bg-white/10 px-3 py-1.5 text-xs font-semibold text-white hover:bg-white/20">
-                Intégrations ({pdvToday})
+              <Link href="/pdv-integrations" className="lonaci-db-prem-pill">
+                Intégrations
+                <span className="lonaci-db-prem-pill__meta">{pdvToday}</span>
               </Link>
-              <Link href="/alertes" className="rounded-full border border-rose-300/40 bg-rose-500/20 px-3 py-1.5 text-xs font-semibold text-rose-100 hover:bg-rose-500/30">
+              <Link href="/alertes" className="lonaci-db-prem-pill lonaci-db-prem-pill--danger">
                 Alertes critiques
               </Link>
-            </div>
+            </nav>
           </section>
 
           <div className="lonaci-db-kpi-grid">
@@ -289,7 +518,9 @@ export default function LonaciDashboardHome() {
               <div className="lonaci-db-flex-between lonaci-db-mb-14">
                 <div>
                   <div className="lonaci-db-section-title">Activité — 7 derniers jours</div>
-                  <div className="lonaci-db-section-subtitle">Contrats · Cautions · Intégrations</div>
+                  <div className="lonaci-db-section-subtitle">
+                    Barres en dégradé · courbe de volume agrégé · infobulles détaillées
+                  </div>
                 </div>
                 <div className="lonaci-db-chart-legend">
                   <span>
@@ -303,8 +534,19 @@ export default function LonaciDashboardHome() {
                   </span>
                 </div>
               </div>
-              <div className="lonaci-db-chart-wrap">
-                <Bar data={barData} options={barChartOptions} />
+              <div className="lonaci-db-prem-chart-split">
+                <div className="lonaci-db-prem-chart-panel">
+                  <p className="lonaci-db-prem-chart-panel-title">Répartition par canal</p>
+                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-bar">
+                    <Bar data={barDataPremium} options={barChartOptions} />
+                  </div>
+                </div>
+                <div className="lonaci-db-prem-chart-panel">
+                  <p className="lonaci-db-prem-chart-panel-title">Dynamique cumulée</p>
+                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-line">
+                    <Line data={lineActivityData} options={lineChartOptions} />
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -625,16 +867,8 @@ export default function LonaciDashboardHome() {
             <div className="lonaci-db-kpi lonaci-db-flex-col">
               <div className="lonaci-db-section-title lonaci-db-mb-3">Répartition par produit</div>
               <div className="lonaci-db-section-subtitle lonaci-db-mb-12">Contrats actifs · mois courant</div>
-              <div className="lonaci-db-donut-wrap">
-                <Doughnut
-                  data={donutData}
-                  options={{
-                    responsive: true,
-                    maintainAspectRatio: false,
-                    cutout: "68%",
-                    plugins: { legend: { display: false } },
-                  }}
-                />
+              <div className="lonaci-db-donut-wrap lonaci-db-donut-wrap--premium">
+                <Doughnut data={donutData} options={donutChartOptions} />
               </div>
               <div className="lonaci-db-donut-legend">
                 {donutLegend.map((row, idx) => (

@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Readable } from "node:stream";
 
-import { createResiliationAttachmentStream, getResiliationAttachment } from "@/lib/lonaci/resiliations";
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { createResiliationAttachmentStream, getResiliationAttachmentWithConcessionnaire } from "@/lib/lonaci/resiliations";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 export async function GET(
@@ -14,9 +16,14 @@ export async function GET(
   if ("error" in auth) return auth.error;
 
   const { id, attachmentId } = await context.params;
-  const attachment = await getResiliationAttachment({ id, attachmentId });
-  if (!attachment) {
+  const pack = await getResiliationAttachmentWithConcessionnaire({ id, attachmentId });
+  if (!pack) {
     return NextResponse.json({ message: "Pièce jointe introuvable." }, { status: 404 });
+  }
+  const { attachment, concessionnaireId } = pack;
+  const concessionnaire = await findConcessionnaireById(concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
+    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 
   const stream = createResiliationAttachmentStream(attachment.storedRelativePath);

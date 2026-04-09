@@ -4,6 +4,7 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
 
 const REF_COUNTER_ID = "contrat_ref";
 
@@ -246,6 +247,114 @@ export async function findContratById(id: string): Promise<ContratDocument | nul
     where: { id, deletedAt: null },
   });
   return row ? mapContrat(row) : null;
+}
+
+export async function updateContratDateEffet(input: {
+  contratId: string;
+  dateEffet: Date;
+  actor: UserDocument;
+}): Promise<ContratDocument> {
+  const current = await prisma.contrat.findFirst({
+    where: { id: input.contratId, deletedAt: null },
+  });
+  if (!current) {
+    throw new Error("CONTRAT_NOT_FOUND");
+  }
+
+  const concessionnaire = await findConcessionnaireById(current.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(input.actor, concessionnaire)) {
+    throw new Error("AGENCE_FORBIDDEN");
+  }
+
+  const updated = await prisma.contrat.update({
+    where: { id: input.contratId },
+    data: {
+      dateEffet: input.dateEffet,
+      updatedByUserId: input.actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONTRAT",
+    entityId: updated.id,
+    action: "UPDATE_DATE_EFFET",
+    userId: input.actor._id ?? "",
+    details: {
+      previousDateEffet: current.dateEffet.toISOString(),
+      nextDateEffet: updated.dateEffet.toISOString(),
+    },
+  });
+
+  return mapContrat(updated);
+}
+
+export async function updateContratById(input: {
+  contratId: string;
+  actor: UserDocument;
+  dateEffet?: Date;
+  status?: "ACTIF" | "RESILIE" | "CEDE";
+  operationType?: ContratOperationType;
+}): Promise<ContratDocument> {
+  const current = await prisma.contrat.findFirst({
+    where: { id: input.contratId, deletedAt: null },
+  });
+  if (!current) {
+    throw new Error("CONTRAT_NOT_FOUND");
+  }
+
+  const concessionnaire = await findConcessionnaireById(current.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(input.actor, concessionnaire)) {
+    throw new Error("AGENCE_FORBIDDEN");
+  }
+
+  const nextStatus = input.status ?? (current.status as "ACTIF" | "RESILIE" | "CEDE");
+  if (nextStatus === "ACTIF") {
+    const activeCount = await prisma.contrat.count({
+      where: {
+        concessionnaireId: current.concessionnaireId,
+        produitCode: current.produitCode,
+        status: "ACTIF",
+        deletedAt: null,
+        id: { not: current.id },
+      },
+    });
+    if (activeCount > 0) {
+      throw new Error("ACTIVE_CONTRACT_EXISTS");
+    }
+  }
+
+  const updated = await prisma.contrat.update({
+    where: { id: input.contratId },
+    data: {
+      dateEffet: input.dateEffet ?? current.dateEffet,
+      status: nextStatus,
+      operationType: input.operationType ?? (current.operationType as ContratOperationType),
+      updatedByUserId: input.actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONTRAT",
+    entityId: updated.id,
+    action: "UPDATE_CONTRAT",
+    userId: input.actor._id ?? "",
+    details: {
+      previous: {
+        dateEffet: current.dateEffet.toISOString(),
+        status: current.status,
+        operationType: current.operationType,
+      },
+      next: {
+        dateEffet: updated.dateEffet.toISOString(),
+        status: updated.status,
+        operationType: updated.operationType,
+      },
+    },
+  });
+
+  return mapContrat(updated);
 }
 
 export type ContratListRow = {

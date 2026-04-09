@@ -261,6 +261,17 @@ export async function getResiliationAttachment(input: { id: string; attachmentId
   return row.attachments.find((a) => a.id === input.attachmentId) ?? null;
 }
 
+/** Pièce jointe + PDV pour contrôle d’accès sur la route de téléchargement. */
+export async function getResiliationAttachmentWithConcessionnaire(input: { id: string; attachmentId: string }) {
+  if (!ObjectId.isValid(input.id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  if (!row) return null;
+  const attachment = row.attachments.find((a) => a.id === input.attachmentId);
+  if (!attachment) return null;
+  return { attachment, concessionnaireId: row.concessionnaireId };
+}
+
 export function createResiliationAttachmentStream(storedRelativePath: string) {
   return createReadStream(path.join(FILE_ROOT, storedRelativePath));
 }

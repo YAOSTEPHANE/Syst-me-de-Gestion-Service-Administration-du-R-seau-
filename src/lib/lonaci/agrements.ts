@@ -220,6 +220,8 @@ export async function getAgrementDocumentMeta(id: string) {
     filename: row.documentFilename,
     mimeType: row.documentMimeType,
     storedRelativePath: row.documentStoredRelativePath,
+    agenceId: row.agenceId,
+    concessionnaireId: row.concessionnaireId,
   };
 }
 

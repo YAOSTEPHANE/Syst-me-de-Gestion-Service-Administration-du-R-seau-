@@ -5,6 +5,7 @@ import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lona
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
 
 type Banc = "NON_BANCARISE" | "EN_COURS" | "BANCARISE";
 type RequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
@@ -170,6 +171,8 @@ export default function BancarisationPanel() {
   const [requests, setRequests] = useState<ReqRow[]>([]);
   const [counters, setCounters] = useState<CounterRow[]>([]);
   const [userRole, setUserRole] = useState<string>("");
+  /** null = chargement initial ; false = pas de module CONCESSIONNAIRES (pas d’API bancarisation). */
+  const [saisieBancarisation, setSaisieBancarisation] = useState<boolean | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -223,38 +226,49 @@ export default function BancarisationPanel() {
     setLoading(true);
     setError(null);
     try {
+      const meRes = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+      if (!meRes.ok) throw new Error();
+      const meData = (await meRes.json()) as { user: { role: string; modulesAutorises?: string[] } };
+      const saisie = userHasConcessionnairesSaisieModule(meData.user.modulesAutorises ?? []);
+      setUserRole(meData.user.role);
+      setSaisieBancarisation(saisie);
+
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
       if (filter) params.set("statutBancarisation", filter);
-      const [listRes, refsRes, reqRes, meRes] = await Promise.all([
+      const [listRes, refsRes] = await Promise.all([
         fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" }),
         fetch("/api/referentials", { credentials: "include", cache: "no-store" }),
-        fetch(`/api/bancarisation?page=1&pageSize=50&status=${requestTab}`, {
-          credentials: "include",
-          cache: "no-store",
-        }),
-        fetch("/api/auth/me", { credentials: "include", cache: "no-store" }),
       ]);
-      if (!listRes.ok || !refsRes.ok || !reqRes.ok || !meRes.ok) throw new Error();
+      if (!listRes.ok || !refsRes.ok) throw new Error();
       const listData = (await listRes.json()) as { items: ConcRow[]; total: number };
       const refsData = (await refsRes.json()) as { agences: RefAgence[]; produits: RefProduit[] };
-      const reqData = (await reqRes.json()) as {
-        items: ReqRow[];
-        counters: CounterRow[];
-        allStatusCounts?: { SOUMIS: number; VALIDE: number; REJETE: number };
-      };
-      const meData = (await meRes.json()) as { user: { role: string } };
       setItems(listData.items);
       setTotal(listData.total);
       setRefsAgences(refsData.agences);
       setRefsProduits(refsData.produits);
-      setRequests(reqData.items);
-      setCounters(reqData.counters);
-      setUserRole(meData.user.role);
+
+      if (saisie) {
+        const reqRes = await fetch(`/api/bancarisation?page=1&pageSize=50&status=${requestTab}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!reqRes.ok) throw new Error();
+        const reqData = (await reqRes.json()) as {
+          items: ReqRow[];
+          counters: CounterRow[];
+          allStatusCounts?: { SOUMIS: number; VALIDE: number; REJETE: number };
+        };
+        setRequests(reqData.items);
+        setCounters(reqData.counters);
+      } else {
+        setRequests([]);
+        setCounters([]);
+      }
     } catch {
-      setError("Impossible de charger les concessionnaires.");
+      setError("Impossible de charger les données.");
     } finally {
       setLoading(false);
     }
@@ -391,91 +405,104 @@ export default function BancarisationPanel() {
             <p className="mt-0.5 text-xs text-slate-600">
               Pilotage opérationnel, validation et export des statuts bancaires.
             </p>
+            {saisieBancarisation === false ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                <span className="font-semibold">Action / saisie uniquement</span> : demandes, validations, exports et
+                compteurs détaillés bancarisation exigent le module{" "}
+                <code className="rounded bg-white px-1 py-0.5 text-[11px]">CONCESSIONNAIRES</code> (le profil{" "}
+                <code className="rounded bg-white px-1 py-0.5 text-[11px]">CONCESSIONNAIRES_LECTURE</code> ne suffit pas).
+                Vous pouvez consulter les PDV ci-dessous selon vos droits sur le référentiel.
+              </p>
+            ) : null}
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-110"
-            >
-              Nouvelle demande
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void window.open(
-                  `/api/bancarisation/export?format=excel${
-                    filter ? `&statutBancarisation=${filter}` : ""
-                  }`,
-                  "_blank",
-                );
-              }}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
-            >
-              Export Excel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void window.open(
-                  `/api/bancarisation/export?format=pdf${
-                    filter ? `&statutBancarisation=${filter}` : ""
-                  }`,
-                  "_blank",
-                );
-              }}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
-            >
-              Export PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => void downloadBancarisationExcelTemplate()}
-              className="rounded-xl border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
-            >
-              Modèle Excel
-            </button>
-            <input
-              ref={importFileInputRef}
-              type="file"
-              accept=".json,.csv,.xlsx,.xls,.pdf"
-              className="hidden"
-              onChange={(e) => void onImportFileChange(e)}
-            />
-            <button
-              type="button"
-              onClick={() => importFileInputRef.current?.click()}
-              disabled={importingFile}
-              className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:opacity-60"
-            >
-              {importingFile ? "Import..." : "Importer fichier vers le tableau"}
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.NON_BANCARISE.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Non bancarisés</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.NON_BANCARISE.value}`}>{b.NON_BANCARISE}</p>
-          </div>
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.EN_COURS.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">En cours</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.EN_COURS.value}`}>{b.EN_COURS}</p>
-          </div>
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.BANCARISE.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Bancarisés</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.BANCARISE.value}`}>{b.BANCARISE}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-3">
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Taux</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900">{tauxBancarisation}%</p>
-            <div className="mt-2 h-2 rounded-full bg-slate-200">
-              <div
-                className="h-2 rounded-full bg-linear-to-r from-cyan-400 to-emerald-400"
-                style={{ width: `${Math.min(100, Math.max(0, tauxBancarisation))}%` }}
+          {saisieBancarisation ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-110"
+              >
+                Nouvelle demande
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void window.open(
+                    `/api/bancarisation/export?format=excel${
+                      filter ? `&statutBancarisation=${filter}` : ""
+                    }`,
+                    "_blank",
+                  );
+                }}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
+              >
+                Export Excel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void window.open(
+                    `/api/bancarisation/export?format=pdf${
+                      filter ? `&statutBancarisation=${filter}` : ""
+                    }`,
+                    "_blank",
+                  );
+                }}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
+              >
+                Export PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadBancarisationExcelTemplate()}
+                className="rounded-xl border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+              >
+                Modèle Excel
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept=".json,.csv,.xlsx,.xls,.pdf"
+                className="hidden"
+                onChange={(e) => void onImportFileChange(e)}
               />
+              <button
+                type="button"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={importingFile}
+                className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:opacity-60"
+              >
+                {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {saisieBancarisation ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.NON_BANCARISE.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Non bancarisés</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.NON_BANCARISE.value}`}>{b.NON_BANCARISE}</p>
+            </div>
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.EN_COURS.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">En cours</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.EN_COURS.value}`}>{b.EN_COURS}</p>
+            </div>
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.BANCARISE.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Bancarisés</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.BANCARISE.value}`}>{b.BANCARISE}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Taux</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{tauxBancarisation}%</p>
+              <div className="mt-2 h-2 rounded-full bg-slate-200">
+                <div
+                  className="h-2 rounded-full bg-linear-to-r from-cyan-400 to-emerald-400"
+                  style={{ width: `${Math.min(100, Math.max(0, tauxBancarisation))}%` }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
       </section>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -517,6 +544,7 @@ export default function BancarisationPanel() {
       ) : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
+      {saisieBancarisation ? (
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Compteurs par agence et produit</h3>
         <div className="overflow-x-auto">
@@ -547,7 +575,9 @@ export default function BancarisationPanel() {
           </table>
         </div>
       </section>
+      ) : null}
 
+      {saisieBancarisation ? (
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <h3 className="text-sm font-semibold text-slate-900">Validation et transfert (Chef(fe) de service)</h3>
@@ -605,7 +635,7 @@ export default function BancarisationPanel() {
                   </td>
                   <td className="py-1.5 pr-3 text-slate-400">{r.validationComment || "—"}</td>
                   <td className="py-1.5">
-                    {userRole === "CHEF_SERVICE" && r.status === "SOUMIS" ? (
+                    {saisieBancarisation && userRole === "CHEF_SERVICE" && r.status === "SOUMIS" ? (
                       <div className="flex gap-2">
                         <button
                           type="button"
@@ -651,6 +681,7 @@ export default function BancarisationPanel() {
           </table>
         </div>
       </section>
+      ) : null}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

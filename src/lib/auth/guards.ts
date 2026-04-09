@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import { getSessionFromRequest } from "@/lib/auth/session";
+import {
+  userHasConcessionnairesLectureModule,
+  userHasConcessionnairesSaisieModule,
+} from "@/lib/lonaci/module-concessionnaires";
 import { clearCurrentSession, findUserById, setUserCurrentSession, touchSessionActivity } from "@/lib/lonaci/users";
 
 interface GuardOptions {
@@ -17,8 +21,10 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   if (p.includes("/api/admin") || p.includes("/api/import-data")) return "ADMIN";
   if (p.includes("/api/contrats")) return "CONTRATS";
   if (p.includes("/api/dossiers")) return "DOSSIERS";
-  if (p.includes("/api/concessionnaires")) return "CONCESSIONNAIRES";
-  if (p.includes("/api/bancarisation")) return "CONCESSIONNAIRES";
+  // Référentiel PDV : contrôle fini lecture/saisie dans requireApiAuth (pas une seule clé ici).
+  if (p.includes("/api/concessionnaires")) return null;
+  // Bancarisation : réservée à la saisie (CONCESSIONNAIRES), traité dans requireApiAuth.
+  if (p.includes("/api/bancarisation")) return null;
   if (p.includes("/api/referentials")) return "REFERENTIELS";
   if (p.includes("/api/cautions")) return "CAUTIONS";
   if (p.includes("/api/succession")) return "SUCCESSION";
@@ -31,6 +37,14 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   if (p.includes("/api/reports")) return "REPORTS";
   if (p.includes("/api/dashboard")) return "DASHBOARD";
   return null;
+}
+
+export function hasModuleAuthorization(
+  modulesAutorises: string[] | null | undefined,
+  moduleKey: string,
+): boolean {
+  if (!modulesAutorises || modulesAutorises.length === 0) return true;
+  return modulesAutorises.includes("ADMIN") || modulesAutorises.includes(moduleKey);
 }
 
 export async function requireApiAuth(request: NextRequest, options?: GuardOptions) {
@@ -114,12 +128,47 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     }
   }
 
+  const pathnameLower = request.nextUrl.pathname.toLowerCase();
+  if (pathnameLower.startsWith("/api/concessionnaires")) {
+    const mods = user.modulesAutorises ?? [];
+    if (mods.length > 0) {
+      const readMethod = request.method === "GET" || request.method === "HEAD";
+      if (readMethod) {
+        if (!userHasConcessionnairesLectureModule(mods)) {
+          return { error: NextResponse.json({ message: "Module non autorisé" }, { status: 403 }) };
+        }
+      } else if (!userHasConcessionnairesSaisieModule(mods)) {
+        return {
+          error: NextResponse.json(
+            { message: "Saisie non autorisée sur le référentiel concessionnaires (profil suivi / lecture seule)." },
+            { status: 403 },
+          ),
+        };
+      }
+    }
+  }
+
+  if (pathnameLower.startsWith("/api/bancarisation")) {
+    const mods = user.modulesAutorises ?? [];
+    if (mods.length > 0 && !userHasConcessionnairesSaisieModule(mods)) {
+      return {
+        error: NextResponse.json(
+          {
+            message:
+              "Bancarisation réservée au profil saisie : ajoutez le module CONCESSIONNAIRES (pas seulement CONCESSIONNAIRES_LECTURE).",
+          },
+          { status: 403 },
+        ),
+      };
+    }
+  }
+
   // Contrôle de module autorisé (si liste de modules non vide).
   const moduleKey = inferModuleKeyFromPath(request.nextUrl.pathname);
-  if (user.modulesAutorises && user.modulesAutorises.length > 0 && moduleKey) {
-    if (!user.modulesAutorises.includes(moduleKey)) {
+  if (moduleKey && !hasModuleAuthorization(user.modulesAutorises, moduleKey)) {
+    // Le module ADMIN agit comme surcouche d'administration transverse.
+    // Un compte admin ne doit pas être bloqué sur les modules métiers (ex: CONTRATS/DOSSIERS).
       return { error: NextResponse.json({ message: "Module non autorisé" }, { status: 403 }) };
-    }
   }
 
   if (

@@ -38,6 +38,9 @@ interface AgenceRef {
 
 const ROLE_OPTIONS = [...LONACI_ROLES];
 
+const MODULES_CSV_HELP =
+  "CONCESSIONNAIRES = saisie PDV + bancarisation ; CONCESSIONNAIRES_LECTURE = suivi PDV lecture seule uniquement (pas la bancarisation). Ex. suivi : CONCESSIONNAIRES_LECTURE,DOSSIERS";
+
 const AGENCE_CODES_HELP: Array<{ code: string; libelle: string }> = [
   { code: "YOPOUGON_1", libelle: "Yopougon 1" },
   { code: "YOPOUGON_2", libelle: "Yopougon 2" },
@@ -742,8 +745,9 @@ export default function UsersAdminPanel() {
                   value={editModulesAutorises}
                   onChange={(e) => setEditModulesAutorises(e.target.value)}
                   className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                  placeholder="moduleA, moduleB"
+                  placeholder="CONCESSIONNAIRES ou CONCESSIONNAIRES_LECTURE, …"
                 />
+                <span className="text-[11px] text-slate-500">{MODULES_CSV_HELP}</span>
               </label>
 
               <label className="grid gap-1 md:col-span-2">
@@ -849,7 +853,16 @@ export default function UsersAdminPanel() {
               <input value={createAgenceId} onChange={(e) => setCreateAgenceId(e.target.value)} placeholder="Agence de rattachement (ex: YOPOUGON_1 ou ObjectId 24 hex)" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
               <input value={createProduits} onChange={(e) => setCreateProduits(e.target.value)} placeholder="Produits autorisés CSV" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />
               <input value={createAgencesAutorisees} onChange={(e) => setCreateAgencesAutorisees(e.target.value)} placeholder="Agences autorisées CSV (ex: YOPOUGON_1, ABOBO)" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />
-              <input value={createModulesAutorises} onChange={(e) => setCreateModulesAutorises(e.target.value)} placeholder="Modules autorisés CSV" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />
+              <label className="grid gap-1 md:col-span-2">
+                <span className="text-xs text-slate-600">Modules autorisés (CSV)</span>
+                <input
+                  value={createModulesAutorises}
+                  onChange={(e) => setCreateModulesAutorises(e.target.value)}
+                  placeholder="CONCESSIONNAIRES ou CONCESSIONNAIRES_LECTURE, …"
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+                <span className="text-[11px] text-slate-500">{MODULES_CSV_HELP}</span>
+              </label>
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <button type="button" onClick={() => setCreateOpen(false)} className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50">

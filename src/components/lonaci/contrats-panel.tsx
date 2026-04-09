@@ -334,6 +334,14 @@ export default function ContratsPanel() {
 
   const [dossierActionBusyId, setDossierActionBusyId] = useState<string | null>(null);
   const [signatureLinkBusyId, setSignatureLinkBusyId] = useState<string | null>(null);
+  const [editContratOpen, setEditContratOpen] = useState(false);
+  const [editContratId, setEditContratId] = useState<string | null>(null);
+  const [editDateEffet, setEditDateEffet] = useState("");
+  const [editStatus, setEditStatus] = useState<"ACTIF" | "RESILIE" | "CEDE">("ACTIF");
+  const [editOperationType, setEditOperationType] = useState<"NOUVEAU" | "ACTUALISATION">("NOUVEAU");
+  const [editSaving, setEditSaving] = useState(false);
+  const [viewContratOpen, setViewContratOpen] = useState(false);
+  const [viewContrat, setViewContrat] = useState<ContratListeItem | null>(null);
 
   type ContratsChartsRow = { produitCode: string; weekly: number; monthly: number };
   type PendingByLevelDto = { n1: number; n2: number; final: number };
@@ -936,6 +944,77 @@ export default function ContratsPanel() {
     if (!ok) return;
   }
 
+  function openEditContrat(contrat: ContratListeItem) {
+    const isoDay = (() => {
+      const d = new Date(contrat.dateEffet);
+      if (Number.isNaN(d.getTime())) return "";
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    setEditContratId(contrat.id);
+    setEditDateEffet(isoDay);
+    setEditStatus((contrat.status as "ACTIF" | "RESILIE" | "CEDE") ?? "ACTIF");
+    setEditOperationType((contrat.operationType as "NOUVEAU" | "ACTUALISATION") ?? "NOUVEAU");
+    setEditContratOpen(true);
+  }
+
+  function closeEditContrat() {
+    if (editSaving) return;
+    setEditContratOpen(false);
+    setEditContratId(null);
+    setEditDateEffet("");
+    setEditStatus("ACTIF");
+    setEditOperationType("NOUVEAU");
+  }
+
+  function openViewContrat(contrat: ContratListeItem) {
+    setViewContrat(contrat);
+    setViewContratOpen(true);
+  }
+
+  function closeViewContrat() {
+    setViewContratOpen(false);
+    setViewContrat(null);
+  }
+
+  async function saveEditContrat() {
+    if (!editContratId) return;
+    const raw = editDateEffet.trim();
+    if (!raw) {
+      setToast({ type: "error", message: "La date d'effet est obligatoire." });
+      return;
+    }
+    const date = new Date(`${raw}T12:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      setToast({ type: "error", message: "Date d'effet invalide." });
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/contrats/${encodeURIComponent(editContratId)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateEffet: date.toISOString(),
+          status: editStatus,
+          operationType: editOperationType,
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Modification contrat impossible.");
+      }
+      setToast({ type: "success", message: "Contrat modifié avec succès." });
+      setListReloadTick((n) => n + 1);
+      closeEditContrat();
+    } catch (err) {
+      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   const showSearchPanel = pdvQuery.trim().length >= 2 && (!selectedPdv || labelPdv(selectedPdv) !== pdvQuery.trim());
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
 
@@ -1515,14 +1594,32 @@ export default function ContratsPanel() {
                           </span>
                         </td>
                         <td className="px-3 py-2.5 text-right sm:px-4">
-                          <button
-                            type="button"
-                            disabled={dossierActionBusyId === c.dossierId}
-                            onClick={() => openDecision(c.dossierId, etape)}
-                            className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
-                          >
-                            {dossierActionBusyId === c.dossierId ? "..." : actionLabel}
-                          </button>
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openViewContrat(c)}
+                              className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                            >
+                              Voir
+                            </button>
+                            <button
+                              type="button"
+                              disabled={dossierActionBusyId === c.dossierId}
+                              onClick={() => openDecision(c.dossierId, etape)}
+                              className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
+                            >
+                              {dossierActionBusyId === c.dossierId ? "..." : actionLabel}
+                            </button>
+                            {meRole === "CHEF_SERVICE" ? (
+                              <button
+                                type="button"
+                                onClick={() => openEditContrat(c)}
+                                className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                              >
+                                Modifier
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1544,6 +1641,161 @@ export default function ContratsPanel() {
           </div>
         ) : null}
       </section>
+
+      {editContratOpen && editContratId ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-contrat-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
+            aria-label="Fermer"
+            disabled={editSaving}
+            onClick={closeEditContrat}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="border-b border-slate-200 px-4 py-3">
+              <h3 id="edit-contrat-title" className="text-base font-semibold text-slate-900">
+                Modifier le contrat
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600">Mise à jour de la date d&apos;effet.</p>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Date d&apos;effet</span>
+                <input
+                  type="date"
+                  value={editDateEffet}
+                  onChange={(e) => setEditDateEffet(e.target.value)}
+                  className={inputClass}
+                  disabled={editSaving}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Statut</span>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as "ACTIF" | "RESILIE" | "CEDE")}
+                  className={inputClass}
+                  disabled={editSaving}
+                >
+                  <option value="ACTIF">Actif</option>
+                  <option value="RESILIE">Résilié</option>
+                  <option value="CEDE">Cédé</option>
+                </select>
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Type d&apos;opération</span>
+                <select
+                  value={editOperationType}
+                  onChange={(e) => setEditOperationType(e.target.value as "NOUVEAU" | "ACTUALISATION")}
+                  className={inputClass}
+                  disabled={editSaving}
+                >
+                  <option value="NOUVEAU">Nouveau</option>
+                  <option value="ACTUALISATION">Actualisation</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={closeEditContrat}
+                disabled={editSaving}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveEditContrat()}
+                disabled={editSaving}
+                className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-60"
+              >
+                {editSaving ? "Enregistrement..." : "Enregistrer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {viewContratOpen && viewContrat ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="view-contrat-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
+            aria-label="Fermer"
+            onClick={closeViewContrat}
+          />
+          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="border-b border-slate-200 px-4 py-3">
+              <h3 id="view-contrat-title" className="text-base font-semibold text-slate-900">
+                Détails du contrat
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600">Consultation du contrat créé.</p>
+            </div>
+            <div className="grid gap-3 px-4 py-4 sm:grid-cols-2">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Référence</p>
+                <p className="font-mono text-xs text-slate-900">{viewContrat.reference}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Concessionnaire</p>
+                <p className="text-sm text-slate-900">{viewContrat.nomPdv || "—"}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Produit</p>
+                <p className="text-sm text-slate-900">{viewContrat.produitCode}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Type</p>
+                <p className="text-sm text-slate-900">{labelOperationType(viewContrat.operationType)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Statut</p>
+                <p className="text-sm text-slate-900">{viewContrat.status}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date d'effet</p>
+                <p className="text-sm text-slate-900">{formatShortDate(viewContrat.dateEffet)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date de dépôt</p>
+                <p className="text-sm text-slate-900">{formatShortDate(viewContrat.dateDepot ?? viewContrat.createdAt)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Étape dossier</p>
+                <p className="text-sm text-slate-900">{labelDossierEtape(viewContrat.dossierEtape ?? "FINALISE")}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <a
+                href={`/api/contrats/${encodeURIComponent(viewContrat.dossierId)}/export`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+              >
+                Ouvrir le PDF
+              </a>
+              <button
+                type="button"
+                onClick={closeViewContrat}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {decisionOpen && decisionDossierId ? (
         <div
@@ -1902,6 +2154,7 @@ export default function ContratsPanel() {
                   ref={importFileInputRef}
                   type="file"
                   accept=".json,.csv,.xlsx,.xls,.pdf"
+                  aria-label="Importer des contrats"
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}
                 />

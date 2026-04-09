@@ -70,7 +70,13 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ message: "Identifiants invalides" }, { status: 401 });
   }
 
-  const passwordIsValid = await verifyPassword(password, user.passwordHash);
+  let passwordIsValid: boolean;
+  try {
+    passwordIsValid = await verifyPassword(password, user.passwordHash);
+  } catch (error) {
+    console.error("[auth/login] verifyPassword failed", error);
+    return NextResponse.json({ message: "Erreur serveur (mot de passe)." }, { status: 500 });
+  }
   if (!passwordIsValid) {
     queueAuthLog({
       email: user.email,
@@ -88,14 +94,39 @@ export async function POST(request: NextRequest) {
    * (cookie effacé, autre appareil, etc.). L’ancien JWT cessera de matcher currentSessionId. */
 
   const sessionId = randomUUID();
-  await createSessionCookie({
-    sub: user._id ?? "",
-    email: user.email,
-    role: user.role,
-    sessionId,
-  });
+  try {
+    await updateLastLogin(user._id ?? "", sessionId);
+  } catch (error) {
+    console.error("[auth/login] updateLastLogin failed", error);
+    return NextResponse.json(
+      { message: "Base de donnees indisponible. Verifiez MongoDB puis reessayez." },
+      { status: 503 },
+    );
+  }
 
-  await updateLastLogin(user._id ?? "", sessionId);
+  try {
+    await createSessionCookie({
+      sub: user._id ?? "",
+      email: user.email,
+      role: user.role,
+      sessionId,
+    });
+  } catch (error) {
+    console.error("[auth/login] createSessionCookie failed", error);
+    const msg = error instanceof Error ? error.message : "";
+    const jwtMisconfigured =
+      msg.includes("JWT_SECRET") ||
+      msg.includes("Variable d'environnement manquante: JWT_SECRET");
+    return NextResponse.json(
+      {
+        message: jwtMisconfigured
+          ? "Configuration serveur : definissez JWT_SECRET sur Vercel (au moins 32 caracteres, valeur aleatoire)."
+          : "Erreur serveur (session). Consultez les logs de l hebergeur.",
+      },
+      { status: 500 },
+    );
+  }
+
   queueAuthLog({
     email: user.email,
     userId: user._id ?? null,

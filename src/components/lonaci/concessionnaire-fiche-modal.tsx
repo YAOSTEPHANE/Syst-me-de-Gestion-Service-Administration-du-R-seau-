@@ -7,6 +7,7 @@ import {
   CONCESSIONNAIRE_STATUTS,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
+import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -169,7 +170,7 @@ export interface ConcessionnaireFicheModalProps {
   onClose: () => void;
   agences: AgenceRef[];
   produits: ProduitRef[];
-  me: { agenceId: string | null; role: string } | null;
+  me: { agenceId: string | null; role: string; modulesAutorises?: string[] } | null;
   isAgenceProfileFixed: boolean;
   onSaved: () => void;
 }
@@ -225,8 +226,11 @@ export default function ConcessionnaireFicheModal({
   const [contratsLoading, setContratsLoading] = useState(false);
   const [contratsError, setContratsError] = useState<string | null>(null);
 
-  const canDeactivate = me?.role === "ASSIST_CDS" || me?.role === "CHEF_SERVICE";
-  const canChangeAgence = me?.role === "CHEF_SERVICE";
+  const saisieReferentiel = userHasConcessionnairesSaisieModule(me?.modulesAutorises ?? []);
+
+  const canDeactivate =
+    saisieReferentiel && (me?.role === "ASSIST_CDS" || me?.role === "CHEF_SERVICE");
+  const canChangeAgence = saisieReferentiel && me?.role === "CHEF_SERVICE";
   const chefService = me?.role === "CHEF_SERVICE";
 
   /** Actives pour les nouveaux choix ; inclut toujours l’agence actuelle si elle est inactive (sinon la liste déroulante ne peut pas afficher la valeur). */
@@ -400,12 +404,13 @@ export default function ConcessionnaireFicheModal({
   const gelee = detail ? isFicheGelee(detail.statut) : false;
   const canEditNotesWhenGelee =
     me != null && (LONACI_ROLES as readonly string[]).includes(me.role);
-  const readOnlyFiche = Boolean(gelee && !canEditNotesWhenGelee);
-  const notesOnlyMode = Boolean(gelee && canEditNotesWhenGelee);
+  const readOnlyFiche = Boolean((gelee && !canEditNotesWhenGelee) || !saisieReferentiel);
+  const notesOnlyMode = Boolean(gelee && canEditNotesWhenGelee && saisieReferentiel);
 
   async function onSaveFiche(e: FormEvent) {
     e.preventDefault();
     if (!concessionnaireId || !detail) return;
+    if (!saisieReferentiel) return;
     setSaving(true);
     setError(null);
     try {
@@ -493,7 +498,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onDeactivate() {
-    if (!concessionnaireId || !detail) return;
+    if (!concessionnaireId || !detail || !saisieReferentiel) return;
     const ok = window.confirm(
       "Désactiver cette fiche ? Le statut passera à « Inactif ». Aucune suppression définitive : la fiche et l’historique restent consultables.",
     );
@@ -519,7 +524,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onUploadPiece(file: File | null) {
-    if (!concessionnaireId || !file || !detail) return;
+    if (!concessionnaireId || !file || !detail || !saisieReferentiel) return;
     setPieceUploading(true);
     setError(null);
     try {
@@ -546,7 +551,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onRemovePiece(pieceId: string) {
-    if (!concessionnaireId) return;
+    if (!concessionnaireId || !saisieReferentiel) return;
     const ok = window.confirm(
       "Retirer cette pièce du dossier ? Le fichier sera supprimé du stockage (la fiche concessionnaire n’est jamais supprimée).",
     );
@@ -618,7 +623,7 @@ export default function ConcessionnaireFicheModal({
         <div className="flex shrink-0 gap-1 border-b border-slate-200 px-4 pt-2">
           {(
             [
-              ["fiche", "Fiche & modification"],
+              ["fiche", saisieReferentiel ? "Fiche & modification" : "Fiche (lecture seule)"],
               ["contrats", "Contrats"],
               ["historique", "Historique"],
               ["pieces", "Pièces jointes"],
@@ -650,7 +655,13 @@ export default function ConcessionnaireFicheModal({
 
           {!loading && detail && tab === "fiche" ? (
             <form onSubmit={onSaveFiche} className="grid gap-4">
-              {readOnlyFiche ? (
+              {!saisieReferentiel ? (
+                <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                  <span className="font-semibold">Suivi / lecture seule</span> sur le référentiel concessionnaires : la
+                  fiche est consultable ; aucune modification n’est autorisée avec votre profil modules.
+                </p>
+              ) : null}
+              {readOnlyFiche && saisieReferentiel ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   Fiche en statut résilié ou décédé : les champs de la fiche sont en lecture seule. La modification des
                   notes internes est réservée aux comptes (agent, chef de section, assistant CDS, chef de
@@ -1099,7 +1110,7 @@ export default function ConcessionnaireFicheModal({
                 Documents PDF ou images (contrats, CNI, photos PDV…). Téléchargement authentifié via les liens
                 ci-dessous.
               </p>
-              {!gelee ? (
+              {!gelee && saisieReferentiel ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-3 flex flex-wrap items-end gap-3">
                     <label className="grid gap-1">
@@ -1130,10 +1141,16 @@ export default function ConcessionnaireFicheModal({
                   </div>
                   {pieceUploading ? <p className="text-xs text-slate-500">Téléversement…</p> : null}
                 </div>
-              ) : (
+              ) : gelee ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   Statut résilié ou décédé : plus d’ajout ni de retrait de pièces. Téléchargement des fichiers existants
                   toujours possible.
+                </p>
+              ) : (
+                <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                  Profil suivi : vous pouvez télécharger les pièces existantes ; l’ajout et le retrait sont réservés aux
+                  comptes avec saisie sur le référentiel (<code className="rounded bg-white px-1">CONCESSIONNAIRES</code>
+                  ).
                 </p>
               )}
               <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200">
@@ -1158,7 +1175,7 @@ export default function ConcessionnaireFicheModal({
                         >
                           Ouvrir / télécharger
                         </a>
-                        {!gelee ? (
+                        {!gelee && saisieReferentiel ? (
                           <button
                             type="button"
                             disabled={removingPieceId === p.id}

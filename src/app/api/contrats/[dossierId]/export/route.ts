@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -8,7 +9,8 @@ interface RouteContext {
   params: Promise<{ dossierId: string }>;
 }
 
-function toPdfBuffer(dossier: Awaited<ReturnType<typeof findDossierById>>) {
+async function toPdfBuffer(dossier: Awaited<ReturnType<typeof findDossierById>>) {
+  const { default: PDFDocument } = await import("pdfkit");
   return new Promise<Buffer>((resolve, reject) => {
     const doc = new PDFDocument({ margin: 40, size: "A4" });
     const chunks: Buffer[] = [];
@@ -51,6 +53,11 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+  }
+
+  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
+    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 
   const pdf = await toPdfBuffer(dossier);

@@ -1,5 +1,6 @@
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import { LONACI_ROLES, CONCESSIONNAIRE_STATUTS_BLOQUANTS } from "@/lib/lonaci/constants";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import type { ConcessionnaireDocument, UserDocument } from "@/lib/lonaci/types";
 
 export function userHasNationalScope(user: UserDocument): boolean {
@@ -31,6 +32,26 @@ export function userMatchesAgence(user: UserDocument, agenceId: string | null): 
 
 export function canReadConcessionnaire(user: UserDocument, doc: ConcessionnaireDocument): boolean {
   return userMatchesAgence(user, doc.agenceId);
+}
+
+/** Pièces jointes cession : accès si le périmètre national, ou si au moins un PDV lié est lisible. */
+export async function canReadCessionScopeForUser(
+  user: UserDocument,
+  scope: { concessionnaireId: string | null; cedantId: string | null; beneficiaireId: string | null },
+): Promise<boolean> {
+  if (userHasNationalScope(user)) {
+    return true;
+  }
+  const ids = [scope.concessionnaireId, scope.cedantId, scope.beneficiaireId].filter((x): x is string =>
+    Boolean(x),
+  );
+  for (const id of ids) {
+    const c = await findConcessionnaireById(id);
+    if (c && !c.deletedAt && canReadConcessionnaire(user, c)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function canCreateConcessionnaireForAgence(

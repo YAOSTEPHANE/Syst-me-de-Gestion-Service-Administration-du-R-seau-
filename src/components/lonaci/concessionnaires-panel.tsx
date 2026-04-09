@@ -15,6 +15,7 @@ import {
 } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
@@ -370,7 +371,11 @@ export default function ConcessionnairesPanel() {
   const [bancarisation, setBancarisation] = useState<string>("NON_BANCARISE");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [observations, setObservations] = useState("");
-  const [me, setMe] = useState<{ agenceId: string | null; role: string } | null>(null);
+  const [me, setMe] = useState<{
+    agenceId: string | null;
+    role: string;
+    modulesAutorises?: string[];
+  } | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const photoInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -490,7 +495,9 @@ export default function ConcessionnairesPanel() {
       try {
         const res = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
         if (!res.ok) throw new Error("Profil utilisateur indisponible");
-        const data = (await res.json()) as { user: { agenceId: string | null; role: string } };
+        const data = (await res.json()) as {
+          user: { agenceId: string | null; role: string; modulesAutorises?: string[] };
+        };
         setMe(data.user);
       } catch (e) {
         setToast({
@@ -505,6 +512,11 @@ export default function ConcessionnairesPanel() {
     me &&
       me.agenceId &&
       (me.role === "AGENT" || me.role === "CHEF_SECTION" || me.role === "ASSIST_CDS"),
+  );
+
+  const saisieReferentielConcessionnaires = useMemo(
+    () => userHasConcessionnairesSaisieModule(me?.modulesAutorises ?? []),
+    [me],
   );
 
   /** Filtres et création : uniquement agences actives ; le tableau utilise `agences` complet pour les libellés. */
@@ -884,6 +896,12 @@ export default function ConcessionnairesPanel() {
           </p>
           <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">Concessionnaires</h2>
           <p className="mt-1 text-sm text-slate-700">Pilotage centralisé du réseau PDV, création rapide et suivi en temps réel.</p>
+          {me && !saisieReferentielConcessionnaires ? (
+            <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-xs text-sky-950">
+              <span className="font-semibold">Profil suivi / lecture seule</span> sur ce référentiel : consultation,
+              export et carte autorisés ; pas de création ni de modification des fiches.
+            </p>
+          ) : null}
         </div>
         <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:items-end">
           <div className="flex flex-wrap items-center justify-end gap-2">
@@ -905,14 +923,16 @@ export default function ConcessionnairesPanel() {
             >
               Carte ({carteCountAffiche})
             </Link>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-400 bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-600 hover:bg-cyan-600"
-            >
-              <span className="text-lg font-light leading-none">+</span>
-              Nouveau concessionnaire
-            </button>
+            {saisieReferentielConcessionnaires ? (
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-400 bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-600 hover:bg-cyan-600"
+              >
+                <span className="text-lg font-light leading-none">+</span>
+                Nouveau concessionnaire
+              </button>
+            ) : null}
           </div>
           <div className="rounded-xl border border-white/80 bg-white/80 px-3 py-2 text-right text-xs text-slate-700 shadow-sm backdrop-blur">
             Dernière synchronisation <span className="font-medium text-slate-900">{lastSyncLabel ?? "—"}</span>

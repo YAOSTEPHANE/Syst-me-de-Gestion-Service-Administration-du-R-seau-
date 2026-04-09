@@ -42,6 +42,10 @@ Application: [http://localhost:3000](http://localhost:3000)
 
 Voir [docs/HEBERGEMENT.md](docs/HEBERGEMENT.md) (architecture, MongoDB, variables d environnement, cron, SMTP) et [docs/RISQUES.md](docs/RISQUES.md) (securite, controles automatises).
 
+## Guide utilisateur
+
+[docs/GUIDE-UTILISATION.md](docs/GUIDE-UTILISATION.md) — connexion, navigation, modules, dossiers, import, exports.
+
 ## Qualite
 
 - `npm run lint` — ESLint

@@ -299,6 +299,22 @@ export async function getCessionAttachment(input: { id: string; attachmentId: st
   return attachment;
 }
 
+/** Même lecture que getCessionAttachment, avec les identifiants nécessaires au contrôle d’accès agence / PDV. */
+export async function getCessionAttachmentWithScope(input: { id: string; attachmentId: string }) {
+  if (!ObjectId.isValid(input.id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  if (!row) return null;
+  const attachment = row.attachments.find((a) => a.id === input.attachmentId);
+  if (!attachment) return null;
+  return {
+    attachment,
+    concessionnaireId: row.concessionnaireId,
+    cedantId: row.cedantId,
+    beneficiaireId: row.beneficiaireId,
+  };
+}
+
 function ensureTransitionAllowed(role: string, from: CessionStatus, target: CessionStatus) {
   if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
     if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");

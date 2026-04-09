@@ -31,6 +31,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["pdfkit"],
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },
