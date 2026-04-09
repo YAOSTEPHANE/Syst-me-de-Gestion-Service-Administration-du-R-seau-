@@ -16,6 +16,7 @@ function LoginPageContent() {
   const [resetLoading, setResetLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [isResetModalOpen, setIsResetModalOpen] = useState(Boolean(resetToken));
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -90,93 +91,162 @@ function LoginPageContent() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
-      <section className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6">
-        <p className="text-xs uppercase tracking-[0.2em] text-amber-700">LONACI</p>
-        <h1 className="mt-2 text-2xl font-semibold text-slate-900">Connexion</h1>
-        <p className="mt-1 text-sm text-slate-600">Accédez au tableau de bord métier.</p>
+    <main className="relative h-screen overflow-hidden bg-slate-950 px-4 py-5 text-slate-100 sm:px-6">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(250,204,21,0.2),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.16),transparent_40%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-size-[34px_34px] opacity-20 bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
 
-        <form onSubmit={onSubmit} className="mt-5 space-y-3">
-          <div>
-            <label className="mb-1 block text-xs text-slate-600">Identifiant (email ou matricule)</label>
-            <input
-              type="text"
-              required
-              value={identifier}
-              onChange={(e) => setIdentifier(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              placeholder="vous@lonaci.ci ou MAT1234"
-            />
+      <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
+        <div className="w-full rounded-3xl border border-white/15 bg-white/10 p-2 shadow-[0_30px_80px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+          <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
+            <div className="mb-5">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-300">LONACI</p>
+                <h1 className="mt-1 text-2xl font-semibold text-white">Connexion sécurisée</h1>
+                <p className="text-sm text-slate-300">Accédez au tableau de bord métier.</p>
+              </div>
+            </div>
+
+            <form onSubmit={onSubmit} className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Connexion</p>
+              <div>
+                <label className="mb-1 block text-xs text-slate-300">Identifiant (email ou matricule)</label>
+                <input
+                  type="text"
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
+                  placeholder="vous@lonaci.ci ou MAT1234"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs text-slate-300">Mot de passe</label>
+                <input
+                  type="password"
+                  required
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
+                  placeholder="********"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={loading}
+                className="w-full rounded-lg border border-amber-300/70 bg-linear-to-r from-amber-300 to-yellow-300 px-4 py-2 text-sm font-semibold text-slate-900 transition hover:from-amber-200 hover:to-yellow-200 disabled:opacity-60"
+              >
+                {loading ? "Connexion..." : "Se connecter"}
+              </button>
+            </form>
+
+            <div className="mt-3 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setInfo(null);
+                  setIsResetModalOpen(true);
+                }}
+                className="text-sm text-amber-200 underline underline-offset-2 transition hover:text-amber-100"
+              >
+                Mot de passe oublié ?
+              </button>
+            </div>
+
+            {error ? (
+              <p className="mt-4 rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">{error}</p>
+            ) : null}
+            {info ? (
+              <p className="mt-4 rounded-lg border border-emerald-400/40 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-200">
+                {info}
+              </p>
+            ) : null}
           </div>
-          <div>
-            <label className="mb-1 block text-xs text-slate-600">Mot de passe</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              placeholder="********"
-            />
-          </div>
-          {error ? <p className="text-sm text-rose-600">{error}</p> : null}
-          {info ? <p className="text-sm text-emerald-600">{info}</p> : null}
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-lg border border-amber-600 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60"
-          >
-            {loading ? "Connexion..." : "Se connecter"}
-          </button>
-        </form>
-
-        <form onSubmit={onRequestReset} className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-          <p className="text-xs font-medium text-slate-600">Réinitialiser le mot de passe</p>
-          <input
-            type="text"
-            value={forgotIdentifier}
-            onChange={(e) => setForgotIdentifier(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-            placeholder="Email ou matricule"
-          />
-          <button
-            type="submit"
-            disabled={forgotLoading}
-            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
-          >
-            {forgotLoading ? "Demande..." : "Demander un lien de reset"}
-          </button>
-        </form>
-
-        {resetToken ? (
-          <form onSubmit={onResetWithToken} className="mt-4 space-y-2 border-t border-slate-200 pt-4">
-            <p className="text-xs font-medium text-slate-600">Nouveau mot de passe (token)</p>
-            <input
-              type="password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              minLength={8}
-              required
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:border-amber-500"
-              placeholder="Nouveau mot de passe"
-            />
-            <button
-              type="submit"
-              disabled={resetLoading}
-              className="w-full rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-60"
-            >
-              {resetLoading ? "Validation..." : "Valider la réinitialisation"}
-            </button>
-          </form>
-        ) : null}
+        </div>
       </section>
+
+      {isResetModalOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-950/75"
+            aria-label="Fermer"
+            onClick={() => {
+              if (forgotLoading || resetLoading) return;
+              setIsResetModalOpen(false);
+            }}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-white/15 bg-slate-900/95 p-4 shadow-2xl backdrop-blur">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.16em] text-sky-200">Assistance</p>
+                <h2 className="text-lg font-semibold text-white">Réinitialiser le mot de passe</h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsResetModalOpen(false)}
+                disabled={forgotLoading || resetLoading}
+                className="rounded-md border border-white/20 bg-white/5 px-2 py-1 text-xs text-slate-200 hover:bg-white/10 disabled:opacity-60"
+              >
+                Fermer
+              </button>
+            </div>
+
+            <form onSubmit={onRequestReset} className="space-y-2.5 rounded-xl border border-white/10 bg-white/5 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Demander un lien</p>
+              <input
+                type="text"
+                value={forgotIdentifier}
+                onChange={(e) => setForgotIdentifier(e.target.value)}
+                className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-sky-300/70 focus:bg-white/15"
+                placeholder="Email ou matricule"
+              />
+              <button
+                type="submit"
+                disabled={forgotLoading}
+                className="w-full rounded-lg border border-white/20 bg-white/10 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-white/15 disabled:opacity-60"
+              >
+                {forgotLoading ? "Demande..." : "Demander un lien"}
+              </button>
+            </form>
+
+            {resetToken ? (
+              <form onSubmit={onResetWithToken} className="mt-3 space-y-2.5 rounded-xl border border-white/10 bg-white/5 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Nouveau mot de passe (token)</p>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={8}
+                  required
+                  className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-300/70 focus:bg-white/15"
+                  placeholder="Nouveau mot de passe"
+                />
+                <button
+                  type="submit"
+                  disabled={resetLoading}
+                  className="w-full rounded-lg border border-emerald-300/60 bg-emerald-300/15 px-4 py-2 text-sm font-medium text-emerald-100 transition hover:bg-emerald-300/20 disabled:opacity-60"
+                >
+                  {resetLoading ? "Validation..." : "Valider la réinitialisation"}
+                </button>
+              </form>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }
 
 export default function LoginPage() {
   return (
-    <Suspense fallback={<main className="flex min-h-screen items-center justify-center bg-slate-100 px-4 text-sm text-slate-600">Chargement...</main>}>
+    <Suspense
+      fallback={
+        <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-sm text-slate-300">
+          Chargement...
+        </main>
+      }
+    >
       <LoginPageContent />
     </Suspense>
   );

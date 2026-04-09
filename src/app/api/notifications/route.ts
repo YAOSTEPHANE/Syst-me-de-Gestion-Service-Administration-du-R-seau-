@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureNotificationIndexes, listMyNotifications } from "@/lib/lonaci/notifications";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -17,7 +18,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = querySchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureNotificationIndexes();
   const result = await listMyNotifications(auth.user._id ?? "", parsed.data.page, parsed.data.pageSize);

@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest, forbidden } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   canCreateConcessionnaireForAgence,
   enforcedAgenceIdOnCreate,
@@ -63,7 +65,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listQuerySchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   const includeDeleted =
@@ -99,7 +101,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   const requestedAgenceId =
@@ -107,19 +109,19 @@ export async function POST(request: NextRequest) {
   const agenceId = enforcedAgenceIdOnCreate(auth.user, requestedAgenceId);
 
   if (!agenceId) {
-    return NextResponse.json(
-      { message: "Agence de rattachement obligatoire pour attribuer le code PDV." },
-      { status: 400 },
+    return badRequest(
+      "Agence de rattachement obligatoire pour attribuer le code PDV.",
+      "AGENCE_REQUIRED",
     );
   }
 
   if (!canCreateConcessionnaireForAgence(auth.user, agenceId)) {
-    return NextResponse.json({ message: "Acces refuse pour cette agence" }, { status: 403 });
+    return forbidden("Acces refuse pour cette agence", "AGENCE_FORBIDDEN");
   }
 
   const agence = await findAgenceById(agenceId);
   if (!agence || !agence.actif || !agence.code) {
-    return NextResponse.json({ message: "Agence invalide ou inactive" }, { status: 400 });
+    return badRequest("Agence invalide ou inactive", "AGENCE_INVALID");
   }
   const agenceCode = agence.code;
 
@@ -127,15 +129,12 @@ export async function POST(request: NextRequest) {
   const produitCodes = new Set(produits.filter((p) => p.actif).map((p) => p.code));
   const invalidProduits = parsed.data.produitsAutorises.filter((code) => !produitCodes.has(code.trim().toUpperCase()));
   if (invalidProduits.length > 0) {
-    return NextResponse.json(
-      { message: `Produits invalides: ${invalidProduits.join(", ")}` },
-      { status: 400 },
-    );
+    return badRequest(`Produits invalides: ${invalidProduits.join(", ")}`, "INVALID_PRODUCTS");
   }
   if (parsed.data.statutBancarisation === "BANCARISE" && !parsed.data.compteBancaire) {
-    return NextResponse.json(
-      { message: "Le numero de compte bancaire est requis pour le statut BANCARISE." },
-      { status: 400 },
+    return badRequest(
+      "Le numero de compte bancaire est requis pour le statut BANCARISE.",
+      "BANK_ACCOUNT_REQUIRED",
     );
   }
 

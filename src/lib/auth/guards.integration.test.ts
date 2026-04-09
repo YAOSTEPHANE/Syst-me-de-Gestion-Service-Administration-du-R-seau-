@@ -86,4 +86,59 @@ describe("requireApiAuth module authorization", () => {
     }
     expect(result.error.status).toBe(403);
   });
+
+  it("applique RBAC: refuse creation cautions pour SUPERVISEUR_REGIONAL", async () => {
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "SUPERVISEUR_REGIONAL",
+        modulesAutorises: ["CAUTIONS"],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/cautions", { method: "POST" });
+    const result = await requireApiAuth(req);
+
+    expect("error" in result).toBe(true);
+    if (!("error" in result)) {
+      throw new Error("Expected RBAC denial");
+    }
+    expect(result.error.status).toBe(403);
+  });
+
+  it("applique RBAC: autorise lecture cautions pour SUPERVISEUR_REGIONAL", async () => {
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "SUPERVISEUR_REGIONAL",
+        modulesAutorises: ["CAUTIONS"],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/cautions", { method: "GET" });
+    const result = await requireApiAuth(req);
+
+    expect("error" in result).toBe(false);
+    if ("error" in result) {
+      throw new Error("Unexpected RBAC denial");
+    }
+  });
+
+  it("applique un override RBAC explicite", async () => {
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "AGENT",
+        modulesAutorises: ["REPORTS"],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/reports/summary", { method: "GET" });
+    const result = await requireApiAuth(req, {
+      rbac: { resource: "REPORTS", action: "CONFIGURE" },
+    });
+
+    expect("error" in result).toBe(true);
+    if (!("error" in result)) {
+      throw new Error("Expected RBAC override denial");
+    }
+    expect(result.error.status).toBe(403);
+  });
 });

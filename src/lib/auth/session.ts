@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
 
 import { LONACI_SESSION_COOKIE_NAME } from "@/lib/auth/cookie-name";
-import { sessionMaxAgeSeconds, signSessionToken, verifySessionToken } from "@/lib/auth/jwt";
+import { signSessionToken, verifySessionToken } from "@/lib/auth/jwt";
 import type { SessionPayload } from "@/lib/auth/jwt";
 
 export { LONACI_SESSION_COOKIE_NAME };
@@ -17,7 +17,8 @@ export async function createSessionCookie(payload: SessionPayload) {
     sameSite: "lax",
     secure: process.env.NODE_ENV === "production",
     path: "/",
-    maxAge: sessionMaxAgeSeconds,
+    // Cookie de session navigateur (pas persistant) :
+    // à la fermeture du navigateur, la session est ré-authentifiée au prochain lancement.
   });
 }
 

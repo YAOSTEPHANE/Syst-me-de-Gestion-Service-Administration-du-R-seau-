@@ -2,10 +2,9 @@ import { randomBytes, createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { sendSmtpEmail } from "@/lib/email/smtp";
 import { findUserByIdentifier, setResetPasswordToken } from "@/lib/lonaci/users";
-import { getClientIp } from "@/lib/security/client-ip";
-import { consumeRateLimit } from "@/lib/security/mongo-rate-limit";
 
 const bodySchema = z.object({
   identifier: z.string().min(1),
@@ -14,17 +13,16 @@ const bodySchema = z.object({
 export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
-  const ip = getClientIp(request);
-  const rl = await consumeRateLimit("password-reset-request", ip, 5, 60 * 60 * 1000);
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { message: "Trop de demandes. Réessayez plus tard." },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
-    );
-  }
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "password-reset-request",
+    max: 5,
+    windowMs: 60 * 60 * 1000,
+    message: "Trop de demandes. Réessayez plus tard.",
+  });
+  if (rateLimitResponse) return rateLimitResponse;
 
   const user = await findUserByIdentifier(parsed.data.identifier);
   // Réponse neutre pour éviter l’énumération de comptes.

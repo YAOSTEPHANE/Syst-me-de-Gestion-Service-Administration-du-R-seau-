@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { apiError, badRequest } from "@/lib/api/error-responses";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   createSuccessionCase,
   ensureSuccessionIndexes,
@@ -26,8 +28,8 @@ const listSchema = z.object({
   status: z.enum(["OUVERT", "CLOTURE"]).optional(),
   concessionnaireId: z.string().optional(),
   decisionType: z.enum(["TRANSFERT", "RESILIATION"]).optional(),
-  dateFrom: z.string().optional(),
-  dateTo: z.string().optional(),
+  dateFrom: z.string().datetime().optional(),
+  dateTo: z.string().datetime().optional(),
 });
 
 function listScopeAgenceId(user: UserDocument): string | undefined {
@@ -41,6 +43,13 @@ function listScopeAgenceId(user: UserDocument): string | undefined {
 }
 
 export async function GET(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "succession-cases:list",
+    max: 120,
+    windowMs: 60 * 1000,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
   });
@@ -48,7 +57,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureSuccessionIndexes();
@@ -61,20 +70,21 @@ export async function GET(request: NextRequest) {
     {
       concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
       decisionType: parsed.data.decisionType,
-      dateFrom:
-        parsed.data.dateFrom && !Number.isNaN(new Date(parsed.data.dateFrom).getTime())
-          ? new Date(parsed.data.dateFrom)
-          : undefined,
-      dateTo:
-        parsed.data.dateTo && !Number.isNaN(new Date(parsed.data.dateTo).getTime())
-          ? new Date(parsed.data.dateTo)
-          : undefined,
+      dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
+      dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
     },
   );
   return NextResponse.json(result, { status: 200 });
 }
 
 export async function POST(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "succession-cases:create",
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const auth = await requireApiAuth(request, {
     roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
   });
@@ -82,7 +92,7 @@ export async function POST(request: NextRequest) {
 
   const form = await request.formData().catch(() => null);
   if (!form) {
-    return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+    return badRequest("Donnees invalides", "INVALID_BODY");
   }
   const parsed = createSchema.safeParse({
     concessionnaireId: form.get("concessionnaireId"),
@@ -93,21 +103,21 @@ export async function POST(request: NextRequest) {
     comment: form.get("comment"),
   });
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
   const acte = form.get("acteDeces");
   if (!(acte instanceof File)) {
-    return NextResponse.json({ message: "ACTE_DECES_REQUIRED" }, { status: 400 });
+    return badRequest("ACTE_DECES_REQUIRED", "ACTE_DECES_REQUIRED");
   }
   if (acte.size > MAX_SUCCESSION_FILE_BYTES) {
-    return NextResponse.json(
-      { message: `Fichier trop volumineux (max ${MAX_SUCCESSION_FILE_BYTES} octets)` },
-      { status: 400 },
+    return badRequest(
+      `Fichier trop volumineux (max ${MAX_SUCCESSION_FILE_BYTES} octets)`,
+      "FILE_TOO_LARGE",
     );
   }
   const mimeType = acte.type || "application/octet-stream";
   if (!SUCCESSION_ALLOWED_MIME[mimeType]) {
-    return NextResponse.json({ message: "Type MIME non autorise" }, { status: 400 });
+    return badRequest("Type MIME non autorise", "INVALID_MIME_TYPE");
   }
   const rawFilename = acte.name || "acte-deces";
   const bytes = Buffer.from(await acte.arrayBuffer());
@@ -154,9 +164,6 @@ export async function POST(request: NextRequest) {
       ACTE_DECES_REQUIRED: 400,
     };
     const status = map[code] ?? 500;
-    return NextResponse.json(
-      { message: code === "UNKNOWN" ? "Creation impossible" : code },
-      { status },
-    );
+    return apiError(status, code === "UNKNOWN" ? "Creation impossible" : code, code);
   }
 }

@@ -21,6 +21,9 @@ interface AlertItem {
 interface ContratItem {
   id: string;
   reference: string;
+  concessionnaireId: string;
+  codePdv?: string;
+  nomPdv?: string;
   status: "ACTIF" | "RESILIE";
 }
 
@@ -242,6 +245,7 @@ export default function CautionsPanel() {
   const pageSize = 50;
 
   const [contratId, setContratId] = useState(contratPrefill);
+  const [selectedConcessionnaireId, setSelectedConcessionnaireId] = useState("");
   const [contratQuickPick, setContratQuickPick] = useState("");
   const [montant, setMontant] = useState("");
   const [modeReglement, setModeReglement] = useState<CautionPaymentMode>("VIREMENT");
@@ -270,6 +274,13 @@ export default function CautionsPanel() {
   }, [contratPrefill]);
 
   useEffect(() => {
+    if (!contratPrefill || contrats.length === 0) return;
+    const hit = contrats.find((c) => c.id === contratPrefill);
+    if (!hit) return;
+    setSelectedConcessionnaireId(hit.concessionnaireId);
+  }, [contratPrefill, contrats]);
+
+  useEffect(() => {
     if (!createOpen) return;
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -286,9 +297,49 @@ export default function CautionsPanel() {
     if (!contratPrefill) {
       setContratId("");
       setContratQuickPick("");
+      setSelectedConcessionnaireId("");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createOpen]);
+
+  const concessionnairesOptions = useMemo(() => {
+    const map = new Map<string, { id: string; label: string }>();
+    for (const c of contrats) {
+      if (map.has(c.concessionnaireId)) continue;
+      const label = c.nomPdv?.trim()
+        ? `${c.codePdv ? `${c.codePdv} — ` : ""}${c.nomPdv}`
+        : c.codePdv
+          ? c.codePdv
+          : c.concessionnaireId;
+      map.set(c.concessionnaireId, { id: c.concessionnaireId, label });
+    }
+    return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
+  }, [contrats]);
+
+  const contratsForSelectedConcessionnaire = useMemo(() => {
+    if (!selectedConcessionnaireId) return [] as ContratItem[];
+    return contrats.filter((c) => c.concessionnaireId === selectedConcessionnaireId);
+  }, [contrats, selectedConcessionnaireId]);
+
+  useEffect(() => {
+    if (!selectedConcessionnaireId) {
+      if (!contratPrefill) {
+        setContratId("");
+        setContratQuickPick("");
+      }
+      return;
+    }
+    const list = contrats.filter((c) => c.concessionnaireId === selectedConcessionnaireId);
+    if (list.length === 0) {
+      setContratId("");
+      setContratQuickPick("");
+      return;
+    }
+    const prefilled = contratPrefill ? list.find((c) => c.id === contratPrefill) : null;
+    const chosen = prefilled ?? list[0];
+    setContratId(chosen.id);
+    setContratQuickPick(chosen.id);
+  }, [selectedConcessionnaireId, contrats, contratPrefill]);
 
   const load = useCallback(async (nextTab?: CautionListTab) => {
     setLoading(true);
@@ -484,6 +535,7 @@ export default function CautionsPanel() {
     if (!contratPrefill) {
       setContratId("");
       setContratQuickPick("");
+      setSelectedConcessionnaireId("");
     }
   }
 
@@ -624,6 +676,21 @@ export default function CautionsPanel() {
                   <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-amber-900">
                     Contrat de rattachement
                   </p>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Concessionnaire</label>
+                  <select
+                    aria-label="Choisir un concessionnaire"
+                    value={selectedConcessionnaireId}
+                    onChange={(e) => setSelectedConcessionnaireId(e.target.value)}
+                    className="mb-2.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                  >
+                    <option value="">— Choisir un concessionnaire —</option>
+                    {concessionnairesOptions.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+
                   <label className="mb-1 block text-xs font-medium text-slate-700">Contrat (actifs)</label>
                   {contractsError ? (
                     <div className="mb-2 rounded border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-700">
@@ -646,10 +713,17 @@ export default function CautionsPanel() {
                       setContratQuickPick(v);
                       setContratId(v);
                     }}
+                    disabled={!selectedConcessionnaireId || contratsForSelectedConcessionnaire.length === 0}
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
-                    <option value="">— Choisir un contrat —</option>
-                    {contrats.map((c) => (
+                    <option value="">
+                      {!selectedConcessionnaireId
+                        ? "Sélectionnez d'abord un concessionnaire"
+                        : contratsForSelectedConcessionnaire.length === 0
+                          ? "Aucun contrat actif rattaché"
+                          : "— Contrat rattaché —"}
+                    </option>
+                    {contratsForSelectedConcessionnaire.map((c) => (
                       <option key={c.id} value={c.id}>
                         {c.reference} · {c.id.slice(0, 8)}…
                       </option>
@@ -738,6 +812,7 @@ export default function CautionsPanel() {
                     ref={importFileInputRef}
                     type="file"
                     accept=".json,.csv,.xlsx,.xls,.pdf"
+                    aria-label="Importer des cautions"
                     className="sr-only"
                     onChange={(e) => void onImportFileChange(e)}
                   />

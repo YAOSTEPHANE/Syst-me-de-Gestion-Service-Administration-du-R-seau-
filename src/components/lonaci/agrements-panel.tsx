@@ -298,7 +298,7 @@ export default function AgrementsPanel() {
   }, [filterAgence, filterProduit, filterStatut, filterDateFrom, filterDateTo]);
 
   const inputClass =
-    "w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
+    "w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
   const inputClassXs =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
 
@@ -411,7 +411,7 @@ export default function AgrementsPanel() {
 
   return (
     <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <header className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 shadow-sm">
+      <header className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-linear-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 shadow-sm">
         <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-indigo-300/20 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl" />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
@@ -448,7 +448,7 @@ export default function AgrementsPanel() {
         </div>
       </header>
 
-      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-indigo-50/40 p-3 sm:grid-cols-5">
+      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-linear-to-r from-slate-50 to-indigo-50/40 p-3 sm:grid-cols-5">
         <input aria-label="Filtre agence" value={filterAgence} onChange={(e) => setFilterAgence(e.target.value)} placeholder="Agence" className={inputClassXs} />
         <input aria-label="Filtre produit" value={filterProduit} onChange={(e) => setFilterProduit(e.target.value)} placeholder="Produit" className={inputClassXs} />
         <select aria-label="Filtre statut" value={filterStatut} onChange={(e) => setFilterStatut(e.target.value as "" | AgrementStatus)} className={inputClassXs}>
@@ -478,7 +478,7 @@ export default function AgrementsPanel() {
 
       {toast ? (
         <div
-          className={`fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
+          className={`fixed left-1/2 top-4 z-100 w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
             toast.type === "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-900"
               : "border-rose-200 bg-rose-50 text-rose-900"
@@ -600,7 +600,7 @@ export default function AgrementsPanel() {
             disabled={creating}
           />
           <div className="relative z-10 flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-5 py-4">
+            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-indigo-50 via-white to-cyan-50 px-5 py-4">
               <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-indigo-200/40 blur-2xl" />
               <div>
                 <p className="mb-1 inline-flex rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-900">
@@ -623,7 +623,7 @@ export default function AgrementsPanel() {
             </div>
 
             <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-5 py-4">
+              <div className="min-h-0 flex-1 overflow-y-auto bg-linear-to-b from-slate-50/80 via-white to-white px-5 py-4">
                 {createError ? (
                   <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">
                     {createError}
@@ -635,8 +635,8 @@ export default function AgrementsPanel() {
                     <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
                       Paramètres de l’agrément
                     </p>
-                    <div className="grid gap-3 md:grid-cols-2">
-                  <label className="grid gap-1 md:col-span-3 xl:col-span-4">
+                    <div className="grid gap-3 lg:grid-cols-2">
+                  <label className="grid min-w-0 gap-1 lg:col-span-2">
                     <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
                     <select
                       required
@@ -659,7 +659,7 @@ export default function AgrementsPanel() {
                     {referentialsError ? <span className="text-[11px] leading-4 text-rose-700">{referentialsError}</span> : null}
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Date de réception *</span>
                     <input
                       required
@@ -670,7 +670,7 @@ export default function AgrementsPanel() {
                     />
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Référence officielle *</span>
                     <input
                       required
@@ -681,7 +681,7 @@ export default function AgrementsPanel() {
                     />
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Agence concernée</span>
                     <select
                       value={agenceId}
@@ -700,7 +700,7 @@ export default function AgrementsPanel() {
                     </select>
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Concessionnaire</span>
                     <select
                       value={concessionnaireId}
@@ -729,7 +729,7 @@ export default function AgrementsPanel() {
                       Document et notes
                     </p>
                     <div className="grid gap-3">
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-700">
                       <svg
                         aria-hidden="true"
@@ -759,7 +759,7 @@ export default function AgrementsPanel() {
                     <button
                       type="button"
                       onClick={() => pdfInputRef.current?.click()}
-                      className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-left text-[11px] leading-4 text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
                     >
                       <span className="inline-flex min-w-0 items-center gap-1.5">
                         <svg
@@ -781,7 +781,7 @@ export default function AgrementsPanel() {
                     </button>
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Observations</span>
                     <textarea
                       value={observations}
@@ -801,6 +801,7 @@ export default function AgrementsPanel() {
                   ref={importFileInputRef}
                   type="file"
                   accept=".json,.csv,.xlsx,.xls,.pdf"
+                  aria-label="Importer des agréments"
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}
                 />

@@ -22,6 +22,24 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
+function toRbacAction(action: z.infer<typeof transitionSchema>["action"]) {
+  switch (action) {
+    case "VALIDATE_N1":
+      return "VALIDATE_N1" as const;
+    case "VALIDATE_N2":
+      return "VALIDATE_N2" as const;
+    case "FINALIZE":
+      return "FINALIZE" as const;
+    case "REJECT":
+      return "REJECT" as const;
+    case "RETURN_PREVIOUS":
+    case "REJECT_TO_DRAFT":
+      return "RETURN_FOR_CORRECTION" as const;
+    default:
+      return "UPDATE" as const;
+  }
+}
+
 function toTargetStatus(action: z.infer<typeof transitionSchema>["action"]) {
   switch (action) {
     case "SUBMIT":
@@ -43,17 +61,19 @@ function toTargetStatus(action: z.infer<typeof transitionSchema>["action"]) {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const parsed = transitionSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+  }
+
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    rbac: { resource: "DOSSIERS", action: toRbacAction(parsed.data.action) },
   });
   if ("error" in auth) {
     return auth.error;
   }
   const { id } = await context.params;
-  const parsed = transitionSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
-  }
 
   await ensureDossierIndexes();
   const before = await findDossierById(id);

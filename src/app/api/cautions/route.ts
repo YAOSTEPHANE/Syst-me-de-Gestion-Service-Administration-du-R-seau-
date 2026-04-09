@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { apiError, conflict, notFound } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { CAUTION_PAYMENT_MODES } from "@/lib/lonaci/constants";
 import {
   CAUTION_LIST_TABS,
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listQuerySchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureSprint4Indexes();
@@ -55,7 +57,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   await ensureSprint4Indexes();
@@ -73,26 +75,23 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONTRAT_NOT_FOUND") {
-      return NextResponse.json({ message: "Contrat introuvable." }, { status: 404 });
+      return notFound("Contrat introuvable.", "CONTRAT_NOT_FOUND");
     }
     if (code === "CONTRAT_NOT_ACTIF") {
-      return NextResponse.json({ message: "Contrat non actif." }, { status: 409 });
+      return conflict("Contrat non actif.", "CONTRAT_NOT_ACTIF");
     }
     if (code === "CONCESSIONNAIRE_NOT_FOUND") {
-      return NextResponse.json({ message: "Concessionnaire introuvable." }, { status: 404 });
+      return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
     }
     if (code === "CONCESSIONNAIRE_BLOQUE") {
-      return NextResponse.json(
-        { message: "Operation interdite: concessionnaire résilié / inactif / décédé." },
-        { status: 409 },
+      return conflict(
+        "Operation interdite: concessionnaire résilié / inactif / décédé.",
+        "CONCESSIONNAIRE_BLOQUE",
       );
     }
     if (code.includes("E11000")) {
-      return NextResponse.json(
-        { message: "Une caution existe déjà pour ce contrat." },
-        { status: 409 },
-      );
+      return conflict("Une caution existe déjà pour ce contrat.", "DUPLICATE_CAUTION");
     }
-    return NextResponse.json({ message: "Creation caution impossible." }, { status: 500 });
+    return apiError(500, "Creation caution impossible.", "CAUTION_CREATE_FAILED");
   }
 }

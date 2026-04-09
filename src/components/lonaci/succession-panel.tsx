@@ -2,7 +2,7 @@
 
 import { getLonaciRoleLabel, SUCCESSION_STEP_LABELS } from "@/lib/lonaci/constants";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
 interface CaseRow {
@@ -87,6 +87,7 @@ function friendlySuccessionError(raw: string): string {
 }
 
 export default function SuccessionPanel() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +129,22 @@ export default function SuccessionPanel() {
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
 
+  const handleAuthFailure = useCallback(
+    (status: number, rawMessage?: string): boolean => {
+      if (status !== 401) return false;
+      setToast({
+        type: "error",
+        message:
+          rawMessage ||
+          "Session expirée ou invalide. Vous allez être redirigé vers la page de connexion.",
+      });
+      router.replace("/login");
+      router.refresh();
+      return true;
+    },
+    [router],
+  );
+
   async function load(nextPage = page) {
     setLoading(true);
     setError(null);
@@ -144,6 +161,7 @@ export default function SuccessionPanel() {
       ]);
       if (!listRes.ok) {
         const b = (await listRes.json().catch(() => null)) as { message?: string } | null;
+        if (handleAuthFailure(listRes.status, b?.message)) return;
         throw new Error(b?.message ?? `Liste succession inaccessible (HTTP ${listRes.status}).`);
       }
       const listData = (await listRes.json()) as { items: CaseRow[]; total: number; page: number };
@@ -166,32 +184,36 @@ export default function SuccessionPanel() {
     }
   }
 
-  const loadDetail = useCallback(async (caseId: string) => {
-    if (!caseId) {
-      setDetail(null);
-      return;
-    }
-    setDetailLoading(true);
-    try {
-      const res = await fetch(`/api/succession-cases/${encodeURIComponent(caseId)}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
-      if (!res.ok) {
-        const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        const raw = b?.message ?? `Fiche dossier inaccessible (HTTP ${res.status})`;
-        throw new Error(friendlySuccessionError(raw));
+  const loadDetail = useCallback(
+    async (caseId: string) => {
+      if (!caseId) {
+        setDetail(null);
+        return;
       }
-      const payload = (await res.json()) as CaseDetailResponse;
-      setDetail(payload.case);
-    } catch (e) {
-      setDetail(null);
-      const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
-      setToast({ type: "error", message });
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+      setDetailLoading(true);
+      try {
+        const res = await fetch(`/api/succession-cases/${encodeURIComponent(caseId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) {
+          const b = (await res.json().catch(() => null)) as { message?: string } | null;
+          if (handleAuthFailure(res.status, b?.message)) return;
+          const raw = b?.message ?? `Fiche dossier inaccessible (HTTP ${res.status})`;
+          throw new Error(friendlySuccessionError(raw));
+        }
+        const payload = (await res.json()) as CaseDetailResponse;
+        setDetail(payload.case);
+      } catch (e) {
+        setDetail(null);
+        const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
+        setToast({ type: "error", message });
+      } finally {
+        setDetailLoading(false);
+      }
+    },
+    [handleAuthFailure],
+  );
 
   useEffect(() => {
     void load(1);
@@ -262,6 +284,7 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
+        if (handleAuthFailure(res.status, b?.message)) return;
         const raw = b?.message ?? `Création impossible (HTTP ${res.status})`;
         throw new Error(friendlySuccessionError(raw));
       }
@@ -311,6 +334,7 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
+        if (handleAuthFailure(res.status, b?.message)) return;
         const raw = b?.message ?? `Avancement impossible (HTTP ${res.status})`;
         throw new Error(friendlySuccessionError(raw));
       }
@@ -351,6 +375,7 @@ export default function SuccessionPanel() {
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
+        if (handleAuthFailure(res.status, b?.message)) return;
         const raw = b?.message ?? `Upload impossible (HTTP ${res.status})`;
         throw new Error(friendlySuccessionError(raw));
       }
@@ -376,7 +401,7 @@ export default function SuccessionPanel() {
     "rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200";
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 p-6 shadow-sm">
+    <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-linear-to-br from-slate-50 via-white to-indigo-50/40 p-6 shadow-sm">
       <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-indigo-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -left-24 bottom-0 h-56 w-56 rounded-full bg-teal-200/20 blur-3xl" />
 
@@ -404,24 +429,51 @@ export default function SuccessionPanel() {
         </div>
       </div>
       <div className={`${cardClass} relative mb-5 grid gap-2 md:grid-cols-6`}>
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value as "" | "OUVERT" | "CLOTURE")} className={subtleFieldClass}>
+        <select
+          aria-label="Filtrer par statut"
+          value={fStatus}
+          onChange={(e) => setFStatus(e.target.value as "" | "OUVERT" | "CLOTURE")}
+          className={subtleFieldClass}
+        >
           <option value="">Tous statuts</option>
           <option value="OUVERT">OUVERT</option>
           <option value="CLOTURE">CLOTURE</option>
         </select>
-        <select value={fConcessionnaireId} onChange={(e) => setFConcessionnaireId(e.target.value)} className={subtleFieldClass}>
+        <select
+          aria-label="Filtrer par concessionnaire"
+          value={fConcessionnaireId}
+          onChange={(e) => setFConcessionnaireId(e.target.value)}
+          className={subtleFieldClass}
+        >
           <option value="">Tous concessionnaires</option>
           {concessionnaires.map((c) => (
             <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
           ))}
         </select>
-        <select value={fDecisionType} onChange={(e) => setFDecisionType(e.target.value as "" | "TRANSFERT" | "RESILIATION")} className={subtleFieldClass}>
+        <select
+          aria-label="Filtrer par type de décision"
+          value={fDecisionType}
+          onChange={(e) => setFDecisionType(e.target.value as "" | "TRANSFERT" | "RESILIATION")}
+          className={subtleFieldClass}
+        >
           <option value="">Toutes décisions</option>
           <option value="TRANSFERT">TRANSFERT</option>
           <option value="RESILIATION">RESILIATION</option>
         </select>
-        <input type="date" value={fDateFrom} onChange={(e) => setFDateFrom(e.target.value)} className={subtleFieldClass} />
-        <input type="date" value={fDateTo} onChange={(e) => setFDateTo(e.target.value)} className={subtleFieldClass} />
+        <input
+          aria-label="Filtrer par date de début"
+          type="date"
+          value={fDateFrom}
+          onChange={(e) => setFDateFrom(e.target.value)}
+          className={subtleFieldClass}
+        />
+        <input
+          aria-label="Filtrer par date de fin"
+          type="date"
+          value={fDateTo}
+          onChange={(e) => setFDateTo(e.target.value)}
+          className={subtleFieldClass}
+        />
         <div className="flex gap-2">
           <a
             href={`/api/succession-cases/export?format=csv&${new URLSearchParams({
@@ -455,7 +507,7 @@ export default function SuccessionPanel() {
       </div>
 
       {stale.length ? (
-        <div className="mb-5 rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+        <div className="mb-5 rounded-2xl border border-amber-200 bg-linear-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
           <p className="font-semibold">Alerte 30 jours sans action ({stale.length})</p>
           <ul className="mt-2 list-inside list-disc text-xs text-amber-800">
             {stale.slice(0, 8).map((s) => (
@@ -478,7 +530,7 @@ export default function SuccessionPanel() {
             disabled={creating}
           />
           <div className="relative z-10 flex max-h-[84vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-indigo-50 px-4 py-2">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-cyan-50 via-white to-indigo-50 px-4 py-2">
               <div>
                 <h3 id="create-succession-title" className="text-sm font-semibold text-slate-900">
                   Ouvrir un dossier décès & succession

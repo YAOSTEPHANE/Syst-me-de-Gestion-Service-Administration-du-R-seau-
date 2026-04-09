@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest, conflict, notFound, serverError } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { finalizeCaution, ensureSprint4Indexes, returnCautionForCorrection } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -14,14 +16,23 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
+  const parsed = schema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return zodBadRequest(parsed.error);
+  }
+  const rbacAction =
+    parsed.data.decision === "APPROUVER"
+      ? "FINALIZE"
+      : parsed.data.decision === "REJETER"
+        ? "REJECT"
+        : "RETURN_FOR_CORRECTION";
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SERVICE"],
+    rbac: { resource: "CAUTIONS", action: rbacAction },
+  });
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
-  const parsed = schema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
-  }
 
   const { decision, comment } = parsed.data;
   await ensureSprint4Indexes();
@@ -36,19 +47,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     const c = (comment ?? "").trim();
     if (!c) {
-      return NextResponse.json({ message: "Motif obligatoire pour un retour correction." }, { status: 400 });
+      return badRequest("Motif obligatoire pour un retour correction.", "MISSING_COMMENT");
     }
     await returnCautionForCorrection({ cautionId: id, comment: c, actor: auth.user });
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CAUTION_NOT_FOUND") {
-      return NextResponse.json({ message: "Caution introuvable." }, { status: 404 });
+      return notFound("Caution introuvable.", "CAUTION_NOT_FOUND");
     }
     if (code === "CAUTION_IMMUTABLE") {
-      return NextResponse.json({ message: "Caution deja finalisee (statut immuable)." }, { status: 409 });
+      return conflict("Caution deja finalisee (statut immuable).", "CAUTION_IMMUTABLE");
     }
-    return NextResponse.json({ message: "Decision caution impossible." }, { status: 500 });
+    return serverError("Decision caution impossible.", "CAUTION_DECISION_FAILED");
   }
 }
 

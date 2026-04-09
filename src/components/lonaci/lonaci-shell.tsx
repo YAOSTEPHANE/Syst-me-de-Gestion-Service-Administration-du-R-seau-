@@ -121,8 +121,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   }, [loggingOut, router]);
 
   useEffect(() => {
-    if (!meUser?.role) return;
-
     const INACTIVITY_MS = 30 * 60 * 1000;
 
     const resetTimer = () => {
@@ -156,7 +154,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         window.clearTimeout(inactivityTimeoutRef.current);
       }
     };
-  }, [meUser?.role, handleLogout]);
+  }, [handleLogout]);
 
   useEffect(() => {
     if (!userMenuOpen) return;

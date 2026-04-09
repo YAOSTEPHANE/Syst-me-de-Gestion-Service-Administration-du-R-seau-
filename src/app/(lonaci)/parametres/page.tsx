@@ -2,6 +2,7 @@ import AdminAgencesPanel from "@/components/lonaci/admin-agences-panel";
 import AdminEmailSettings from "@/components/lonaci/admin-email-settings";
 import AdminProduitsPanel from "@/components/lonaci/admin-produits-panel";
 import AlertThresholdsSettings from "@/components/lonaci/alert-thresholds-settings";
+import MonitoringEventsPanel from "@/components/lonaci/monitoring-events-panel";
 import ParametresComptePanel from "@/components/lonaci/parametres-compte-panel";
 import UsersAdminPanel from "@/components/lonaci/users-admin-panel";
 import { getSessionFromCookies } from "@/lib/auth/session";
@@ -79,6 +80,7 @@ export default async function ParametresPage() {
                 <div className="space-y-4">
                   <AlertThresholdsSettings />
                   <AdminEmailSettings />
+                  <MonitoringEventsPanel />
                 </div>
               </ParamSection>
             </>

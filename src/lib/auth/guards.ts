@@ -1,17 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import type { LonaciRole } from "@/lib/lonaci/constants";
+import type { RbacAction, RbacResource } from "@/lib/auth/rbac";
+import { canRole } from "@/lib/auth/rbac";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import {
   userHasConcessionnairesLectureModule,
   userHasConcessionnairesSaisieModule,
 } from "@/lib/lonaci/module-concessionnaires";
 import { clearCurrentSession, findUserById, setUserCurrentSession, touchSessionActivity } from "@/lib/lonaci/users";
+import { logger } from "@/lib/observability/logger";
 
 interface GuardOptions {
   roles?: LonaciRole[];
   agenceId?: string;
   produitCode?: string;
+  rbac?: {
+    resource: RbacResource;
+    action: RbacAction;
+  };
 }
 
 const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
@@ -39,6 +46,30 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   return null;
 }
 
+function inferRbacResourceFromPath(pathname: string): RbacResource | null {
+  const p = pathname.toLowerCase();
+  if (p.includes("/api/concessionnaires")) return "CONCESSIONNAIRES";
+  if (p.includes("/api/contrats")) return "CONTRATS";
+  if (p.includes("/api/dossiers")) return "DOSSIERS";
+  if (p.includes("/api/cautions")) return "CAUTIONS";
+  if (p.includes("/api/pdv-integrations")) return "PDV_INTEGRATIONS";
+  if (p.includes("/api/agrements")) return "AGREMENTS";
+  if (p.includes("/api/reports")) return "REPORTS";
+  if (p.includes("/api/admin/app-settings")) return "PARAMETRES";
+  if (p.includes("/api/lonaci/alert-thresholds")) return "ALERTS";
+  if (p.includes("/api/notifications")) return "NOTIFICATIONS";
+  return null;
+}
+
+function inferRbacActionFromRequest(request: NextRequest): RbacAction | null {
+  const method = request.method.toUpperCase();
+  if (method === "GET" || method === "HEAD") return "READ";
+  if (method === "POST") return "CREATE";
+  if (method === "PUT" || method === "PATCH") return "UPDATE";
+  if (method === "DELETE") return "DEACTIVATE";
+  return null;
+}
+
 export function hasModuleAuthorization(
   modulesAutorises: string[] | null | undefined,
   moduleKey: string,
@@ -51,7 +82,10 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   const session = await getSessionFromRequest(request);
   if (!session) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[auth] 401 Non authentifie", { path: request.nextUrl.pathname });
+      logger.warn("Unauthorized: missing session", {
+        event: "AUTH_MISSING_SESSION",
+        path: request.nextUrl.pathname,
+      });
     }
     return { error: NextResponse.json({ message: "Non authentifie" }, { status: 401 }) };
   }
@@ -59,7 +93,8 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   const user = await findUserById(session.sub);
   if (!user || !user.actif) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[auth] 403 Compte inactif ou inexistant", {
+      logger.warn("Forbidden: inactive or missing account", {
+        event: "AUTH_INACTIVE_OR_MISSING_USER",
         path: request.nextUrl.pathname,
         userId: session.sub,
       });
@@ -69,7 +104,8 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
 
   if (!user.currentSessionId) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[auth] Session null dans la base, resynchronisation", {
+      logger.warn("Session id missing in DB, resync", {
+        event: "AUTH_RESYNC_SESSION_ID",
         path: request.nextUrl.pathname,
         userId: session.sub,
         providedSessionId: session.sessionId,
@@ -78,7 +114,8 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     await setUserCurrentSession(session.sub, session.sessionId);
   } else if (user.currentSessionId !== session.sessionId) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[auth] 401 Session invalide", {
+      logger.warn("Unauthorized: invalid session id", {
+        event: "AUTH_INVALID_SESSION_ID",
         path: request.nextUrl.pathname,
         userId: session.sub,
         expectedSessionId: user.currentSessionId,
@@ -95,7 +132,8 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
 
   if (user.lastActivityAt && Date.now() - user.lastActivityAt.getTime() > INACTIVITY_TIMEOUT_MS) {
     if (process.env.NODE_ENV !== "production") {
-      console.warn("[auth] 401 Session expirée (inactivite)", {
+      logger.warn("Unauthorized: session inactivity timeout", {
+        event: "AUTH_INACTIVITY_TIMEOUT",
         path: request.nextUrl.pathname,
         userId: session.sub,
         lastActivityAt: user.lastActivityAt.toISOString(),
@@ -112,6 +150,18 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
 
   if (options?.roles && !options.roles.includes(user.role)) {
     return { error: NextResponse.json({ message: "Acces refuse" }, { status: 403 }) };
+  }
+
+  const explicitRbac = options?.rbac;
+  const inferredResource = inferRbacResourceFromPath(request.nextUrl.pathname);
+  const inferredAction = inferRbacActionFromRequest(request);
+  const resource = explicitRbac?.resource ?? inferredResource;
+  const action = explicitRbac?.action ?? inferredAction;
+  if (resource && action) {
+    const r = canRole({ role: user.role, resource, action });
+    if (!r.allowed) {
+      return { error: NextResponse.json({ message: "Acces refuse (RBAC)" }, { status: 403 }) };
+    }
   }
 
   if (options?.agenceId) {
@@ -168,7 +218,7 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   if (moduleKey && !hasModuleAuthorization(user.modulesAutorises, moduleKey)) {
     // Le module ADMIN agit comme surcouche d'administration transverse.
     // Un compte admin ne doit pas être bloqué sur les modules métiers (ex: CONTRATS/DOSSIERS).
-      return { error: NextResponse.json({ message: "Module non autorisé" }, { status: 403 }) };
+    return { error: NextResponse.json({ message: "Module non autorisé" }, { status: 403 }) };
   }
 
   if (

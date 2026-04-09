@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { conflict, forbidden, notFound, serverError } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAgrementsIndexes, transitionAgrement } from "@/lib/lonaci/agrements";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -13,13 +15,23 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const rbacAction =
+    parsed.data.target === "CONTROLE"
+      ? "VALIDATE_N1"
+      : parsed.data.target === "TRANSMIS"
+        ? "VALIDATE_N2"
+        : "FINALIZE";
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    rbac: { resource: "AGREMENTS", action: rbacAction },
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
+
   await ensureAgrementsIndexes();
   try {
     await transitionAgrement({
@@ -32,15 +44,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "AGREMENT_NOT_FOUND") {
-      return NextResponse.json({ message: "Agrement introuvable." }, { status: 404 });
+      return notFound("Agrement introuvable.", "AGREMENT_NOT_FOUND");
     }
     if (code === "FORBIDDEN_TRANSITION") {
-      return NextResponse.json({ message: "Transition interdite pour votre role." }, { status: 403 });
+      return forbidden("Transition interdite pour votre role.", "FORBIDDEN_TRANSITION");
     }
     if (code === "INVALID_TRANSITION") {
-      return NextResponse.json({ message: "Transition invalide." }, { status: 409 });
+      return conflict("Transition invalide.", "INVALID_TRANSITION");
     }
-    return NextResponse.json({ message: "Transition impossible." }, { status: 500 });
+    return serverError("Transition impossible.", "AGREMENT_TRANSITION_FAILED");
   }
 }
 

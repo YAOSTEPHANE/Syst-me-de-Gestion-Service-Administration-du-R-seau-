@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MongoBulkWriteError } from "mongodb";
+import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -256,7 +259,35 @@ function validateAndNormalizeImportRow(
   return { row: normalized };
 }
 
+const importMetaSchema = z
+  .object({
+    collection: z
+      .string()
+      .trim()
+      .min(1, "Collection manquante")
+      .regex(/^[a-zA-Z0-9_-]+$/, "Nom de collection invalide"),
+    mode: z.enum(["insert", "upsert"]).default("insert"),
+    upsertBy: z.string().trim().optional(),
+    agenceId: z.string().trim().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "upsert" && !data.upsertBy) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["upsertBy"],
+        message: "Champ upsert requis en mode upsert",
+      });
+    }
+  });
+
 export async function POST(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "admin-import-data",
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const auth = await requireApiAuth(request, {
     roles: ["CHEF_SERVICE"],
   });
@@ -266,30 +297,27 @@ export async function POST(request: NextRequest) {
 
   const formData = await request.formData().catch(() => null);
   if (!formData) {
-    return NextResponse.json({ message: "Requête invalide" }, { status: 400 });
+    return badRequest("Requête invalide", "INVALID_REQUEST");
   }
 
   const file = formData.get("file");
-  const collection = String(formData.get("collection") ?? "").trim();
-  const modeRaw = String(formData.get("mode") ?? "insert").trim().toLowerCase();
-  const upsertByRaw = String(formData.get("upsertBy") ?? "").trim();
-  const agenceIdRaw = String(formData.get("agenceId") ?? "").trim();
+  const metaParsed = importMetaSchema.safeParse({
+    collection: formData.get("collection"),
+    mode: String(formData.get("mode") ?? "insert").trim().toLowerCase(),
+    upsertBy: formData.get("upsertBy"),
+    agenceId: formData.get("agenceId"),
+  });
 
   if (!(file instanceof File)) {
-    return NextResponse.json({ message: "Fichier manquant" }, { status: 400 });
+    return badRequest("Fichier manquant", "MISSING_FILE");
   }
-  if (!collection) {
-    return NextResponse.json({ message: "Collection manquante" }, { status: 400 });
+  if (!metaParsed.success) {
+    return zodBadRequest(metaParsed.error, "Parametres invalides");
   }
-  if (!/^[a-zA-Z0-9_-]+$/.test(collection)) {
-    return NextResponse.json({ message: "Nom de collection invalide" }, { status: 400 });
-  }
-  if (modeRaw !== "insert" && modeRaw !== "upsert") {
-    return NextResponse.json({ message: "Mode invalide (insert ou upsert)" }, { status: 400 });
-  }
-  if (modeRaw === "upsert" && !upsertByRaw) {
-    return NextResponse.json({ message: "Champ upsert requis en mode upsert" }, { status: 400 });
-  }
+  const { collection } = metaParsed.data;
+  const modeRaw = metaParsed.data.mode;
+  const upsertByRaw = metaParsed.data.upsertBy ?? "";
+  const agenceIdRaw = metaParsed.data.agenceId ?? "";
 
   const text = await file.text();
   let rows: Record<string, unknown>[] = [];
@@ -297,7 +325,7 @@ export async function POST(request: NextRequest) {
     rows = parseFromFile(file.name, text);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Fichier invalide";
-    return NextResponse.json({ message }, { status: 400 });
+    return badRequest(message, "INVALID_FILE");
   }
 
   if (rows.length === 0) {
@@ -321,19 +349,15 @@ export async function POST(request: NextRequest) {
   });
   rows = validRows;
   if (rows.length === 0) {
-    return NextResponse.json(
-      {
-        message: "Aucune ligne valide à importer",
-        mode: modeRaw,
-        collection,
-        inserted: 0,
-        upserted: 0,
-        modified: 0,
-        skippedInvalidRows: invalidRows.length,
-        invalidRows: invalidRows.slice(0, 25),
-      },
-      { status: 400 },
-    );
+    return badRequest("Aucune ligne valide à importer", "NO_VALID_ROWS", {
+      mode: modeRaw,
+      collection,
+      inserted: 0,
+      upserted: 0,
+      modified: 0,
+      skippedInvalidRows: invalidRows.length,
+      invalidRows: invalidRows.slice(0, 25),
+    });
   }
 
   const db = await getDatabase();
@@ -474,10 +498,7 @@ export async function POST(request: NextRequest) {
   for (const row of rows) {
     const keyValue = row[upsertKey];
     if (keyValue === undefined || keyValue === null || keyValue === "") {
-      return NextResponse.json(
-        { message: `Champ "${upsertKey}" manquant sur une ligne` },
-        { status: 400 },
-      );
+      return badRequest(`Champ "${upsertKey}" manquant sur une ligne`, "UPSERT_KEY_MISSING");
     }
     const updateData: Record<string, unknown> = { ...row, ...agencePatch, updatedAt: now };
     const res = await db.collection(collection).updateOne(

@@ -7,6 +7,7 @@ import { requireApiAuth } from "@/lib/auth/guards";
 const schema = z.object({
   period: z.enum(["daily", "weekly", "monthly"]).default("daily"),
   format: z.enum(["csv", "json"]).default("csv"),
+  agenceId: z.string().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -20,7 +21,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const summary = await buildReportSummary(parsed.data.period as ReportPeriod);
+  const summary = await buildReportSummary(parsed.data.period as ReportPeriod, parsed.data.agenceId);
   if (parsed.data.format === "json") {
     return NextResponse.json(summary, { status: 200 });
   }
