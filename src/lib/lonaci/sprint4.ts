@@ -184,16 +184,39 @@ export async function returnCautionForCorrection(input: {
   });
 }
 
-export async function listCautionAlertsJ10() {
+export async function listCautionAlertsJ10(agenceId?: string | null) {
   const thr = await getResolvedAlertThresholds();
   const db = await getDatabase();
   const today = new Date();
   const threshold = new Date(today);
   threshold.setDate(today.getDate() - thr.cautionOverdueDays);
-  const rows = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).find({
+  let scopedContratIds: string[] | null = null;
+  if (agenceId?.trim()) {
+    const concessionnaires = await db
+      .collection<{ _id: string }>("concessionnaires")
+      .find({ deletedAt: null, agenceId: agenceId.trim() }, { projection: { _id: 1 } })
+      .toArray();
+    const concessionnaireIds = concessionnaires.map((r) => String(r._id));
+    if (concessionnaireIds.length === 0) {
+      scopedContratIds = [];
+    } else {
+      const contrats = await db
+        .collection<{ _id: string }>("contrats")
+        .find({ deletedAt: null, concessionnaireId: { $in: concessionnaireIds } }, { projection: { _id: 1 } })
+        .toArray();
+      scopedContratIds = contrats.map((r) => String(r._id));
+    }
+  }
+  const cautionFilter: Record<string, unknown> = {
     status: "EN_ATTENTE",
     dueDate: { $lte: threshold },
     deletedAt: null,
+  };
+  if (scopedContratIds) {
+    cautionFilter.contratId = { $in: scopedContratIds.length ? scopedContratIds : ["__none__"] };
+  }
+  const rows = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).find({
+    ...cautionFilter,
   }).toArray();
   return rows.map((row) => ({
     id: row._id.toHexString(),

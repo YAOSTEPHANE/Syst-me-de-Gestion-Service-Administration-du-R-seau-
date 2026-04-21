@@ -52,6 +52,7 @@ body.lonaci-db-no-scroll {
   top: 0;
   height: 100vh;
   overflow-y: auto;
+  transition: width 0.2s ease, padding 0.2s ease;
 }
 
 .lonaci-db-sidebar-brand {
@@ -64,6 +65,46 @@ body.lonaci-db-no-scroll {
   display: flex;
   align-items: center;
   gap: 9px;
+  position: relative;
+  padding-right: 38px;
+}
+
+.lonaci-db-sidebar-toggle {
+  width: 30px;
+  height: 30px;
+  border: 1px solid #f59e0b;
+  border-radius: 8px;
+  background: #fffbeb;
+  color: #b45309;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 2;
+  box-shadow: 0 2px 8px rgba(245, 158, 11, 0.2);
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.lonaci-db-sidebar-toggle:hover {
+  border-color: #d97706;
+  background: #fef3c7;
+  color: #92400e;
+  box-shadow: 0 4px 12px rgba(217, 119, 6, 0.28);
+  transform: translateY(calc(-50% - 1px));
+}
+
+.lonaci-db-sidebar-toggle:focus-visible {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
 }
 
 .lonaci-db-logo {
@@ -160,6 +201,7 @@ body.lonaci-db-no-scroll {
   font-size: 12.5px;
   color: #334155;
   text-decoration: none;
+  position: relative;
   transition:
     background 0.12s,
     color 0.12s;
@@ -285,6 +327,50 @@ body.lonaci-db-no-scroll {
   background: #f59e0b;
   margin-left: auto;
   flex-shrink: 0;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar {
+  width: 72px;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar-brand {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar .lonaci-db-logo-title {
+  display: none;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-section {
+  display: none;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-item {
+  justify-content: center;
+  gap: 0;
+  padding-left: 8px;
+  padding-right: 8px;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-label {
+  display: none;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-active-dot {
+  position: absolute;
+  right: 8px;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  margin-left: 0;
+  padding: 0 4px;
+  font-size: 9px;
 }
 
 .lonaci-db-mobile-menu-btn {
@@ -1627,6 +1713,10 @@ body.lonaci-db-no-scroll {
 
 @media (max-width: 768px) {
   .lonaci-db-sidebar {
+    display: none;
+  }
+
+  .lonaci-db-sidebar-toggle {
     display: none;
   }
 

@@ -449,7 +449,12 @@ export default function LonaciDashboardHome() {
               <div className="lonaci-db-pbr">
                 <div className="lonaci-db-pbf lonaci-db-pbf-blue lonaci-db-pbf-w-60" />
               </div>
-              <div className="lonaci-db-kpi-foot">Objectif : 20 / mois</div>
+              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
+                <span>Objectif : {kpi.contractsMonthlyTarget ?? 20} / mois</span>
+                <Link href="/contrats" className="lonaci-db-abtn lonaci-db-abtn-ghost">
+                  Ouvrir
+                </Link>
+              </div>
             </div>
 
             <div className="lonaci-db-kpi">
@@ -471,7 +476,12 @@ export default function LonaciDashboardHome() {
               <div className="lonaci-db-pbr">
                 <div className="lonaci-db-pbf lonaci-db-pbf-amber lonaci-db-pbf-w-30" />
               </div>
-              <div className="lonaci-db-kpi-foot">{kpi.daily.cautions.enAttente} en attente de validation</div>
+              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
+                <span>{kpi.daily.cautions.enAttente} en attente de validation</span>
+                <Link href="/cautions?tab=EN_ATTENTE" className="lonaci-db-abtn lonaci-db-abtn-ghost">
+                  Ouvrir
+                </Link>
+              </div>
             </div>
 
             <div className="lonaci-db-kpi">
@@ -491,10 +501,15 @@ export default function LonaciDashboardHome() {
               <div className="lonaci-db-pbr">
                 <div className="lonaci-db-pbf lonaci-db-pbf-green lonaci-db-pbf-w-50" />
               </div>
-              <div className="lonaci-db-kpi-foot">
-                {kpi.dossierValidation.pdvEnCoursRetard5j === 0
-                  ? "0 en retard"
-                  : `${kpi.dossierValidation.pdvEnCoursRetard5j} intégration(s) > ${pdvDays} j.`}
+              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
+                <span>
+                  {kpi.dossierValidation.pdvEnCoursRetard5j === 0
+                    ? "0 en retard"
+                    : `${kpi.dossierValidation.pdvEnCoursRetard5j} intégration(s) > ${pdvDays} j.`}
+                </span>
+                <Link href="/pdv-integrations?status=EN_TRAITEMENT" className="lonaci-db-abtn lonaci-db-abtn-ghost">
+                  Ouvrir
+                </Link>
               </div>
             </div>
 
@@ -516,7 +531,12 @@ export default function LonaciDashboardHome() {
               <div className="lonaci-db-pbr">
                 <div className="lonaci-db-pbf lonaci-db-pbf-violet lonaci-db-pbf-w-80" />
               </div>
-              <div className="lonaci-db-kpi-foot">Sur le réseau ({kpi.daily.concessionnaires.total ?? 0} PDV)</div>
+              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
+                <span>Sur le réseau ({kpi.daily.concessionnaires.total ?? 0} PDV)</span>
+                <Link href="/concessionnaires" className="lonaci-db-abtn lonaci-db-abtn-ghost">
+                  Ouvrir
+                </Link>
+              </div>
             </div>
           </div>
 
@@ -568,7 +588,7 @@ export default function LonaciDashboardHome() {
                   <div className="lonaci-db-alr-title lonaci-db-text-red-900">Cautions impayées J+{cautionDays}</div>
                   <div className="lonaci-db-alr-sub lonaci-db-text-red-700">{kpi.cautionsJ10} dossier(s)</div>
                 </div>
-                <Link href="/cautions" className="lonaci-db-abtn lonaci-db-abtn-red lonaci-db-alr-actions">
+                <Link href="/cautions?tab=J10_OVERDUE" className="lonaci-db-abtn lonaci-db-abtn-red lonaci-db-alr-actions">
                   Voir
                 </Link>
               </div>
@@ -580,7 +600,7 @@ export default function LonaciDashboardHome() {
                     {kpi.successionStaleItems[0]?.reference ?? "Aucune"} · {kpi.successionStale} cas
                   </div>
                 </div>
-                <Link href="/succession" className="lonaci-db-abtn lonaci-db-abtn-red lonaci-db-alr-actions">
+                <Link href="/succession?status=OUVERT&staleOnly=1" className="lonaci-db-abtn lonaci-db-abtn-red lonaci-db-alr-actions">
                   Voir
                 </Link>
               </div>
@@ -592,7 +612,7 @@ export default function LonaciDashboardHome() {
                     {kpi.dossierValidation.contratSoumisRetard48h} en attente validation N1
                   </div>
                 </div>
-                <Link href="/contrats" className="lonaci-db-abtn lonaci-db-abtn-ghost lonaci-db-alr-actions">
+                <Link href="/dossiers?status=SOUMIS" className="lonaci-db-abtn lonaci-db-abtn-ghost lonaci-db-alr-actions">
                   Voir
                 </Link>
               </div>
@@ -607,7 +627,7 @@ export default function LonaciDashboardHome() {
                       {kpi.dossierValidation.pdvEnCoursRetard5j} demande(s) en traitement
                     </div>
                   </div>
-                  <Link href="/pdv-integrations" className="lonaci-db-abtn lonaci-db-abtn-ghost lonaci-db-alr-actions">
+                  <Link href="/pdv-integrations?status=EN_TRAITEMENT" className="lonaci-db-abtn lonaci-db-abtn-ghost lonaci-db-alr-actions">
                     Voir
                   </Link>
                 </div>
@@ -710,10 +730,32 @@ export default function LonaciDashboardHome() {
                   <tbody>
                     {agencesTableRows.map((a, i) => (
                       <tr key={a.agenceId ?? `ag-${i}`}>
-                        <td>{a.agenceLabel}</td>
-                        <td className="lonaci-db-td-num">{a.contrats30j}</td>
+                        <td>
+                          {a.agenceId ? (
+                            <Link href={`/concessionnaires?agenceId=${encodeURIComponent(a.agenceId)}`}>
+                              {a.agenceLabel}
+                            </Link>
+                          ) : (
+                            a.agenceLabel
+                          )}
+                        </td>
+                        <td className="lonaci-db-td-num">
+                          {a.agenceId ? (
+                            <Link href={`/contrats?agenceId=${encodeURIComponent(a.agenceId)}`}>{a.contrats30j}</Link>
+                          ) : (
+                            a.contrats30j
+                          )}
+                        </td>
                         <td className="lonaci-db-td-num">{a.cautions30j}</td>
-                        <td className="lonaci-db-td-num">{a.integrations30j}</td>
+                        <td className="lonaci-db-td-num">
+                          {a.agenceId ? (
+                            <Link href={`/pdv-integrations?agenceId=${encodeURIComponent(a.agenceId)}`}>
+                              {a.integrations30j}
+                            </Link>
+                          ) : (
+                            a.integrations30j
+                          )}
+                        </td>
                         <td className="lonaci-db-td-num">
                           <strong>{a.total30j}</strong>
                         </td>
@@ -746,8 +788,14 @@ export default function LonaciDashboardHome() {
                   <tbody>
                     {produitVol.map((p, i) => (
                       <tr key={p.produitCode || `pr-${i}`}>
-                        <td>{p.produitCode}</td>
-                        <td className="lonaci-db-td-num">{p.current30d}</td>
+                        <td>
+                          <Link href={`/contrats?produitCode=${encodeURIComponent(p.produitCode)}`}>
+                            {p.produitCode}
+                          </Link>
+                        </td>
+                        <td className="lonaci-db-td-num">
+                          <Link href={`/contrats?produitCode=${encodeURIComponent(p.produitCode)}`}>{p.current30d}</Link>
+                        </td>
                         <td className="lonaci-db-td-num">{p.previous30d}</td>
                         <td className={`lonaci-db-td-num ${trendClass(p.trendPct)}`}>{formatTrendPct(p.trendPct)}</td>
                       </tr>
@@ -785,7 +833,7 @@ export default function LonaciDashboardHome() {
                     <span className="lonaci-db-badge lonaci-db-badge-red">{kpi.dossierValidation.contratSoumisRetard48h}</span>
                   </div>
                   <div className="lonaci-db-pending-action">
-                    <Link href="/dossiers" className="lonaci-db-abtn lonaci-db-abtn-blue">
+                    <Link href="/dossiers?status=SOUMIS" className="lonaci-db-abtn lonaci-db-abtn-blue">
                       Valider N1
                     </Link>
                   </div>
@@ -804,7 +852,7 @@ export default function LonaciDashboardHome() {
                     <span className="lonaci-db-badge lonaci-db-badge-red">{kpi.dossierValidation.cautionsJ10}</span>
                   </div>
                   <div className="lonaci-db-pending-action">
-                    <Link href="/cautions" className="lonaci-db-abtn lonaci-db-abtn-red">
+                    <Link href="/cautions?tab=J10_OVERDUE" className="lonaci-db-abtn lonaci-db-abtn-red">
                       Urgent
                     </Link>
                   </div>
@@ -820,10 +868,16 @@ export default function LonaciDashboardHome() {
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En retard</span>
-                    <span className="lonaci-db-muted">—</span>
+                    {kpi.dossierValidation.pdvEnCoursRetard5j > 0 ? (
+                      <span className="lonaci-db-badge lonaci-db-badge-red">
+                        {kpi.dossierValidation.pdvEnCoursRetard5j}
+                      </span>
+                    ) : (
+                      <span className="lonaci-db-muted">—</span>
+                    )}
                   </div>
                   <div className="lonaci-db-pending-action">
-                    <Link href="/pdv-integrations" className="lonaci-db-abtn lonaci-db-abtn-green">
+                    <Link href="/pdv-integrations?status=EN_TRAITEMENT" className="lonaci-db-abtn lonaci-db-abtn-green">
                       Finaliser
                     </Link>
                   </div>
@@ -865,7 +919,7 @@ export default function LonaciDashboardHome() {
                     <span className="lonaci-db-badge lonaci-db-badge-red">{kpi.dossierValidation.successionStale30j}</span>
                   </div>
                   <div className="lonaci-db-pending-action">
-                    <Link href="/succession" className="lonaci-db-abtn lonaci-db-abtn-red">
+                    <Link href="/succession?status=OUVERT&staleOnly=1" className="lonaci-db-abtn lonaci-db-abtn-red">
                       Décision
                     </Link>
                   </div>

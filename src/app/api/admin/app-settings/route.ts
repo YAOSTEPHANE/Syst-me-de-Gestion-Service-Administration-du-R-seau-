@@ -13,6 +13,7 @@ const patchSchema = z
     alertPdvIntegrationMaxDays: z.number().int().min(1).max(90).optional(),
     alertAgrementStaleDays: z.number().int().min(1).max(90).optional(),
     alertSuccessionStaleDays: z.number().int().min(1).max(365).optional(),
+    dashboardContractsMonthlyTarget: z.number().int().min(1).max(10000).optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Aucune modification" });
 
@@ -30,6 +31,7 @@ export async function GET(request: NextRequest) {
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
+      dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },
@@ -56,6 +58,7 @@ export async function PATCH(request: NextRequest) {
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
+      dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },

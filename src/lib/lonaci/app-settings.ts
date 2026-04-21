@@ -17,6 +17,8 @@ export interface AppSettingsDocument {
   alertAgrementStaleDays: number;
   /** Succession ouverte sans activité depuis N jours — défaut 30 */
   alertSuccessionStaleDays: number;
+  /** Objectif mensuel de contrats signés pour le dashboard — défaut 20 */
+  dashboardContractsMonthlyTarget: number;
   updatedAt: Date;
   updatedByUserId: string;
 }
@@ -31,6 +33,7 @@ const DEFAULTS: Omit<AppSettingsDocument, "updatedAt" | "updatedByUserId"> = {
   alertPdvIntegrationMaxDays: 5,
   alertAgrementStaleDays: 7,
   alertSuccessionStaleDays: 30,
+  dashboardContractsMonthlyTarget: 20,
 };
 
 export async function ensureAppSettingsIndexes() {
@@ -71,6 +74,10 @@ export async function getAppSettings(): Promise<AppSettingsDocument> {
       typeof row.alertSuccessionStaleDays === "number" && row.alertSuccessionStaleDays > 0
         ? row.alertSuccessionStaleDays
         : DEFAULTS.alertSuccessionStaleDays,
+    dashboardContractsMonthlyTarget:
+      typeof row.dashboardContractsMonthlyTarget === "number" && row.dashboardContractsMonthlyTarget > 0
+        ? row.dashboardContractsMonthlyTarget
+        : DEFAULTS.dashboardContractsMonthlyTarget,
     updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(),
     updatedByUserId: row.updatedByUserId ?? "",
   };
@@ -84,6 +91,7 @@ export async function updateAppSettings(
     alertPdvIntegrationMaxDays?: number;
     alertAgrementStaleDays?: number;
     alertSuccessionStaleDays?: number;
+    dashboardContractsMonthlyTarget?: number;
   },
   actor: UserDocument,
 ): Promise<AppSettingsDocument> {
@@ -110,6 +118,9 @@ export async function updateAppSettings(
   }
   if (patch.alertSuccessionStaleDays !== undefined) {
     $set.alertSuccessionStaleDays = patch.alertSuccessionStaleDays;
+  }
+  if (patch.dashboardContractsMonthlyTarget !== undefined) {
+    $set.dashboardContractsMonthlyTarget = patch.dashboardContractsMonthlyTarget;
   }
   await db.collection<Stored>(COLLECTION).updateOne(
     { _id: GLOBAL_ID },

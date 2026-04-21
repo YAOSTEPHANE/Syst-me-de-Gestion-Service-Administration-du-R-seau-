@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Analytics } from "@vercel/analytics/react";
 import { Geist, Geist_Mono } from "next/font/google";
+import OfflineSupportHost from "@/components/system/offline-support-host";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,6 +17,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "LONACI",
   description: "Base Next.js et MongoDB",
+  manifest: "/manifest.webmanifest",
+  applicationName: "LONACI",
 };
 
 export default function RootLayout({
@@ -29,6 +32,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <OfflineSupportHost />
         {children}
         <Analytics />
       </body>

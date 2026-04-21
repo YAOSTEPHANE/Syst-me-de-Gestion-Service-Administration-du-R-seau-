@@ -8,8 +8,32 @@ export interface ActivityDay {
   integrations: number;
 }
 
-export async function getActivityLast7Days(): Promise<ActivityDay[]> {
+async function getScopedConcessionnaireIds(agenceId?: string | null): Promise<string[] | null> {
+  const scopedAgenceId = agenceId?.trim();
+  if (!scopedAgenceId) return null;
   const db = await getDatabase();
+  const rows = await db
+    .collection<{ _id: unknown }>("concessionnaires")
+    .find({ deletedAt: null, agenceId: scopedAgenceId }, { projection: { _id: 1 } })
+    .toArray();
+  return rows.map((r) => String(r._id));
+}
+
+export async function getActivityLast7Days(agenceId?: string | null): Promise<ActivityDay[]> {
+  const db = await getDatabase();
+  const scopedConcessionnaireIds = await getScopedConcessionnaireIds(agenceId);
+  let scopedContratIds: string[] | null = null;
+  if (scopedConcessionnaireIds) {
+    if (scopedConcessionnaireIds.length === 0) {
+      scopedContratIds = [];
+    } else {
+      const contrats = await db
+        .collection<{ _id: unknown }>("contrats")
+        .find({ deletedAt: null, concessionnaireId: { $in: scopedConcessionnaireIds } }, { projection: { _id: 1 } })
+        .toArray();
+      scopedContratIds = contrats.map((r) => String(r._id));
+    }
+  }
   const days: { label: string; start: Date; end: Date }[] = [];
   for (let i = 6; i >= 0; i--) {
     const start = new Date();
@@ -27,14 +51,21 @@ export async function getActivityLast7Days(): Promise<ActivityDay[]> {
       db.collection("contrats").countDocuments({
         deletedAt: null,
         createdAt: { $gte: start, $lt: end },
+        ...(scopedConcessionnaireIds
+          ? { concessionnaireId: { $in: scopedConcessionnaireIds.length ? scopedConcessionnaireIds : ["__none__"] } }
+          : {}),
       }),
       db.collection("cautions").countDocuments({
         deletedAt: null,
         createdAt: { $gte: start, $lt: end },
+        ...(scopedContratIds
+          ? { contratId: { $in: scopedContratIds.length ? scopedContratIds : ["__none__"] } }
+          : {}),
       }),
       db.collection("pdv_integrations").countDocuments({
         deletedAt: null,
         createdAt: { $gte: start, $lt: end },
+        ...(agenceId?.trim() ? { agenceId: agenceId.trim() } : {}),
       }),
     ]);
     out.push({ label, contracts, cautions, integrations });
@@ -47,12 +78,17 @@ export interface ProduitSlice {
   count: number;
 }
 
-export async function getContratsActifsByProduit(topN = 5): Promise<ProduitSlice[]> {
+export async function getContratsActifsByProduit(topN = 5, agenceId?: string | null): Promise<ProduitSlice[]> {
   const db = await getDatabase();
+  const scopedConcessionnaireIds = await getScopedConcessionnaireIds(agenceId);
+  const contratFilter: Record<string, unknown> = { deletedAt: null, status: "ACTIF" };
+  if (scopedConcessionnaireIds) {
+    contratFilter.concessionnaireId = { $in: scopedConcessionnaireIds.length ? scopedConcessionnaireIds : ["__none__"] };
+  }
   const rows = await db
     .collection("contrats")
     .aggregate<{ _id: string; c: number }>([
-      { $match: { deletedAt: null, status: "ACTIF" } },
+      { $match: contratFilter },
       { $group: { _id: "$produitCode", c: { $sum: 1 } } },
       { $sort: { c: -1 } },
     ])
@@ -152,12 +188,27 @@ export async function getDossierValidationSnapshot(
   successionOpen: number,
   successionStale: number,
   pdvNonFinalise: number,
+  agenceId?: string | null,
 ): Promise<DossierValidationSnapshot> {
   const db = await getDatabase();
   const thr = await getResolvedAlertThresholds();
-  const filter = { deletedAt: null, type: "CONTRAT_ACTUALISATION" as const };
+  const filter: Record<string, unknown> = { deletedAt: null, type: "CONTRAT_ACTUALISATION" as const };
+  if (agenceId?.trim()) filter.agenceId = agenceId.trim();
   const dossierIdleBefore = new Date(Date.now() - thr.dossierIdleMs);
   const pdvStaleBefore = new Date(Date.now() - thr.pdvIntegrationMaxMs);
+  const scopedConcessionnaireIds = await getScopedConcessionnaireIds(agenceId);
+  let scopedContratIds: string[] | null = null;
+  if (scopedConcessionnaireIds) {
+    if (scopedConcessionnaireIds.length === 0) {
+      scopedContratIds = [];
+    } else {
+      const contrats = await db
+        .collection<{ _id: unknown }>("contrats")
+        .find({ deletedAt: null, concessionnaireId: { $in: scopedConcessionnaireIds } }, { projection: { _id: 1 } })
+        .toArray();
+      scopedContratIds = contrats.map((r) => String(r._id));
+    }
+  }
 
   const [contratSoumis, contratSoumisRetard48h, cautionsEnAttente, pdvEnCoursRetard5j, agrementQueue] =
     await Promise.all([
@@ -167,11 +218,18 @@ export async function getDossierValidationSnapshot(
         status: "SOUMIS",
         updatedAt: { $lt: dossierIdleBefore },
       }),
-      db.collection("cautions").countDocuments({ deletedAt: null, status: "EN_ATTENTE" }),
+      db.collection("cautions").countDocuments({
+        deletedAt: null,
+        status: "EN_ATTENTE",
+        ...(scopedContratIds
+          ? { contratId: { $in: scopedContratIds.length ? scopedContratIds : ["__none__"] } }
+          : {}),
+      }),
       db.collection("pdv_integrations").countDocuments({
         deletedAt: null,
         status: { $in: ["BROUILLON", "EN_COURS"] },
         updatedAt: { $lt: pdvStaleBefore },
+        ...(agenceId?.trim() ? { agenceId: agenceId.trim() } : {}),
       }),
       getAgrementRegistryQueueCounts(thr.agrementStaleDays),
     ]);
@@ -190,12 +248,14 @@ export async function getDossierValidationSnapshot(
   };
 }
 
-export async function getBancarisationSnapshot(): Promise<BancarisationSnapshot> {
+export async function getBancarisationSnapshot(agenceId?: string | null): Promise<BancarisationSnapshot> {
   const db = await getDatabase();
+  const concFilter: Record<string, unknown> = { deletedAt: null };
+  if (agenceId?.trim()) concFilter.agenceId = agenceId.trim();
   const rows = await db
     .collection("concessionnaires")
     .aggregate<{ _id: string; c: number }>([
-      { $match: { deletedAt: null } },
+      { $match: concFilter },
       { $group: { _id: "$statutBancarisation", c: { $sum: 1 } } },
     ])
     .toArray();
@@ -333,9 +393,10 @@ export async function getAgenceTrendsLast30Days(topN = 8): Promise<AgenceTrendIt
 }
 
 /** Toutes les agences du référentiel avec volumes 30 j. (y compris à zéro), tri par code. */
-export async function getAllAgencesTrendsLast30Days(): Promise<AgenceTrendItem[]> {
+export async function getAllAgencesTrendsLast30Days(agenceId?: string | null): Promise<AgenceTrendItem[]> {
   const merged = await computeAgenceTrends30DaysMerged(true);
-  const list = [...merged.values()].filter((a) => a.agenceId !== null);
+  const scopedAgenceId = agenceId?.trim();
+  const list = [...merged.values()].filter((a) => a.agenceId !== null && (!scopedAgenceId || a.agenceId === scopedAgenceId));
   return list.sort((a, b) => {
     const ca = a.agenceCode ?? a.agenceLabel;
     const cb = b.agenceCode ?? b.agenceLabel;
@@ -343,8 +404,13 @@ export async function getAllAgencesTrendsLast30Days(): Promise<AgenceTrendItem[]
   });
 }
 
-export async function getTopConcessionnairesActifs(topN = 5): Promise<TopConcessionnaireItem[]> {
+export async function getTopConcessionnairesActifs(topN = 5, agenceId?: string | null): Promise<TopConcessionnaireItem[]> {
   const db = await getDatabase();
+  const scopedConcessionnaireIds = await getScopedConcessionnaireIds(agenceId);
+  const contratFilter: Record<string, unknown> = { deletedAt: null, status: "ACTIF" };
+  if (scopedConcessionnaireIds) {
+    contratFilter.concessionnaireId = { $in: scopedConcessionnaireIds.length ? scopedConcessionnaireIds : ["__none__"] };
+  }
   const rows = await db
     .collection("contrats")
     .aggregate<{
@@ -352,7 +418,7 @@ export async function getTopConcessionnairesActifs(topN = 5): Promise<TopConcess
       c: number;
       concessionnaire: { codePdv?: string; nomComplet?: string; raisonSociale?: string }[];
     }>([
-      { $match: { deletedAt: null, status: "ACTIF" } },
+      { $match: contratFilter },
       { $group: { _id: "$concessionnaireId", c: { $sum: 1 } } },
       { $sort: { c: -1 } },
       { $limit: topN },
@@ -378,13 +444,15 @@ export async function getTopConcessionnairesActifs(topN = 5): Promise<TopConcess
   });
 }
 
-export async function getDossierDelaySnapshotLast30Days(): Promise<DossierDelaySnapshot> {
+export async function getDossierDelaySnapshotLast30Days(agenceId?: string | null): Promise<DossierDelaySnapshot> {
   const db = await getDatabase();
   const from = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const dossierFilter: Record<string, unknown> = { deletedAt: null, createdAt: { $gte: from } };
+  if (agenceId?.trim()) dossierFilter.agenceId = agenceId.trim();
   const rows = await db
     .collection("dossiers")
     .find(
-      { deletedAt: null, createdAt: { $gte: from } },
+      dossierFilter,
       { projection: { createdAt: 1, history: 1 } },
     )
     .toArray();
@@ -427,25 +495,29 @@ export async function getDossierDelaySnapshotLast30Days(): Promise<DossierDelayS
   };
 }
 
-export async function getProduitVolumesLast30Days(topN = 8): Promise<ProduitVolume30jItem[]> {
+export async function getProduitVolumesLast30Days(topN = 8, agenceId?: string | null): Promise<ProduitVolume30jItem[]> {
   const db = await getDatabase();
   const now = Date.now();
   const currentFrom = new Date(now - 30 * 24 * 60 * 60 * 1000);
   const previousFrom = new Date(now - 60 * 24 * 60 * 60 * 1000);
   const previousTo = currentFrom;
+  const scopedConcessionnaireIds = await getScopedConcessionnaireIds(agenceId);
+  const scopeMatch = scopedConcessionnaireIds
+    ? { concessionnaireId: { $in: scopedConcessionnaireIds.length ? scopedConcessionnaireIds : ["__none__"] } }
+    : {};
 
   const [currentRows, previousRows] = await Promise.all([
     db
       .collection("contrats")
       .aggregate<{ _id: string; c: number }>([
-        { $match: { deletedAt: null, createdAt: { $gte: currentFrom } } },
+        { $match: { deletedAt: null, createdAt: { $gte: currentFrom }, ...scopeMatch } },
         { $group: { _id: "$produitCode", c: { $sum: 1 } } },
       ])
       .toArray(),
     db
       .collection("contrats")
       .aggregate<{ _id: string; c: number }>([
-        { $match: { deletedAt: null, createdAt: { $gte: previousFrom, $lt: previousTo } } },
+        { $match: { deletedAt: null, createdAt: { $gte: previousFrom, $lt: previousTo }, ...scopeMatch } },
         { $group: { _id: "$produitCode", c: { $sum: 1 } } },
       ])
       .toArray(),

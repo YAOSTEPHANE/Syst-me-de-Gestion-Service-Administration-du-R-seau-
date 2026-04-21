@@ -36,6 +36,10 @@ interface CautionCounters {
 
 type CautionListTab = "J10_OVERDUE" | "EN_ATTENTE" | "VALIDATED_THIS_MONTH";
 
+function isCautionListTab(value: string): value is CautionListTab {
+  return value === "J10_OVERDUE" || value === "EN_ATTENTE" || value === "VALIDATED_THIS_MONTH";
+}
+
 interface CautionListItem {
   id: string;
   contratId: string;
@@ -232,6 +236,7 @@ async function fetchCautionCounters(): Promise<CautionCounters> {
 export default function CautionsPanel() {
   const searchParams = useSearchParams();
   const contratPrefill = searchParams.get("contratId") ?? "";
+  const initialTabFromUrl = searchParams.get("tab")?.trim() ?? "";
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -380,9 +385,14 @@ export default function CautionsPanel() {
       void load();
     };
     window.addEventListener("lonaci:data-imported", onDataImported);
-    void load();
+    if (isCautionListTab(initialTabFromUrl)) {
+      setTab(initialTabFromUrl);
+      void load(initialTabFromUrl);
+    } else {
+      void load();
+    }
     return () => window.removeEventListener("lonaci:data-imported", onDataImported);
-  }, [load]);
+  }, [initialTabFromUrl, load]);
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();

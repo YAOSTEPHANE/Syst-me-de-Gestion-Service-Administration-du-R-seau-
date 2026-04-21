@@ -43,6 +43,7 @@ export interface LonaciKpiAlertThresholds {
 
 export interface LonaciKpiPayload {
   alertThresholds?: LonaciKpiAlertThresholds;
+  contractsMonthlyTarget?: number;
   weekly: { contrats: { createdInWindow: number } };
   monthly: { contrats: { createdInWindow: number } };
   daily: {

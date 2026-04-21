@@ -25,6 +25,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { kpi } = useLonaciKpi();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [agenceKey, setAgenceKey] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [meUser, setMeUser] = useState<{ role: string; prenom: string; nom: string } | null>(null);
@@ -35,6 +36,40 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   useEffect(() => {
     setMobileMenuOpen(false);
   }, [pathname]);
+
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("lonaci-sidebar-collapsed");
+      if (stored === "1") {
+        setSidebarCollapsed(true);
+      }
+    } catch {
+      // Ignorer les erreurs de lecture localStorage en environnement restreint.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("lonaci-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
+    } catch {
+      // Ignorer les erreurs d'écriture localStorage en environnement restreint.
+    }
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const isShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b";
+      if (!isShortcut) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
+        return;
+      }
+      event.preventDefault();
+      setSidebarCollapsed((value) => !value);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -192,7 +227,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const roleLabel = getLonaciRoleLabel(meUser?.role);
 
   return (
-    <div className="lonaci-db-app">
+    <div className={`lonaci-db-app ${sidebarCollapsed ? "lonaci-db-sidebar-collapsed" : ""}`}>
       <div className="lonaci-db-layout">
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
@@ -201,26 +236,38 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               <div>
                 <div className="lonaci-db-logo-title">Système de Gestion</div>
               </div>
+              <button
+                type="button"
+                className="lonaci-db-sidebar-toggle"
+                aria-label={sidebarCollapsed ? "Déplier le menu" : "Replier le menu"}
+                title={`${sidebarCollapsed ? "Déplier" : "Replier"} le menu (Ctrl/Cmd+B)`}
+                onClick={() => setSidebarCollapsed((value) => !value)}
+              >
+                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
+                  <path d={sidebarCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} />
+                </svg>
+              </button>
             </div>
           </div>
 
           <nav className="lonaci-db-nav">
             {navItems.map(({ item, showSection, active, badgeCount, iconColor }) => (
               <div key={`${item.href}-${item.label}`}>
-                {showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
+                {!sidebarCollapsed && showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
                 {item.disabled ? (
-                  <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled">
+                  <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled" title={sidebarCollapsed ? item.label : undefined}>
                     <LonaciNavIcon label={item.label} />
-                    <span>{item.label}</span>
+                    <span className="lonaci-db-nav-label">{item.label}</span>
                   </span>
                 ) : (
                   <Link
                     href={item.href}
                     className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
                     style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
+                    title={sidebarCollapsed ? item.label : undefined}
                   >
                     <LonaciNavIcon label={item.label} />
-                    <span>{item.label}</span>
+                    <span className="lonaci-db-nav-label">{item.label}</span>
                     {active && item.href === "/dashboard" ? <span className="lonaci-db-nav-active-dot" /> : null}
                     {badgeCount && badgeCount > 0 && item.badge ? (
                       <span className={`lonaci-db-nav-badge ${lonaciNavBadgeClass(item.badge)}`}>{badgeCount}</span>

@@ -16,6 +16,19 @@ import { ensureSuccessionIndexes, listSuccessionStaleAlerts } from "@/lib/lonaci
 import { listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
+function resolveDashboardScopeAgenceId(user: {
+  role: string;
+  agenceId?: string | null;
+  agencesAutorisees?: string[];
+}) {
+  if (user.role === "CHEF_SERVICE") return null;
+  if (user.agenceId?.trim()) return user.agenceId.trim();
+  if (Array.isArray(user.agencesAutorisees) && user.agencesAutorisees.length > 0) {
+    return user.agencesAutorisees[0]?.trim() || null;
+  }
+  return null;
+}
+
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -25,6 +38,7 @@ export async function GET(request: NextRequest) {
   await ensureSuccessionIndexes();
   await ensureAppSettingsIndexes();
   const appSettings = await getAppSettings();
+  const scopeAgenceId = resolveDashboardScopeAgenceId(auth.user);
   const [
     daily,
     weekly,
@@ -39,24 +53,24 @@ export async function GET(request: NextRequest) {
     dossierDelays30j,
     produitVolumes30j,
   ] = await Promise.all([
-      buildReportSummary("daily"),
-      buildReportSummary("weekly"),
-      buildReportSummary("monthly"),
+      buildReportSummary("daily", scopeAgenceId),
+      buildReportSummary("weekly", scopeAgenceId),
+      buildReportSummary("monthly", scopeAgenceId),
       auth.user.role === "ASSIST_CDS" || auth.user.role === "CHEF_SERVICE"
-        ? listCautionAlertsJ10()
+        ? listCautionAlertsJ10(scopeAgenceId)
         : Promise.resolve([]),
       auth.user.role === "CHEF_SECTION" ||
       auth.user.role === "ASSIST_CDS" ||
       auth.user.role === "CHEF_SERVICE"
-        ? listSuccessionStaleAlerts()
+        ? listSuccessionStaleAlerts(scopeAgenceId)
         : Promise.resolve([]),
-      getActivityLast7Days(),
-      getContratsActifsByProduit(5),
-      getBancarisationSnapshot(),
-      getAllAgencesTrendsLast30Days(),
-      getTopConcessionnairesActifs(5),
-      getDossierDelaySnapshotLast30Days(),
-      getProduitVolumesLast30Days(8),
+      getActivityLast7Days(scopeAgenceId),
+      getContratsActifsByProduit(5, scopeAgenceId),
+      getBancarisationSnapshot(scopeAgenceId),
+      getAllAgencesTrendsLast30Days(scopeAgenceId),
+      getTopConcessionnairesActifs(5, scopeAgenceId),
+      getDossierDelaySnapshotLast30Days(scopeAgenceId),
+      getProduitVolumesLast30Days(8, scopeAgenceId),
     ]);
 
   const cautionsJ10Count = cautionsJ10.length;
@@ -68,6 +82,7 @@ export async function GET(request: NextRequest) {
     daily.succession.ouverts,
     daily.succession.stale30j,
     daily.pdvIntegrations.nonFinalise,
+    scopeAgenceId,
   );
 
   return NextResponse.json(
@@ -79,6 +94,7 @@ export async function GET(request: NextRequest) {
         agrementStaleDays: appSettings.alertAgrementStaleDays,
         successionStaleDays: appSettings.alertSuccessionStaleDays,
       },
+      contractsMonthlyTarget: appSettings.dashboardContractsMonthlyTarget,
       daily,
       weekly,
       monthly,

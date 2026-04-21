@@ -1,5 +1,6 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -180,6 +181,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
 }
 
 export default function PdvIntegrationsPanel() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -214,6 +216,25 @@ export default function PdvIntegrationsPanel() {
   const [finalizingId, setFinalizingId] = useState<string | null>(null);
   const [finalizeModal, setFinalizeModal] = useState<PdvItem | null>(null);
   const [finalizeAck, setFinalizeAck] = useState(false);
+
+  useEffect(() => {
+    const agenceId = searchParams.get("agenceId")?.trim() ?? "";
+    const produitCode = searchParams.get("produitCode")?.trim() ?? "";
+    const statusRaw = searchParams.get("status")?.trim() ?? "";
+    const status = (
+      statusRaw === "DEMANDE_RECUE" ||
+      statusRaw === "EN_TRAITEMENT" ||
+      statusRaw === "INTEGRE_GPR" ||
+      statusRaw === "FINALISE"
+    )
+      ? statusRaw
+      : "";
+    if (agenceId) setFilterAgenceId(agenceId);
+    if (produitCode) setFilterProduit(produitCode);
+    if (status) setFilterStatus(status);
+    // Intentionnellement au montage uniquement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function load(nextPage = page) {
     setLoading(true);
@@ -874,6 +895,7 @@ export default function PdvIntegrationsPanel() {
                     ref={importFileInputRef}
                     type="file"
                     accept={getImportAcceptAttribute("PDV_INTEGRATIONS")}
+                    aria-label="Importer des intégrations PDV"
                     className="sr-only"
                     onChange={(e) => void onImportFileChange(e)}
                   />

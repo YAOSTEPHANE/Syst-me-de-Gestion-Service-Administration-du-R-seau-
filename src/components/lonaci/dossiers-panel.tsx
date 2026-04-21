@@ -210,6 +210,7 @@ function confirmMessage(action: TransitionAction): string | null {
 
 export default function DossiersPanel() {
   const searchParams = useSearchParams();
+  const statusFromUrl = searchParams.get("status")?.trim() ?? "";
   const [statusFilter, setStatusFilter] = useState<DossierStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -475,6 +476,19 @@ export default function DossiersPanel() {
       setSearch(referenceFilter);
     }
   }, [referenceFilter]);
+
+  useEffect(() => {
+    if (
+      statusFromUrl === "BROUILLON" ||
+      statusFromUrl === "SOUMIS" ||
+      statusFromUrl === "VALIDE_N1" ||
+      statusFromUrl === "VALIDE_N2" ||
+      statusFromUrl === "FINALISE" ||
+      statusFromUrl === "REJETE"
+    ) {
+      setStatusFilter(statusFromUrl);
+    }
+  }, [statusFromUrl]);
 
   useEffect(() => {
     setSelectedIds((prev) => prev.filter((id) => items.some((row) => row.id === id)));

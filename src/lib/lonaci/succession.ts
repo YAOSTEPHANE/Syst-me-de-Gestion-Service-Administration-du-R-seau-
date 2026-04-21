@@ -461,17 +461,21 @@ export async function listSuccessionCases(
   };
 }
 
-export async function listSuccessionStaleAlerts() {
+export async function listSuccessionStaleAlerts(agenceId?: string | null) {
   const db = await getDatabase();
   const thresholdDays = 30;
   const threshold = new Date(Date.now() - thresholdDays * 24 * 60 * 60 * 1000);
+  const filter: Record<string, unknown> = {
+    status: "OUVERT",
+    deletedAt: null,
+    updatedAt: { $lte: threshold },
+  };
+  if (agenceId?.trim()) {
+    filter.agenceId = agenceId.trim();
+  }
   const rows = await db
     .collection<StoredSuccession>(COLLECTION)
-    .find({
-      status: "OUVERT",
-      deletedAt: null,
-      updatedAt: { $lte: threshold },
-    })
+    .find(filter)
     .sort({ updatedAt: 1 })
     .limit(200)
     .toArray();

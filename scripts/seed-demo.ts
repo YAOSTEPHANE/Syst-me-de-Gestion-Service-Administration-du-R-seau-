@@ -23,6 +23,16 @@ function loadEnvFile(filePath: string, override = false) {
 }
 
 const DEMO_PREFIX = "PDV-DEMO-";
+const DEFAULT_DEMO_COUNT = 30;
+const MAX_DEMO_COUNT = 500;
+
+function parseDemoCount(): number {
+  const raw = process.env.SEED_DEMO_COUNT;
+  if (!raw) return DEFAULT_DEMO_COUNT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 5) return DEFAULT_DEMO_COUNT;
+  return Math.min(parsed, MAX_DEMO_COUNT);
+}
 
 async function resetDemoCollections(
   prisma: typeof import("../src/lib/prisma").prisma,
@@ -286,6 +296,27 @@ async function main() {
       gps: { lat: 6.8276, lng: -5.2893 },
     },
   ];
+
+  const targetCount = parseDemoCount();
+  for (let i = plan.length + 1; i <= targetCount; i += 1) {
+    const agenceId = i % 2 === 0 ? abjId : yamId;
+    const isActive = i % 5 !== 0;
+    const status: ConcSeed["statut"] = isActive ? "ACTIF" : "SUSPENDU";
+    const banca: ConcSeed["banca"] = i % 3 === 0 ? "BANCARISE" : i % 3 === 1 ? "EN_COURS" : "NON_BANCARISE";
+    const produits = i % 2 === 0 ? ["LOTO"] : ["PMU"];
+    plan.push({
+      codePdv: `${DEMO_PREFIX}${String(i).padStart(6, "0")}`,
+      nom: `Concessionnaire Demo ${String(i).padStart(3, "0")}`,
+      statut: status,
+      banca,
+      agenceId,
+      produits,
+      gps: {
+        lat: agenceId === abjId ? 5.3 + (i % 20) * 0.005 : 6.8 + (i % 20) * 0.003,
+        lng: agenceId === abjId ? -4.05 + (i % 20) * 0.004 : -5.35 + (i % 20) * 0.003,
+      },
+    });
+  }
 
   const createdIds: string[] = [];
 

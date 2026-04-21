@@ -257,6 +257,9 @@ export default function SuccessionPanel() {
   }, []);
 
   const concFromUrl = searchParams.get("concessionnaireId")?.trim() ?? "";
+  const statusFromUrl = searchParams.get("status")?.trim() ?? "";
+  const staleOnlyFromUrl = searchParams.get("staleOnly")?.trim() ?? "";
+  const staleOnlyActive = staleOnlyFromUrl === "1";
   useEffect(() => {
     if (/^[a-f\d]{24}$/i.test(concFromUrl)) {
       setConcId(concFromUrl);
@@ -264,6 +267,19 @@ export default function SuccessionPanel() {
       setManualConcIdOpen(false);
     }
   }, [concFromUrl]);
+
+  useEffect(() => {
+    if (statusFromUrl === "OUVERT" || statusFromUrl === "CLOTURE") {
+      setFStatus(statusFromUrl);
+    }
+    if (staleOnlyFromUrl === "1") {
+      setFStatus("OUVERT");
+    }
+  }, [staleOnlyFromUrl, statusFromUrl]);
+
+  const visibleItems = staleOnlyActive
+    ? items.filter((row) => stale.some((s) => s.id === row.id))
+    : items;
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -773,7 +789,7 @@ export default function SuccessionPanel() {
             aria-label="Dossier succession détail"
           >
             <option value="">— Sélectionner un dossier —</option>
-            {items.map((x) => (
+            {visibleItems.map((x) => (
               <option key={x.id} value={x.id}>
                 {x.reference} · {x.status}
               </option>
@@ -890,7 +906,7 @@ export default function SuccessionPanel() {
               </tr>
             </thead>
             <tbody className="text-slate-900">
-              {items.map((row) => (
+              {visibleItems.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100 transition hover:bg-cyan-50/30">
                   <td className="px-2 py-2 font-mono text-xs">{row.reference}</td>
                   <td className="px-2 py-2 font-mono text-xs">{row.concessionnaireId}</td>
@@ -936,7 +952,7 @@ export default function SuccessionPanel() {
                   </td>
                 </tr>
               ))}
-              {!items.length ? (
+              {!visibleItems.length ? (
                 <tr>
                   <td colSpan={5} className="px-2 py-4 text-slate-500">
                     Aucun dossier succession.
@@ -948,7 +964,9 @@ export default function SuccessionPanel() {
         </div>
       ) : null}
       <div className="mt-3 flex items-center gap-2 text-xs text-slate-600">
-        <span>{total} dossier(s) · page {page}/{Math.max(1, Math.ceil(total / pageSize))}</span>
+        <span>
+          {staleOnlyActive ? `${visibleItems.length} dossier(s) stale affiché(s)` : `${total} dossier(s)`} · page {page}/{Math.max(1, Math.ceil(total / pageSize))}
+        </span>
         <button type="button" onClick={() => void load(page - 1)} disabled={page <= 1} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:opacity-40">Préc.</button>
         <button type="button" onClick={() => void load(page + 1)} disabled={page >= Math.max(1, Math.ceil(total / pageSize))} className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:opacity-40">Suiv.</button>
       </div>

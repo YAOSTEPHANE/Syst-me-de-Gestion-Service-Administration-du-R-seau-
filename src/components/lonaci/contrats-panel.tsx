@@ -296,6 +296,10 @@ function labelPdv(c: ConcessionnaireOption) {
 export default function ContratsPanel() {
   const searchParams = useSearchParams();
   const prefillConcessionnaireId = searchParams.get("concessionnaireId") ?? "";
+  const urlProduitCode = searchParams.get("produitCode")?.trim().toUpperCase() ?? "";
+  const urlAgenceId = searchParams.get("agenceId")?.trim() ?? "";
+  const urlStatus = searchParams.get("status")?.trim() ?? "";
+  const urlDossierStatus = searchParams.get("dossierStatus")?.trim() ?? "";
 
   const [agences, setAgences] = useState<AgenceRef[]>([]);
   const [refLoading, setRefLoading] = useState(true);
@@ -357,6 +361,26 @@ export default function ContratsPanel() {
   const [editSaving, setEditSaving] = useState(false);
   const [viewContratOpen, setViewContratOpen] = useState(false);
   const [viewContrat, setViewContrat] = useState<ContratListeItem | null>(null);
+
+  useEffect(() => {
+    if (urlProduitCode) setListProduit(urlProduitCode);
+    if (urlAgenceId) setListAgenceId(urlAgenceId);
+    if (urlStatus === "ACTIF" || urlStatus === "RESILIE") {
+      setListStatus(urlStatus);
+    }
+    if (
+      urlDossierStatus === "BROUILLON" ||
+      urlDossierStatus === "SOUMIS" ||
+      urlDossierStatus === "VALIDE_N1" ||
+      urlDossierStatus === "VALIDE_N2" ||
+      urlDossierStatus === "FINALISE" ||
+      urlDossierStatus === "REJETE"
+    ) {
+      setListWorkflowStatus(urlDossierStatus);
+    }
+    // Intentionnellement au montage uniquement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   type ContratsChartsRow = { produitCode: string; weekly: number; monthly: number };
   type PendingByLevelDto = { n1: number; n2: number; final: number };
