@@ -227,7 +227,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const roleLabel = getLonaciRoleLabel(meUser?.role);
 
   return (
-    <div className={`lonaci-db-app ${sidebarCollapsed ? "lonaci-db-sidebar-collapsed" : ""}`}>
+    <div className={sidebarCollapsed ? "lonaci-db-app lonaci-db-sidebar-collapsed" : "lonaci-db-app"}>
       <div className="lonaci-db-layout">
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
@@ -262,7 +262,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 ) : (
                   <Link
                     href={item.href}
-                    className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
+                    className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
                     style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
                     title={sidebarCollapsed ? item.label : undefined}
                   >
@@ -372,14 +372,26 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      <div className={`lonaci-db-mobile-overlay ${mobileMenuOpen ? "lonaci-db-mobile-overlay-open" : ""}`}>
+      <div
+        className={
+          mobileMenuOpen
+            ? "lonaci-db-mobile-overlay lonaci-db-mobile-overlay-open"
+            : "lonaci-db-mobile-overlay"
+        }
+      >
         <button
           type="button"
           className="lonaci-db-mobile-backdrop"
           aria-label="Fermer le menu"
           onClick={() => setMobileMenuOpen(false)}
         />
-        <aside className={`lonaci-db-mobile-drawer ${mobileMenuOpen ? "lonaci-db-mobile-drawer-open" : ""}`}>
+        <aside
+          className={
+            mobileMenuOpen
+              ? "lonaci-db-mobile-drawer lonaci-db-mobile-drawer-open"
+              : "lonaci-db-mobile-drawer"
+          }
+        >
           <div className="lonaci-db-mobile-drawer-head">
             <div className="lonaci-db-sidebar-brand-inner">
               <div className="lonaci-db-logo">SGAR</div>
@@ -411,7 +423,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 ) : (
                   <Link
                     href={item.href}
-                    className={`lonaci-db-nav-item ${active ? "lonaci-db-active" : ""}`}
+                    className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
                     style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
                   >
                     <LonaciNavIcon label={item.label} />
