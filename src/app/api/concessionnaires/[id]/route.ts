@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   canMutateConcessionnaireCore,
   canEditNotesInternesWhenBlocked,
@@ -115,10 +116,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       detail,
       issues: parsed.error.issues,
     });
-    return NextResponse.json(
-      { message: `Donnees invalides (${detail})`, issues: parsed.error.issues },
-      { status: 400 },
-    );
+    return zodBadRequest(parsed.error, `Donnees invalides (${detail})`);
   }
 
   await ensureConcessionnaireIndexes();

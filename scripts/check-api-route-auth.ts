@@ -1,6 +1,7 @@
 /**
- * Vérifie que chaque fichier route.ts sous src/app/api contient la chaîne
- * requireApiAuth ou est listé dans PUBLIC_OR_DELEGATED_API_ROUTE_SUFFIXES.
+ * Vérifie que chaque fichier route.ts sous src/app/api contient un garde
+ * d'authentification autorisé (`requireApiAuth` ou `checkPermission`) ou
+ * est listé dans PUBLIC_OR_DELEGATED_API_ROUTE_SUFFIXES.
  */
 import fs from "fs";
 import path from "path";
@@ -12,6 +13,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const apiRoot = path.join(__dirname, "..", "src", "app", "api");
 const allow = new Set<string>(PUBLIC_OR_DELEGATED_API_ROUTE_SUFFIXES);
 const violations: string[] = [];
+const AUTH_GUARD_MARKERS = ["requireApiAuth(", "checkPermission("];
 
 function walk(dir: string): void {
   for (const name of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -21,7 +23,8 @@ function walk(dir: string): void {
     } else if (name.name === "route.ts") {
       const rel = path.relative(apiRoot, full).split(path.sep).join("/");
       const content = fs.readFileSync(full, "utf8");
-      if (!content.includes("requireApiAuth") && !allow.has(rel)) {
+      const hasAllowedGuard = AUTH_GUARD_MARKERS.some((marker) => content.includes(marker));
+      if (!hasAllowedGuard && !allow.has(rel)) {
         violations.push(rel);
       }
     }
@@ -32,9 +35,9 @@ walk(apiRoot);
 
 if (violations.length > 0) {
   console.error(
-    "[check-api-routes] Fichiers route.ts sans requireApiAuth (hors liste publique/déléguée) :\n",
+    "[check-api-routes] Fichiers route.ts sans garde auth autorisé (requireApiAuth/checkPermission) :\n",
     violations.map((v) => `  - ${v}`).join("\n"),
-    "\n\nAjoutez requireApiAuth ou documentez la route dans src/config/public-api-routes.ts",
+    "\n\nAjoutez requireApiAuth/checkPermission ou documentez la route dans src/config/public-api-routes.ts",
   );
   process.exit(1);
 }

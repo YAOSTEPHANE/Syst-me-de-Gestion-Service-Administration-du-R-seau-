@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   createCession,
   ensureCessionIndexes,
@@ -25,12 +27,41 @@ const listSchema = z.object({
   produitCode: z.string().optional(),
 });
 
+const createFormSchema = z
+  .object({
+    kind: z.enum(["CESSION", "DELOCALISATION"]),
+    concessionnaireId: z.string(),
+    cedantId: z.string(),
+    beneficiaireId: z.string(),
+    produitCode: z.string(),
+    oldAdresse: z.string(),
+    oldAgenceId: z.string(),
+    newAdresse: z.string(),
+    newAgenceId: z.string(),
+    newGpsLat: z.string(),
+    newGpsLng: z.string(),
+    dateDemande: z.string().min(1),
+    motif: z.string().min(1),
+    commentaire: z.string(),
+  })
+  .superRefine((v, ctx) => {
+    if (v.kind === "CESSION" && (!v.cedantId || !v.beneficiaireId || !v.produitCode)) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Champs cession obligatoires manquants." });
+    }
+    if (
+      v.kind === "DELOCALISATION" &&
+      (!v.concessionnaireId || !v.oldAdresse || !v.oldAgenceId || !v.newAdresse || !v.newAgenceId || !v.newGpsLat || !v.newGpsLng)
+    ) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Champs delocalisation obligatoires manquants." });
+    }
+  });
+
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureCessionIndexes();
   const result = await listCessions({
@@ -48,35 +79,44 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   const form = await request.formData();
-  const kind = String(form.get("kind") ?? "CESSION").trim() as CessionKind;
-  const concessionnaireId = String(form.get("concessionnaireId") ?? "").trim();
-  const cedantId = String(form.get("cedantId") ?? "").trim();
-  const beneficiaireId = String(form.get("beneficiaireId") ?? "").trim();
-  const produitCode = String(form.get("produitCode") ?? "").trim();
-  const oldAdresse = String(form.get("oldAdresse") ?? "").trim();
-  const oldAgenceId = String(form.get("oldAgenceId") ?? "").trim();
-  const newAdresse = String(form.get("newAdresse") ?? "").trim();
-  const newAgenceId = String(form.get("newAgenceId") ?? "").trim();
-  const newGpsLatRaw = String(form.get("newGpsLat") ?? "").trim();
-  const newGpsLngRaw = String(form.get("newGpsLng") ?? "").trim();
-  const dateDemandeRaw = String(form.get("dateDemande") ?? "").trim();
-  const motif = String(form.get("motif") ?? "").trim();
-  const commentaire = String(form.get("commentaire") ?? "").trim();
-  if (!dateDemandeRaw || !motif) {
-    return NextResponse.json({ message: "Champs obligatoires manquants." }, { status: 400 });
+  const parsedCreate = createFormSchema.safeParse({
+    kind: String(form.get("kind") ?? "CESSION").trim(),
+    concessionnaireId: String(form.get("concessionnaireId") ?? "").trim(),
+    cedantId: String(form.get("cedantId") ?? "").trim(),
+    beneficiaireId: String(form.get("beneficiaireId") ?? "").trim(),
+    produitCode: String(form.get("produitCode") ?? "").trim(),
+    oldAdresse: String(form.get("oldAdresse") ?? "").trim(),
+    oldAgenceId: String(form.get("oldAgenceId") ?? "").trim(),
+    newAdresse: String(form.get("newAdresse") ?? "").trim(),
+    newAgenceId: String(form.get("newAgenceId") ?? "").trim(),
+    newGpsLat: String(form.get("newGpsLat") ?? "").trim(),
+    newGpsLng: String(form.get("newGpsLng") ?? "").trim(),
+    dateDemande: String(form.get("dateDemande") ?? "").trim(),
+    motif: String(form.get("motif") ?? "").trim(),
+    commentaire: String(form.get("commentaire") ?? "").trim(),
+  });
+  if (!parsedCreate.success) {
+    return zodBadRequest(parsedCreate.error);
   }
-  if (kind === "CESSION" && (!cedantId || !beneficiaireId || !produitCode)) {
-    return NextResponse.json({ message: "Champs cession obligatoires manquants." }, { status: 400 });
-  }
-  if (
-    kind === "DELOCALISATION" &&
-    (!concessionnaireId || !oldAdresse || !oldAgenceId || !newAdresse || !newAgenceId || !newGpsLatRaw || !newGpsLngRaw)
-  ) {
-    return NextResponse.json({ message: "Champs délocalisation obligatoires manquants." }, { status: 400 });
-  }
+  const {
+    kind,
+    concessionnaireId,
+    cedantId,
+    beneficiaireId,
+    produitCode,
+    oldAdresse,
+    oldAgenceId,
+    newAdresse,
+    newAgenceId,
+    newGpsLat: newGpsLatRaw,
+    newGpsLng: newGpsLngRaw,
+    dateDemande: dateDemandeRaw,
+    motif,
+    commentaire,
+  } = parsedCreate.data;
   const dateDemande = new Date(dateDemandeRaw);
   if (Number.isNaN(dateDemande.getTime())) {
-    return NextResponse.json({ message: "Date de demande invalide." }, { status: 400 });
+    return badRequest("Date de demande invalide.", "INVALID_DATE_DEMANDE");
   }
   const newGpsLat = Number(newGpsLatRaw);
   const newGpsLng = Number(newGpsLngRaw);
@@ -87,7 +127,7 @@ export async function POST(request: NextRequest) {
         : null
       : null;
   if (kind === "DELOCALISATION" && !newGps) {
-    return NextResponse.json({ message: "Coordonnées GPS invalides." }, { status: 400 });
+    return badRequest("Coordonnees GPS invalides.", "INVALID_GPS");
   }
 
   await ensureCessionIndexes();
@@ -112,10 +152,10 @@ export async function POST(request: NextRequest) {
     const docs = form.getAll("documents").filter((d): d is File => d instanceof File);
     for (const doc of docs) {
       if (!CESSION_ALLOWED_MIME[doc.type]) {
-        return NextResponse.json({ message: `Type de fichier non autorisé: ${doc.type}` }, { status: 400 });
+        return badRequest(`Type de fichier non autorise: ${doc.type}`, "INVALID_MIME_TYPE");
       }
       if (doc.size > MAX_CESSION_FILE_BYTES) {
-        return NextResponse.json({ message: "Document trop volumineux." }, { status: 400 });
+        return badRequest("Document trop volumineux.", "FILE_TOO_LARGE");
       }
       const attachmentId = randomUUID();
       const buffer = Buffer.from(await doc.arrayBuffer());

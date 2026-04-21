@@ -331,17 +331,35 @@ export async function listDossiers(
   status: DossierStatus | undefined,
   type: DossierType | undefined,
   scopeAgenceId: string | null | undefined,
+  q?: string,
+  concessionnaireId?: string,
+  sortField: "updatedAt" | "reference" | "status" = "updatedAt",
+  sortOrder: "asc" | "desc" = "desc",
 ) {
   const db = await getDatabase();
   const filter: Record<string, unknown> = { deletedAt: null };
   if (status) filter.status = status;
   if (type) filter.type = type;
   if (scopeAgenceId) filter.agenceId = scopeAgenceId;
+  if (concessionnaireId?.trim()) filter.concessionnaireId = concessionnaireId.trim();
+  if (q?.trim()) {
+    const escaped = q
+      .trim()
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const regex = new RegExp(escaped, "i");
+    filter.$or = [{ reference: regex }, { status: regex }, { type: regex }, { concessionnaireId: regex }];
+  }
   const skip = (page - 1) * pageSize;
   const col = db.collection<StoredDossier>(COLLECTION);
+  const sort: Record<string, 1 | -1> = {
+    [sortField]: sortOrder === "asc" ? 1 : -1,
+  };
+  if (sortField !== "updatedAt") {
+    sort.updatedAt = -1;
+  }
   const [total, rows] = await Promise.all([
     col.countDocuments(filter),
-    col.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize).toArray(),
+    col.find(filter).sort(sort).skip(skip).limit(pageSize).toArray(),
   ]);
   return {
     items: rows.map((row) => ({

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   getActivityLast7Days,
-  getAgenceTrendsLast30Days,
   getAllAgencesTrendsLast30Days,
   getBancarisationSnapshot,
   getDossierDelaySnapshotLast30Days,
@@ -35,7 +34,6 @@ export async function GET(request: NextRequest) {
     activity7d,
     produitSlices,
     bancarisation,
-    agenceTrends30j,
     agencesOverview30j,
     topConcessionnairesActifs,
     dossierDelays30j,
@@ -55,7 +53,6 @@ export async function GET(request: NextRequest) {
       getActivityLast7Days(),
       getContratsActifsByProduit(5),
       getBancarisationSnapshot(),
-      getAgenceTrendsLast30Days(8),
       getAllAgencesTrendsLast30Days(),
       getTopConcessionnairesActifs(5),
       getDossierDelaySnapshotLast30Days(),
@@ -63,6 +60,9 @@ export async function GET(request: NextRequest) {
     ]);
 
   const cautionsJ10Count = cautionsJ10.length;
+  const agenceTrends30j = [...agencesOverview30j]
+    .sort((a, b) => b.total30j - a.total30j)
+    .slice(0, 8);
   const dossierValidation = await getDossierValidationSnapshot(
     cautionsJ10Count,
     daily.succession.ouverts,

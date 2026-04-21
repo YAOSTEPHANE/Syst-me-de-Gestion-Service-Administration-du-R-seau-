@@ -6,13 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, 
 
 import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 import {
-  LONACI_AGENCES,
   LONACI_NAV,
   LonaciNavIcon,
   lonaciNavBadgeClass,
   type LonaciNavItem,
 } from "@/components/lonaci/lonaci-nav";
 import NotificationBell from "@/components/lonaci/notification-bell";
+import ShellAgenceFilterDropdown from "@/components/lonaci/shell-agence-filter-dropdown";
 import { lonaciShellHeader } from "@/lib/lonaci/lonaci-shell-header";
 import { getLonaciRoleLabel } from "@/lib/lonaci/constants";
 
@@ -248,18 +248,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               <div className="lonaci-db-header-title">{title}</div>
               <div className="lonaci-db-header-sub">{sub}</div>
             </div>
-            <select
-              className="lonaci-db-select"
-              aria-label="Filtre agence"
-              value={agenceKey}
-              onChange={(e) => setAgenceKey(e.target.value)}
-            >
-              {LONACI_AGENCES.map((a) => (
-                <option key={a.value || "all"} value={a.value}>
-                  {a.label}
-                </option>
-              ))}
-            </select>
+            <ShellAgenceFilterDropdown value={agenceKey} onChange={setAgenceKey} />
             <NotificationBell
               triggerClassName="lonaci-db-notif-btn"
               triggerContent={

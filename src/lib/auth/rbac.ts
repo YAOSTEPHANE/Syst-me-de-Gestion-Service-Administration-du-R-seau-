@@ -284,6 +284,9 @@ export function isGlobalRole(role: LonaciRole): boolean {
  * NOTE:
  * Cette matrice complète la RBAC technique ci-dessus.
  * La RBAC technique reste la source d'autorisation API actuelle.
+ *
+ * Agent : Action/Saisie (A) sur tous les modules métier listés, sauf les lignes
+ * « Rapports * » (suivi/lecture ou sans accès) et « Gestion des comptes utilisateurs ».
  */
 export type CoreLonaciRole = "AGENT" | "CHEF_SECTION" | "ASSIST_CDS" | "CHEF_SERVICE";
 
@@ -299,7 +302,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     module: "Contrats & Actualisations",
     permissions: {
       AGENT: "A",
-      CHEF_SECTION: "C, S, R",
+      CHEF_SECTION: "Contrôle, Suivi/Lecture, Rapport",
       ASSIST_CDS: "C, S, Synthèse",
       CHEF_SERVICE: "C, S, V",
     },
@@ -308,7 +311,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     module: "Cautions",
     permissions: {
       AGENT: "A",
-      CHEF_SECTION: "C, S, R",
+      CHEF_SECTION: "Contrôle, Suivi/Lecture, Rapport",
       ASSIST_CDS: "C, S, Synthèse",
       CHEF_SERVICE: "C, S, V",
     },
@@ -388,7 +391,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
   {
     module: "Rapports journaliers",
     permissions: {
-      AGENT: "A (saisie)",
+      AGENT: "S",
       CHEF_SECTION: "C, S",
       ASSIST_CDS: "C, V",
       CHEF_SERVICE: "Finalisation",
@@ -415,7 +418,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
   {
     module: "Notifications",
     permissions: {
-      AGENT: "S",
+      AGENT: "A",
       CHEF_SECTION: "S",
       ASSIST_CDS: "S",
       CHEF_SERVICE: "S, Config",

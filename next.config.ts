@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
-/** CSP en observation uniquement : n’applique pas de blocage, permet d’affiner la politique sans casser l’app. */
-const cspDirectives = [
+/** CSP observée (report-only) pour calibration progressive. */
+const cspReportOnlyDirectives = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
@@ -13,8 +13,27 @@ const cspDirectives = [
   "form-action 'self'",
 ].join("; ");
 
+/** CSP bloquante (enforce) plus stricte pour la production. */
+const cspEnforcedDirectives = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: blob: https:",
+  "font-src 'self' data:",
+  "connect-src 'self' https: wss:",
+  "frame-ancestors 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "object-src 'none'",
+  "upgrade-insecure-requests",
+].join("; ");
+
 /** À `true` au build : applique `Content-Security-Policy` (bloquant) au lieu de Report-Only. */
 const cspEnforce = process.env.ENABLE_CSP_ENFORCE === "true";
+const firstAllowedCorsOrigin = process.env.CORS_ALLOWED_ORIGINS
+  ?.split(",")
+  .map((v) => v.trim())
+  .find(Boolean);
 
 const securityHeaders = [
   { key: "X-Frame-Options", value: "DENY" },
@@ -26,14 +45,33 @@ const securityHeaders = [
     value: "camera=(), microphone=(), geolocation=(), interest-cohort=()",
   },
   cspEnforce
-    ? { key: "Content-Security-Policy", value: cspDirectives }
-    : { key: "Content-Security-Policy-Report-Only", value: cspDirectives },
+    ? { key: "Content-Security-Policy", value: cspEnforcedDirectives }
+    : { key: "Content-Security-Policy-Report-Only", value: cspReportOnlyDirectives },
+];
+
+/**
+ * CORS de base sur /api (fallback statique) :
+ * la logique dynamique multi-origines et preflight reste dans src/proxy.ts.
+ */
+const apiCorsHeaders = [
+  { key: "Access-Control-Allow-Methods", value: "GET,POST,PUT,PATCH,DELETE,OPTIONS" },
+  { key: "Access-Control-Allow-Headers", value: "Content-Type, Authorization, X-Requested-With" },
+  { key: "Vary", value: "Origin" },
+  ...(firstAllowedCorsOrigin
+    ? [
+        { key: "Access-Control-Allow-Origin", value: firstAllowedCorsOrigin },
+        { key: "Access-Control-Allow-Credentials", value: "true" },
+      ]
+    : []),
 ];
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["pdfkit"],
   async headers() {
-    return [{ source: "/:path*", headers: securityHeaders }];
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      { source: "/api/:path*", headers: apiCorsHeaders },
+    ];
   },
 };
 

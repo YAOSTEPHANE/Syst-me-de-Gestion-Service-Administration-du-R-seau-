@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { finalizeContratFromDossier, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -63,7 +64,7 @@ function toTargetStatus(action: z.infer<typeof transitionSchema>["action"]) {
 export async function POST(request: NextRequest, context: RouteContext) {
   const parsed = transitionSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   const auth = await requireApiAuth(request, {

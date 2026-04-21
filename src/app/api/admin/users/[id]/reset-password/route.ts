@@ -2,6 +2,7 @@ import { randomBytes, createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { findUserById, setResetPasswordToken } from "@/lib/lonaci/users";
 import { sendSmtpEmail } from "@/lib/email/smtp";
@@ -28,7 +29,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   // Génère un lien de reset temporaire (usage email) ; le Chef(fe) de service peut le transmettre au user.

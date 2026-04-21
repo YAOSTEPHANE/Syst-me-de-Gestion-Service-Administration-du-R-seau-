@@ -234,6 +234,36 @@ export async function clearCurrentSession(userId: string): Promise<void> {
   );
 }
 
+export async function clearCurrentSessions(userIds: string[]): Promise<number> {
+  const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return 0;
+  const result = await prisma.user.updateMany({
+    where: { id: { in: ids }, deletedAt: null },
+    data: {
+      currentSessionId: null,
+      updatedAt: new Date(),
+    },
+  });
+  return result.count;
+}
+
+export async function setUsersActiveState(userIds: string[], actif: boolean): Promise<number> {
+  const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return 0;
+  const data: { actif: boolean; currentSessionId?: null; updatedAt: Date } = {
+    actif,
+    updatedAt: new Date(),
+  };
+  if (!actif) {
+    data.currentSessionId = null;
+  }
+  const result = await prisma.user.updateMany({
+    where: { id: { in: ids }, deletedAt: null },
+    data,
+  });
+  return result.count;
+}
+
 export async function updateUserAdmin(userId: string, input: UpdateUserAdminInput): Promise<UserDocument | null> {
   const data: Record<string, unknown> = { updatedAt: new Date() };
   if (input.email !== undefined) data.email = input.email.trim().toLowerCase();

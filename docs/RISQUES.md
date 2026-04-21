@@ -11,6 +11,7 @@ Ce document prolonge l’audit sécurité / exploitation : pour chaque famille d
 | Nouvelle route API sans garde | Liste des routes **sans** `requireApiAuth` centralisée dans `src/config/public-api-routes.ts`. **`npm run check:api-routes`** échoue si un `route.ts` n’est ni protégé ni listé (à lancer en CI). |
 | IDOR sur exports / pièces jointes | Inventaire et correctifs documentés dans **[SECURITY-IDOR-AUDIT.md](./SECURITY-IDOR-AUDIT.md)** (exports PDF dossier, documents agrément, PJ cession / résiliation). |
 | Auth uniquement par handler | **`src/proxy.ts`** (Next.js 16, incompatible avec `middleware.ts` simultané) : **cookie obligatoire** sur `/api/*` sauf chemins publics listés ; en-tête **`X-Request-Id`** ; blocage **TRACE** / **TRACK**. Les handlers gardent **`requireApiAuth`** (JWT, rôles, modules) en double filet. |
+| CORS trop permissif | En prod, si `CORS_ALLOWED_ORIGINS` est vide, le proxy applique un mode **fail-closed** (preflight refusé). Renseigner explicitement les origines autorisées. |
 | CSP trop permissive / XSS | Par défaut **Report-Only** dans `next.config.ts`. Pour durcir après tests : **`ENABLE_CSP_ENFORCE=true`** au **build** (passe en `Content-Security-Policy` bloquant). |
 | Secrets dans le dépôt | Ne versionner que **`.env.example`** avec des placeholders. Rotation immédiate si fuite. |
 
@@ -20,7 +21,7 @@ Ce document prolonge l’audit sécurité / exploitation : pour chaque famille d
 
 | Risque | Mesures dans le projet |
 |--------|-------------------------|
-| CVE `xlsx` / parsing malveillant | `npm audit` signale **Prototype Pollution** et **ReDoS** (GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9) sur le paquet **`xlsx`** : **aucun correctif** n’est publié sur la branche community (`No fix available`). Mesures côté app : plafonds **5 Mo**, **10 000 lignes**, **32 feuilles** (`safe-xlsx-read.ts`), parsing surtout **côté navigateur** après choix utilisateur (fichiers non automatiques). Pistes long terme : privilégier **CSV** pour les imports sensibles, ou une lib/maintenance avec correctifs (évaluer le coût de migration). **Éviter** `npm audit fix --force` uniquement pour `xlsx` : cela ne résout pas cette alerte et peut bouger d’autres dépendances. |
+| CVE `xlsx` / parsing malveillant | `npm audit` signale **Prototype Pollution** et **ReDoS** (GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9) sur le paquet **`xlsx`** : **aucun correctif** n’est publié sur la branche community (`No fix available`). Mesures côté app : plafonds **5 Mo**, **10 000 lignes**, **32 feuilles**, **200 000 cellules max** (`safe-xlsx-read.ts`), parsing surtout **côté navigateur** après choix utilisateur (fichiers non automatiques), et **Excel désactivé par défaut sur modules critiques** (contrats, cautions, bancarisation, intégrations PDV) avec feature flag de transition `NEXT_PUBLIC_IMPORT_ALLOW_EXCEL_MODULES`. Plan de mitigation détaillé : **[XLSX-MITIGATION-PLAN.md](./XLSX-MITIGATION-PLAN.md)**. **Éviter** `npm audit fix --force` uniquement pour `xlsx` : cela ne résout pas cette alerte et peut bouger d’autres dépendances. |
 | Chaîne npm | Garder **`prisma` et `@prisma/client` à la même version**. Mettre à jour Next / deps après lecture des changelogs. |
 
 ---

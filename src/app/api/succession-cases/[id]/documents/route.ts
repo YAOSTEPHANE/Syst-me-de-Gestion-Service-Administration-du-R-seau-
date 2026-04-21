@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { badRequest, forbidden, notFound } from "@/lib/api/error-responses";
-import { enforceRateLimit } from "@/lib/api/endpoint-helpers";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
@@ -45,7 +45,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const paramsParsed = paramsSchema.safeParse(await context.params);
   if (!paramsParsed.success) {
-    return badRequest("CASE_ID_INVALID", "CASE_ID_INVALID");
+    return zodBadRequest(paramsParsed.error, "CASE_ID_INVALID");
   }
   const { id } = paramsParsed.data;
   await ensureSuccessionIndexes();
@@ -67,7 +67,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
   const formParsed = formSchema.safeParse({ file: form.get("file") });
   if (!formParsed.success) {
-    return badRequest("Fichier manquant (champ file)", "MISSING_FILE");
+    return zodBadRequest(formParsed.error, "Fichier manquant (champ file)");
   }
   const file = formParsed.data.file;
   if (file.size > MAX_SUCCESSION_FILE_BYTES) {

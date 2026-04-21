@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   createDemandeAttestationDomiciliation,
   ensureAttestationsDomiciliationIndexes,
@@ -33,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureAttestationsDomiciliationIndexes();
@@ -56,12 +58,12 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   const dateDemande = new Date(parsed.data.dateDemande);
   if (Number.isNaN(dateDemande.getTime())) {
-    return NextResponse.json({ message: "Date de demande invalide." }, { status: 400 });
+    return badRequest("Date de demande invalide.", "INVALID_DATE_DEMANDE");
   }
 
   await ensureAttestationsDomiciliationIndexes();

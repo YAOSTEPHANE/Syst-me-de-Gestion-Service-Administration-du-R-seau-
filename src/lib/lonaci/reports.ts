@@ -3,6 +3,17 @@ import { getDatabase } from "@/lib/mongodb";
 
 export type ReportPeriod = "daily" | "weekly" | "monthly";
 
+export interface AgenceComparisonRow {
+  agenceId: string;
+  agenceCode: string;
+  agenceLabel: string;
+  dossiersTotal: number;
+  dossiersCreatedInWindow: number;
+  concessionnairesTotal: number;
+  successionOuverts: number;
+  pdvNonFinalise: number;
+}
+
 function windowForPeriod(period: ReportPeriod): { from: Date; to: Date; label: string } {
   const to = new Date();
   const from = new Date(to);
@@ -43,9 +54,14 @@ export interface ReportSummary {
     succession: { ouverts: number; stale30j: number };
     pdvIntegrations: { nonFinalise: number };
   };
+  agenceComparatif?: AgenceComparisonRow[];
 }
 
-export async function buildReportSummary(period: ReportPeriod, agenceId?: string | null): Promise<ReportSummary> {
+export async function buildReportSummary(
+  period: ReportPeriod,
+  agenceId?: string | null,
+  topAgences = 0,
+): Promise<ReportSummary> {
   const db = await getDatabase();
   const { from, to, label } = windowForPeriod(period);
   const scopedAgenceId = agenceId?.trim() || null;
@@ -169,6 +185,111 @@ export async function buildReportSummary(period: ReportPeriod, agenceId?: string
     byStatut[row._id] = row.c;
   }
 
+  let agenceComparatif: AgenceComparisonRow[] | undefined;
+  if (!scopedAgenceId && topAgences > 0) {
+    const [agencesRows, dossiersTotalByAgence, dossiersCreatedByAgence, concessionnairesByAgence, successionByAgence, pdvByAgence] =
+      await Promise.all([
+        db
+          .collection<{ _id: unknown; code?: string; libelle?: string }>("agences")
+          .find({ deletedAt: null })
+          .project({ _id: 1, code: 1, libelle: 1 })
+          .toArray(),
+        db
+          .collection("dossiers")
+          .aggregate<{ _id: string; c: number }>([
+            { $match: { deletedAt: null } },
+            { $group: { _id: "$agenceId", c: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("dossiers")
+          .aggregate<{ _id: string; c: number }>([
+            { $match: { deletedAt: null, createdAt: { $gte: from, $lte: to } } },
+            { $group: { _id: "$agenceId", c: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("concessionnaires")
+          .aggregate<{ _id: string; c: number }>([
+            { $match: { deletedAt: null } },
+            { $group: { _id: "$agenceId", c: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("succession_cases")
+          .aggregate<{ _id: string; c: number }>([
+            { $match: { deletedAt: null, status: "OUVERT" } },
+            { $group: { _id: "$agenceId", c: { $sum: 1 } } },
+          ])
+          .toArray(),
+        db
+          .collection("pdv_integrations")
+          .aggregate<{ _id: string; c: number }>([
+            { $match: { deletedAt: null, status: { $ne: "FINALISE" } } },
+            { $group: { _id: "$agenceId", c: { $sum: 1 } } },
+          ])
+          .toArray(),
+      ]);
+
+    const agenceMap = new Map<string, { code: string; libelle: string }>();
+    for (const row of agencesRows) {
+      const id = String(row._id ?? "");
+      agenceMap.set(id, {
+        code: row.code ?? id.slice(-6).toUpperCase(),
+        libelle: row.libelle ?? "Agence",
+      });
+    }
+
+    function countsToMap(rows: Array<{ _id: string; c: number }>): Map<string, number> {
+      const map = new Map<string, number>();
+      for (const row of rows) {
+        if (!row._id) continue;
+        map.set(String(row._id), row.c);
+      }
+      return map;
+    }
+
+    const dossiersTotals = countsToMap(dossiersTotalByAgence);
+    const dossiersCreated = countsToMap(dossiersCreatedByAgence);
+    const concessionnairesTotals = countsToMap(concessionnairesByAgence);
+    const successionTotals = countsToMap(successionByAgence);
+    const pdvTotals = countsToMap(pdvByAgence);
+
+    const agenceIds = new Set<string>([
+      ...dossiersTotals.keys(),
+      ...dossiersCreated.keys(),
+      ...concessionnairesTotals.keys(),
+      ...successionTotals.keys(),
+      ...pdvTotals.keys(),
+      ...agenceMap.keys(),
+    ]);
+
+    agenceComparatif = [...agenceIds]
+      .map((id) => {
+        const agence = agenceMap.get(id);
+        return {
+          agenceId: id,
+          agenceCode: agence?.code ?? id.slice(-6).toUpperCase(),
+          agenceLabel: agence?.libelle ?? "Agence",
+          dossiersTotal: dossiersTotals.get(id) ?? 0,
+          dossiersCreatedInWindow: dossiersCreated.get(id) ?? 0,
+          concessionnairesTotal: concessionnairesTotals.get(id) ?? 0,
+          successionOuverts: successionTotals.get(id) ?? 0,
+          pdvNonFinalise: pdvTotals.get(id) ?? 0,
+        };
+      })
+      .sort((a, b) => {
+        if (b.dossiersCreatedInWindow !== a.dossiersCreatedInWindow) {
+          return b.dossiersCreatedInWindow - a.dossiersCreatedInWindow;
+        }
+        if (b.dossiersTotal !== a.dossiersTotal) {
+          return b.dossiersTotal - a.dossiersTotal;
+        }
+        return a.agenceCode.localeCompare(b.agenceCode, "fr", { sensitivity: "base" });
+      })
+      .slice(0, topAgences);
+  }
+
   return {
     period,
     windowLabel: label,
@@ -215,6 +336,7 @@ export async function buildReportSummary(period: ReportPeriod, agenceId?: string
         nonFinalise: pdvDraft,
       },
     },
+    agenceComparatif,
   };
 }
 
@@ -252,5 +374,12 @@ export function summaryToCsv(summary: ReportSummary): string {
     `modules_succession,stale30j,${summary.modules.succession.stale30j}`,
     `modules_pdv_integrations,nonFinalise,${summary.modules.pdvIntegrations.nonFinalise}`,
   ];
+  for (const row of summary.agenceComparatif ?? []) {
+    lines.push(`agences,${row.agenceCode}_dossiers_total,${row.dossiersTotal}`);
+    lines.push(`agences,${row.agenceCode}_dossiers_created_in_window,${row.dossiersCreatedInWindow}`);
+    lines.push(`agences,${row.agenceCode}_concessionnaires_total,${row.concessionnairesTotal}`);
+    lines.push(`agences,${row.agenceCode}_succession_ouverts,${row.successionOuverts}`);
+    lines.push(`agences,${row.agenceCode}_pdv_non_finalise,${row.pdvNonFinalise}`);
+  }
   return lines.join("\n");
 }

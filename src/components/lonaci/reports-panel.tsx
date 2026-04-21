@@ -29,6 +29,16 @@ const periodLabels: Record<Period, string> = {
   monthly: "Mensuel",
 };
 type ReportSummary = {
+  agenceComparatif?: Array<{
+    agenceId: string;
+    agenceCode: string;
+    agenceLabel: string;
+    dossiersTotal: number;
+    dossiersCreatedInWindow: number;
+    concessionnairesTotal: number;
+    successionOuverts: number;
+    pdvNonFinalise: number;
+  }>;
   period: Period;
   windowLabel?: string;
   dossiers?: { total?: number; createdInWindow?: number; byStatus?: Record<string, number> };
@@ -60,6 +70,8 @@ export default function ReportsPanel() {
   const [monthlySummary, setMonthlySummary] = useState<ReportSummary | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
+  const [compareAgences, setCompareAgences] = useState(true);
+  const [topAgences, setTopAgences] = useState(8);
 
   async function load() {
     setLoading(true);
@@ -67,6 +79,10 @@ export default function ReportsPanel() {
     try {
       const params = new URLSearchParams({ period });
       if (agenceId.trim()) params.set("agenceId", agenceId.trim());
+      if (!agenceId.trim() && compareAgences) {
+        params.set("compareAgences", "1");
+        params.set("topAgences", String(topAgences));
+      }
       const res = await fetch(`/api/reports/summary?${params.toString()}`, {
         credentials: "include",
         cache: "no-store",
@@ -84,7 +100,7 @@ export default function ReportsPanel() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- recharger uniquement quand la période change
-  }, [period, agenceId]);
+  }, [period, agenceId, compareAgences, topAgences]);
 
   useEffect(() => {
     void (async () => {
@@ -340,8 +356,23 @@ export default function ReportsPanel() {
   function exportCsv() {
     const params = new URLSearchParams({ period, format: "csv" });
     if (agenceId.trim()) params.set("agenceId", agenceId.trim());
+    if (!agenceId.trim() && compareAgences) {
+      params.set("compareAgences", "1");
+      params.set("topAgences", String(topAgences));
+    }
     window.open(`/api/reports/export?${params.toString()}`, "_blank");
     flash("Export CSV lancé");
+  }
+
+  function exportXlsx() {
+    const params = new URLSearchParams({ period, format: "xlsx" });
+    if (agenceId.trim()) params.set("agenceId", agenceId.trim());
+    if (!agenceId.trim() && compareAgences) {
+      params.set("compareAgences", "1");
+      params.set("topAgences", String(topAgences));
+    }
+    window.open(`/api/reports/export?${params.toString()}`, "_blank");
+    flash("Export Excel lancé");
   }
 
   function printView() {
@@ -601,6 +632,27 @@ export default function ReportsPanel() {
               </option>
             ))}
           </select>
+          <label className="inline-flex items-center gap-2 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={compareAgences}
+              onChange={(e) => setCompareAgences(e.target.checked)}
+              disabled={agenceId.trim().length > 0}
+            />
+            Comparatif agences
+          </label>
+          <select
+            aria-label="Nombre d'agences à comparer"
+            value={topAgences}
+            onChange={(e) => setTopAgences(Number(e.target.value))}
+            disabled={!compareAgences || agenceId.trim().length > 0}
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-900 disabled:opacity-60"
+          >
+            <option value={5}>Top 5</option>
+            <option value={8}>Top 8</option>
+            <option value={10}>Top 10</option>
+            <option value={15}>Top 15</option>
+          </select>
           <button
             type="button"
             onClick={() => void load()}
@@ -614,6 +666,13 @@ export default function ReportsPanel() {
             className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm text-emerald-700 hover:bg-emerald-100"
           >
             Export CSV (Excel)
+          </button>
+          <button
+            type="button"
+            onClick={exportXlsx}
+            className="rounded border border-emerald-400 bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-200"
+          >
+            Export XLSX (multi-feuilles)
           </button>
           <button
             type="button"
@@ -704,6 +763,42 @@ export default function ReportsPanel() {
               </article>
             </div>
           </div>
+
+          {summary.agenceComparatif && summary.agenceComparatif.length > 0 ? (
+            <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
+              <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">
+                Comparatif multi-agences
+              </h4>
+              <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-600">
+                    <tr>
+                      <th className="px-3 py-2">Agence</th>
+                      <th className="px-3 py-2 text-right">Dossiers</th>
+                      <th className="px-3 py-2 text-right">Créés période</th>
+                      <th className="px-3 py-2 text-right">Concessionnaires</th>
+                      <th className="px-3 py-2 text-right">Succession ouverts</th>
+                      <th className="px-3 py-2 text-right">PDV non finalisés</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summary.agenceComparatif.map((row) => (
+                      <tr key={row.agenceId} className="border-t border-slate-100 text-slate-700">
+                        <td className="px-3 py-2">
+                          <span className="font-semibold text-slate-900">{row.agenceCode}</span> - {row.agenceLabel}
+                        </td>
+                        <td className="px-3 py-2 text-right">{row.dossiersTotal}</td>
+                        <td className="px-3 py-2 text-right">{row.dossiersCreatedInWindow}</td>
+                        <td className="px-3 py-2 text-right">{row.concessionnairesTotal}</td>
+                        <td className="px-3 py-2 text-right">{row.successionOuverts}</td>
+                        <td className="px-3 py-2 text-right">{row.pdvNonFinalise}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
         </div>
       ) : null}
     </section>

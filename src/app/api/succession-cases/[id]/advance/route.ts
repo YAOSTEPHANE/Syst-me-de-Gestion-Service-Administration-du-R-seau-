@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { advanceSuccessionCase, ensureSuccessionIndexes } from "@/lib/lonaci/succession";
-import { requireApiAuth } from "@/lib/auth/guards";
+import { checkPermission } from "@/lib/auth/checkPermission";
 
 const schema = z.object({
   comment: z.string().max(5000).nullable().optional(),
@@ -18,16 +19,17 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
-  });
-  if ("error" in auth) return auth.error;
-
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await checkPermission(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    resource: "DOSSIERS",
+    action: parsed.data.decisionType ? "FINALIZE" : "UPDATE",
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
 
   await ensureSuccessionIndexes();
   try {

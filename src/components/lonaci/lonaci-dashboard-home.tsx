@@ -17,7 +17,6 @@ import {
 } from "chart.js";
 import { Bar, Doughnut, Line } from "react-chartjs-2";
 
-import DashboardAgencesStrip from "@/components/lonaci/dashboard-agences-strip";
 import DashboardNotifications from "@/components/lonaci/dashboard-notifications";
 import { useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 
@@ -318,7 +317,16 @@ export default function LonaciDashboardHome() {
     : 0;
 
   const topPdv = kpi?.topConcessionnairesActifs ?? [];
-  const agenceTrends = kpi?.agenceTrends30j ?? [];
+  const agencesTableRows = useMemo(() => {
+    const list = kpi?.agencesOverview30j;
+    if (!list?.length) return [];
+    return [...list].sort((a, b) => {
+      if (b.total30j !== a.total30j) return b.total30j - a.total30j;
+      const ca = a.agenceCode ?? a.agenceLabel;
+      const cb = b.agenceCode ?? b.agenceLabel;
+      return ca.localeCompare(cb, "fr", { sensitivity: "base" });
+    });
+  }, [kpi]);
   const produitVol = kpi?.produitVolumes30j ?? [];
   const delays = kpi?.dossierDelays30j;
   const th = kpi?.alertThresholds;
@@ -337,7 +345,6 @@ export default function LonaciDashboardHome() {
 
   return (
     <div className="lonaci-db-dashboard lonaci-db-dashboard--premium space-y-5">
-      <DashboardAgencesStrip items={kpi?.agencesOverview30j ?? null} loading={!kpi && !error} />
       <DashboardNotifications />
       {error ? <p className="lonaci-db-dashboard--premium__error">{error}</p> : null}
 
@@ -681,12 +688,14 @@ export default function LonaciDashboardHome() {
             <div className="lonaci-db-flex-between lonaci-db-mb-12">
               <div>
                 <div className="lonaci-db-section-title">Tendances par agence</div>
-                <div className="lonaci-db-section-subtitle">Volumes sur 30 j. · contrats, cautions, intégrations PDV</div>
+                <div className="lonaci-db-section-subtitle">
+                  Toutes les agences · 30 j. · tri par volume (contrats, cautions, intégrations PDV)
+                </div>
               </div>
             </div>
             <div className="lonaci-db-mini-table-wrap">
-              {agenceTrends.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune activité agrégée sur la période.</p>
+              {agencesTableRows.length === 0 ? (
+                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune agence dans le référentiel.</p>
               ) : (
                 <table className="lonaci-db-mini-table">
                   <thead>
@@ -699,7 +708,7 @@ export default function LonaciDashboardHome() {
                     </tr>
                   </thead>
                   <tbody>
-                    {agenceTrends.map((a, i) => (
+                    {agencesTableRows.map((a, i) => (
                       <tr key={a.agenceId ?? `ag-${i}`}>
                         <td>{a.agenceLabel}</td>
                         <td className="lonaci-db-td-num">{a.contrats30j}</td>

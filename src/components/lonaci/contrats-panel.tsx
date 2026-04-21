@@ -1,8 +1,10 @@
 "use client";
 
+import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -143,6 +145,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    assertExcelImportAllowed("CONTRATS");
     const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
       "@/lib/spreadsheet/safe-xlsx-read",
     );
@@ -269,6 +272,18 @@ function workflowPrimaryAction(etape: string): {
     default:
       return null;
   }
+}
+
+/** Au moins une action de la modale « Décision dossier » est autorisée pour ce rôle à cette étape. */
+function userCanOpenDossierDecisionModal(role: string | null, etape: string): boolean {
+  const primary = workflowPrimaryAction(etape);
+  if (primary && userMayPerformDossierTransition(role, primary.action)) return true;
+  const intermediate = etape === "SOUMIS" || etape === "VALIDE_N1" || etape === "VALIDE_N2";
+  if (intermediate) {
+    if (userMayPerformDossierTransition(role, "REJECT")) return true;
+    if (userMayPerformDossierTransition(role, "RETURN_PREVIOUS")) return true;
+  }
+  return false;
 }
 
 const inputClass =
@@ -1017,6 +1032,12 @@ export default function ContratsPanel() {
 
   const showSearchPanel = pdvQuery.trim().length >= 2 && (!selectedPdv || labelPdv(selectedPdv) !== pdvQuery.trim());
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
+  const decisionIntermediateStep =
+    decisionEtape === "SOUMIS" || decisionEtape === "VALIDE_N1" || decisionEtape === "VALIDE_N2";
+  const mayApprouverDossier =
+    decisionPrimary !== null && userMayPerformDossierTransition(meRole, decisionPrimary.action);
+  const mayRejectDossier = userMayPerformDossierTransition(meRole, "REJECT");
+  const mayReturnDossier = userMayPerformDossierTransition(meRole, "RETURN_PREVIOUS");
 
   const contractsKpis = useMemo(() => {
     if (!chartsData) {
@@ -1085,12 +1106,13 @@ export default function ContratsPanel() {
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <a
-              href="/api/contrats/export?format=excel"
+            <button
+              type="button"
+              onClick={() => window.location.assign("/api/contrats/export?format=excel")}
               className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
             >
               Excel
-            </a>
+            </button>
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
@@ -1568,7 +1590,8 @@ export default function ContratsPanel() {
                     const etape = c.dossierEtape ?? "FINALISE";
                     const etatSuivi = contratSuiviEtat(etape, c.dateDepot ?? c.createdAt);
                     const etatBadge = contratSuiviBadge(etatSuivi);
-                    const actionLabel = "Valider";
+                    const workflowPrimary = workflowPrimaryAction(etape);
+                    const canDecideDossier = userCanOpenDossierDecisionModal(meRole, etape);
                     return (
                       <tr key={c.id} className="border-b border-slate-100 align-top transition-colors duration-150 hover:bg-cyan-50/60">
                         <td className="px-3 py-2.5 font-mono text-xs text-slate-900 sm:px-4" title={c.reference}>
@@ -1602,14 +1625,17 @@ export default function ContratsPanel() {
                             >
                               Voir
                             </button>
-                            <button
-                              type="button"
-                              disabled={dossierActionBusyId === c.dossierId}
-                              onClick={() => openDecision(c.dossierId, etape)}
-                              className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
-                            >
-                              {dossierActionBusyId === c.dossierId ? "..." : actionLabel}
-                            </button>
+                            {canDecideDossier ? (
+                              <button
+                                type="button"
+                                disabled={dossierActionBusyId === c.dossierId}
+                                title={workflowPrimary?.label ?? "Workflow dossier"}
+                                onClick={() => openDecision(c.dossierId, etape)}
+                                className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
+                              >
+                                {dossierActionBusyId === c.dossierId ? "..." : "Valider"}
+                              </button>
+                            ) : null}
                             {meRole === "CHEF_SERVICE" ? (
                               <button
                                 type="button"
@@ -1764,7 +1790,7 @@ export default function ContratsPanel() {
                 <p className="text-sm text-slate-900">{viewContrat.status}</p>
               </div>
               <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date d'effet</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date d&apos;effet</p>
                 <p className="text-sm text-slate-900">{formatShortDate(viewContrat.dateEffet)}</p>
               </div>
               <div>
@@ -1777,14 +1803,19 @@ export default function ContratsPanel() {
               </div>
             </div>
             <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
-              <a
-                href={`/api/contrats/${encodeURIComponent(viewContrat.dossierId)}/export`}
-                target="_blank"
-                rel="noopener noreferrer"
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(
+                    `/api/contrats/${encodeURIComponent(viewContrat.dossierId)}/export`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
                 className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
               >
                 Ouvrir le PDF
-              </a>
+              </button>
               <button
                 type="button"
                 onClick={closeViewContrat}
@@ -1863,7 +1894,11 @@ export default function ContratsPanel() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId || decisionPrimary === null}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        decisionPrimary === null ||
+                        !mayApprouverDossier
+                      }
                       onClick={() => void decideApprouver()}
                       className="rounded-lg border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-sky-700 hover:bg-sky-700 disabled:opacity-60"
                     >
@@ -1871,7 +1906,11 @@ export default function ContratsPanel() {
                     </button>
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        !mayRejectDossier ||
+                        !decisionIntermediateStep
+                      }
                       onClick={() => void decideRejeter()}
                       className="rounded-lg border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-rose-700 hover:bg-rose-700 disabled:opacity-60"
                     >
@@ -1879,7 +1918,11 @@ export default function ContratsPanel() {
                     </button>
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        !mayReturnDossier ||
+                        !decisionIntermediateStep
+                      }
                       onClick={() => void decideRetourner()}
                       className="rounded-lg border border-amber-600 bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-amber-700 hover:bg-amber-700 disabled:opacity-60"
                     >
@@ -2153,7 +2196,7 @@ export default function ContratsPanel() {
                 <input
                   ref={importFileInputRef}
                   type="file"
-                  accept=".json,.csv,.xlsx,.xls,.pdf"
+                  accept={getImportAcceptAttribute("CONTRATS")}
                   aria-label="Importer des contrats"
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}

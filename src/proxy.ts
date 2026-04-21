@@ -20,7 +20,11 @@ function resolveCorsOrigin(request: NextRequest): string | null {
   const origin = request.headers.get("origin")?.trim();
   if (!origin) return null;
   const allowed = getAllowedOrigins();
-  if (!allowed.length) return origin;
+  if (!allowed.length) {
+    // En production, fail-closed : aucune origine cross-site sans whitelist explicite.
+    if (process.env.NODE_ENV === "production") return "";
+    return origin;
+  }
   return allowed.includes(origin) ? origin : "";
 }
 
@@ -38,6 +42,68 @@ function applyCorsHeaders(request: NextRequest, response: NextResponse): NextRes
   );
   response.headers.set("Access-Control-Max-Age", "86400");
   return response;
+}
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const g = globalThis as typeof globalThis & {
+  __lonaciProxyRateLimitBuckets?: Map<string, RateLimitBucket>;
+};
+
+function getRateLimitBuckets(): Map<string, RateLimitBucket> {
+  if (!g.__lonaciProxyRateLimitBuckets) {
+    g.__lonaciProxyRateLimitBuckets = new Map<string, RateLimitBucket>();
+  }
+  return g.__lonaciProxyRateLimitBuckets;
+}
+
+function getClientIp(request: NextRequest): string {
+  const xff = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  if (xff) return xff;
+  const realIp = request.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp;
+  return "unknown";
+}
+
+function parseIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name]?.trim();
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const RL_AUTH_MAX = parseIntEnv("PROXY_RATE_LIMIT_AUTH_MAX", 20);
+const RL_PUBLIC_MAX = parseIntEnv("PROXY_RATE_LIMIT_PUBLIC_MAX", 120);
+const RL_PRIVATE_MAX = parseIntEnv("PROXY_RATE_LIMIT_PRIVATE_MAX", 300);
+const RL_WINDOW_MS = parseIntEnv("PROXY_RATE_LIMIT_WINDOW_MS", 60_000);
+
+function consumeProxyRateLimit(request: NextRequest, keyKind: "auth" | "public" | "private"): number | null {
+  if (request.method === "OPTIONS") return null;
+  const max = keyKind === "auth" ? RL_AUTH_MAX : keyKind === "public" ? RL_PUBLIC_MAX : RL_PRIVATE_MAX;
+  const now = Date.now();
+  const windowKey = `${keyKind}:${getClientIp(request)}:${Math.floor(now / RL_WINDOW_MS)}`;
+  const buckets = getRateLimitBuckets();
+
+  // Cleanup opportuniste léger.
+  if (buckets.size > 2000) {
+    for (const [k, bucket] of buckets) {
+      if (bucket.resetAt <= now) buckets.delete(k);
+    }
+  }
+
+  const existing = buckets.get(windowKey);
+  if (!existing || existing.resetAt <= now) {
+    buckets.set(windowKey, { count: 1, resetAt: now + RL_WINDOW_MS });
+    return null;
+  }
+  if (existing.count >= max) {
+    return Math.max(1, Math.ceil((existing.resetAt - now) / 1000));
+  }
+  existing.count += 1;
+  return null;
 }
 
 /**
@@ -98,6 +164,19 @@ export function proxy(request: NextRequest) {
       preflightResponse.headers.set("X-Api-Version", apiVersion);
     }
     return preflightResponse;
+  }
+
+  if (effectivePathname !== "/api/health") {
+    const keyKind: "auth" | "public" | "private" =
+      effectivePathname.startsWith("/api/auth/") ? "auth" : isPublicApiPath(effectivePathname) ? "public" : "private";
+    const retryAfterSec = consumeProxyRateLimit(request, keyKind);
+    if (retryAfterSec) {
+      const limited = NextResponse.json(
+        { message: "Trop de requêtes", code: "RATE_LIMITED" },
+        { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+      );
+      return applyCorsHeaders(request, withRequestId(limited));
+    }
   }
 
   if (isPublicApiPath(effectivePathname)) {

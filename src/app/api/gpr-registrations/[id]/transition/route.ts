@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureGprGrattageIndexes, GPR_REGISTRATION_STATUSES, transitionGprRegistration } from "@/lib/lonaci/gpr-grattage";
 
@@ -16,7 +17,7 @@ interface RouteContext {
 export async function POST(request: NextRequest, context: RouteContext) {
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
   const rbacAction =
     parsed.data.targetStatus === "VALIDE_N1"

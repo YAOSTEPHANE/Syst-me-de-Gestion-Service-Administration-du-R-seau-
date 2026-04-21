@@ -28,6 +28,7 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run check:api-routes
+      - run: npm run check:api-zod
       - run: npx prisma generate
   build:
     runs-on: ubuntu-latest

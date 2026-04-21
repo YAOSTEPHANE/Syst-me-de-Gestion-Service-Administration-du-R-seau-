@@ -1,6 +1,9 @@
 import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
+import { badRequest, forbidden, notFound, serverError } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { canMutateConcessionnaireCore, isStatutFicheGelee } from "@/lib/lonaci/access";
 import {
   addPieceJointe,
@@ -21,6 +24,11 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
+const pieceFormSchema = z.object({
+  file: z.instanceof(File),
+  kind: z.enum(["PHOTO", "DOCUMENT"]),
+});
+
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -33,40 +41,34 @@ export async function POST(request: NextRequest, context: RouteContext) {
   await ensureConcessionnaireIndexes();
   const doc = await findConcessionnaireById(id);
   if (!doc || doc.deletedAt) {
-    return NextResponse.json({ message: "Non trouve" }, { status: 404 });
+    return notFound("Non trouve", "CONCESSIONNAIRE_NOT_FOUND");
   }
 
   if (isStatutFicheGelee(doc.statut)) {
-    return NextResponse.json(
-      { message: "Pieces jointes interdites pour statut resilie ou decede" },
-      { status: 403 },
-    );
+    return forbidden("Pieces jointes interdites pour statut resilie ou decede", "CONCESSIONNAIRE_FROZEN");
   }
 
   if (!canMutateConcessionnaireCore(auth.user, doc)) {
-    return NextResponse.json({ message: "Modification interdite" }, { status: 403 });
+    return forbidden("Modification interdite", "CONCESSIONNAIRE_MUTATION_FORBIDDEN");
   }
 
   const form = await request.formData();
-  const file = form.get("file");
-  const kindRaw = form.get("kind");
-
-  if (!(file instanceof File)) {
-    return NextResponse.json({ message: "Fichier manquant (champ file)" }, { status: 400 });
+  const parsedForm = pieceFormSchema.safeParse({
+    file: form.get("file"),
+    kind: form.get("kind"),
+  });
+  if (!parsedForm.success) {
+    return zodBadRequest(parsedForm.error);
   }
-
-  const kind = typeof kindRaw === "string" && (kindRaw === "PHOTO" || kindRaw === "DOCUMENT") ? kindRaw : null;
-  if (!kind) {
-    return NextResponse.json({ message: "kind requis: PHOTO ou DOCUMENT" }, { status: 400 });
-  }
+  const { file, kind } = parsedForm.data;
 
   if (file.size > MAX_PIECE_BYTES) {
-    return NextResponse.json({ message: `Fichier trop volumineux (max ${MAX_PIECE_BYTES} octets)` }, { status: 400 });
+    return badRequest(`Fichier trop volumineux (max ${MAX_PIECE_BYTES} octets)`, "FILE_TOO_LARGE");
   }
 
   const mimeType = file.type || "application/octet-stream";
   if (!ALLOWED_PIECE_MIME[mimeType]) {
-    return NextResponse.json({ message: "Type MIME non autorise" }, { status: 400 });
+    return badRequest("Type MIME non autorise", "INVALID_MIME_TYPE");
   }
 
   const buffer = Buffer.from(await file.arrayBuffer());
@@ -87,7 +89,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const updated = await addPieceJointe(id, piece, auth.user);
   if (!updated) {
-    return NextResponse.json({ message: "Enregistrement impossible" }, { status: 500 });
+    return serverError("Enregistrement impossible", "PIECE_SAVE_FAILED");
   }
 
   let out = updated;

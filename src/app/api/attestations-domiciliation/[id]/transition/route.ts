@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAttestationsDomiciliationIndexes, transitionDemandeAttestationDomiciliation } from "@/lib/lonaci/attestations-domiciliation";
-import { requireApiAuth } from "@/lib/auth/guards";
+import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
 
 const schema = z.object({
   target: z.enum(["TRANSMIS", "FINALISE"]),
@@ -13,14 +14,20 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["ASSIST_CDS", "CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await checkPermission(request, {
+    roles: ["ASSIST_CDS", "CHEF_SERVICE"],
+    resource: "DOSSIERS",
+    action: resolveRbacAction(parsed.data.target, {
+      TRANSMIS: "VALIDATE_N2",
+      FINALISE: "FINALIZE",
+    }),
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
 
   await ensureAttestationsDomiciliationIndexes();
   try {

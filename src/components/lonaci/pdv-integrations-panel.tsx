@@ -3,6 +3,7 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -127,6 +128,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    assertExcelImportAllowed("PDV_INTEGRATIONS");
     const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
       "@/lib/spreadsheet/safe-xlsx-read",
     );
@@ -871,7 +873,7 @@ export default function PdvIntegrationsPanel() {
                   <input
                     ref={importFileInputRef}
                     type="file"
-                    accept=".json,.csv,.xlsx,.xls,.pdf"
+                    accept={getImportAcceptAttribute("PDV_INTEGRATIONS")}
                     className="sr-only"
                     onChange={(e) => void onImportFileChange(e)}
                   />

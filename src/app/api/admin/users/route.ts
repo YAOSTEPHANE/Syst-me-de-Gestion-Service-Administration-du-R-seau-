@@ -30,6 +30,11 @@ const createUserSchema = z.object({
 
 const listSchema = z.object({
   status: z.enum(["ALL", "ACTIF", "INACTIF"]).optional().default("ALL"),
+  role: z.enum(LONACI_ROLES).optional(),
+  agenceId: z.string().trim().optional(),
+  q: z.string().trim().optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(20),
 });
 
 export async function GET(request: NextRequest) {
@@ -44,11 +49,42 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   const users = await listUsers();
-  const filtered =
+  const statusFiltered =
     parsed.data.status === "ALL"
       ? users
       : users.filter((u) => (parsed.data.status === "ACTIF" ? u.actif : !u.actif));
-  return NextResponse.json({ users: filtered.map(sanitizeUser) }, { status: 200 });
+
+  const roleFiltered = parsed.data.role ? statusFiltered.filter((u) => u.role === parsed.data.role) : statusFiltered;
+  const agenceFiltered = parsed.data.agenceId
+    ? roleFiltered.filter((u) => (u.agenceId ?? "").trim() === parsed.data.agenceId)
+    : roleFiltered;
+
+  const q = parsed.data.q?.trim().toLowerCase();
+  const searched = q
+    ? agenceFiltered.filter((u) => {
+        const haystack = [u.email, u.nom, u.prenom, u.matricule ?? "", u.role].join(" ").toLowerCase();
+        return haystack.includes(q);
+      })
+    : agenceFiltered;
+
+  const total = searched.length;
+  const totalPages = Math.max(1, Math.ceil(total / parsed.data.pageSize));
+  const page = Math.min(parsed.data.page, totalPages);
+  const start = (page - 1) * parsed.data.pageSize;
+  const pageItems = searched.slice(start, start + parsed.data.pageSize);
+
+  return NextResponse.json(
+    {
+      users: pageItems.map(sanitizeUser),
+      pagination: {
+        page,
+        pageSize: parsed.data.pageSize,
+        total,
+        totalPages,
+      },
+    },
+    { status: 200 },
+  );
 }
 
 export async function POST(request: NextRequest) {

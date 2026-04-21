@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   findBancarisationRequestById,
   sanitizeBancarisationRequestPublic,
   validateBancarisationRequest,
 } from "@/lib/lonaci/bancarisation";
-import { requireApiAuth } from "@/lib/auth/guards";
+import { checkPermission } from "@/lib/auth/checkPermission";
 
 const schema = z.object({
   decision: z.enum(["VALIDER", "REJETER"]),
@@ -19,14 +20,17 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await checkPermission(request, {
+    roles: ["CHEF_SERVICE"],
+    resource: "CONCESSIONNAIRES",
+    action: parsed.data.decision === "VALIDER" ? "FINALIZE" : "REJECT",
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
 
   const reqDoc = await findBancarisationRequestById(id);
   if (!reqDoc) {

@@ -68,17 +68,26 @@ export function canCreateConcessionnaireForAgence(
     return true;
   }
   if (user.role === "AGENT" || user.role === "CHEF_SECTION") {
-    if (!user.agenceId) {
-      return false;
+    if (user.agenceId) {
+      return agenceId === user.agenceId;
     }
-    return agenceId === user.agenceId;
+    if (user.agencesAutorisees.length > 0) {
+      return agenceId !== null && user.agencesAutorisees.includes(agenceId);
+    }
+    return false;
   }
   return false;
 }
 
 export function enforcedAgenceIdOnCreate(user: UserDocument, requestedAgenceId: string | null): string | null {
   if (user.role === "AGENT" || user.role === "CHEF_SECTION") {
-    return user.agenceId;
+    if (user.agenceId) {
+      return user.agenceId;
+    }
+    if (user.agencesAutorisees.length === 1) {
+      return user.agencesAutorisees[0] ?? null;
+    }
+    return requestedAgenceId;
   }
   if (user.role === "ASSIST_CDS" && user.agenceId) {
     return user.agenceId;

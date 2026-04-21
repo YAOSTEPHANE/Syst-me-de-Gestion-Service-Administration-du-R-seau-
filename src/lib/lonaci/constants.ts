@@ -28,20 +28,21 @@ export interface LonaciRoleProfile {
 export const LONACI_ROLE_PROFILES: Record<LonaciRole, LonaciRoleProfile> = {
   AGENT: {
     designation: "Agent opérationnel",
-    responsabilite: "Saisie des dossiers. Accès limité à son agence et ses modules assignés.",
+    responsabilite:
+      "Action et saisie sur l’ensemble des modules métier (contrats, cautions, PDV, agréments, cessions, résiliations, attestations, décès, bancarisation, GPR, référentiel, notifications, etc.), dans la limite de son agence et des modules assignés au compte. Hors périmètre : production des rapports (lecture / suivi seulement selon les écrans) et gestion des comptes utilisateurs.",
   },
   CHEF_SECTION: {
-    designation: "Chef(fe) de Section",
+    designation: "Chef(fe) de section",
     responsabilite:
       "Contrôle N1. Valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
   },
   ASSIST_CDS: {
-    designation: "Assistant(e) Chef(fe) de Service",
+    designation: "Assistant(e) chef(fe) de service",
     responsabilite:
       "Contrôle N2. Synthèse des états. Produit les rapports mensuels, semestriels et annuels.",
   },
   CHEF_SERVICE: {
-    designation: "Chef(fe) de Service",
+    designation: "Chef(fe) de service",
     responsabilite:
       "Validation finale. Accès complet à tous les modules. Finalise tous les dossiers. Paramètre le système.",
   },

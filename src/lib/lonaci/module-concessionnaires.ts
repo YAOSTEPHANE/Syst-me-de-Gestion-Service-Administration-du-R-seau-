@@ -13,12 +13,37 @@
 export const MODULE_CONCESSIONNAIRES_SAISIE = "CONCESSIONNAIRES";
 export const MODULE_CONCESSIONNAIRES_LECTURE = "CONCESSIONNAIRES_LECTURE";
 
+function normalizeModuleToken(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[\s/-]+/g, "_");
+}
+
+const SAISIE_ALIASES = new Set<string>([
+  MODULE_CONCESSIONNAIRES_SAISIE,
+  "ACTION_SAISIE",
+  "CONCESSIONNAIRES_ACTION_SAISIE",
+]);
+
+const LECTURE_ALIASES = new Set<string>([
+  MODULE_CONCESSIONNAIRES_LECTURE,
+  "SUIVI_LECTURE",
+  "CONCESSIONNAIRES_SUIVI_LECTURE",
+]);
+
+function hasAnyModuleAlias(modulesAutorises: string[], aliases: Set<string>): boolean {
+  return modulesAutorises.some((moduleKey) => aliases.has(normalizeModuleToken(moduleKey)));
+}
+
 /** True si l’utilisateur peut muter le référentiel (POST/PATCH/DELETE sur /api/concessionnaires/*). */
 export function userHasConcessionnairesSaisieModule(modulesAutorises: string[]): boolean {
   if (!modulesAutorises.length) {
     return true;
   }
-  return modulesAutorises.includes(MODULE_CONCESSIONNAIRES_SAISIE);
+  return hasAnyModuleAlias(modulesAutorises, SAISIE_ALIASES);
 }
 
 /** True si l’utilisateur peut appeler les GET sur /api/concessionnaires/* (y compris export). */
@@ -27,7 +52,7 @@ export function userHasConcessionnairesLectureModule(modulesAutorises: string[])
     return true;
   }
   return (
-    modulesAutorises.includes(MODULE_CONCESSIONNAIRES_SAISIE) ||
-    modulesAutorises.includes(MODULE_CONCESSIONNAIRES_LECTURE)
+    hasAnyModuleAlias(modulesAutorises, SAISIE_ALIASES) ||
+    hasAnyModuleAlias(modulesAutorises, LECTURE_ALIASES)
   );
 }

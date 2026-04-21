@@ -1,25 +1,32 @@
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
 
-function agenceLabel(agenceKey: string): string {
-  const labels: Record<string, string> = {
-    "": "Toutes agences",
+function shortAgenceLibelle(label: string): string {
+  if (label.includes(" - ")) return label.split(" - ").slice(1).join(" - ");
+  return label;
+}
+
+function agenceLabel(agenceKey: string, kpi: LonaciKpiPayload | null): string {
+  if (!agenceKey) return "Toutes agences";
+  const fromKpi = kpi?.agencesOverview30j?.find((a) => a.agenceId === agenceKey);
+  if (fromKpi) return shortAgenceLibelle(fromKpi.agenceLabel) || fromKpi.agenceCode || "Agence";
+  const legacy: Record<string, string> = {
     yop1: "Yopougon 1",
     abobo: "Abobo",
     plateau: "Plateau",
     cocody: "Cocody",
     marcory: "Marcory",
   };
-  return labels[agenceKey] ?? "Toutes agences";
+  return legacy[agenceKey] ?? "Toutes agences";
 }
 
-function dateLine(agenceKey: string): string {
+function dateLine(agenceKey: string, kpi: LonaciKpiPayload | null): string {
   const datePart = new Date().toLocaleDateString("fr-FR", {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
   });
-  return `${datePart} · ${agenceLabel(agenceKey)}`;
+  return `${datePart} · ${agenceLabel(agenceKey, kpi)}`;
 }
 
 /** Titres de l'en-tête selon la route (données KPI optionnelles pour les sous-titres dynamiques). */
@@ -28,7 +35,7 @@ export function lonaciShellHeader(
   kpi: LonaciKpiPayload | null,
   agenceKey: string,
 ): { title: string; sub: string } {
-  const dl = dateLine(agenceKey);
+  const dl = dateLine(agenceKey, kpi);
 
   if (pathname === "/dashboard" || pathname === "/dashboard/") {
     return { title: "Tableau de bord", sub: dl };

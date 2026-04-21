@@ -24,6 +24,10 @@ const listSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(DOSSIER_STATUSES).optional(),
   type: z.enum(DOSSIER_TYPES).optional(),
+  q: z.string().trim().max(120).optional(),
+  concessionnaireId: z.string().trim().max(120).optional(),
+  sortField: z.enum(["updatedAt", "reference", "status"]).optional().default("updatedAt"),
+  sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
 });
 
 export async function GET(request: NextRequest) {
@@ -46,6 +50,10 @@ export async function GET(request: NextRequest) {
     parsed.data.status,
     parsed.data.type,
     scopeAgenceId,
+    parsed.data.q,
+    parsed.data.concessionnaireId,
+    parsed.data.sortField,
+    parsed.data.sortOrder,
   );
   return NextResponse.json(result, { status: 200 });
 }

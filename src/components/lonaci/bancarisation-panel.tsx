@@ -6,6 +6,7 @@ import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type Banc = "NON_BANCARISE" | "EN_COURS" | "BANCARISE";
 type RequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
@@ -127,6 +128,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    assertExcelImportAllowed("BANCARISATION");
     const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
       "@/lib/spreadsheet/safe-xlsx-read",
     );
@@ -462,7 +464,7 @@ export default function BancarisationPanel() {
               <input
                 ref={importFileInputRef}
                 type="file"
-                accept=".json,.csv,.xlsx,.xls,.pdf"
+                accept={getImportAcceptAttribute("BANCARISATION")}
                 className="hidden"
                 onChange={(e) => void onImportFileChange(e)}
               />

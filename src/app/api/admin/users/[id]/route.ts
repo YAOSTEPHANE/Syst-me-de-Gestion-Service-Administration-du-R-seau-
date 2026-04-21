@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { findUserByEmail, findUserById, findUserByMatricule, sanitizeUser, updateUserAdmin } from "@/lib/lonaci/users";
@@ -36,7 +37,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   if (parsed.data.email && parsed.data.email.trim().toLowerCase() !== current.email) {

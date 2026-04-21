@@ -7,6 +7,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 import { CAUTION_PAYMENT_MODES, type CautionStatus } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
@@ -137,6 +138,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    assertExcelImportAllowed("CAUTIONS");
     const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
       "@/lib/spreadsheet/safe-xlsx-read",
     );
@@ -811,7 +813,7 @@ export default function CautionsPanel() {
                   <input
                     ref={importFileInputRef}
                     type="file"
-                    accept=".json,.csv,.xlsx,.xls,.pdf"
+                    accept={getImportAcceptAttribute("CAUTIONS")}
                     aria-label="Importer des cautions"
                     className="sr-only"
                     onChange={(e) => void onImportFileChange(e)}

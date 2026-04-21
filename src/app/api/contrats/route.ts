@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 
-import { apiError, badRequest, conflict, forbidden, notFound, serverError } from "@/lib/api/error-responses";
+import { apiError, badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
 import { isStatutBloquant } from "@/lib/lonaci/access";

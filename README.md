@@ -1,6 +1,9 @@
 # ADMR - MVP (LONACI)
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 Base de demarrage du projet ADMR avec:
+
 - Next.js (App Router)
 - Turbopack pour le developpement (`next dev --turbopack`)
 - MongoDB comme base de donnees
@@ -18,9 +21,9 @@ Base de demarrage du projet ADMR avec:
 cp .env.example .env.local
 ```
 
-2. Mettre a jour `MONGODB_URI` et `MONGODB_DB` dans `.env.local`.
+1. Mettre a jour `MONGODB_URI` et `MONGODB_DB` dans `.env.local`.
 
-3. Installer les dependances:
+1. Installer les dependances:
 
 ```bash
 npm install
@@ -32,7 +35,7 @@ npm install
 npm run dev -- --turbopack
 ```
 
-Application: [http://localhost:3000](http://localhost:3000)
+Application: [http://127.0.0.1:3000](http://127.0.0.1:3000)
 
 ## Endpoint de verification
 
@@ -45,6 +48,11 @@ Voir [docs/HEBERGEMENT.md](docs/HEBERGEMENT.md) (architecture, MongoDB, variable
 ## Guide utilisateur
 
 [docs/GUIDE-UTILISATION.md](docs/GUIDE-UTILISATION.md) — connexion, navigation, modules, dossiers, import, exports.
+
+## Licence
+
+- Texte officiel GPLv3: [LICENSE](LICENSE)
+- Version francaise (aide de lecture): [LICENSE.fr.md](LICENSE.fr.md)
 
 ## Qualite
 
