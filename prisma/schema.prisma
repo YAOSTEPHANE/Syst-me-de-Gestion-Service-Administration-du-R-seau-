@@ -44,6 +44,10 @@ model Counter {
 model Concessionnaire {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
   codePdv         String    @unique
+  /** Code terminal métier (saisie libre, distinct du code PDV généré). */
+  codeTerminal    String?
+  /** Code concessionnaire métier (saisie libre). */
+  codeConcessionnaire String?
   nomComplet      String?
   raisonSociale   String
   cniNumero       String?

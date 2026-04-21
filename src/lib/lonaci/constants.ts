@@ -155,7 +155,7 @@ export const BANCARISATION_STATUT_LABELS: Record<BancarisationStatut, string> = 
 /** Opérations interdites sauf lecture / notes service (règles MVP) */
 export const CONCESSIONNAIRE_STATUTS_BLOQUANTS = ["INACTIF", "RESILIE", "DECEDE"] as const;
 
-/** Décès & succession — 5 étapes séquentielles (Sprint 5) */
+/** Décès et ayants droit — 5 étapes séquentielles (Sprint 5) */
 export const SUCCESSION_STEPS = [
   "DECLARATION_DECES",
   "IDENTIFICATION_AYANT_DROIT",

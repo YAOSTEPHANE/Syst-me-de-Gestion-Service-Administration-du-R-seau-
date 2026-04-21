@@ -758,7 +758,7 @@ export default function ReportsPanel() {
                 <p className="text-sm text-slate-700">Stale 30j: <span className="font-semibold">{summary.modules?.succession?.stale30j ?? summary.succession?.stale30j ?? 0}</span></p>
               </article>
               <article className="rounded-xl border border-violet-200 bg-linear-to-br from-violet-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-violet-700">Intégrations PDV</p>
+                <p className="text-[11px] uppercase tracking-wide text-violet-700">Géolocalisation PDV</p>
                 <p className="mt-2 text-sm text-slate-700">Non finalisées: <span className="font-semibold">{summary.modules?.pdvIntegrations?.nonFinalise ?? summary.pdvIntegrations?.nonFinalise ?? 0}</span></p>
               </article>
             </div>

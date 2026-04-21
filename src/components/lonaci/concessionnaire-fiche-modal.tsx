@@ -40,6 +40,8 @@ interface PieceMeta {
 interface ConcessionnaireDetail {
   id: string;
   codePdv: string;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   nomComplet: string;
   raisonSociale: string;
   cniNumero: string | null;
@@ -194,6 +196,8 @@ export default function ConcessionnaireFicheModal({
   const [detail, setDetail] = useState<ConcessionnaireDetail | null>(null);
 
   const [nomComplet, setNomComplet] = useState("");
+  const [codeTerminal, setCodeTerminal] = useState("");
+  const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
   const [email, setEmail] = useState("");
   const [tel, setTel] = useState("");
@@ -281,6 +285,8 @@ export default function ConcessionnaireFicheModal({
       const c = data.concessionnaire;
       setDetail(c);
       setNomComplet(c.nomComplet ?? "");
+      setCodeTerminal(c.codeTerminal ?? "");
+      setCodeConcessionnaire(c.codeConcessionnaire ?? "");
       setCniNumero(c.cniNumero ?? "");
       setEmail(c.email ?? "");
       setTel(c.telephonePrincipal ?? "");
@@ -440,6 +446,11 @@ export default function ConcessionnaireFicheModal({
       if (cni.length > 0 && cni.length < 4) {
         throw new Error("Numéro CNI : au moins 4 caractères si renseigné.");
       }
+      const ct = codeTerminal.trim();
+      const cc = codeConcessionnaire.trim();
+      if (ct.length > 64 || cc.length > 64) {
+        throw new Error("Code terminal et code concessionnaire : 64 caractères maximum.");
+      }
       const la = Number(lat.replace(",", "."));
       const lo = Number(lng.replace(",", "."));
       if (Number.isNaN(la) || Number.isNaN(lo)) {
@@ -453,6 +464,8 @@ export default function ConcessionnaireFicheModal({
       const telS = telSecondary.trim();
       const body: Record<string, unknown> = {
         nomComplet: nomComplet.trim(),
+        codeTerminal: ct.length ? ct : null,
+        codeConcessionnaire: cc.length ? cc : null,
         cniNumero: cni.length ? cni : null,
         email: email.trim() ? email.trim() : null,
         telephonePrincipal: telP.length >= 8 ? telP : telP.length === 0 ? null : undefined,
@@ -689,6 +702,28 @@ export default function ConcessionnaireFicheModal({
                     <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
                     <input value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} className={inputClass} />
                   </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Code terminal</span>
+                      <input
+                        value={codeTerminal}
+                        onChange={(e) => setCodeTerminal(e.target.value)}
+                        maxLength={64}
+                        placeholder="Optionnel"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Code concessionnaire</span>
+                      <input
+                        value={codeConcessionnaire}
+                        onChange={(e) => setCodeConcessionnaire(e.target.value)}
+                        maxLength={64}
+                        placeholder="Optionnel"
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
                   <label className="grid gap-1">
                     <span className="text-xs font-medium text-slate-700">E-mail</span>
                     <input

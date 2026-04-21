@@ -51,8 +51,8 @@ const IMPORT_MODULES: Array<{
   },
   {
     key: "PDV_INTEGRATIONS",
-    label: "Intégrations PDV",
-    // Intégration PDV: contrainte d’unicité Mongo sur `reference`.
+    label: "Géolocalisation PDV",
+    // Géolocalisation PDV: contrainte d’unicité Mongo sur `reference`.
     collections: [{ value: "pdv_integrations", label: "PDV Integrations", defaultUpsertBy: "reference" }],
   },
   {

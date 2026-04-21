@@ -424,7 +424,7 @@ export default function SuccessionPanel() {
       <div className="relative mb-5 flex items-center justify-between gap-4">
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">LONACI</p>
-          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Décès & succession</h2>
+          <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Décès et ayants droit</h2>
           <p className="mt-1 text-sm text-slate-600">Workflow guidé en 5 étapes avec traçabilité et contrôles de validation.</p>
         </div>
         <div className="flex items-center gap-2">

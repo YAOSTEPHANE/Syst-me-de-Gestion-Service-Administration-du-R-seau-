@@ -87,7 +87,12 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
         path: request.nextUrl.pathname,
       });
     }
-    return { error: NextResponse.json({ message: "Non authentifie" }, { status: 401 }) };
+    return {
+      error: NextResponse.json(
+        { message: "Non authentifie", code: "AUTH_MISSING_SESSION" },
+        { status: 401 },
+      ),
+    };
   }
 
   const user = await findUserById(session.sub);
@@ -124,7 +129,10 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     }
     return {
       error: NextResponse.json(
-        { message: "Session invalide. Veuillez vous reconnecter." },
+        {
+          message: "Session invalide. Veuillez vous reconnecter.",
+          code: "INVALID_SESSION_ID",
+        },
         { status: 401 },
       ),
     };
@@ -142,7 +150,10 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     await clearCurrentSession(user._id ?? "");
     return {
       error: NextResponse.json(
-        { message: "Session expiree apres 30 minutes d'inactivite. Veuillez vous reconnecter." },
+        {
+          message: "Session expiree apres 30 minutes d'inactivite. Veuillez vous reconnecter.",
+          code: "SESSION_INACTIVITY_TIMEOUT",
+        },
         { status: 401 },
       ),
     };

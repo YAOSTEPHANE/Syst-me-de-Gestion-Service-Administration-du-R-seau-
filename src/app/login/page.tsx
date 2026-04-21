@@ -119,7 +119,8 @@ function LoginPageContent() {
                   placeholder="vous@lonaci.ci ou MAT1234"
                 />
               </div>
-              <div>
+              {/* suppressHydrationWarning: extensions (ex. KeePass) injectent des nœuds dans les champs password */}
+              <div suppressHydrationWarning>
                 <label className="mb-1 block text-xs text-slate-300">Mot de passe</label>
                 <input
                   type="password"
@@ -213,15 +214,17 @@ function LoginPageContent() {
             {resetToken ? (
               <form onSubmit={onResetWithToken} className="mt-3 space-y-2.5 rounded-xl border border-white/10 bg-white/5 p-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Nouveau mot de passe (token)</p>
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  minLength={8}
-                  required
-                  className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-300/70 focus:bg-white/15"
-                  placeholder="Nouveau mot de passe"
-                />
+                <div suppressHydrationWarning>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    minLength={8}
+                    required
+                    className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-emerald-300/70 focus:bg-white/15"
+                    placeholder="Nouveau mot de passe"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={resetLoading}

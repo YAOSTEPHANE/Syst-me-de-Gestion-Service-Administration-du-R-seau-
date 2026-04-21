@@ -317,7 +317,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "Intégrations PDV",
+    module: "Géolocalisation PDV",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "A, C, S",
@@ -362,7 +362,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "Décès & Ayant Droit",
+    module: "Décès et ayants droit",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "C, S",
@@ -380,7 +380,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "GPR & Codes Grattage",
+    module: "Création de code grattage",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "C N1",

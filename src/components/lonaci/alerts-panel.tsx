@@ -177,7 +177,7 @@ export default function AlertsPanel() {
           tone="amber"
         />
         <AlertCard
-          title="Intégrations PDV non finalisées"
+          title="Géolocalisation PDV — dossiers non finalisés"
           value={daily?.pdvIntegrations?.nonFinalise ?? 0}
           subtitle={`${dv?.pdvEnCoursRetard5j ?? 0} en cours > 5 j.`}
           href="/pdv-integrations"

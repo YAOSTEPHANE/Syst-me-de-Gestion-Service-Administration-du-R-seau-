@@ -31,6 +31,8 @@ function isObjectId(id: string) {
 function mapDoc(row: {
   id: string;
   codePdv: string;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   nomComplet: string | null;
   raisonSociale: string;
   cniNumero: string | null;
@@ -64,6 +66,8 @@ function mapDoc(row: {
   return {
     _id: row.id,
     codePdv: row.codePdv,
+    codeTerminal: row.codeTerminal ?? null,
+    codeConcessionnaire: row.codeConcessionnaire ?? null,
     // Historique de données: `nomComplet` peut exister en `null` en base.
     // On normalise côté application vers une valeur string exploitable.
     nomComplet: row.nomComplet ?? row.raisonSociale ?? row.codePdv,
@@ -114,6 +118,8 @@ async function nextCodePdv(agenceCode: string): Promise<string> {
 
 export interface CreateConcessionnaireInput {
   nomComplet: string;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   cniNumero: string | null;
   photoUrl: string | null;
   email: string | null;
@@ -141,6 +147,8 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
   const created = await prisma.concessionnaire.create({
     data: {
       codePdv,
+      codeTerminal: input.codeTerminal,
+      codeConcessionnaire: input.codeConcessionnaire,
       nomComplet,
       raisonSociale: nomComplet,
       cniNumero: input.cniNumero,
@@ -250,6 +258,8 @@ export function buildConcessionnaireListWhere(
       { raisonSociale: { contains: q, mode: "insensitive" } },
       { nomComplet: { contains: q, mode: "insensitive" } },
       { codePdv: { contains: q, mode: "insensitive" } },
+      { codeTerminal: { contains: q, mode: "insensitive" } },
+      { codeConcessionnaire: { contains: q, mode: "insensitive" } },
       { email: { contains: q, mode: "insensitive" } },
       { telephone: { contains: q, mode: "insensitive" } },
       { telephonePrincipal: { contains: q, mode: "insensitive" } },
@@ -498,6 +508,8 @@ export async function searchConcessionnaires(params: SearchConcessionnairesParam
 
 export interface UpdateConcessionnaireInput {
   nomComplet?: string;
+  codeTerminal?: string | null;
+  codeConcessionnaire?: string | null;
   cniNumero?: string | null;
   photoUrl?: string | null;
   email?: string | null;
@@ -607,6 +619,8 @@ export function sanitizeConcessionnairePublic(doc: ConcessionnaireDocument) {
   return {
     id: doc._id ?? "",
     codePdv: doc.codePdv,
+    codeTerminal: doc.codeTerminal,
+    codeConcessionnaire: doc.codeConcessionnaire,
     raisonSociale: doc.raisonSociale,
     nomComplet: doc.nomComplet,
     cniNumero: doc.cniNumero,
@@ -648,6 +662,8 @@ export function sanitizeConcessionnaireListItem(doc: ConcessionnaireDocument) {
   return {
     id: doc._id ?? "",
     codePdv: doc.codePdv,
+    codeTerminal: doc.codeTerminal,
+    codeConcessionnaire: doc.codeConcessionnaire,
     nomComplet: doc.nomComplet,
     raisonSociale: doc.raisonSociale,
     photoUrl: doc.photoUrl,

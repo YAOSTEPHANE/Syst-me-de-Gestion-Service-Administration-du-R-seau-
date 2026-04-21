@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
         `<tr><td>${r.reference}</td><td>${r.concessionnaireId}</td><td>${r.status}</td><td>${r.stepsCompleted}/${r.stepsTotal}</td><td>${r.decisionType ?? ""}</td><td>${r.autoDossierContratReference ?? ""}</td><td>${new Date(r.updatedAt).toLocaleString("fr-FR")}</td></tr>`,
     )
     .join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Décès & Succession</title></head><body><h1>Décès & Succession</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>Réf</th><th>Concessionnaire</th><th>Statut</th><th>Progression</th><th>Décision</th><th>Dossier contrat auto</th><th>MAJ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Décès et ayants droit</title></head><body><h1>Décès et ayants droit</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>Réf</th><th>Concessionnaire</th><th>Statut</th><th>Progression</th><th>Décision</th><th>Dossier contrat auto</th><th>MAJ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
   return new NextResponse(html, {
     status: 200,
     headers: {

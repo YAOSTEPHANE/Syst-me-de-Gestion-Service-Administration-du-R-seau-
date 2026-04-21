@@ -486,7 +486,7 @@ export default function LonaciDashboardHome() {
 
             <div className="lonaci-db-kpi">
               <div className="lonaci-db-kpi-head">
-                <div className="lonaci-db-kpi-label">Intégrations PDV</div>
+                <div className="lonaci-db-kpi-label">Géolocalisation PDV</div>
                 <div className="lonaci-db-icon-box lonaci-db-icon-box-green">
                   <svg width="14" height="14" fill="none" stroke="#047857" strokeWidth={1.7} viewBox="0 0 24 24">
                     <path d="M12 21s-6-5.2-6-10a6 6 0 1112 0c0 4.8-6 10-6 10z" />
@@ -859,7 +859,7 @@ export default function LonaciDashboardHome() {
                 </div>
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
-                    <div className="lonaci-db-cell-title">Intégrations PDV</div>
+                    <div className="lonaci-db-cell-title">Géolocalisation PDV</div>
                     <div className="lonaci-db-cell-sub">Finalisation</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
@@ -907,7 +907,7 @@ export default function LonaciDashboardHome() {
                 </div>
                 <div className="lonaci-db-pending-row lonaci-db-pending-row-last">
                   <div className="lonaci-db-pending-module">
-                    <div className="lonaci-db-cell-title">Décès &amp; Succession</div>
+                    <div className="lonaci-db-cell-title">Décès et ayants droit</div>
                     <div className="lonaci-db-cell-sub">Décision finale</div>
                   </div>
                   <div className="lonaci-db-pending-metric">

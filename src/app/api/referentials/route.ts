@@ -26,6 +26,7 @@ export async function GET(request: NextRequest) {
         code: p.code,
         libelle: p.libelle,
         actif: p.actif,
+        ...(typeof p.prix === "number" && Number.isFinite(p.prix) ? { prix: p.prix } : {}),
       })),
     },
     { status: 200 },

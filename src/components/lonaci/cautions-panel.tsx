@@ -23,6 +23,7 @@ interface ContratItem {
   id: string;
   reference: string;
   concessionnaireId: string;
+  produitCode?: string;
   codePdv?: string;
   nomPdv?: string;
   status: "ACTIF" | "RESILIE";
@@ -233,6 +234,54 @@ async function fetchCautionCounters(): Promise<CautionCounters> {
   return data.counters;
 }
 
+async function fetchContratsForDealer(concessionnaireId: string): Promise<ContratItem[]> {
+  const params = new URLSearchParams({
+    page: "1",
+    pageSize: "100",
+    status: "ACTIF",
+    concessionnaireId,
+  });
+  const response = await fetch(`/api/contrats?${params.toString()}`, {
+    credentials: "include",
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error("Impossible de charger les contrats");
+  }
+  const data = (await response.json()) as { items: ContratItem[] };
+  return data.items.filter((c) => c.status === "ACTIF");
+}
+
+type ConcessionnaireSearchHit = {
+  id: string;
+  nomComplet: string | null;
+  raisonSociale: string | null;
+  codePdv: string | null;
+  /** Ordre d’inscription sur la fiche PDV (réponse liste concessionnaires). */
+  produitsAutorises?: string[];
+};
+
+function formatDealerHitLabel(hit: ConcessionnaireSearchHit): string {
+  const name = hit.nomComplet?.trim() || hit.raisonSociale?.trim() || hit.id;
+  const code = hit.codePdv?.trim();
+  return code ? `${name} · ${code}` : name;
+}
+
+function normalizeProduitCodesAutorises(raw: string[] | undefined): string[] {
+  return (raw ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean);
+}
+
+/** Choisit le contrat actif dont le produit correspond à l’ordre d’inscription (`produitsAutorises`). */
+function pickContratFromFicheProduits(list: ContratItem[], produitsAutorises: string[]): ContratItem | null {
+  if (list.length === 0) return null;
+  const order = normalizeProduitCodesAutorises(produitsAutorises);
+  for (const code of order) {
+    const row = list.find((c) => (c.produitCode ?? "").trim().toUpperCase() === code);
+    if (row) return row;
+  }
+  return list[0] ?? null;
+}
+
 export default function CautionsPanel() {
   const searchParams = useSearchParams();
   const contratPrefill = searchParams.get("contratId") ?? "";
@@ -253,6 +302,15 @@ export default function CautionsPanel() {
 
   const [contratId, setContratId] = useState(contratPrefill);
   const [selectedConcessionnaireId, setSelectedConcessionnaireId] = useState("");
+  const [dealerSearchInput, setDealerSearchInput] = useState("");
+  const [dealerSearchHits, setDealerSearchHits] = useState<ConcessionnaireSearchHit[]>([]);
+  const [dealerSearchLoading, setDealerSearchLoading] = useState(false);
+  /** PDV choisi via la recherche nom (peut être absent des 50 premiers contrats chargés). */
+  const [dealerFromSearch, setDealerFromSearch] = useState<{ id: string; label: string } | null>(null);
+  const [dealerContracts, setDealerContracts] = useState<ContratItem[]>([]);
+  const [dealerContractsLoading, setDealerContractsLoading] = useState(false);
+  /** Produits enregistrés sur la fiche PDV (inscription), ordre conservé. */
+  const [dealerProduitsAutorises, setDealerProduitsAutorises] = useState<string[]>([]);
   const [contratQuickPick, setContratQuickPick] = useState("");
   const [montant, setMontant] = useState("");
   const [modeReglement, setModeReglement] = useState<CautionPaymentMode>("VIREMENT");
@@ -301,6 +359,10 @@ export default function CautionsPanel() {
     setObservations("");
     setMontant("");
     setModeReglement("VIREMENT");
+    setDealerSearchInput("");
+    setDealerSearchHits([]);
+    setDealerFromSearch(null);
+    setDealerProduitsAutorises([]);
     if (!contratPrefill) {
       setContratId("");
       setContratQuickPick("");
@@ -320,13 +382,63 @@ export default function CautionsPanel() {
           : c.concessionnaireId;
       map.set(c.concessionnaireId, { id: c.concessionnaireId, label });
     }
+    if (dealerFromSearch) {
+      map.set(dealerFromSearch.id, { id: dealerFromSearch.id, label: dealerFromSearch.label });
+    }
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label, "fr", { sensitivity: "base" }));
-  }, [contrats]);
+  }, [contrats, dealerFromSearch]);
 
-  const contratsForSelectedConcessionnaire = useMemo(() => {
-    if (!selectedConcessionnaireId) return [] as ContratItem[];
-    return contrats.filter((c) => c.concessionnaireId === selectedConcessionnaireId);
-  }, [contrats, selectedConcessionnaireId]);
+  const contratsForSelectedConcessionnaire = dealerContracts;
+
+  useEffect(() => {
+    if (!selectedConcessionnaireId) {
+      setDealerContracts([]);
+      setDealerContractsLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setDealerContracts([]);
+    setDealerContractsLoading(true);
+    void fetchContratsForDealer(selectedConcessionnaireId)
+      .then((rows) => {
+        if (!cancelled) setDealerContracts(rows);
+      })
+      .catch(() => {
+        if (!cancelled) setDealerContracts([]);
+      })
+      .finally(() => {
+        if (!cancelled) setDealerContractsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedConcessionnaireId]);
+
+  useEffect(() => {
+    if (!selectedConcessionnaireId) {
+      setDealerProduitsAutorises([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/concessionnaires/${encodeURIComponent(selectedConcessionnaireId)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as { concessionnaire?: { produitsAutorises?: string[] } };
+        const codes = normalizeProduitCodesAutorises(data.concessionnaire?.produitsAutorises);
+        if (!cancelled) setDealerProduitsAutorises(codes);
+      } catch {
+        if (!cancelled) setDealerProduitsAutorises([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      setDealerProduitsAutorises([]);
+    };
+  }, [selectedConcessionnaireId]);
 
   useEffect(() => {
     if (!selectedConcessionnaireId) {
@@ -336,17 +448,74 @@ export default function CautionsPanel() {
       }
       return;
     }
-    const list = contrats.filter((c) => c.concessionnaireId === selectedConcessionnaireId);
+    if (dealerContractsLoading) {
+      if (!contratPrefill) {
+        setContratId("");
+        setContratQuickPick("");
+      }
+      return;
+    }
+    const list = dealerContracts;
     if (list.length === 0) {
       setContratId("");
       setContratQuickPick("");
       return;
     }
     const prefilled = contratPrefill ? list.find((c) => c.id === contratPrefill) : null;
-    const chosen = prefilled ?? list[0];
+    const chosen = prefilled ?? pickContratFromFicheProduits(list, dealerProduitsAutorises);
+    if (!chosen) {
+      setContratId("");
+      setContratQuickPick("");
+      return;
+    }
     setContratId(chosen.id);
     setContratQuickPick(chosen.id);
-  }, [selectedConcessionnaireId, contrats, contratPrefill]);
+  }, [
+    selectedConcessionnaireId,
+    dealerContracts,
+    dealerContractsLoading,
+    dealerProduitsAutorises,
+    contratPrefill,
+  ]);
+
+  useEffect(() => {
+    const q = dealerSearchInput.trim();
+    if (q.length < 2) {
+      setDealerSearchHits([]);
+      setDealerSearchLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setDealerSearchLoading(true);
+        try {
+          const params = new URLSearchParams({ page: "1", pageSize: "20", q });
+          const response = await fetch(`/api/concessionnaires?${params.toString()}`, {
+            credentials: "include",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (!response.ok) {
+            if (!controller.signal.aborted) setDealerSearchHits([]);
+            return;
+          }
+          const data = (await response.json()) as { items: ConcessionnaireSearchHit[] };
+          if (!controller.signal.aborted) {
+            setDealerSearchHits(Array.isArray(data.items) ? data.items : []);
+          }
+        } catch {
+          if (!controller.signal.aborted) setDealerSearchHits([]);
+        } finally {
+          if (!controller.signal.aborted) setDealerSearchLoading(false);
+        }
+      })();
+    }, 300);
+    return () => {
+      controller.abort();
+      window.clearTimeout(timer);
+    };
+  }, [dealerSearchInput]);
 
   const load = useCallback(async (nextTab?: CautionListTab) => {
     setLoading(true);
@@ -397,7 +566,11 @@ export default function CautionsPanel() {
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!contratId.trim()) {
-      setToast({ type: "error", message: "Indiquez un contrat." });
+      setToast({ type: "error", message: "Indiquez un produit." });
+      return;
+    }
+    if (!dealerContracts.some((c) => c.id === contratId)) {
+      setToast({ type: "error", message: "Produit / contrat invalide pour ce concessionnaire." });
       return;
     }
     if (!paymentReference.trim()) {
@@ -549,6 +722,10 @@ export default function CautionsPanel() {
       setContratQuickPick("");
       setSelectedConcessionnaireId("");
     }
+    setDealerSearchInput("");
+    setDealerSearchHits([]);
+    setDealerFromSearch(null);
+    setDealerProduitsAutorises([]);
   }
 
   const cautionAnalytics = useMemo(() => {
@@ -689,10 +866,72 @@ export default function CautionsPanel() {
                     Contrat de rattachement
                   </p>
                   <label className="mb-1 block text-xs font-medium text-slate-700">Concessionnaire</label>
+                  <p className="mb-1.5 text-[11px] text-slate-500">
+                    Recherche par nom ou raison sociale (au moins 2 caractères), puis choix dans les
+                    résultats.
+                  </p>
+                  <div className="relative mb-2.5">
+                    <input
+                      type="search"
+                      autoComplete="off"
+                      value={dealerSearchInput}
+                      onChange={(e) => setDealerSearchInput(e.target.value)}
+                      placeholder="Ex. Kouassi, SARL Horizon…"
+                      className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      aria-label="Rechercher un concessionnaire par nom"
+                    />
+                    {dealerSearchLoading ? (
+                      <p className="mt-1 text-[11px] text-slate-500">Recherche…</p>
+                    ) : null}
+                    {dealerSearchInput.trim().length >= 2 && !dealerSearchLoading && dealerSearchHits.length === 0 ? (
+                      <p className="mt-1 text-[11px] text-slate-500">Aucun résultat.</p>
+                    ) : null}
+                    {dealerSearchHits.length > 0 ? (
+                      <div className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
+                        {dealerSearchHits.map((hit) => (
+                          <button
+                            key={hit.id}
+                            type="button"
+                            className="w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-indigo-50"
+                            onClick={() => {
+                              setSelectedConcessionnaireId(hit.id);
+                              const fromList = normalizeProduitCodesAutorises(hit.produitsAutorises);
+                              if (fromList.length > 0) {
+                                setDealerProduitsAutorises(fromList);
+                              }
+                              const label = formatDealerHitLabel(hit);
+                              setDealerFromSearch({ id: hit.id, label });
+                              setDealerSearchInput(label);
+                              setDealerSearchHits([]);
+                            }}
+                          >
+                            {formatDealerHitLabel(hit)}
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                    Ou liste des PDV (contrats actifs chargés)
+                  </label>
                   <select
                     aria-label="Choisir un concessionnaire"
                     value={selectedConcessionnaireId}
-                    onChange={(e) => setSelectedConcessionnaireId(e.target.value)}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      setSelectedConcessionnaireId(v);
+                      setDealerSearchInput("");
+                      setDealerSearchHits([]);
+                      if (!v) {
+                        setDealerFromSearch(null);
+                        return;
+                      }
+                      const fromLoadedContracts = contrats.some((c) => c.concessionnaireId === v);
+                      if (fromLoadedContracts) {
+                        setDealerFromSearch(null);
+                      }
+                    }}
                     className="mb-2.5 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="">— Choisir un concessionnaire —</option>
@@ -703,7 +942,14 @@ export default function CautionsPanel() {
                     ))}
                   </select>
 
-                  <label className="mb-1 block text-xs font-medium text-slate-700">Contrat (actifs)</label>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">Produit</label>
+                  <p className="mb-1.5 text-[11px] text-slate-500">
+                    Sélection automatique selon l’ordre des produits autorisés enregistrés sur la fiche PDV
+                    (inscription) ; vous pouvez changer le produit si besoin.
+                  </p>
+                  {dealerContractsLoading ? (
+                    <p className="mb-2 text-[11px] text-slate-500">Chargement des produits (contrats actifs)…</p>
+                  ) : null}
                   {contractsError ? (
                     <div className="mb-2 rounded border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-700">
                       Impossible de charger la liste des contrats.
@@ -718,28 +964,37 @@ export default function CautionsPanel() {
                     </div>
                   ) : null}
                   <select
-                    aria-label="Choisir un contrat actif"
+                    aria-label="Choisir un produit (contrat actif associé)"
                     value={contratQuickPick}
                     onChange={(e) => {
                       const v = e.target.value;
                       setContratQuickPick(v);
                       setContratId(v);
                     }}
-                    disabled={!selectedConcessionnaireId || contratsForSelectedConcessionnaire.length === 0}
+                    disabled={
+                      !selectedConcessionnaireId ||
+                      dealerContractsLoading ||
+                      contratsForSelectedConcessionnaire.length === 0
+                    }
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
                     <option value="">
                       {!selectedConcessionnaireId
                         ? "Sélectionnez d'abord un concessionnaire"
-                        : contratsForSelectedConcessionnaire.length === 0
-                          ? "Aucun contrat actif rattaché"
-                          : "— Contrat rattaché —"}
+                        : dealerContractsLoading
+                          ? "Chargement…"
+                          : contratsForSelectedConcessionnaire.length === 0
+                            ? "Aucun produit (contrat actif) pour ce PDV"
+                            : "— Choisir un produit —"}
                     </option>
-                    {contratsForSelectedConcessionnaire.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.reference} · {c.id.slice(0, 8)}…
-                      </option>
-                    ))}
+                    {contratsForSelectedConcessionnaire.map((c) => {
+                      const code = (c.produitCode ?? "").trim() || "—";
+                      return (
+                        <option key={c.id} value={c.id}>
+                          {code} · réf. {c.reference}
+                        </option>
+                      );
+                    })}
                   </select>
                 </section>
 
@@ -853,7 +1108,7 @@ export default function CautionsPanel() {
                   </button>
                   <button
                     type="submit"
-                    disabled={creating}
+                    disabled={creating || dealerContractsLoading}
                     className="rounded-lg border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-amber-600 hover:bg-amber-600 disabled:opacity-60"
                   >
                     {creating ? "Création..." : "Créer caution"}
@@ -880,7 +1135,7 @@ export default function CautionsPanel() {
             <div className="text-[11px] text-slate-600">{cautionAnalytics.riskRate}% du portefeuille caution</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.pending.card}>
-            <div className={CAUTION_COLOR_TOKENS.pending.title}>Pipeline en cours</div>
+            <div className={CAUTION_COLOR_TOKENS.pending.title}>Attendu caution</div>
             <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.pending.value}`}>{cautionAnalytics.pending}</div>
             <div className="text-[11px] text-slate-600">En attente + retards</div>
           </div>

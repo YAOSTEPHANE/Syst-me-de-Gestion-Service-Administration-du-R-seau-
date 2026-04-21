@@ -38,16 +38,23 @@ export async function ensureReferentialsIndexes() {
   ]);
 }
 
-interface CreateReferentialInput {
+interface CreateAgenceInput {
   code: string;
   libelle: string;
+}
+
+interface CreateProduitInput {
+  code: string;
+  libelle: string;
+  /** Prix caution (FCFA), entier ≥ 0. */
+  prix: number;
 }
 
 function normalizeCode(code: string) {
   return code.trim().toUpperCase();
 }
 
-export async function createAgence(input: CreateReferentialInput): Promise<AgenceDocument> {
+export async function createAgence(input: CreateAgenceInput): Promise<AgenceDocument> {
   const db = await getDatabase();
   const now = new Date();
   const agence: InsertAgenceDocument = {
@@ -62,12 +69,14 @@ export async function createAgence(input: CreateReferentialInput): Promise<Agenc
   return { ...agence, _id: result.insertedId.toHexString() };
 }
 
-export async function createProduit(input: CreateReferentialInput): Promise<ProduitDocument> {
+export async function createProduit(input: CreateProduitInput): Promise<ProduitDocument> {
   const db = await getDatabase();
   const now = new Date();
+  const prix = Number.isFinite(input.prix) ? Math.max(0, Math.round(input.prix)) : 0;
   const produit: InsertProduitDocument = {
     code: normalizeCode(input.code),
     libelle: input.libelle.trim(),
+    prix,
     actif: true,
     createdAt: now,
     updatedAt: now,
@@ -113,4 +122,79 @@ export async function findProduitByCode(code: string): Promise<ProduitDocument |
     .collection<StoredProduitDocument>(PRODUITS_COLLECTION)
     .findOne({ code: normalized, actif: true });
   return row ? mapStoredProduit(row) : null;
+}
+
+export async function findProduitById(id: string): Promise<ProduitDocument | null> {
+  if (!ObjectId.isValid(id)) {
+    return null;
+  }
+  const db = await getDatabase();
+  const row = await db
+    .collection<StoredProduitDocument>(PRODUITS_COLLECTION)
+    .findOne({ _id: new ObjectId(id) });
+  return row ? mapStoredProduit(row) : null;
+}
+
+export interface UpdateProduitInput {
+  libelle?: string;
+  prix?: number;
+  actif?: boolean;
+  code?: string;
+}
+
+/**
+ * Met à jour un produit par identifiant Mongo. Lance `Error("DUPLICATE_CODE")` si le code entre en conflit d'unicité.
+ */
+export async function updateProduit(id: string, input: UpdateProduitInput): Promise<ProduitDocument | null> {
+  if (!ObjectId.isValid(id)) {
+    return null;
+  }
+  const db = await getDatabase();
+  const oid = new ObjectId(id);
+  const existing = await db.collection<StoredProduitDocument>(PRODUITS_COLLECTION).findOne({ _id: oid });
+  if (!existing) {
+    return null;
+  }
+
+  const $set: Record<string, unknown> = { updatedAt: new Date() };
+  if (input.libelle !== undefined) {
+    $set.libelle = input.libelle.trim();
+  }
+  if (input.prix !== undefined) {
+    $set.prix = Number.isFinite(input.prix) ? Math.max(0, Math.round(input.prix)) : 0;
+  }
+  if (input.actif !== undefined) {
+    $set.actif = input.actif;
+  }
+  if (input.code !== undefined) {
+    $set.code = normalizeCode(input.code);
+  }
+
+  try {
+    const result = await db.collection<StoredProduitDocument>(PRODUITS_COLLECTION).updateOne({ _id: oid }, { $set });
+    if (result.matchedCount === 0) {
+      return null;
+    }
+    const row = await db.collection<StoredProduitDocument>(PRODUITS_COLLECTION).findOne({ _id: oid });
+    return row ? mapStoredProduit(row) : null;
+  } catch (error: unknown) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      (error as { code?: number }).code === 11000
+    ) {
+      throw new Error("DUPLICATE_CODE");
+    }
+    throw error;
+  }
+}
+
+export async function deleteProduitById(id: string): Promise<boolean> {
+  if (!ObjectId.isValid(id)) {
+    return false;
+  }
+  const db = await getDatabase();
+  const result = await db.collection<StoredProduitDocument>(PRODUITS_COLLECTION).deleteOne({ _id: new ObjectId(id) });
+  return result.deletedCount === 1;
 }

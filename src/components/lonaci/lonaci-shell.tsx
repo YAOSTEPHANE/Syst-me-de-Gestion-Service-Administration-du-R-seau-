@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 
 import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 import {
@@ -20,12 +29,96 @@ type NavIconLinkStyle = CSSProperties & {
   "--lonaci-nav-icon-color"?: string;
 };
 
+const SIDEBAR_STORAGE_KEY = "lonaci-sidebar-collapsed";
+const SIDEBAR_STORE_EVENT = "lonaci:sidebar-collapsed";
+
+function subscribeSidebarCollapsed(onStoreChange: () => void) {
+  const onStorage = (event: StorageEvent) => {
+    if (event.key === SIDEBAR_STORAGE_KEY || event.key === null) onStoreChange();
+  };
+  const onLocal = () => onStoreChange();
+  window.addEventListener("storage", onStorage);
+  window.addEventListener(SIDEBAR_STORE_EVENT, onLocal);
+  return () => {
+    window.removeEventListener("storage", onStorage);
+    window.removeEventListener(SIDEBAR_STORE_EVENT, onLocal);
+  };
+}
+
+function getSidebarCollapsedSnapshot(): boolean {
+  try {
+    return window.localStorage.getItem(SIDEBAR_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function getSidebarCollapsedServerSnapshot(): boolean {
+  return false;
+}
+
+/** Réponses 401 de `requireApiAuth` : session remplacée, expirée ou cookie absent — renvoyer vers la connexion. */
+const API_SESSION_REDIRECT_CODES = new Set([
+  "INVALID_SESSION_ID",
+  "SESSION_INACTIVITY_TIMEOUT",
+  "AUTH_MISSING_SESSION",
+]);
+
 function LonaciShellChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const apiFetchGuardRef = useRef(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || apiFetchGuardRef.current) return;
+    apiFetchGuardRef.current = true;
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const res = await nativeFetch(input, init);
+      if (res.status !== 401) return res;
+      const url =
+        typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
+      let apiPath = "";
+      try {
+        apiPath = new URL(url, window.location.origin).pathname;
+      } catch {
+        return res;
+      }
+      if (!apiPath.startsWith("/api/") || apiPath.startsWith("/api/auth/login")) {
+        return res;
+      }
+      try {
+        const ct = res.headers.get("content-type");
+        if (!ct?.includes("application/json")) return res;
+        const body = (await res.clone().json()) as { code?: string };
+        if (body?.code && API_SESSION_REDIRECT_CODES.has(body.code)) {
+          window.location.assign("/login");
+        }
+      } catch {
+        return res;
+      }
+      return res;
+    };
+    return () => {
+      window.fetch = nativeFetch;
+      apiFetchGuardRef.current = false;
+    };
+  }, []);
   const { kpi } = useLonaciKpi();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const sidebarCollapsed = useSyncExternalStore(
+    subscribeSidebarCollapsed,
+    getSidebarCollapsedSnapshot,
+    getSidebarCollapsedServerSnapshot,
+  );
+  const setSidebarCollapsed = useCallback((next: boolean) => {
+    try {
+      window.localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "1" : "0");
+    } catch {
+      // Ignorer les erreurs d'écriture localStorage en environnement restreint.
+    }
+    window.dispatchEvent(new Event(SIDEBAR_STORE_EVENT));
+  }, []);
   const [agenceKey, setAgenceKey] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [meUser, setMeUser] = useState<{ role: string; prenom: string; nom: string } | null>(null);
@@ -38,25 +131,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   }, [pathname]);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem("lonaci-sidebar-collapsed");
-      if (stored === "1") {
-        setSidebarCollapsed(true);
-      }
-    } catch {
-      // Ignorer les erreurs de lecture localStorage en environnement restreint.
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("lonaci-sidebar-collapsed", sidebarCollapsed ? "1" : "0");
-    } catch {
-      // Ignorer les erreurs d'écriture localStorage en environnement restreint.
-    }
-  }, [sidebarCollapsed]);
-
-  useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const isShortcut = (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "b";
       if (!isShortcut) return;
@@ -65,11 +139,11 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         return;
       }
       event.preventDefault();
-      setSidebarCollapsed((value) => !value);
+      setSidebarCollapsed(!getSidebarCollapsedSnapshot());
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [setSidebarCollapsed]);
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
@@ -232,16 +306,18 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo">SG</div>
+              <div className="lonaci-db-logo" suppressHydrationWarning>
+                IC
+              </div>
               <div>
-                <div className="lonaci-db-logo-title">Système de Gestion</div>
+                <div className="lonaci-db-logo-title">Infinitecore Système</div>
               </div>
               <button
                 type="button"
                 className="lonaci-db-sidebar-toggle"
                 aria-label={sidebarCollapsed ? "Déplier le menu" : "Replier le menu"}
                 title={`${sidebarCollapsed ? "Déplier" : "Replier"} le menu (Ctrl/Cmd+B)`}
-                onClick={() => setSidebarCollapsed((value) => !value)}
+                onClick={() => setSidebarCollapsed(!getSidebarCollapsedSnapshot())}
               >
                 <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
                   <path d={sidebarCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} />
@@ -293,7 +369,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
             </button>
             <div className="lonaci-db-header-grow">
               <div className="lonaci-db-header-title">{title}</div>
-              <div className="lonaci-db-header-sub">{sub}</div>
+              <div className="lonaci-db-header-sub" suppressHydrationWarning>
+                {sub}
+              </div>
             </div>
             <ShellAgenceFilterDropdown value={agenceKey} onChange={setAgenceKey} />
             <NotificationBell
@@ -394,9 +472,11 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         >
           <div className="lonaci-db-mobile-drawer-head">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo">SGAR</div>
+              <div className="lonaci-db-logo" suppressHydrationWarning>
+                IC
+              </div>
               <div>
-                <div className="lonaci-db-logo-title">Système de Gestion Service et Administration</div>
+                <div className="lonaci-db-logo-title">Infinitecore Système Service et Administration</div>
                 <div className="lonaci-db-logo-sub">Réseau</div>
               </div>
             </div>

@@ -36,6 +36,8 @@ function normalizeToken(value: string): string {
 
 const createSchema = z.object({
   nomComplet: z.string().min(2),
+  codeTerminal: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
+  codeConcessionnaire: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   cniNumero: z.preprocess(emptyStringToNull, z.union([z.string().min(4).max(64), z.null()]).optional()),
   photoUrl: z.preprocess(emptyStringToNull, z.union([z.string().max(2000), z.null()]).optional()),
   email: z.preprocess(emptyStringToNull, z.union([z.string().email(), z.null()]).optional()),
@@ -183,6 +185,8 @@ export async function POST(request: NextRequest) {
 
   const doc = await createConcessionnaire({
     nomComplet: parsed.data.nomComplet,
+    codeTerminal: parsed.data.codeTerminal ?? null,
+    codeConcessionnaire: parsed.data.codeConcessionnaire ?? null,
     cniNumero: parsed.data.cniNumero ?? null,
     photoUrl: parsed.data.photoUrl ?? null,
     email: parsed.data.email ?? null,

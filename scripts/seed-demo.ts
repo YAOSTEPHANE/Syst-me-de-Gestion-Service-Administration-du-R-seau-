@@ -91,6 +91,7 @@ async function ensureProduit(
   getDb: typeof import("../src/lib/mongodb").getDatabase,
   code: string,
   libelle: string,
+  prix = 0,
 ): Promise<void> {
   const c = code.trim().toUpperCase();
   const db = await getDb();
@@ -100,6 +101,7 @@ async function ensureProduit(
   await db.collection("produits").insertOne({
     code: c,
     libelle: libelle.trim(),
+    prix: Math.max(0, Math.round(prix)),
     actif: true,
     createdAt: now,
     updatedAt: now,
@@ -231,8 +233,8 @@ async function main() {
 
   const abjId = await ensureAgence(getDatabase, "ABJ", "Agence Abidjan Plateau");
   const yamId = await ensureAgence(getDatabase, "YAM", "Agence Yamoussoukro");
-  await ensureProduit(getDatabase, "LOTO", "Lonaci Loto");
-  await ensureProduit(getDatabase, "PMU", "Paris mutuels urbains");
+  await ensureProduit(getDatabase, "LOTO", "Lonaci Loto", 250_000);
+  await ensureProduit(getDatabase, "PMU", "Paris mutuels urbains", 180_000);
 
   const db = await getDatabase();
   const now = new Date();
@@ -324,6 +326,8 @@ async function main() {
     const row = await prisma.concessionnaire.create({
       data: {
         codePdv: p.codePdv,
+        codeTerminal: null,
+        codeConcessionnaire: null,
         nomComplet: p.nom,
         raisonSociale: `${p.nom} [seed-demo]`,
         cniNumero: "CI-DEMO-001",

@@ -19,12 +19,16 @@ function agenceLabel(agenceKey: string, kpi: LonaciKpiPayload | null): string {
   return legacy[agenceKey] ?? "Toutes agences";
 }
 
+/** Fuseau explicite pour éviter les écarts d’hydratation SSR / navigateur (Node vs client). */
+const LONACI_APP_TIME_ZONE = "Africa/Abidjan";
+
 function dateLine(agenceKey: string, kpi: LonaciKpiPayload | null): string {
   const datePart = new Date().toLocaleDateString("fr-FR", {
     weekday: "long",
     day: "numeric",
     month: "long",
     year: "numeric",
+    timeZone: LONACI_APP_TIME_ZONE,
   });
   return `${datePart} · ${agenceLabel(agenceKey, kpi)}`;
 }
@@ -68,7 +72,7 @@ export function lonaciShellHeader(
     const r = kpi?.dossierValidation.pdvEnCoursRetard5j;
     const pd = kpi?.alertThresholds?.pdvIntegrationMaxDays ?? 5;
     return {
-      title: "Intégrations PDV",
+      title: "Géolocalisation PDV",
       sub: n != null && r != null ? `${n} en traitement · ${r} > ${pd} j. · ${dl}` : dl,
     };
   }
@@ -87,7 +91,7 @@ export function lonaciShellHeader(
   if (pathname.startsWith("/succession")) {
     const o = kpi?.dossierValidation.successionOuverts;
     return {
-      title: "Décès & succession",
+      title: "Décès et ayants droit",
       sub: o != null ? `${o} dossier(s) ouvert(s) · ${dl}` : dl,
     };
   }
@@ -99,7 +103,7 @@ export function lonaciShellHeader(
     };
   }
   if (pathname.startsWith("/gpr")) {
-    return { title: "GPR & grattage", sub: `Produits de réseau · ${dl}` };
+    return { title: "Création de code grattage", sub: `GPR, lots et codes · ${dl}` };
   }
   if (pathname.startsWith("/rapports") && !pathname.startsWith("/rapports/print")) {
     return { title: "Rapports", sub: `Analyse & exports · ${dl}` };

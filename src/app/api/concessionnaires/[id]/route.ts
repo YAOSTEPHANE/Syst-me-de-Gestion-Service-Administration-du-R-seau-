@@ -32,6 +32,26 @@ function preprocessEmail(value: unknown): string | null | undefined {
 const patchSchema = z
   .object({
     nomComplet: z.string().min(2).optional(),
+    codeTerminal: z.preprocess(
+      (v) => {
+        if (v === undefined) return undefined;
+        if (v === null) return null;
+        if (typeof v !== "string") return undefined;
+        const t = v.trim();
+        return t === "" ? null : t;
+      },
+      z.union([z.string().min(1).max(64), z.null()]).optional(),
+    ),
+    codeConcessionnaire: z.preprocess(
+      (v) => {
+        if (v === undefined) return undefined;
+        if (v === null) return null;
+        if (typeof v !== "string") return undefined;
+        const t = v.trim();
+        return t === "" ? null : t;
+      },
+      z.union([z.string().min(1).max(64), z.null()]).optional(),
+    ),
     cniNumero: z.preprocess(
       (v) => {
         if (v === undefined) return undefined;

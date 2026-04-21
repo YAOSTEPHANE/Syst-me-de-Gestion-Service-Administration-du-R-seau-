@@ -269,9 +269,9 @@ export default function GprModulePage() {
           <p className="mb-2 inline-flex items-center rounded-full border border-indigo-300 bg-indigo-600 px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-white">
             Operations Hub
           </p>
-          <h2 className="text-xl font-semibold text-slate-900">GPR &amp; Codes grattage</h2>
+          <h2 className="text-xl font-semibold text-slate-900">Création de code grattage</h2>
           <p className="mt-1 text-sm text-slate-700">
-            Suivi opérationnel GPR et supervision des traitements en cours.
+            Enregistrements GPR, lots de codes et synchronisations.
           </p>
         </div>
       </header>

@@ -6,13 +6,14 @@ const links = [
   { href: "/", label: "Accueil" },
   { href: "/dashboard", label: "Tableau de bord" },
   { href: "/concessionnaires", label: "Concessionnaires" },
-  { href: "/dossiers", label: "Dossiers" },
-  { href: "/contrats", label: "Contrats" },
+  { href: "/agrements", label: "Agréments" },
   { href: "/cautions", label: "Cautions" },
-  { href: "/pdv-integrations", label: "PDV" },
+  { href: "/contrats", label: "Contrats" },
+  { href: "/dossiers", label: "Dossiers" },
+  { href: "/pdv-integrations", label: "Géolocalisation PDV" },
   { href: "/carte-pdv", label: "Carte PDV" },
   { href: "/resiliations", label: "Résiliations" },
-  { href: "/succession", label: "Décès" },
+  { href: "/succession", label: "Décès et ayants droit" },
   { href: "/rapports", label: "Rapports" },
 ] as const;
 

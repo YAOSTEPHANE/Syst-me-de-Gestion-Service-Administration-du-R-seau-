@@ -66,6 +66,8 @@ export interface ProduitDocument {
   _id?: string;
   code: string;
   libelle: string;
+  /** Prix caution référentiel (FCFA), entier. */
+  prix?: number;
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -102,6 +104,8 @@ export interface GpsPoint {
 export interface ConcessionnaireDocument {
   _id?: string;
   codePdv: string;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   nomComplet: string;
   raisonSociale: string;
   cniNumero: string | null;

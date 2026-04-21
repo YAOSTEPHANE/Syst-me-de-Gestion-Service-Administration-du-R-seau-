@@ -114,6 +114,8 @@ function ConcessionnaireRowActionsMenu({
 interface Item {
   id: string;
   codePdv: string;
+  codeTerminal?: string | null;
+  codeConcessionnaire?: string | null;
   nomComplet: string;
   raisonSociale: string;
   photoUrl: string | null;
@@ -145,6 +147,8 @@ interface ProduitRef {
 
 type ExtractedConcessionnaireDraft = {
   codePdv?: string;
+  codeTerminal?: string;
+  codeConcessionnaire?: string;
   nomComplet?: string;
   cniNumero?: string;
   telephonePrincipal?: string;
@@ -187,6 +191,12 @@ function pickRecordValue(record: Record<string, unknown>, aliases: string[]): st
 
 function extractDraftFromRecord(record: Record<string, unknown>): ExtractedConcessionnaireDraft {
   const codePdv = pickRecordValue(record, ["codePdv", "code pdv", "pdv", "reference"]);
+  const codeTerminal = pickRecordValue(record, ["codeTerminal", "code terminal", "terminal"]);
+  const codeConcessionnaire = pickRecordValue(record, [
+    "codeConcessionnaire",
+    "code concessionnaire",
+    "code cons",
+  ]);
   const nomComplet = pickRecordValue(record, ["nomComplet", "nom complet", "nom", "raisonSociale", "raison sociale"]);
   const cniNumero = pickRecordValue(record, ["cniNumero", "cni", "numero cni", "piece identite"]);
   const telephonePrincipal = pickRecordValue(record, [
@@ -212,6 +222,8 @@ function extractDraftFromRecord(record: Record<string, unknown>): ExtractedConce
   const lng = pickRecordValue(record, ["lng", "longitude", "gps lng", "gps.longitude"]);
   return {
     codePdv: codePdv ?? undefined,
+    codeTerminal: codeTerminal ?? undefined,
+    codeConcessionnaire: codeConcessionnaire ?? undefined,
     nomComplet: nomComplet ?? undefined,
     cniNumero: cniNumero ?? undefined,
     telephonePrincipal: telephonePrincipal ?? undefined,
@@ -241,6 +253,8 @@ async function downloadConcessionnaireExcelTemplate() {
   const XLSX = await import("xlsx");
   const headers = [
     "nomComplet",
+    "codeTerminal",
+    "codeConcessionnaire",
     "cniNumero",
     "telephonePrincipal",
     "telephoneSecondaire",
@@ -255,6 +269,8 @@ async function downloadConcessionnaireExcelTemplate() {
   ];
   const sample = {
     nomComplet: "KOUASSI JEAN",
+    codeTerminal: "TERM-001",
+    codeConcessionnaire: "CONS-8821",
     cniNumero: "CNI123456789",
     telephonePrincipal: "+2250700000000",
     telephoneSecondaire: "",
@@ -276,6 +292,8 @@ async function downloadConcessionnaireExcelTemplate() {
 async function normalizeImportFileForApi(file: File): Promise<File> {
   const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
     nomComplet: (raw.nomComplet as string | null) ?? null,
+    codeTerminal: (raw.codeTerminal as string | null) ?? null,
+    codeConcessionnaire: (raw.codeConcessionnaire as string | null) ?? null,
     cniNumero: (raw.cniNumero as string | null) ?? null,
     telephonePrincipal: (raw.telephonePrincipal as string | null) ?? null,
     telephoneSecondaire: (raw.telephoneSecondaire as string | null) ?? null,
@@ -302,6 +320,8 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
     const draft = await extractDraftFromPdf(file);
     const row: Record<string, unknown> = sanitize({
       nomComplet: draft.nomComplet ?? null,
+      codeTerminal: draft.codeTerminal ?? null,
+      codeConcessionnaire: draft.codeConcessionnaire ?? null,
       cniNumero: draft.cniNumero ?? null,
       telephonePrincipal: draft.telephonePrincipal ?? null,
       telephoneSecondaire: draft.telephoneSecondaire ?? null,
@@ -326,6 +346,9 @@ async function extractDraftFromPdf(file: File): Promise<ExtractedConcessionnaire
   const text = await extractPdfText(file, 8);
   return {
     codePdv: captureByAliases(text, ["code pdv", "pdv", "reference"], "[a-z0-9\\-_/]{3,60}") ?? undefined,
+    codeTerminal: captureByAliases(text, ["code terminal", "terminal"], "[a-z0-9\\-_]{1,64}") ?? undefined,
+    codeConcessionnaire:
+      captureByAliases(text, ["code concessionnaire", "concessionnaire"], "[a-z0-9\\-_]{1,64}") ?? undefined,
     nomComplet:
       captureByAliases(text, ["nom complet", "nom", "raison sociale", "raisonsociale"], "[^|;]{2,120}") ?? undefined,
     cniNumero: captureByAliases(text, ["cni", "numero cni", "piece identite"], "[a-z0-9\\-_/]{3,80}") ?? undefined,
@@ -360,6 +383,8 @@ export default function ConcessionnairesPanel() {
   const [produits, setProduits] = useState<ProduitRef[]>([]);
 
   const [rs, setRs] = useState("");
+  const [codeTerminal, setCodeTerminal] = useState("");
+  const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
   const [tel, setTel] = useState("");
   const [telSecondary, setTelSecondary] = useState("");
@@ -559,9 +584,16 @@ export default function ConcessionnairesPanel() {
       if (cni.length > 0 && cni.length < 4) {
         throw new Error("Numéro CNI : au moins 4 caractères si renseigné.");
       }
+      const ct = codeTerminal.trim();
+      const cc = codeConcessionnaire.trim();
+      if (ct.length > 64 || cc.length > 64) {
+        throw new Error("Code terminal et code concessionnaire : 64 caractères maximum.");
+      }
 
       const body: Record<string, unknown> = {
         nomComplet: rs.trim(),
+        codeTerminal: ct || null,
+        codeConcessionnaire: cc || null,
         cniNumero: cni || null,
         email: null,
         telephonePrincipal: tel.trim() || null,
@@ -612,6 +644,8 @@ export default function ConcessionnairesPanel() {
       }
 
       setRs("");
+      setCodeTerminal("");
+      setCodeConcessionnaire("");
       setCniNumero("");
       setTel("");
       setTelSecondary("");
@@ -717,6 +751,8 @@ export default function ConcessionnairesPanel() {
       }
 
       if (draft.nomComplet) setRs(draft.nomComplet);
+      if (draft.codeTerminal) setCodeTerminal(draft.codeTerminal);
+      if (draft.codeConcessionnaire) setCodeConcessionnaire(draft.codeConcessionnaire);
       if (draft.cniNumero) setCniNumero(draft.cniNumero);
       if (draft.telephonePrincipal) setTel(draft.telephonePrincipal);
       if (draft.telephoneSecondaire) setTelSecondary(draft.telephoneSecondaire);
@@ -1205,6 +1241,26 @@ export default function ConcessionnairesPanel() {
                       <label className="grid gap-1">
                         <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
                         <input value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} placeholder="Optionnel" className={inputClass} />
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-xs font-medium text-slate-700">Code terminal</span>
+                        <input
+                          value={codeTerminal}
+                          onChange={(e) => setCodeTerminal(e.target.value)}
+                          placeholder="Optionnel"
+                          maxLength={64}
+                          className={inputClass}
+                        />
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-xs font-medium text-slate-700">Code concessionnaire</span>
+                        <input
+                          value={codeConcessionnaire}
+                          onChange={(e) => setCodeConcessionnaire(e.target.value)}
+                          placeholder="Optionnel"
+                          maxLength={64}
+                          className={inputClass}
+                        />
                       </label>
                       <label className="grid gap-1">
                         <span className="text-xs font-medium text-slate-700">Agence de rattachement *</span>

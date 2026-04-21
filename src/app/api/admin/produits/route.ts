@@ -12,6 +12,8 @@ import {
 const createProduitSchema = z.object({
   code: z.string().min(2),
   libelle: z.string().min(2),
+  /** Prix caution en FCFA (entier ≥ 0). */
+  prix: z.coerce.number().int().min(0).max(999_999_999_999),
 });
 
 export async function GET(request: NextRequest) {
