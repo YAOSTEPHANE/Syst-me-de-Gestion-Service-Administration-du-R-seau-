@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
 
 type Ctx = {
@@ -18,7 +19,7 @@ export function LonaciKpiProvider({ children }: { children: ReactNode }) {
 
   async function refresh() {
     try {
-      const res = await fetch("/api/dashboard/kpi", { credentials: "include", cache: "no-store" });
+      const res = await lonaciFetch("/api/dashboard/kpi");
       if (!res.ok) throw new Error("Données tableau de bord indisponibles");
       setKpi((await res.json()) as LonaciKpiPayload);
       setError(null);

@@ -7,6 +7,7 @@ export const RBAC_RESOURCES = [
   "CAUTIONS",
   "PDV_INTEGRATIONS",
   "AGREMENTS",
+  "CESSIONS",
   "REPORTS",
   "ALERTS",
   "NOTIFICATIONS",
@@ -84,6 +85,12 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: false },
     { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
 
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: false },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
+
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "CONFIGURE", allowed: false },
@@ -128,6 +135,12 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: false },
     { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
 
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
+
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
@@ -171,6 +184,12 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "FINALIZE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
@@ -188,6 +207,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -203,6 +223,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "GLOBAL" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "GLOBAL" },
@@ -218,6 +239,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "NOTIFICATIONS", action: "READ", allowed: true, scope: "OWN_OR_ASSIGNED" },

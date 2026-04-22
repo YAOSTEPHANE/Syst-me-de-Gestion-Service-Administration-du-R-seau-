@@ -46,7 +46,7 @@ describe("resolveRbacAction", () => {
   });
 
   it("retourne fallback si non mappe", () => {
-    const action = resolveRbacAction("INCONNU", { FINALISE: "FINALIZE" }, "UPDATE");
+    const action = resolveRbacAction("INCONNU", {}, "UPDATE");
     expect(action).toBe("UPDATE");
   });
 });

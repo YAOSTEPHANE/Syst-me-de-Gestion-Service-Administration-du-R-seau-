@@ -16,6 +16,8 @@ vi.mock("@/lib/lonaci/succession", () => ({
   listSuccessionStaleAlerts: listSuccessionStaleAlertsMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { GET } from "./route";
 
 describe("GET /api/succession-cases/alerts/stale", () => {
@@ -32,6 +34,7 @@ describe("GET /api/succession-cases/alerts/stale", () => {
   it("applique minDaysInactive et limit", async () => {
     const req = new NextRequest("http://localhost:3000/api/succession-cases/alerts/stale?minDaysInactive=30&limit=1");
     const res = await GET(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string }>; total: number };
     expect(body.total).toBe(1);

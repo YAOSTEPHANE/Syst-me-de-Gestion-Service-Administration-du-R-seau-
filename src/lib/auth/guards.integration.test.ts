@@ -1,3 +1,5 @@
+import assert from "node:assert";
+
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -81,10 +83,12 @@ describe("requireApiAuth module authorization", () => {
     const result = await requireApiAuth(req);
 
     expect("error" in result).toBe(true);
-    if (!("error" in result)) {
+    if ("error" in result) {
+      assert(result.error);
+      expect(result.error.status).toBe(403);
+    } else {
       throw new Error("Expected auth error");
     }
-    expect(result.error.status).toBe(403);
   });
 
   it("applique RBAC: refuse creation cautions pour SUPERVISEUR_REGIONAL", async () => {
@@ -99,10 +103,12 @@ describe("requireApiAuth module authorization", () => {
     const result = await requireApiAuth(req);
 
     expect("error" in result).toBe(true);
-    if (!("error" in result)) {
+    if ("error" in result) {
+      assert(result.error);
+      expect(result.error.status).toBe(403);
+    } else {
       throw new Error("Expected RBAC denial");
     }
-    expect(result.error.status).toBe(403);
   });
 
   it("applique RBAC: autorise lecture cautions pour SUPERVISEUR_REGIONAL", async () => {
@@ -136,9 +142,11 @@ describe("requireApiAuth module authorization", () => {
     });
 
     expect("error" in result).toBe(true);
-    if (!("error" in result)) {
+    if ("error" in result) {
+      assert(result.error);
+      expect(result.error.status).toBe(403);
+    } else {
       throw new Error("Expected RBAC override denial");
     }
-    expect(result.error.status).toBe(403);
   });
 });

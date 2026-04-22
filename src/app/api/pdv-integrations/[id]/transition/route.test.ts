@@ -16,6 +16,8 @@ vi.mock("@/lib/lonaci/sprint4", () => ({
   transitionPdvIntegration: transitionPdvIntegrationMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { POST } from "./route";
 
 const actor = { _id: "u1", role: "CHEF_SERVICE" } as const;
@@ -36,6 +38,7 @@ describe("POST /api/pdv-integrations/[id]/transition RBAC mapping", () => {
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "abc" }) });
+    expectResponse(res);
 
     expect(requireApiAuthMock).toHaveBeenCalledWith(
       req,
@@ -54,6 +57,7 @@ describe("POST /api/pdv-integrations/[id]/transition RBAC mapping", () => {
     });
 
     const res = await POST(req, { params: Promise.resolve({ id: "abc" }) });
+    expectResponse(res);
 
     expect(requireApiAuthMock).toHaveBeenCalledWith(
       req,

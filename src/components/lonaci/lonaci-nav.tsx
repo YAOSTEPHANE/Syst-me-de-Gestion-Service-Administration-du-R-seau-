@@ -8,10 +8,12 @@ export type LonaciNavItem = {
 
 export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", section: "Principal" },
+  { href: "/import", label: "Import" },
   { href: "/concessionnaires", label: "Concessionnaires" },
   { href: "/agrements", label: "Agréments", badge: "agrements" },
   { href: "/cautions", label: "Cautions", badge: "cautions" },
   { href: "/contrats", label: "Contrats", badge: "contracts" },
+  { href: "/dossiers", label: "Dossiers" },
   { href: "/pdv-integrations", label: "Géolocalisation PDV", badge: "pdv" },
   { href: "/attestations-domiciliation", label: "Attestations & domiciliation" },
   { href: "/cessions", label: "Cessions & Déloc.", section: "Opérations" },
@@ -69,6 +71,14 @@ export function LonaciNavIcon({ label }: { label: string }) {
       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
         <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
         <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+      </svg>
+    );
+  }
+  if (label === "Dossiers") {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M4 5a2 2 0 012-2h4l2 2h6a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" />
+        <path d="M8 11h8M8 15h5" />
       </svg>
     );
   }

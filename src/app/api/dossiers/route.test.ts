@@ -27,6 +27,8 @@ vi.mock("@/lib/lonaci/constants", () => ({
   DOSSIER_TYPES: ["CONTRAT_ACTUALISATION"],
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { GET } from "./route";
 
 describe("GET /api/dossiers", () => {
@@ -42,6 +44,7 @@ describe("GET /api/dossiers", () => {
       "http://localhost:3000/api/dossiers?page=2&pageSize=50&status=SOUMIS&q=DOS-01&concessionnaireId=cx1&sortField=reference&sortOrder=asc",
     );
     const res = await GET(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     expect(listDossiersMock).toHaveBeenCalledWith(2, 50, "SOUMIS", undefined, undefined, "DOS-01", "cx1", "reference", "asc");
   });

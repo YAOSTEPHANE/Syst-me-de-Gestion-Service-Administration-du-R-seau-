@@ -16,6 +16,8 @@ vi.mock("@/lib/lonaci/users", () => ({
   setUsersActiveState: setUsersActiveStateMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { POST } from "./route";
 
 describe("POST /api/admin/users/bulk", () => {
@@ -33,6 +35,7 @@ describe("POST /api/admin/users/bulk", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     expect(clearCurrentSessionsMock).toHaveBeenCalledWith(["u1", "u2"]);
   });
@@ -44,6 +47,7 @@ describe("POST /api/admin/users/bulk", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(400);
     expect(setUsersActiveStateMock).not.toHaveBeenCalled();
   });

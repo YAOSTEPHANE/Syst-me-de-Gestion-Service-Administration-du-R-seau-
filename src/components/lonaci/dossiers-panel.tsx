@@ -4,6 +4,7 @@ import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-r
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DossierStatus =
@@ -103,10 +104,7 @@ async function fetchDossiers(
   }
   search.set("sortField", sortField);
   search.set("sortOrder", sortOrder);
-  const response = await fetch(`/api/dossiers?${search.toString()}`, {
-    credentials: "include",
-    cache: "no-store",
-  });
+  const response = await lonaciFetch(`/api/dossiers?${search.toString()}`);
   if (!response.ok) {
     throw new Error("Impossible de charger les dossiers");
   }
@@ -292,9 +290,8 @@ export default function DossiersPanel() {
       const body: { action: TransitionAction; comment?: string | null } = { action };
       if (comment !== undefined) body.comment = comment;
 
-      const response = await fetch(`/api/dossiers/${id}/transition`, {
+      const response = await lonaciFetch(`/api/dossiers/${id}/transition`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -330,10 +327,7 @@ export default function DossiersPanel() {
     setDetailLoading(true);
     setDetailItem(null);
     try {
-      const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await lonaciFetch(`/api/dossiers/${encodeURIComponent(id)}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Détail dossier indisponible");
@@ -390,10 +384,7 @@ export default function DossiersPanel() {
       if (bulkLogsActionFilter !== "ALL") {
         params.set("action", bulkLogsActionFilter);
       }
-      const response = await fetch(`/api/dossiers/bulk-transition/logs?${params.toString()}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const response = await lonaciFetch(`/api/dossiers/bulk-transition/logs?${params.toString()}`);
       if (!response.ok) {
         setBulkLogs([]);
         setBulkLogsTotal(0);
@@ -413,7 +404,7 @@ export default function DossiersPanel() {
   useEffect(() => {
     void (async () => {
       try {
-        const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        const r = await lonaciFetch("/api/auth/me");
         if (!r.ok) return;
         const d = (await r.json()) as {
           user?: { role?: string; _id?: string; id?: string; email?: string };
@@ -538,9 +529,8 @@ export default function DossiersPanel() {
 
     setBulkBusy(true);
     try {
-      const response = await fetch("/api/dossiers/bulk-transition", {
+      const response = await lonaciFetch("/api/dossiers/bulk-transition", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ids: selectedIds,
@@ -606,9 +596,8 @@ export default function DossiersPanel() {
     }
     setBulkLogsReplayBusyId(logId);
     try {
-      const response = await fetch("/api/dossiers/bulk-transition/replay", {
+      const response = await lonaciFetch("/api/dossiers/bulk-transition/replay", {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ logId, mode: bulkReplayMode, commentOverride: replayComment || null }),
       });
@@ -665,9 +654,8 @@ export default function DossiersPanel() {
       let totalFailed = 0;
       let failedLogs = 0;
       for (const logId of selectedBulkLogIds) {
-        const response = await fetch("/api/dossiers/bulk-transition/replay", {
+        const response = await lonaciFetch("/api/dossiers/bulk-transition/replay", {
           method: "POST",
-          credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ logId, mode: bulkReplayMode, commentOverride: replayComment || null }),
         });

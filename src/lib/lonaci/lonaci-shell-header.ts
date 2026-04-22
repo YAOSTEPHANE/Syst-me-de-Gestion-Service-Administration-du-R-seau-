@@ -44,6 +44,9 @@ export function lonaciShellHeader(
   if (pathname === "/dashboard" || pathname === "/dashboard/") {
     return { title: "Tableau de bord", sub: dl };
   }
+  if (pathname.startsWith("/import")) {
+    return { title: "Import", sub: `Données externes · ${dl}` };
+  }
   if (pathname.startsWith("/concessionnaires")) {
     const n = kpi?.daily.concessionnaires.total;
     return {

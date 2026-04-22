@@ -33,6 +33,7 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   // Bancarisation : réservée à la saisie (CONCESSIONNAIRES), traité dans requireApiAuth.
   if (p.includes("/api/bancarisation")) return null;
   if (p.includes("/api/referentials")) return "REFERENTIELS";
+  if (p.includes("/api/cessions")) return "CESSIONS";
   if (p.includes("/api/cautions")) return "CAUTIONS";
   if (p.includes("/api/succession")) return "SUCCESSION";
   if (p.includes("/api/resiliations")) return "RESILIATIONS";
@@ -40,7 +41,7 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   if (p.includes("/api/gpr-registrations")) return "LONACI_REGISTRIES";
   if (p.includes("/api/scratch-codes")) return "LONACI_REGISTRIES";
   if (p.includes("/api/attestations-domiciliation")) return "ATTESTATIONS_DOMICILIATION";
-  if (p.includes("/api/lonaci-registries")) return "LONACI_REGISTRIES";
+  if (p.includes("/api/lonaci-registries") || p.includes("/api/admr-registries")) return "LONACI_REGISTRIES";
   if (p.includes("/api/reports")) return "REPORTS";
   if (p.includes("/api/dashboard")) return "DASHBOARD";
   return null;
@@ -54,6 +55,7 @@ function inferRbacResourceFromPath(pathname: string): RbacResource | null {
   if (p.includes("/api/cautions")) return "CAUTIONS";
   if (p.includes("/api/pdv-integrations")) return "PDV_INTEGRATIONS";
   if (p.includes("/api/agrements")) return "AGREMENTS";
+  if (p.includes("/api/cessions")) return "CESSIONS";
   if (p.includes("/api/reports")) return "REPORTS";
   if (p.includes("/api/admin/app-settings")) return "PARAMETRES";
   if (p.includes("/api/lonaci/alert-thresholds")) return "ALERTS";

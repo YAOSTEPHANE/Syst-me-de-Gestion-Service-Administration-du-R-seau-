@@ -9,8 +9,13 @@
     "lint": "eslint",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed",
+    "test:e2e:install": "playwright install chromium",
+    "test:all": "npm run test && npx tsc --noEmit && npm run check:api-routes && npm run check:api-zod && npm run build && npm run lint && npm run test:e2e",
     "check:api-routes": "tsx scripts/check-api-route-auth.ts",
     "check:api-zod": "tsx scripts/check-api-zod-validation.ts",
+    "verify:db": "tsx scripts/verify-db-connection.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push",
     "seed:admin": "tsx scripts/seed-admin.ts",
@@ -42,6 +47,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@tailwindcss/postcss": "^4",
     "@types/leaflet": "^1.9.21",
     "@types/node": "^20",

@@ -1,6 +1,7 @@
 "use client";
 
 import type { ConcessionnaireMapPointDto } from "@/lib/lonaci/concessionnaires-map-types";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import dynamic from "next/dynamic";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
@@ -60,10 +61,7 @@ export default function CartePdvPanel() {
         if (statut) params.set("statut", statut);
         if (q) params.set("q", q);
 
-        const res = await fetch(`/api/concessionnaires/map-points?${params.toString()}`, {
-          credentials: "include",
-          cache: "no-store",
-        });
+        const res = await lonaciFetch(`/api/concessionnaires/map-points?${params.toString()}`);
         if (!res.ok) throw new Error("Chargement impossible");
         const data = (await res.json()) as {
           points: ConcessionnaireMapPointDto[];

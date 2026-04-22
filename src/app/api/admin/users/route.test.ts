@@ -20,6 +20,8 @@ vi.mock("@/lib/lonaci/users", () => ({
   sanitizeUser: (u: unknown) => u,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { GET } from "./route";
 
 describe("GET /api/admin/users", () => {
@@ -66,6 +68,7 @@ describe("GET /api/admin/users", () => {
       "http://localhost:3000/api/admin/users?status=ACTIF&role=AGENT&agenceId=ag-1&q=alpha&page=1&pageSize=10",
     );
     const res = await GET(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { users: Array<{ id: string }>; pagination: { total: number; totalPages: number } };
     expect(body.users.map((u) => u.id)).toEqual(["u1"]);
@@ -76,6 +79,7 @@ describe("GET /api/admin/users", () => {
   it("rejette un pageSize invalide", async () => {
     const req = new NextRequest("http://localhost:3000/api/admin/users?pageSize=0");
     const res = await GET(req);
+    expectResponse(res);
     expect(res.status).toBe(400);
   });
 });

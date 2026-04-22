@@ -16,6 +16,8 @@ vi.mock("@/lib/lonaci/sprint4", () => ({
   listCautionAlertsJ10: listCautionAlertsJ10Mock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { GET } from "./route";
 
 describe("GET /api/cautions/alerts", () => {
@@ -32,6 +34,7 @@ describe("GET /api/cautions/alerts", () => {
   it("applique minDaysOverdue et limit", async () => {
     const req = new NextRequest("http://localhost:3000/api/cautions/alerts?minDaysOverdue=10&limit=1");
     const res = await GET(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { items: Array<{ id: string }>; total: number };
     expect(body.total).toBe(1);

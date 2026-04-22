@@ -33,6 +33,8 @@ vi.mock("@/lib/lonaci/dossier-bulk-transition-logs", () => ({
   appendBulkTransitionLog: appendBulkTransitionLogMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { POST } from "./route";
 
 describe("POST /api/dossiers/bulk-transition", () => {
@@ -60,6 +62,7 @@ describe("POST /api/dossiers/bulk-transition", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     const body = (await res.json()) as { succeeded: number; failed: number };
     expect(body.succeeded).toBe(2);
@@ -73,6 +76,7 @@ describe("POST /api/dossiers/bulk-transition", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(400);
   });
 });

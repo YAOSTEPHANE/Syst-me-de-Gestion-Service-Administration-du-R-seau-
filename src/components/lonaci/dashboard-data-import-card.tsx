@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { LONACI_AGENCES } from "@/components/lonaci/lonaci-nav";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 
 type Mode = "insert" | "upsert";
 type ImportModuleKey =
@@ -221,7 +222,7 @@ export default function DashboardDataImportCard() {
         fd.set("upsertBy", upsertBy.trim());
       }
 
-      const res = await fetch("/api/import-data", {
+      const res = await lonaciFetch("/api/import-data", {
         method: "POST",
         body: fd,
       });

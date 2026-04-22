@@ -370,7 +370,7 @@ export async function listDossiers(
       concessionnaireId: row.concessionnaireId,
       agenceId: row.agenceId,
       payload: row.payload,
-      history: row.history.map((h) => ({
+      history: (row.history ?? []).map((h) => ({
         ...h,
         actedAt: h.actedAt.toISOString(),
       })),

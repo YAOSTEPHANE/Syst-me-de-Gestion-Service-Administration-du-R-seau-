@@ -36,6 +36,8 @@ vi.mock("@/lib/lonaci/dossier-bulk-transition", () => ({
   executeDossierBulkTransition: executeDossierBulkTransitionMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { POST } from "./route";
 
 describe("POST /api/dossiers/bulk-transition/replay", () => {
@@ -78,6 +80,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     expect(executeDossierBulkTransitionMock).toHaveBeenCalledWith(
       expect.objectContaining({ ids: ["d-ko-1", "d-ko-2"] }),
@@ -101,6 +104,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     expect(executeDossierBulkTransitionMock).toHaveBeenCalledWith(
       expect.objectContaining({ ids: ["d-ok", "d-ko-1", "d-ko-2"] }),
@@ -125,6 +129,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(400);
   });
 
@@ -152,6 +157,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(200);
     expect(executeDossierBulkTransitionMock).toHaveBeenCalledWith(
       expect.objectContaining({ comment: "Rejeu validé" }),
@@ -166,6 +172,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
       headers: { "Content-Type": "application/json" },
     });
     const res = await POST(req);
+    expectResponse(res);
     expect(res.status).toBe(404);
   });
 });

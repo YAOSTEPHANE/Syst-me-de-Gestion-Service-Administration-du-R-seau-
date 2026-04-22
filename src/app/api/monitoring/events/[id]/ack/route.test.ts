@@ -14,6 +14,8 @@ vi.mock("@/lib/observability/events", () => ({
   ackMonitoringEvent: ackMonitoringEventMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { POST } from "./route";
 
 describe("POST /api/monitoring/events/[id]/ack", () => {
@@ -26,6 +28,7 @@ describe("POST /api/monitoring/events/[id]/ack", () => {
   it("acquitte un evenement OPEN", async () => {
     const req = new NextRequest("http://localhost:3000/api/monitoring/events/evt1/ack", { method: "POST" });
     const res = await POST(req, { params: Promise.resolve({ id: "evt1" }) });
+    expectResponse(res);
     expect(ackMonitoringEventMock).toHaveBeenCalledWith({ id: "evt1", actorUserId: "u1" });
     expect(res.status).toBe(200);
   });
@@ -34,6 +37,7 @@ describe("POST /api/monitoring/events/[id]/ack", () => {
     ackMonitoringEventMock.mockResolvedValue(false);
     const req = new NextRequest("http://localhost:3000/api/monitoring/events/evt404/ack", { method: "POST" });
     const res = await POST(req, { params: Promise.resolve({ id: "evt404" }) });
+    expectResponse(res);
     expect(res.status).toBe(404);
   });
 });

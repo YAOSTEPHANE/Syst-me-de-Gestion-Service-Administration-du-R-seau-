@@ -16,6 +16,8 @@ vi.mock("@/lib/observability/events", () => ({
   listMonitoringEvents: listMonitoringEventsMock,
 }));
 
+import { expectResponse } from "@/test-utils/expect-response";
+
 import { GET } from "./route";
 
 describe("GET /api/monitoring/events", () => {
@@ -29,6 +31,7 @@ describe("GET /api/monitoring/events", () => {
   it("retourne la liste paginée", async () => {
     const req = new NextRequest("http://localhost:3000/api/monitoring/events?page=1&pageSize=20&code=X1&status=OPEN");
     const res = await GET(req);
+    expectResponse(res);
     expect(requireApiAuthMock).toHaveBeenCalled();
     expect(listMonitoringEventsMock).toHaveBeenCalledWith({ page: 1, pageSize: 20, code: "X1", status: "OPEN" });
     expect(res.status).toBe(200);

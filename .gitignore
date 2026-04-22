@@ -12,6 +12,10 @@
 
 # testing
 /coverage
+/test-results/*
+!/test-results/.gitkeep
+/playwright-report/
+/playwright/.auth/user.json
 
 # next.js
 /.next/
@@ -44,5 +48,4 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.vercel
 .env*.local
