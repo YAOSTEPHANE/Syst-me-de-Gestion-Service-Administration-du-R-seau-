@@ -420,7 +420,7 @@ export default function ReportsPanel() {
         pdf.setFont("helvetica", "bold");
         pdf.setFontSize(11);
         pdf.setTextColor(15, 23, 42);
-        pdf.text("LONACI - Rapport opérationnel", margin, margin + 5);
+        pdf.text("Infinitecore Systeme - Rapport opérationnel", margin, margin + 5);
 
         pdf.setFont("helvetica", "normal");
         pdf.setFontSize(9);
@@ -484,7 +484,7 @@ export default function ReportsPanel() {
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-amber-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-amber-700">Infinitecore Systeme</p>
           <h2 className="text-lg font-semibold text-slate-900">Rapports</h2>
           <p className="mt-0.5 text-xs text-slate-600">Analyse, exports et vue pilotage</p>
           <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700">

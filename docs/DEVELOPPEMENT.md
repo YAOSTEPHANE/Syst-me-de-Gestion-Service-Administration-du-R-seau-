@@ -1,4 +1,4 @@
-# Guide développement LONACI
+# Guide développement Infinitecore Systeme
 
 Ce document complète le [README](../README.md) pour les contributeurs techniques.
 

@@ -1,4 +1,4 @@
-# Guide d’hébergement — LONACI (ADMR)
+# Guide d’hébergement — Infinitecore Systeme (ADMR)
 
 Ce document décrit comment héberger l’application en conditions proches de la production : composants, options d’hébergeur, variables d’environnement, tâches planifiées et bonnes pratiques.
 
@@ -117,4 +117,4 @@ En production, renseigner un relais SMTP fiable (fournisseur transactionnel, mes
 
 ---
 
-*Document généré pour le dépôt LONACI ; à adapter aux politiques internes (DSI, juridique, localisation des données).*
+*Document généré pour le dépôt Infinitecore Systeme ; à adapter aux politiques internes (DSI, juridique, localisation des données).*

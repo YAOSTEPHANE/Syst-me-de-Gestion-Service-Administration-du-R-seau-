@@ -1,4 +1,4 @@
-# Risques et mesures associées — LONACI
+# Risques et mesures associées — Infinitecore Systeme
 
 Ce document prolonge l’audit sécurité / exploitation : pour chaque famille de risque, on indique l’**exposition** et les **actions** déjà en place ou recommandées dans le dépôt.
 

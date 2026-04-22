@@ -314,7 +314,7 @@ export default function ResiliationsPanel() {
       <div className="pointer-events-none absolute -bottom-20 left-0 h-48 w-48 rounded-full bg-rose-200/20 blur-3xl" />
       <div className="relative mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
           <h2 className="text-2xl font-semibold text-slate-900">Résiliations</h2>
         </div>
         <div className="flex flex-wrap gap-2">

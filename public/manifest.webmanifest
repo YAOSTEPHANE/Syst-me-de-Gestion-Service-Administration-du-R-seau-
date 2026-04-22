@@ -1,7 +1,7 @@
 {
-  "name": "LONACI",
-  "short_name": "LONACI",
-  "description": "Plateforme LONACI utilisable en mode hors connexion",
+  "name": "Infinitecore Systeme",
+  "short_name": "Infinitecore",
+  "description": "Plateforme Infinitecore Systeme utilisable en mode hors connexion",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -1,4 +1,4 @@
-# Audit IDOR — routes API et fichiers (LONACI)
+# Audit IDOR — routes API et fichiers (Infinitecore Systeme)
 
 Inventaire des endpoints qui acceptent un identifiant (dossier, PDV, pièce jointe, etc.) et contrôle d’accès au périmètre **agence / concessionnaire**. Mis à jour lors du passage sécurité (correctifs sur les lignes marquées **Corrigé**).
 

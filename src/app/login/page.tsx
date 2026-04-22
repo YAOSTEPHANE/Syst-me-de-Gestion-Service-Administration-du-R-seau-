@@ -100,7 +100,7 @@ function LoginPageContent() {
           <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
             <div className="mb-5">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-300">LONACI</p>
+                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-300">Infinitecore Systeme</p>
                 <h1 className="mt-1 text-2xl font-semibold text-white">Connexion sécurisée</h1>
                 <p className="text-sm text-slate-300">Accédez au tableau de bord métier.</p>
               </div>

@@ -119,7 +119,7 @@ export default function AlertsPanel() {
       <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-rose-50/70 via-white to-amber-50/60 p-5 shadow-sm">
         <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-rose-200/30 blur-3xl" />
         <div className="relative">
-          <p className="text-xs uppercase tracking-[0.16em] text-rose-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-rose-700">Infinitecore Systeme</p>
           <h2 className="mt-1 text-2xl font-semibold text-slate-900">Toutes les alertes</h2>
           <p className="mt-1 text-sm text-slate-600">
             Vue consolidée des indicateurs critiques et des listes détaillées selon vos droits d’accès.

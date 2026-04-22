@@ -149,7 +149,7 @@ export const env = {
     return v;
   },
   get appName() {
-    return process.env.NEXT_PUBLIC_APP_NAME ?? "LONACI";
+    return process.env.NEXT_PUBLIC_APP_NAME ?? "Infinitecore Systeme";
   },
 };
 

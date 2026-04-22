@@ -59,7 +59,7 @@ const IMPORT_MODULES: Array<{
   {
     key: "REGISTRES",
     label: "Registres",
-    collections: [{ value: "lonaci_registries", label: "Registres LONACI", defaultUpsertBy: "_id" }],
+    collections: [{ value: "lonaci_registries", label: "Registres Infinitecore Systeme", defaultUpsertBy: "_id" }],
   },
 ];
 

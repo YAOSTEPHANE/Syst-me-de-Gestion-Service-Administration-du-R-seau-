@@ -15,10 +15,10 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "LONACI",
+  title: "Infinitecore Systeme",
   description: "Base Next.js et MongoDB",
   manifest: "/manifest.webmanifest",
-  applicationName: "LONACI",
+  applicationName: "Infinitecore Systeme",
 };
 
 export default function RootLayout({

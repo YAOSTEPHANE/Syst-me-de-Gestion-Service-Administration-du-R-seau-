@@ -1,4 +1,4 @@
-# Guide d’utilisation — LONACI
+# Guide d’utilisation — Infinitecore Systeme
 
 Ce document est destiné aux **utilisateurs métier** (agents, responsables, supervision). Pour l’installation, l’hébergement ou la sécurité technique, voir [README.md](../README.md), [HEBERGEMENT.md](./HEBERGEMENT.md) et [RISQUES.md](./RISQUES.md). Une vue **direction / produit** est disponible dans [PRESENTATION-ENTREPRISE.md](./PRESENTATION-ENTREPRISE.md).
 
@@ -54,7 +54,7 @@ Des **pastilles** (badges) sur certains liens signalent des **volumes à traiter
 
 - **Dossiers** (`/dossiers`) : suivi des **dossiers** liés au workflow contrats (souvent accessible depuis le **tableau de bord** ou le module **Contrats**). Validations **N1 / N2**, finalisation, éventuel **lien de signature**.
 - **Import** (`/import`) : chargement de fichiers **JSON / CSV** pour alimenter ou mettre à jour des données (référentiels, concessionnaires, dossiers, etc.). **Réservé aux profils habilités** (typiquement **Chef de service** et périmètre **import / admin** défini par l’équipe).
-- **Signature dossier** : si on vous envoie un **lien** (page publique avec **token**), ouvrez-le pour signer **sans** être connecté à LONACI (parcours dédié signataire externe).
+- **Signature dossier** : si on vous envoie un **lien** (page publique avec **token**), ouvrez-le pour signer **sans** être connecté à Infinitecore Systeme (parcours dédié signataire externe).
 
 ### 3.3 En-tête
 
@@ -139,7 +139,7 @@ De nombreux écrans proposent **export Excel ou PDF** (listes filtrées, rapport
 
 ## 10. Obtenir de l’aide
 
-- **Compte, mot de passe, droits** : référent **RH / IT** ou **administrateur applicatif** LONACI.
+- **Compte, mot de passe, droits** : référent **RH / IT** ou **administrateur applicatif** Infinitecore Systeme.
 - **Règles métier** (qui valide quoi, champs obligatoires) : **Chef de service** ou **documentation métier** interne.
 - **Incident technique** (panne, bug) : **support DSI** avec la **référence** éventuelle affichée (ex. en-tête de réponse `X-Request-Id` pour le diagnostic côté serveur — mention utile si votre support vous la demande).
 

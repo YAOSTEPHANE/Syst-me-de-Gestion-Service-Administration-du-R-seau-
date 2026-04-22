@@ -375,7 +375,7 @@ export default function AttestationsDomiciliationPanel() {
         <div className="relative mb-4 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="inline-flex rounded-full border border-cyan-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700">
-            LONACI
+            Infinitecore Systeme
           </p>
           <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">Attestations & domiciliation</h2>
         </div>

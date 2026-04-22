@@ -715,7 +715,7 @@ export default function DossiersPanel() {
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
           <h2 className="mt-1 text-2xl font-semibold text-slate-900">Dossiers workflow</h2>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">

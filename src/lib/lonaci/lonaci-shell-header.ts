@@ -124,5 +124,5 @@ export function lonaciShellHeader(
     return { title: "Carte PDV", sub: `Vue géographique · ${dl}` };
   }
 
-  return { title: "LONACI", sub: dl };
+  return { title: "Infinitecore Systeme", sub: dl };
 }

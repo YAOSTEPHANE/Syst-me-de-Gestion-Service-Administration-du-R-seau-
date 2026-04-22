@@ -1,5 +1,5 @@
 /**
- * Appels `fetch` depuis le navigateur vers les routes `/api/*` de LONACI.
+ * Appels `fetch` depuis le navigateur vers les routes `/api/*` de Infinitecore Systeme.
  * Centralise `credentials: "include"` et `cache: "no-store"` pour les cookies de session
  * et des données non mises en cache par le client.
  */

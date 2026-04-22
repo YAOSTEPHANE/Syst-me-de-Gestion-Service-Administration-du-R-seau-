@@ -417,7 +417,7 @@ export default function CessionsPanel() {
       <div className="pointer-events-none absolute -bottom-20 left-0 h-44 w-44 rounded-full bg-cyan-200/25 blur-3xl" />
       <div className="relative mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-indigo-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-indigo-700">Infinitecore Systeme</p>
           <h2 className="text-2xl font-semibold text-slate-900">Cessions & délocalisations</h2>
         </div>
         <div className="flex items-center gap-2">

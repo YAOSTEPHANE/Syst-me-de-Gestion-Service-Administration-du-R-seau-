@@ -326,8 +326,6 @@ async function main() {
     const row = await prisma.concessionnaire.create({
       data: {
         codePdv: p.codePdv,
-        codeTerminal: null,
-        codeConcessionnaire: null,
         nomComplet: p.nom,
         raisonSociale: `${p.nom} [seed-demo]`,
         cniNumero: "CI-DEMO-001",

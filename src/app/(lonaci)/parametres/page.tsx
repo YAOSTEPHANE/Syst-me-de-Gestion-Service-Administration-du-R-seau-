@@ -50,7 +50,7 @@ export default async function ParametresPage() {
         <div className="pointer-events-none absolute -right-14 -top-16 h-44 w-44 rounded-full bg-sky-200/25 blur-3xl" />
         <div className="pointer-events-none absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-indigo-200/20 blur-3xl" />
         <div className="relative">
-          <p className="text-xs uppercase tracking-[0.16em] text-sky-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-sky-700">Infinitecore Systeme</p>
           <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">Paramètres</h1>
           <p className="mt-1 text-sm text-slate-600">
             Compte, référentiels, droits d’accès et supervision système.

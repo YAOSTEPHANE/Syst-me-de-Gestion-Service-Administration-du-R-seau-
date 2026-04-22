@@ -1,4 +1,4 @@
-# Presentation projet ADMR / LONACI
+# Presentation projet ADMR / Infinitecore Systeme
 
 Ce document est une trame prete a presenter.
 
@@ -80,4 +80,4 @@ Conseil:
 
 ## Conclusion (30 secondes)
 
-"ADMR fournit une base solide, securisee et evolutive pour la gestion des processus LONACI. Le MVP est en place et la valeur metier est tangible. La prochaine etape est de valider la priorisation V1 et d accelerer le deploiement."
+"ADMR fournit une base solide, securisee et evolutive pour la gestion des processus Infinitecore Systeme. Le MVP est en place et la valeur metier est tangible. La prochaine etape est de valider la priorisation V1 et d accelerer le deploiement."

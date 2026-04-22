@@ -1,4 +1,4 @@
-# LONACI — Documentation pour présentation entreprise
+# Infinitecore Systeme — Documentation pour présentation entreprise
 
 Document de support pour une **démonstration ou un comité de direction** : synthèse métier, périmètre fonctionnel, gouvernance des accès et repères techniques. Contenu aligné sur l’application telle qu’implémentée dans le dépôt (Next.js, modules listés ci-dessous).
 
@@ -6,7 +6,7 @@ Document de support pour une **démonstration ou un comité de direction** : syn
 
 ## 1. Résumé exécutif (elevator pitch)
 
-**LONACI** est une **application web métier** dédiée au **pilotage du réseau de concessionnaires (PDV)**, à la **gestion du cycle de vie des contrats** et aux **processus associés** (cautions, bancarisation, agréments, successions, etc.). Elle centralise les données, **enchaîne les validations à plusieurs niveaux** (N1 / N2 / finalisation) et offre un **tableau de bord analytique** (KPI, tendances par agence, alertes opérationnelles).
+**Infinitecore Systeme** est une **application web métier** dédiée au **pilotage du réseau de concessionnaires (PDV)**, à la **gestion du cycle de vie des contrats** et aux **processus associés** (cautions, bancarisation, agréments, successions, etc.). Elle centralise les données, **enchaîne les validations à plusieurs niveaux** (N1 / N2 / finalisation) et offre un **tableau de bord analytique** (KPI, tendances par agence, alertes opérationnelles).
 
 **Valeur pour l’entreprise**
 
@@ -28,7 +28,7 @@ L’application couvre un **écosystème de distribution** (points de vente / co
 - **Agréments**, **attestations et domiciliation**, **GPR & grattage**, **registres**.
 - **Cartographie** des PDV (géolocalisation).
 
-*À personnaliser lors de la présentation* : positionnement exact par rapport à la politique produit de l’organisme (LONACI, partenaires, réglementation locale).
+*À personnaliser lors de la présentation* : positionnement exact par rapport à la politique produit de l’organisme (Infinitecore Systeme, partenaires, réglementation locale).
 
 ---
 
@@ -241,7 +241,7 @@ Les variables d’environnement (**`JWT_SECRET`**, **`CRON_SECRET`**, Mongo, SMT
 | **`CRON_SECRET`** | Secret pour appeler `/api/cron/daily-jobs`. |
 | **`SMTP_HOST`**, **`SMTP_PORT`**, **`SMTP_USER`**, **`SMTP_PASS`** | Envoi mail (Nodemailer). |
 | **`EMAIL_FROM`** ou **`SMTP_USER`** | Adresse expéditeur. |
-| **`NEXT_PUBLIC_APP_NAME`** | Libellé affiché (défaut « LONACI »). |
+| **`NEXT_PUBLIC_APP_NAME`** | Libellé affiché (défaut « Infinitecore Systeme »). |
 
 En **développement**, des valeurs par défaut locales peuvent s’appliquer pour JWT et Mongo (avec avertissement console) — **jamais en production**.
 
@@ -258,7 +258,7 @@ En **développement**, des valeurs par défaut locales peuvent s’appliquer pou
 
 ## 8. Proposition de plan de diaporama (12–15 slides)
 
-1. **Titre** — LONACI, version / contexte projet.  
+1. **Titre** — Infinitecore Systeme, version / contexte projet.  
 2. **Enjeux** — dispersion des données, délais de validation, risque opérationnel.  
 3. **Réponse apportée** — plateforme unique, workflow N1/N2, pilotage.  
 4. **Personas** — agent, chef de section, CDS, supervision, audit.  
