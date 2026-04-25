@@ -249,6 +249,13 @@ export async function findContratById(id: string): Promise<ContratDocument | nul
   return row ? mapContrat(row) : null;
 }
 
+export async function findContratByDossierId(dossierId: string): Promise<ContratDocument | null> {
+  const row = await prisma.contrat.findFirst({
+    where: { dossierId, deletedAt: null },
+  });
+  return row ? mapContrat(row) : null;
+}
+
 export async function updateContratDateEffet(input: {
   contratId: string;
   dateEffet: Date;
@@ -369,6 +376,15 @@ export type ContratListRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Vue nationale (chef de service sans agence) vs périmètre agence fixé — aligné export CSV contrats. */
+export function listScopeAgenceIdForContratsList(user: { agenceId: string | null; role: string }): string | undefined {
+  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
+    return undefined;
+  }
+  if (user.agenceId) return user.agenceId;
+  return undefined;
+}
 
 export type ListContratsParams = {
   page: number;
@@ -515,4 +531,22 @@ export async function listContrats(params: ListContratsParams) {
     page,
     pageSize,
   };
+}
+
+export const CONTRATS_ATTENDUS_CAUTIONS_MAX = 4000;
+
+/** Tous les contrats correspondant aux filtres (pagination interne), plafonnés pour les synthèses lourdes. */
+export async function listContratsAllMatching(
+  base: Omit<ListContratsParams, "page" | "pageSize">,
+): Promise<ContratListRow[]> {
+  const out: ContratListRow[] = [];
+  let page = 1;
+  const pageSize = 500;
+  for (;;) {
+    const { items, total } = await listContrats({ ...base, page, pageSize });
+    out.push(...items);
+    if (items.length < pageSize || out.length >= total || out.length >= CONTRATS_ATTENDUS_CAUTIONS_MAX) break;
+    page += 1;
+  }
+  return out.slice(0, CONTRATS_ATTENDUS_CAUTIONS_MAX);
 }

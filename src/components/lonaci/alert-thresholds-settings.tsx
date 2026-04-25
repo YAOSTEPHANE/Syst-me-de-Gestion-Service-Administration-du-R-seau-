@@ -16,6 +16,16 @@ export default function AlertThresholdsSettings() {
   useEffect(() => {
     void (async () => {
       try {
+        const meRes = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!meRes.ok) {
+          setVisible(false);
+          return;
+        }
+        const me = (await meRes.json()) as { user?: { role?: string } };
+        if (me.user?.role !== "CHEF_SERVICE") {
+          setVisible(false);
+          return;
+        }
         const res = await fetch("/api/admin/app-settings", { credentials: "include" });
         if (res.status === 403 || res.status === 401) {
           setVisible(false);

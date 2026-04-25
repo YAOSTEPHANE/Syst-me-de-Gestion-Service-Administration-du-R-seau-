@@ -26,6 +26,7 @@ export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/alertes", label: "Toutes les alertes" },
   { href: "/parametres", label: "Paramètres" },
   { href: "/carte-pdv", label: "Carte PDV" },
+  { href: "/assistant-operations", label: "Assistant opérations" },
 ];
 
 export const LONACI_AGENCES = [
@@ -54,6 +55,14 @@ export function LonaciNavIcon({ label }: { label: string }) {
         <rect x="14" y="3" width="7" height="7" rx="1" />
         <rect x="14" y="14" width="7" height="7" rx="1" />
         <rect x="3" y="14" width="7" height="7" rx="1" />
+      </svg>
+    );
+  }
+  if (label === "Assistant opérations") {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" />
+        <path d="M14 3v5h5M8 12h8M8 16h6M8 8h2" />
       </svg>
     );
   }

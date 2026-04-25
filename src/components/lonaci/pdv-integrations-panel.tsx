@@ -3,6 +3,8 @@
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
+import { canRole } from "@/lib/auth/rbac";
+import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
@@ -216,6 +218,7 @@ export default function PdvIntegrationsPanel() {
   const [finalizingId, setFinalizingId] = useState<string | null>(null);
   const [finalizeModal, setFinalizeModal] = useState<PdvItem | null>(null);
   const [finalizeAck, setFinalizeAck] = useState(false);
+  const [meRole, setMeRole] = useState<string | null>(null);
 
   useEffect(() => {
     const agenceId = searchParams.get("agenceId")?.trim() ?? "";
@@ -266,6 +269,23 @@ export default function PdvIntegrationsPanel() {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAgenceId, filterProduit, filterStatus, filterDateFrom, filterDateTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!res.ok) throw new Error("Profil indisponible");
+        const data = (await res.json()) as { user?: { role?: string } };
+        if (!cancelled) setMeRole(data.user?.role ?? null);
+      } catch {
+        if (!cancelled) setMeRole(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onDataImported = () => {
@@ -461,6 +481,31 @@ export default function PdvIntegrationsPanel() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const meRbacRole = useMemo<LonaciRole | null>(
+    () => (meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null),
+    [meRole],
+  );
+  const canCreatePdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    const roleAllowed = ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(meRbacRole);
+    return roleAllowed && canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "CREATE" }).allowed;
+  }, [meRbacRole]);
+  const canTransitionPdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    const roleAllowed = ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(meRbacRole);
+    return roleAllowed && canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "UPDATE" }).allowed;
+  }, [meRbacRole]);
+  const canFinalizePdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    return (
+      meRbacRole === "CHEF_SERVICE" &&
+      canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "FINALIZE" }).allowed
+    );
+  }, [meRbacRole]);
+  const canExportPdv = useMemo(
+    () => !!meRbacRole,
+    [meRbacRole],
+  );
   const analytics = useMemo(() => {
     const status = { demandeRecue: 0, enTraitement: 0, integreGpr: 0, finalise: 0 };
     const byAgence = new Map<string, number>();
@@ -550,25 +595,31 @@ export default function PdvIntegrationsPanel() {
           >
             Actualiser
           </button>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="rounded-xl border border-violet-300 bg-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-violet-200 hover:bg-violet-400"
-          >
-            Créer demande PDV
-          </button>
-          <a
-            href={`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-            className="rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
-          >
-            Export Excel
-          </a>
-          <a
-            href={`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-            className="rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
-          >
-            Export PDF
-          </a>
+          {canCreatePdv ? (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="rounded-xl border border-violet-300 bg-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-violet-200 hover:bg-violet-400"
+            >
+              Créer demande PDV
+            </button>
+          ) : null}
+          {canExportPdv ? (
+            <a
+              href={`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
+              className="rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
+            >
+              Export Excel
+            </a>
+          ) : null}
+          {canExportPdv ? (
+            <a
+              href={`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
+              className="rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
+            >
+              Export PDF
+            </a>
+          ) : null}
         </div>
         </div>
       </header>
@@ -1012,7 +1063,19 @@ export default function PdvIntegrationsPanel() {
                     <td className="px-2 py-2 font-mono text-xs">{row.concessionnaireId ?? "—"}</td>
                     <td className="px-2 py-2 text-xs">{new Date(row.createdAt).toLocaleString()}</td>
                     <td className="px-2 py-2">
-                      {row.status === "DEMANDE_RECUE" ? (
+                      {(() => {
+                        const actionAlreadyValidated =
+                          row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv);
+                        if (actionAlreadyValidated) {
+                          return (
+                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              Validée
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                      {row.status === "DEMANDE_RECUE" && canTransitionPdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1021,7 +1084,7 @@ export default function PdvIntegrationsPanel() {
                         >
                           {finalizingId === row.id ? "…" : "Passer en traitement"}
                         </button>
-                      ) : row.status === "EN_TRAITEMENT" ? (
+                      ) : row.status === "EN_TRAITEMENT" && canTransitionPdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1030,7 +1093,7 @@ export default function PdvIntegrationsPanel() {
                         >
                           {finalizingId === row.id ? "…" : "Marquer intégré GPR"}
                         </button>
-                      ) : row.status === "INTEGRE_GPR" ? (
+                      ) : row.status === "INTEGRE_GPR" && canFinalizePdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1040,7 +1103,11 @@ export default function PdvIntegrationsPanel() {
                           {finalizingId === row.id ? "…" : "Finaliser"}
                         </button>
                       ) : (
-                        <span className="text-xs text-slate-500">—</span>
+                        <span className="text-xs text-slate-500">
+                          {row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv)
+                            ? ""
+                            : "—"}
+                        </span>
                       )}
                     </td>
                   </tr>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 
-import { BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
+import { BANCARISATION_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
 import { concessionnaireListScopeAgenceId, searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -58,7 +58,7 @@ function toPdfBuffer(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["i
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, { roles: [...LONACI_ROLES] });
   if ("error" in auth) return auth.error;
 
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));

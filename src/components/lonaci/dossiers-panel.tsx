@@ -146,6 +146,10 @@ function actionLabel(action: TransitionAction): string {
   }
 }
 
+function hideN1N2ForAdmin(role: string | null, action: TransitionAction): boolean {
+  return role === "CHEF_SERVICE" && (action === "VALIDATE_N1" || action === "VALIDATE_N2");
+}
+
 function actionLabelFromRaw(action: string): string {
   if (
     action === "SUBMIT" ||
@@ -443,18 +447,18 @@ export default function DossiersPanel() {
   }, [bulkReplayCommentOverride, meReplayKey]);
 
   useEffect(() => {
-    void load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter, page, pageSize, search, concessionnaireFilter, sortField, sortOrder]);
+    if (hideN1N2ForAdmin(meRole, bulkAction)) {
+      setBulkAction("SUBMIT");
+    }
+    if (bulkLogsActionFilter === "VALIDATE_N1" || bulkLogsActionFilter === "VALIDATE_N2") {
+      if (meRole === "CHEF_SERVICE") {
+        setBulkLogsActionFilter("ALL");
+      }
+    }
+  }, [bulkAction, bulkLogsActionFilter, meRole]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && !loadInFlightRef.current) {
-        void load();
-      }
-    }, 10000);
-
-    return () => window.clearInterval(interval);
+    void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, page, pageSize, search, concessionnaireFilter, sortField, sortOrder]);
 
@@ -791,12 +795,13 @@ export default function DossiersPanel() {
           aria-label="Action en lot"
           className={fieldClass}
         >
-          <option value="SUBMIT">{actionLabel("SUBMIT")}</option>
-          <option value="VALIDATE_N1">{actionLabel("VALIDATE_N1")}</option>
-          <option value="VALIDATE_N2">{actionLabel("VALIDATE_N2")}</option>
-          <option value="FINALIZE">{actionLabel("FINALIZE")}</option>
-          <option value="REJECT">{actionLabel("REJECT")}</option>
-          <option value="RETURN_PREVIOUS">{actionLabel("RETURN_PREVIOUS")}</option>
+          {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
+            .filter((action) => !hideN1N2ForAdmin(meRole, action))
+            .map((action) => (
+              <option key={action} value={action}>
+                {actionLabel(action)}
+              </option>
+            ))}
         </select>
         <input
           value={bulkComment}
@@ -868,12 +873,13 @@ export default function DossiersPanel() {
             aria-label="Filtrer l'historique bulk par action"
           >
             <option value="ALL">Toutes les actions</option>
-            <option value="SUBMIT">{actionLabel("SUBMIT")}</option>
-            <option value="VALIDATE_N1">{actionLabel("VALIDATE_N1")}</option>
-            <option value="VALIDATE_N2">{actionLabel("VALIDATE_N2")}</option>
-            <option value="FINALIZE">{actionLabel("FINALIZE")}</option>
-            <option value="REJECT">{actionLabel("REJECT")}</option>
-            <option value="RETURN_PREVIOUS">{actionLabel("RETURN_PREVIOUS")}</option>
+            {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
+              .filter((action) => !hideN1N2ForAdmin(meRole, action))
+              .map((action) => (
+                <option key={action} value={action}>
+                  {actionLabel(action)}
+                </option>
+              ))}
             <option value="REJECT_TO_DRAFT">Rejeter (brouillon)</option>
           </select>
           <label className="inline-flex items-center gap-2 text-xs text-slate-700">
@@ -1150,6 +1156,7 @@ export default function DossiersPanel() {
                     <div className="flex flex-wrap gap-2">
                       {actionsForStatus(item.status)
                         .filter((action) => userMayPerformDossierTransition(meRole, action))
+                        .filter((action) => !hideN1N2ForAdmin(meRole, action))
                         .map((action) => (
                           <button
                             key={action}
@@ -1167,8 +1174,9 @@ export default function DossiersPanel() {
                             {actionLabel(action)}
                           </button>
                         ))}
-                      {actionsForStatus(item.status).filter((a) => userMayPerformDossierTransition(meRole, a))
-                        .length === 0 ? (
+                      {actionsForStatus(item.status)
+                        .filter((a) => userMayPerformDossierTransition(meRole, a))
+                        .filter((a) => !hideN1N2ForAdmin(meRole, a)).length === 0 ? (
                         <span className="text-xs text-slate-400">Aucune action</span>
                       ) : null}
                       <button

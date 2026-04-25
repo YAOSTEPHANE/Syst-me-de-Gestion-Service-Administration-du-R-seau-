@@ -27,6 +27,10 @@ export default function AdminProduitsPanel() {
   const [editActif, setEditActif] = useState(true);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [sortBy, setSortBy] = useState<"CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC">("CODE");
 
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
@@ -34,16 +38,16 @@ export default function AdminProduitsPanel() {
   const load = useCallback(async () => {
     setError(null);
     try {
-      const res = await fetch("/api/admin/produits", { credentials: "include", cache: "no-store" });
-      if (res.status === 401 || res.status === 403) {
+      const resProduits = await fetch("/api/admin/produits", { credentials: "include", cache: "no-store" });
+      if (resProduits.status === 401 || resProduits.status === 403) {
         setVisible(false);
         return;
       }
-      if (!res.ok) {
+      if (!resProduits.ok) {
         setVisible(false);
         return;
       }
-      const data = (await res.json()) as { produits: ProduitRow[] };
+      const data = (await resProduits.json()) as { produits: ProduitRow[] };
       setProduits(Array.isArray(data.produits) ? data.produits : []);
       setVisible(true);
     } catch {
@@ -171,6 +175,32 @@ export default function AdminProduitsPanel() {
     }
   }
 
+  async function toggleActif(p: ProduitRow) {
+    setError(null);
+    setSuccess(null);
+    setQuickUpdatingId(p._id);
+    try {
+      const res = await fetch(`/api/admin/produits/${p._id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ actif: !p.actif }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
+      if (!res.ok || !body?.produit) {
+        setError(body?.message ?? "Mise à jour du statut impossible.");
+        return;
+      }
+      setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
+      setSuccess(`Produit « ${body.produit.code} » ${body.produit.actif ? "activé" : "désactivé"}.`);
+      if (editingId === p._id) setEditingId(null);
+    } catch {
+      setError("Erreur réseau ou serveur.");
+    } finally {
+      setQuickUpdatingId(null);
+    }
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -226,12 +256,46 @@ export default function AdminProduitsPanel() {
 
   if (loading || !visible) return null;
 
+  const q = search.trim().toLowerCase();
+  const filtered = produits
+    .filter((p) => {
+      if (statusFilter === "ACTIVE" && !p.actif) return false;
+      if (statusFilter === "INACTIVE" && p.actif) return false;
+      if (!q) return true;
+      return p.code.toLowerCase().includes(q) || p.libelle.toLowerCase().includes(q);
+    })
+    .sort((a, b) => {
+      if (sortBy === "LABEL") return a.libelle.localeCompare(b.libelle, "fr");
+      if (sortBy === "PRICE_ASC") return (a.prix ?? 0) - (b.prix ?? 0);
+      if (sortBy === "PRICE_DESC") return (b.prix ?? 0) - (a.prix ?? 0);
+      return a.code.localeCompare(b.code, "fr");
+    });
+
+  const activeCount = produits.filter((p) => p.actif).length;
+  const inactiveCount = produits.length - activeCount;
+  const avgPrice =
+    produits.length > 0
+      ? Math.round(produits.reduce((sum, p) => sum + (typeof p.prix === "number" ? p.prix : 0), 0) / produits.length)
+      : 0;
+
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900">Produits (référentiel)</h3>
-      <p className="mt-1 text-xs text-slate-600">
-        Création et modification réservées au <strong>chef de service</strong>. Le code est normalisé en majuscules.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Produits (référentiel)</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Création et modification réservées au <strong>chef de service</strong>. Le code est normalisé en
+            majuscules.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.open("/api/admin/produits/export", "_blank", "noopener,noreferrer")}
+          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+        >
+          Export PDF
+        </button>
+      </div>
 
       <form
         onSubmit={onCreate}
@@ -288,6 +352,58 @@ export default function AdminProduitsPanel() {
         </p>
       ) : null}
 
+      <div className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 sm:grid-cols-3">
+        <p>
+          Total produits : <strong>{produits.length}</strong>
+        </p>
+        <p>
+          Actifs / Inactifs :{" "}
+          <strong>
+            {activeCount} / {inactiveCount}
+          </strong>
+        </p>
+        <p>
+          Prix caution moyen : <strong>{avgPrice.toLocaleString("fr-FR")} FCFA</strong>
+        </p>
+      </div>
+
+      <div className="mt-3 grid gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-3">
+        <label className="grid gap-1">
+          <span className="text-xs font-medium text-slate-700">Recherche</span>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Code ou libellé"
+            className={inputClass}
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-xs font-medium text-slate-700">Statut</span>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+            className={inputClass}
+          >
+            <option value="ALL">Tous</option>
+            <option value="ACTIVE">Actifs uniquement</option>
+            <option value="INACTIVE">Inactifs uniquement</option>
+          </select>
+        </label>
+        <label className="grid gap-1">
+          <span className="text-xs font-medium text-slate-700">Tri</span>
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as "CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC")}
+            className={inputClass}
+          >
+            <option value="CODE">Code (A → Z)</option>
+            <option value="LABEL">Libellé (A → Z)</option>
+            <option value="PRICE_ASC">Prix (croissant)</option>
+            <option value="PRICE_DESC">Prix (décroissant)</option>
+          </select>
+        </label>
+      </div>
+
       <div className="mt-5 overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full min-w-[520px] border-collapse text-left text-xs">
           <thead>
@@ -301,14 +417,14 @@ export default function AdminProduitsPanel() {
             </tr>
           </thead>
           <tbody className="text-slate-800">
-            {produits.length === 0 ? (
+            {filtered.length === 0 ? (
               <tr>
                 <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                  Aucun produit en base.
+                  Aucun produit ne correspond au filtre.
                 </td>
               </tr>
             ) : (
-              produits.map((p) =>
+              filtered.map((p) =>
                 editingId === p._id ? (
                   <tr key={p._id} className="border-b border-slate-100 bg-cyan-50/50 last:border-b-0">
                     <td colSpan={6} className="p-3">
@@ -405,8 +521,16 @@ export default function AdminProduitsPanel() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => void toggleActif(p)}
+                          disabled={deletingId === p._id || quickUpdatingId === p._id || editingId !== null}
+                          className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                        >
+                          {quickUpdatingId === p._id ? "…" : p.actif ? "Désactiver" : "Activer"}
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => void onDelete(p)}
-                          disabled={deletingId === p._id || editingId !== null}
+                          disabled={deletingId === p._id || quickUpdatingId === p._id || editingId !== null}
                           className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-900 hover:bg-rose-100 disabled:opacity-50"
                         >
                           {deletingId === p._id ? "…" : "Supprimer"}

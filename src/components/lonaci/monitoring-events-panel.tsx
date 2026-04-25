@@ -143,6 +143,22 @@ export default function MonitoringEventsPanel() {
           >
             Rafraîchir
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                `/api/monitoring/events/export?${new URLSearchParams({
+                  ...(codeFilterApplied.trim() ? { code: codeFilterApplied.trim() } : {}),
+                  ...(statusFilter ? { status: statusFilter } : {}),
+                }).toString()}`,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Export PDF
+          </button>
         </div>
       </div>
 

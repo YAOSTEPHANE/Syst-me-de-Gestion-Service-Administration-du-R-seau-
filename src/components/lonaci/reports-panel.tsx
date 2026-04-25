@@ -21,6 +21,7 @@ import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, BarElement, Tooltip, Legend);
 
 type Period = "daily" | "weekly" | "monthly";
+type ProductTrendFilter = "all" | "up" | "down";
 type AgenceRef = { id: string; code: string; libelle: string; actif: boolean };
 const cronScheduleLabel = process.env.NEXT_PUBLIC_CRON_SCHEDULE_LABEL?.trim() || "08h00 locale";
 const periodLabels: Record<Period, string> = {
@@ -55,7 +56,24 @@ type ReportSummary = {
     succession?: { ouverts?: number; stale30j?: number };
     pdvIntegrations?: { nonFinalise?: number };
   };
+  products?: {
+    actifsByProduit?: Array<{ produitCode: string; produitLibelle?: string; count: number }>;
+    volumeByProduitWindow?: Array<{
+      produitCode: string;
+      produitLibelle?: string;
+      currentWindow: number;
+      previousWindow: number;
+      trendPct: number;
+    }>;
+  };
 };
+
+function produitLabel(code: string, libelle?: string): string {
+  const cleanCode = (code || "—").trim();
+  const cleanLibelle = (libelle || "").trim();
+  if (!cleanLibelle) return cleanCode;
+  return `${cleanCode} - ${cleanLibelle}`;
+}
 
 export default function ReportsPanel() {
   const reportRef = useRef<HTMLElement | null>(null);
@@ -72,6 +90,7 @@ export default function ReportsPanel() {
   const [exportingPdf, setExportingPdf] = useState(false);
   const [compareAgences, setCompareAgences] = useState(true);
   const [topAgences, setTopAgences] = useState(8);
+  const [productTrendFilter, setProductTrendFilter] = useState<ProductTrendFilter>("all");
 
   async function load() {
     setLoading(true);
@@ -254,6 +273,114 @@ export default function ReportsPanel() {
       ],
     };
   }, [summary]);
+
+  const productActiveRows = useMemo(() => summary?.products?.actifsByProduit ?? [], [summary]);
+  const productWindowRows = useMemo(() => summary?.products?.volumeByProduitWindow ?? [], [summary]);
+  const filteredProductTrendRows = useMemo(() => {
+    const sorted = [...productWindowRows].sort((a, b) => b.trendPct - a.trendPct);
+    if (productTrendFilter === "up") return sorted.filter((row) => row.trendPct > 0);
+    if (productTrendFilter === "down") return sorted.filter((row) => row.trendPct < 0);
+    return sorted;
+  }, [productWindowRows, productTrendFilter]);
+  const productsToWatch = useMemo(
+    () =>
+      [...filteredProductTrendRows]
+        .sort((a, b) => Math.abs(b.trendPct) - Math.abs(a.trendPct))
+        .slice(0, 3),
+    [filteredProductTrendRows],
+  );
+
+  const productsActiveDoughnutData = useMemo(
+    () => ({
+      labels: productActiveRows.map((row) => produitLabel(row.produitCode, row.produitLibelle)),
+      datasets: [
+        {
+          label: "Contrats actifs",
+          data: productActiveRows.map((row) => row.count),
+          backgroundColor: [
+            "#0ea5e9",
+            "#14b8a6",
+            "#8b5cf6",
+            "#f59e0b",
+            "#ef4444",
+            "#6366f1",
+            "#22c55e",
+            "#64748b",
+          ],
+          borderColor: "rgba(255,255,255,0.9)",
+          borderWidth: 1.5,
+        },
+      ],
+    }),
+    [productActiveRows],
+  );
+
+  const productsTrendBarData = useMemo(
+    () => ({
+      labels: productWindowRows.map((row) => row.produitCode),
+      datasets: [
+        {
+          label: "Période courante",
+          data: productWindowRows.map((row) => row.currentWindow),
+          backgroundColor: "rgba(14,165,233,0.82)",
+          borderColor: "#0284c7",
+          borderWidth: 1,
+          borderRadius: 8,
+        },
+        {
+          label: "Période précédente",
+          data: productWindowRows.map((row) => row.previousWindow),
+          backgroundColor: "rgba(148,163,184,0.72)",
+          borderColor: "#64748b",
+          borderWidth: 1,
+          borderRadius: 8,
+        },
+      ],
+    }),
+    [productWindowRows],
+  );
+
+  const productsTrendPctBarData = useMemo(
+    () => ({
+      labels: filteredProductTrendRows.map((row) => row.produitCode),
+      datasets: [
+        {
+          label: "Variation (%)",
+          data: filteredProductTrendRows.map((row) => row.trendPct),
+          backgroundColor: filteredProductTrendRows.map((row) =>
+            row.trendPct >= 0 ? "rgba(34,197,94,0.75)" : "rgba(239,68,68,0.75)",
+          ),
+          borderColor: filteredProductTrendRows.map((row) => (row.trendPct >= 0 ? "#15803d" : "#b91c1c")),
+          borderWidth: 1,
+          borderRadius: 8,
+        },
+      ],
+    }),
+    [filteredProductTrendRows],
+  );
+
+  const trendPctOpts = useMemo<ChartOptions<"bar">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: "y",
+      plugins: {
+        legend: { labels: { color: "#475569", font: { size: 11 } } },
+      },
+      scales: {
+        x: {
+          ticks: { color: "#64748b", font: { size: 10 } },
+          grid: { color: "rgba(148,163,184,0.2)" },
+          beginAtZero: true,
+        },
+        y: {
+          ticks: { color: "#64748b", font: { size: 10 } },
+          grid: { display: false },
+        },
+      },
+    }),
+    [],
+  );
 
   const barOpts = useMemo<ChartOptions<"bar">>(
     () => ({
@@ -567,6 +694,87 @@ export default function ReportsPanel() {
           <div className="h-[220px]">
             <Bar data={riskBarData} options={barOpts} />
           </div>
+        </div>
+      </div>
+
+      <div className="mb-5 grid gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
+          <div className="mb-3 text-sm font-semibold text-slate-800">Produits - répartition contrats actifs</div>
+          <div className="h-[240px]">
+            {productActiveRows.length > 0 ? (
+              <Doughnut data={productsActiveDoughnutData} options={doughnutOpts} />
+            ) : (
+              <p className="text-xs text-slate-500">Aucune donnée produit active sur ce périmètre.</p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
+          <div className="mb-3 text-sm font-semibold text-slate-800">Produits - tendance période</div>
+          <div className="h-[240px]">
+            {productWindowRows.length > 0 ? (
+              <Bar data={productsTrendBarData} options={barOpts} />
+            ) : (
+              <p className="text-xs text-slate-500">Aucune donnée de tendance produit disponible.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-5 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="text-sm font-semibold text-slate-800">Produits - progression (%)</div>
+          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs">
+            <button
+              type="button"
+              onClick={() => setProductTrendFilter("all")}
+              className={`rounded px-2 py-1 ${productTrendFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+            >
+              Tous
+            </button>
+            <button
+              type="button"
+              onClick={() => setProductTrendFilter("up")}
+              className={`rounded px-2 py-1 ${productTrendFilter === "up" ? "bg-emerald-100 text-emerald-800 shadow-sm" : "text-slate-600"}`}
+            >
+              Top hausses
+            </button>
+            <button
+              type="button"
+              onClick={() => setProductTrendFilter("down")}
+              className={`rounded px-2 py-1 ${productTrendFilter === "down" ? "bg-rose-100 text-rose-800 shadow-sm" : "text-slate-600"}`}
+            >
+              Top baisses
+            </button>
+          </div>
+        </div>
+        <div className="h-[260px]">
+          {filteredProductTrendRows.length > 0 ? (
+            <Bar data={productsTrendPctBarData} options={trendPctOpts} />
+          ) : (
+            <p className="text-xs text-slate-500">Aucune variation produit pour ce filtre.</p>
+          )}
+        </div>
+        <div className="mt-4">
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Top 3 produits à surveiller</div>
+          {productsToWatch.length > 0 ? (
+            <div className="grid gap-2 md:grid-cols-3">
+              {productsToWatch.map((row) => (
+                <article key={`watch-${row.produitCode}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
+                  <p className="truncate text-xs font-semibold text-slate-900">{produitLabel(row.produitCode, row.produitLibelle)}</p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    Courant: <span className="font-semibold text-slate-800">{row.currentWindow}</span> · Préc.:{" "}
+                    <span className="font-semibold text-slate-800">{row.previousWindow}</span>
+                  </p>
+                  <p className={`mt-1 text-xs font-semibold ${row.trendPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                    {row.trendPct >= 0 ? "Hausse" : "Baisse"}: {row.trendPct >= 0 ? "+" : ""}
+                    {row.trendPct}%
+                  </p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-slate-500">Aucun produit notable pour ce filtre.</p>
+          )}
         </div>
       </div>
 

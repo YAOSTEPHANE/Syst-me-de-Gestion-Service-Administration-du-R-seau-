@@ -107,11 +107,22 @@ export default function AdminAgencesPanel() {
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <h3 className="text-sm font-semibold text-slate-900">Agences (référentiel)</h3>
-      <p className="mt-1 text-xs text-slate-600">
-        Création réservée au <strong>chef de service</strong>. Le code est normalisé en majuscules (ex. pour les codes
-        PDV). Les concessionnaires existants ne sont pas modifiés automatiquement.
-      </p>
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-900">Agences (référentiel)</h3>
+          <p className="mt-1 text-xs text-slate-600">
+            Création réservée au <strong>chef de service</strong>. Le code est normalisé en majuscules (ex. pour les
+            codes PDV). Les concessionnaires existants ne sont pas modifiés automatiquement.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => window.open("/api/admin/agences/export", "_blank", "noopener,noreferrer")}
+          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+        >
+          Export PDF
+        </button>
+      </div>
 
       <form
         onSubmit={onCreate}

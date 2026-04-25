@@ -23,7 +23,9 @@ const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   kind: z.enum(["CESSION", "DELOCALISATION"]).optional(),
-  statut: z.enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"]).optional(),
+  statut: z
+    .enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "VALIDEE_CHEF_SERVICE", "REJETEE"])
+    .optional(),
   produitCode: z.string().optional(),
 });
 

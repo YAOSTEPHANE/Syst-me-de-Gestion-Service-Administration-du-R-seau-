@@ -21,15 +21,15 @@ Base de demarrage du projet ADMR avec:
 cp .env.example .env.local
 ```
 
-2. Mettre a jour `MONGODB_URI` et `MONGODB_DB` dans `.env.local` (ou `DATABASE_URL` pour Prisma, voir `docs/HEBERGEMENT.md`).
+1. Mettre a jour `MONGODB_URI` et `MONGODB_DB` dans `.env.local` (ou `DATABASE_URL` pour Prisma, voir `docs/HEBERGEMENT.md`).
 
-3. Installer les dependances :
+1. Installer les dependances :
 
 ```bash
 npm install
 ```
 
-4. (Optionnel) Verifier la connexion Mongo / Prisma :
+1. (Optionnel) Verifier la connexion Mongo / Prisma :
 
 ```bash
 npm run verify:db
@@ -50,6 +50,14 @@ Application: [http://127.0.0.1:3000](http://127.0.0.1:3000)
 ## Deploiement / hebergement
 
 Voir [docs/HEBERGEMENT.md](docs/HEBERGEMENT.md) (architecture, MongoDB, variables d environnement, cron, SMTP) et [docs/RISQUES.md](docs/RISQUES.md) (securite, controles automatises).
+
+## Sauvegarde des donnees
+
+- `npm run backup:data` — sauvegarde Mongo + `uploads` dans `backups/backup-...`
+- `npm run restore:data -- --from=backups/backup-... --drop` — restauration des donnees
+- `npm run backup:task:windows` — cree une tache planifiee quotidienne (Windows)
+
+Guide detaille: [docs/SAUVEGARDE-DONNEES.md](docs/SAUVEGARDE-DONNEES.md)
 
 ## Guide utilisateur
 

@@ -55,7 +55,10 @@ export async function consumeRateLimit(
     return { allowed: true };
   } catch (error) {
     console.error("[mongo-rate-limit] consume failed", error);
-    if (process.env.RATE_LIMIT_FAIL_CLOSED === "true") {
+    const failClosed =
+      process.env.RATE_LIMIT_FAIL_CLOSED === "true" ||
+      (process.env.RATE_LIMIT_FAIL_CLOSED !== "false" && process.env.NODE_ENV === "production");
+    if (failClosed) {
       return { allowed: false, retryAfterSec: 60 };
     }
     return { allowed: true };

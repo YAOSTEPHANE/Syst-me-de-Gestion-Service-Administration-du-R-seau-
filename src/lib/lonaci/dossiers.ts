@@ -8,6 +8,7 @@ import type {
   DossierType,
   UserDocument,
 } from "@/lib/lonaci/types";
+import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
@@ -148,9 +149,9 @@ function roleCanDoTransition(role: LonaciRole, target: DossierStatus): boolean {
     case "SOUMIS":
       return role === "AGENT" || role === "CHEF_SECTION" || role === "ASSIST_CDS" || role === "CHEF_SERVICE";
     case "VALIDE_N1":
-      return role === "CHEF_SECTION" || role === "ASSIST_CDS" || role === "CHEF_SERVICE";
+      return role === "CHEF_SECTION";
     case "VALIDE_N2":
-      return role === "ASSIST_CDS" || role === "CHEF_SERVICE";
+      return role === "ASSIST_CDS";
     case "FINALISE":
       return role === "CHEF_SERVICE";
     case "BROUILLON":
@@ -172,56 +173,63 @@ function canTransition(current: DossierStatus, target: DossierStatus): boolean {
   return false;
 }
 
-async function notifyAfterTransition(dossier: DossierDocument, target: DossierStatus, actor: UserDocument) {
+async function notifyAfterTransition(
+  dossier: DossierDocument,
+  target: DossierStatus,
+  actor: UserDocument,
+  comment: string | null,
+) {
   const metadata = { dossierId: dossier._id, dossierReference: dossier.reference, status: target };
+  const operationLabel = dossier.type.replace(/_/g, " ").toLowerCase();
+  const actionBy = userDisplayName(actor);
   if (target === "SOUMIS") {
     await notifyRoleTargets(
       "CHEF_SECTION",
       `Dossier ${dossier.reference} soumis`,
-      "Un dossier attend une validation N1.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}.`,
       metadata,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SECTION",
       `Dossier ${dossier.reference} soumis`,
-      "Un dossier attend une validation N1. Connectez-vous a la console.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}. Connectez-vous à la console.`,
     );
   } else if (target === "VALIDE_N1") {
     await notifyRoleTargets(
       "ASSIST_CDS",
       `Dossier ${dossier.reference} valide N1`,
-      "Un dossier attend une validation N2.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
       metadata,
     );
     await broadcastCriticalEmailToRole(
       "ASSIST_CDS",
       `Dossier ${dossier.reference} valide N1`,
-      "Un dossier attend une validation N2.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
     );
   } else if (target === "VALIDE_N2") {
     await notifyRoleTargets(
       "CHEF_SERVICE",
       `Dossier ${dossier.reference} valide N2`,
-      "Un dossier attend la finalisation.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
       metadata,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SERVICE",
       `Dossier ${dossier.reference} valide N2`,
-      "Un dossier attend la finalisation.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
     );
   } else if (target === "FINALISE") {
     await sendNotification({
       userId: dossier.createdByUserId,
       title: `Dossier ${dossier.reference} finalise`,
-      message: "Le dossier a ete finalise.",
+      message: `Opération ${operationLabel} | référence ${dossier.reference} | action dossier finalisé | acteur ${actionBy}.`,
       metadata,
       channel: "IN_APP",
     });
     await sendNotification({
       userId: dossier.createdByUserId,
       title: `Dossier ${dossier.reference} finalise`,
-      message: "Le dossier a ete finalise.",
+      message: `Opération ${operationLabel} | référence ${dossier.reference} | action dossier finalisé | acteur ${actionBy}.`,
       metadata,
       channel: "EMAIL",
     });
@@ -231,30 +239,32 @@ async function notifyAfterTransition(dossier: DossierDocument, target: DossierSt
       "Le dossier a ete finalise. Consultez la console pour le detail.",
     );
   } else if (target === "BROUILLON") {
+    const reasonSuffix = comment?.trim() ? ` | motif ${comment.trim()}` : "";
     await sendNotification({
       userId: dossier.createdByUserId,
       title: `Dossier ${dossier.reference} renvoye en brouillon`,
-      message: "Le dossier a ete rejete et renvoye en brouillon.",
+      message: `Opération ${operationLabel} | référence ${dossier.reference} | action dossier renvoyé en brouillon | acteur ${actionBy}.${reasonSuffix}`,
       metadata,
       channel: "IN_APP",
     });
     await sendCriticalEmailToUserId(
       dossier.createdByUserId,
       `Dossier ${dossier.reference} renvoye en brouillon`,
-      "Votre dossier a ete rejete et renvoye en brouillon. Verifiez les commentaires dans la console.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action dossier renvoyé en brouillon | acteur ${actionBy}.${reasonSuffix} Vérifiez les commentaires dans la console.`,
     );
   } else if (target === "REJETE") {
+    const reasonSuffix = comment?.trim() ? ` | motif ${comment.trim()}` : "";
     await sendNotification({
       userId: dossier.createdByUserId,
       title: `Dossier ${dossier.reference} rejete`,
-      message: "Le dossier a ete rejete avec motif.",
+      message: `Opération ${operationLabel} | référence ${dossier.reference} | action dossier rejeté | acteur ${actionBy}.${reasonSuffix}`,
       metadata,
       channel: "IN_APP",
     });
     await sendCriticalEmailToUserId(
       dossier.createdByUserId,
       `Dossier ${dossier.reference} rejete`,
-      "Votre dossier a ete rejete. Consultez les commentaires pour correction.",
+      `Opération ${operationLabel} | référence ${dossier.reference} | action dossier rejeté | acteur ${actionBy}.${reasonSuffix} Consultez les commentaires pour correction.`,
     );
   }
 
@@ -321,7 +331,7 @@ export async function transitionDossier(
     throw new Error("DOSSIER_NOT_FOUND");
   }
 
-  await notifyAfterTransition(updated, targetStatus, actor);
+  await notifyAfterTransition(updated, targetStatus, actor, comment);
   return updated;
 }
 

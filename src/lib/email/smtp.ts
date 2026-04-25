@@ -8,10 +8,17 @@ export interface SendEmailResult {
   skippedReason?: string;
 }
 
+export interface SmtpAttachmentInput {
+  filename: string;
+  content: Buffer | string;
+  contentType?: string;
+}
+
 export async function sendSmtpEmail(
   to: string[],
   subject: string,
   text: string,
+  options?: { attachments?: SmtpAttachmentInput[] },
 ): Promise<SendEmailResult> {
   const host = process.env.SMTP_HOST?.trim();
   const from = process.env.EMAIL_FROM?.trim() ?? process.env.SMTP_USER?.trim();
@@ -36,6 +43,11 @@ export async function sendSmtpEmail(
       to: to.join(", "),
       subject,
       text,
+      attachments: options?.attachments?.map((item) => ({
+        filename: item.filename,
+        content: item.content,
+        contentType: item.contentType,
+      })),
     });
     return { sent: true };
   } catch {

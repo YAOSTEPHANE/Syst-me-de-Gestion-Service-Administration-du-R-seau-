@@ -1,7 +1,18 @@
 "use client";
 
-import { FormEvent, Suspense, useState } from "react";
+import { type ReactNode, FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+
+/** Fond + `<main>` identiques au rendu final pour éviter les erreurs d’hydratation avec `useSearchParams` + `Suspense`. */
+function LoginShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="relative h-screen overflow-hidden bg-slate-950 px-4 py-5 text-slate-100 sm:px-6">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(250,204,21,0.2),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.16),transparent_40%)]" />
+      <div className="pointer-events-none absolute inset-0 bg-size-[34px_34px] opacity-20 bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
+      {children}
+    </main>
+  );
+}
 
 function LoginPageContent() {
   const router = useRouter();
@@ -29,11 +40,17 @@ function LoginPageContent() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ identifier: identifier.trim(), password }),
       });
+      const data = (await res.json().catch(() => null)) as
+        | { message?: string; user?: { needsPasswordChange?: boolean } }
+        | null;
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(body?.message ?? "Connexion impossible");
+        throw new Error(data?.message ?? "Connexion impossible");
       }
-      router.replace("/dashboard");
+      if (data?.user?.needsPasswordChange) {
+        router.replace("/parametres?motDePasse=obligatoire");
+      } else {
+        router.replace("/dashboard");
+      }
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erreur de connexion");
@@ -91,16 +108,16 @@ function LoginPageContent() {
   }
 
   return (
-    <main className="relative h-screen overflow-hidden bg-slate-950 px-4 py-5 text-slate-100 sm:px-6">
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(250,204,21,0.2),transparent_45%),radial-gradient(circle_at_80%_0%,rgba(59,130,246,0.16),transparent_40%)]" />
-      <div className="pointer-events-none absolute inset-0 bg-size-[34px_34px] opacity-20 bg-[linear-gradient(to_right,rgba(148,163,184,0.12)_1px,transparent_1px),linear-gradient(to_bottom,rgba(148,163,184,0.12)_1px,transparent_1px)]" />
-
+    <LoginShell>
       <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
         <div className="w-full rounded-3xl border border-white/15 bg-white/10 p-2 shadow-[0_30px_80px_rgba(2,6,23,0.65)] backdrop-blur-xl">
           <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
             <div className="mb-5">
               <div>
-                <p className="text-[11px] uppercase tracking-[0.2em] text-amber-300">Infinitecore Systeme</p>
+                {/* Tolère les injections/extensions navigateur qui modifient parfois ce libellé avant hydratation */}
+                <p suppressHydrationWarning className="text-[11px] uppercase tracking-[0.2em] text-amber-300">
+                  LONACI
+                </p>
                 <h1 className="mt-1 text-2xl font-semibold text-white">Connexion sécurisée</h1>
                 <p className="text-sm text-slate-300">Accédez au tableau de bord métier.</p>
               </div>
@@ -245,7 +262,7 @@ function LoginPageContent() {
           </div>
         </div>
       ) : null}
-    </main>
+    </LoginShell>
   );
 }
 
@@ -253,9 +270,11 @@ export default function LoginPage() {
   return (
     <Suspense
       fallback={
-        <main className="flex min-h-screen items-center justify-center bg-slate-950 px-4 text-sm text-slate-300">
-          Chargement...
-        </main>
+        <LoginShell>
+          <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
+            <p className="text-sm text-slate-300">Chargement…</p>
+          </section>
+        </LoginShell>
       }
     >
       <LoginPageContent />

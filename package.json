@@ -22,7 +22,10 @@
     "seed:demo": "tsx scripts/seed-demo.ts",
     "seed:test": "tsx scripts/seed-test-data.ts",
     "seed": "npm run seed:test",
-    "import:data": "tsx scripts/import-data.ts"
+    "import:data": "tsx scripts/import-data.ts",
+    "backup:data": "tsx scripts/backup-data.ts",
+    "restore:data": "tsx scripts/restore-data.ts",
+    "backup:task:windows": "powershell -ExecutionPolicy Bypass -File ./scripts/register-backup-task.ps1"
   },
   "dependencies": {
     "@prisma/client": "6.19.3",

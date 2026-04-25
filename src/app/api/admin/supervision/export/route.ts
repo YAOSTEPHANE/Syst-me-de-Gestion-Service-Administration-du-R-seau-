@@ -1,0 +1,182 @@
+import { NextRequest, NextResponse } from "next/server";
+import PDFDocument from "pdfkit";
+import { z } from "zod";
+
+import { requireApiAuth } from "@/lib/auth/guards";
+import { listUnifiedAuditLogs } from "@/lib/lonaci/audit-logs";
+import { getDossierValidationSnapshot } from "@/lib/lonaci/dashboard-stats";
+import { buildReportSummary } from "@/lib/lonaci/reports";
+import { ensureSuccessionIndexes, listSuccessionStaleAlerts } from "@/lib/lonaci/succession";
+import { listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
+
+const querySchema = z.object({
+  format: z.enum(["pdf", "csv", "xlsx"]).default("pdf"),
+  source: z.enum(["AUTH", "MONITORING"]).optional(),
+  status: z.enum(["SUCCESS", "FAILED", "OPEN", "ACK"]).optional(),
+  agenceId: z.string().optional(),
+  slaStatus: z.enum(["ALL", "OVERDUE"]).default("ALL"),
+  query: z.string().trim().min(1).max(200).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+});
+
+function csvEscape(value: string | number | null | undefined): string {
+  const raw = value == null ? "" : String(value);
+  return `"${raw.replace(/"/g, '""')}"`;
+}
+
+export async function GET(request: NextRequest) {
+  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
+  if ("error" in auth) return auth.error;
+
+  const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
+  if (!parsed.success) {
+    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+  }
+
+  await ensureSuccessionIndexes();
+  const [daily, cautionAlerts, successionStale, auditLogs] = await Promise.all([
+    buildReportSummary("daily", parsed.data.agenceId),
+    listCautionAlertsJ10(parsed.data.agenceId),
+    listSuccessionStaleAlerts(parsed.data.agenceId),
+    listUnifiedAuditLogs({
+      page: 1,
+      pageSize: 500,
+      source: parsed.data.source,
+      status: parsed.data.status,
+      query: parsed.data.query,
+      from: parsed.data.from ? new Date(parsed.data.from) : undefined,
+      to: parsed.data.to ? new Date(parsed.data.to) : undefined,
+    }),
+  ]);
+
+  const dossierValidation = await getDossierValidationSnapshot(
+    cautionAlerts.length,
+    daily.succession.ouverts,
+    successionStale.length,
+    daily.pdvIntegrations.nonFinalise,
+    parsed.data.agenceId,
+  );
+
+  const rawSlaRows = [
+    { module: "CONTRATS", pending: dossierValidation.contratSoumis, overdue: dossierValidation.contratSoumisRetard48h },
+    { module: "CAUTIONS", pending: dossierValidation.cautionsEnAttente, overdue: dossierValidation.cautionsJ10 },
+    { module: "PDV_INTEGRATIONS", pending: dossierValidation.pdvNonFinalise, overdue: dossierValidation.pdvEnCoursRetard5j },
+    { module: "AGREMENTS", pending: dossierValidation.agrementsEnAttente, overdue: dossierValidation.agrementsRetard },
+    { module: "SUCCESSIONS", pending: dossierValidation.successionOuverts, overdue: dossierValidation.successionStale30j },
+  ];
+  const slaRows = parsed.data.slaStatus === "OVERDUE" ? rawSlaRows.filter((row) => row.overdue > 0) : rawSlaRows;
+
+  if (parsed.data.format === "csv") {
+    const header = ["date", "source", "status", "code", "title", "message", "actor", "targetRole"];
+    const lines = auditLogs.items.map((row) =>
+      [new Date(row.timestamp).toISOString(), row.source, row.status, row.code ?? "", row.title, row.message, row.actor ?? "", row.targetRole ?? ""]
+        .map(csvEscape)
+        .join(","),
+    );
+    const slaHeader = ["module", "pending", "overdue"];
+    const slaLines = slaRows.map((row) => [row.module, row.pending, row.overdue].map(csvEscape).join(","));
+    const body = [
+      "\uFEFF\"section\",\"name\",\"value\"",
+      `"meta","generatedAt",${csvEscape(new Date().toISOString())}`,
+      "",
+      slaHeader.map(csvEscape).join(","),
+      ...slaLines,
+      "",
+      header.map(csvEscape).join(","),
+      ...lines,
+    ].join("\n");
+    return new NextResponse(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="supervision-export-${Date.now()}.csv"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  if (parsed.data.format === "xlsx") {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet([
+        {
+          generatedAt: new Date().toISOString(),
+          source: parsed.data.source ?? "ALL",
+          status: parsed.data.status ?? "ALL",
+          agenceId: parsed.data.agenceId ?? "ALL",
+          slaStatus: parsed.data.slaStatus,
+          query: parsed.data.query ?? "",
+        },
+      ]),
+      "meta",
+    );
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(slaRows), "sla");
+    XLSX.utils.book_append_sheet(
+      wb,
+      XLSX.utils.json_to_sheet(
+        auditLogs.items.map((row) => ({
+          timestamp: row.timestamp,
+          source: row.source,
+          status: row.status,
+          code: row.code ?? "",
+          title: row.title,
+          message: row.message,
+          actor: row.actor ?? "",
+          targetRole: row.targetRole ?? "",
+        })),
+      ),
+      "audit_logs",
+    );
+    const xlsxArrayBuffer = XLSX.write(wb, { type: "array", bookType: "xlsx" }) as ArrayBuffer;
+    return new NextResponse(xlsxArrayBuffer, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="supervision-export-${Date.now()}.xlsx"`,
+        "Cache-Control": "no-store",
+      },
+    });
+  }
+
+  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
+    const doc = new PDFDocument({ margin: 24, size: "A4", layout: "landscape" });
+    const chunks: Buffer[] = [];
+    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    doc.fontSize(14).text("Export supervision consolidee", { underline: true });
+    doc.moveDown(0.2);
+    doc.fontSize(9).text(`Genere le: ${new Date().toLocaleString("fr-FR")}`);
+    doc.moveDown(0.6);
+    doc.fontSize(11).text("SLA / Retards metier", { underline: true });
+    doc.moveDown(0.2);
+    for (const row of slaRows) {
+      doc.fontSize(9).text(`${row.module}: ${row.overdue} en retard / ${row.pending} en attente`);
+    }
+    doc.moveDown(0.6);
+    doc.fontSize(11).text("Journal d'audit (500 entrees max)", { underline: true });
+    doc.moveDown(0.2);
+    for (const row of auditLogs.items) {
+      doc
+        .fontSize(8.5)
+        .text(
+          `${new Date(row.timestamp).toLocaleString("fr-FR")} | ${row.source} | ${row.status} | ${row.code ?? "-"} | ${row.title} | actor=${row.actor ?? "-"}`,
+        );
+    }
+    if (auditLogs.items.length === 0) doc.fontSize(9).text("Aucune entree d'audit pour ces filtres.");
+    doc.end();
+  });
+
+  return new NextResponse(new Uint8Array(pdfBuffer), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="supervision-export-${Date.now()}.pdf"`,
+      "Cache-Control": "no-store",
+    },
+  });
+}

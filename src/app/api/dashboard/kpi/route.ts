@@ -21,7 +21,7 @@ function resolveDashboardScopeAgenceId(user: {
   agenceId?: string | null;
   agencesAutorisees?: string[];
 }) {
-  if (user.role === "CHEF_SERVICE") return null;
+  if (user.role === "CHEF_SERVICE" || user.role === "AUDITEUR") return null;
   if (user.agenceId?.trim()) return user.agenceId.trim();
   if (Array.isArray(user.agencesAutorisees) && user.agencesAutorisees.length > 0) {
     return user.agencesAutorisees[0]?.trim() || null;
@@ -31,7 +31,7 @@ function resolveDashboardScopeAgenceId(user: {
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR", "SUPERVISEUR_REGIONAL"],
   });
   if ("error" in auth) return auth.error;
 

@@ -14,6 +14,20 @@ export interface AgenceComparisonRow {
   pdvNonFinalise: number;
 }
 
+export interface ReportProductActiveRow {
+  produitCode: string;
+  produitLibelle?: string;
+  count: number;
+}
+
+export interface ReportProductWindowRow {
+  produitCode: string;
+  produitLibelle?: string;
+  currentWindow: number;
+  previousWindow: number;
+  trendPct: number;
+}
+
 function windowForPeriod(period: ReportPeriod): { from: Date; to: Date; label: string } {
   const to = new Date();
   const from = new Date(to);
@@ -53,6 +67,10 @@ export interface ReportSummary {
     dossiers: { total: number; createdInWindow: number };
     succession: { ouverts: number; stale30j: number };
     pdvIntegrations: { nonFinalise: number };
+  };
+  products: {
+    actifsByProduit: ReportProductActiveRow[];
+    volumeByProduitWindow: ReportProductWindowRow[];
   };
   agenceComparatif?: AgenceComparisonRow[];
 }
@@ -101,6 +119,9 @@ export async function buildReportSummary(
 
   const pdvIntegrationsMatch: Record<string, unknown> = { deletedAt: null, status: { $ne: "FINALISE" } };
   if (scopedAgenceId) pdvIntegrationsMatch.agenceId = scopedAgenceId;
+  const windowDurationMs = Math.max(0, to.getTime() - from.getTime());
+  const previousFrom = new Date(from.getTime() - windowDurationMs);
+  const previousTo = from;
 
   const cautionScopedContratIds = scopedConcessionnaireIds
     ? await db
@@ -134,6 +155,9 @@ export async function buildReportSummary(
     successionOpen,
     successionStale,
     pdvDraft,
+    activeByProduitRows,
+    currentByProduitRows,
+    previousByProduitRows,
   ] = await Promise.all([
     db.collection("dossiers").countDocuments(dossiersMatch),
     db
@@ -174,6 +198,28 @@ export async function buildReportSummary(
       updatedAt: { $lte: successionStaleThreshold },
     }),
     db.collection("pdv_integrations").countDocuments(pdvIntegrationsMatch),
+    db
+      .collection("contrats")
+      .aggregate<{ _id: string; c: number }>([
+        { $match: { ...contratsMatchBase, status: "ACTIF" } },
+        { $group: { _id: "$produitCode", c: { $sum: 1 } } },
+        { $sort: { c: -1 } },
+      ])
+      .toArray(),
+    db
+      .collection("contrats")
+      .aggregate<{ _id: string; c: number }>([
+        { $match: { ...contratsMatchBase, createdAt: { $gte: from, $lte: to } } },
+        { $group: { _id: "$produitCode", c: { $sum: 1 } } },
+      ])
+      .toArray(),
+    db
+      .collection("contrats")
+      .aggregate<{ _id: string; c: number }>([
+        { $match: { ...contratsMatchBase, createdAt: { $gte: previousFrom, $lt: previousTo } } },
+        { $group: { _id: "$produitCode", c: { $sum: 1 } } },
+      ])
+      .toArray(),
   ]);
 
   const byStatus: Record<string, number> = {};
@@ -184,6 +230,49 @@ export async function buildReportSummary(
   for (const row of concByStatut) {
     byStatut[row._id] = row.c;
   }
+
+  const allProductCodes = [
+    ...activeByProduitRows.map((r) => (r._id || "").trim().toUpperCase()),
+    ...currentByProduitRows.map((r) => (r._id || "").trim().toUpperCase()),
+    ...previousByProduitRows.map((r) => (r._id || "").trim().toUpperCase()),
+  ].filter((v) => v.length > 0);
+  const uniqueCodes = [...new Set(allProductCodes)];
+  const productRefRows =
+    uniqueCodes.length > 0
+      ? await db
+          .collection<{ code: string; libelle: string }>("produits")
+          .find({ code: { $in: uniqueCodes }, actif: true }, { projection: { _id: 0, code: 1, libelle: 1 } })
+          .toArray()
+      : [];
+  const productLabelByCode = new Map(
+    productRefRows.map((row) => [row.code.trim().toUpperCase(), row.libelle.trim()]),
+  );
+
+  const actifsByProduit: ReportProductActiveRow[] = activeByProduitRows.slice(0, 8).map((row) => {
+    const code = row._id || "—";
+    return {
+      produitCode: code,
+      produitLibelle: productLabelByCode.get(code.trim().toUpperCase()),
+      count: row.c,
+    };
+  });
+
+  const previousByCode = new Map(previousByProduitRows.map((row) => [row._id || "—", row.c]));
+  const volumeByProduitWindow: ReportProductWindowRow[] = currentByProduitRows
+    .map((row) => {
+      const code = row._id || "—";
+      const previous = previousByCode.get(code) ?? 0;
+      const trendPct = previous > 0 ? Math.round(((row.c - previous) / previous) * 100) : row.c > 0 ? 100 : 0;
+      return {
+        produitCode: code,
+        produitLibelle: productLabelByCode.get(code.trim().toUpperCase()),
+        currentWindow: row.c,
+        previousWindow: previous,
+        trendPct,
+      };
+    })
+    .sort((a, b) => b.currentWindow - a.currentWindow)
+    .slice(0, 10);
 
   let agenceComparatif: AgenceComparisonRow[] | undefined;
   if (!scopedAgenceId && topAgences > 0) {
@@ -336,6 +425,10 @@ export async function buildReportSummary(
         nonFinalise: pdvDraft,
       },
     },
+    products: {
+      actifsByProduit,
+      volumeByProduitWindow,
+    },
     agenceComparatif,
   };
 }
@@ -373,6 +466,11 @@ export function summaryToCsv(summary: ReportSummary): string {
     `modules_succession,ouverts,${summary.modules.succession.ouverts}`,
     `modules_succession,stale30j,${summary.modules.succession.stale30j}`,
     `modules_pdv_integrations,nonFinalise,${summary.modules.pdvIntegrations.nonFinalise}`,
+    ...summary.products.actifsByProduit.map((row) => `produits_actifs,${row.produitCode},${row.count}`),
+    ...summary.products.volumeByProduitWindow.map(
+      (row) =>
+        `produits_tendance,${row.produitCode},courant:${row.currentWindow}|precedent:${row.previousWindow}|trend:${row.trendPct}%`,
+    ),
   ];
   for (const row of summary.agenceComparatif ?? []) {
     lines.push(`agences,${row.agenceCode}_dossiers_total,${row.dossiersTotal}`);

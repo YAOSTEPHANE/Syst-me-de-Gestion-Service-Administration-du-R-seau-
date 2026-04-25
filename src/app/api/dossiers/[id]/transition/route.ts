@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { finalizeContratFromDossier, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import {
+  finalizeContratFromDossier,
+  findContratByDossierId,
+  hasActiveContractForProduct,
+} from "@/lib/lonaci/contracts";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -121,6 +125,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const target = toTargetStatus(parsed.data.action);
   try {
     if (parsed.data.action === "FINALIZE" && before.type === "CONTRAT_ACTUALISATION") {
+      const existingContrat = await findContratByDossierId(id);
+      if (existingContrat) {
+        return NextResponse.json({ dossier: before, contrat: existingContrat }, { status: 200 });
+      }
+
       const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
       const operationType = String(before.payload.operationType ?? "");
       const dateEffetRaw = String(before.payload.dateEffet ?? "");
@@ -137,7 +146,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
           );
         }
       }
-      await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);
+      if (before.status !== "FINALISE") {
+        await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);
+      }
       const contrat = await finalizeContratFromDossier({
         dossierId: id,
         concessionnaireId: before.concessionnaireId,

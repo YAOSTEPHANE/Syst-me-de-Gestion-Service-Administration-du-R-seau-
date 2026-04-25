@@ -17,6 +17,7 @@ export const PUBLIC_OR_DELEGATED_API_ROUTE_SUFFIXES = [
   "auth/reset-password/request/route.ts",
   "signatures/dossier/[token]/route.ts",
   "cron/daily-jobs/route.ts",
+  "cron/monthly-password-reminders/route.ts",
   "import-data/route.ts",
   "admr/alert-thresholds/route.ts",
   "admr-registries/route.ts",

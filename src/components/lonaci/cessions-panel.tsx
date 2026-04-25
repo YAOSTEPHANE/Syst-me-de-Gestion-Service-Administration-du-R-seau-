@@ -4,9 +4,16 @@ import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { canRole } from "@/lib/auth/rbac";
+import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
-type CessionStatus = "SAISIE_AGENT" | "CONTROLE_CHEF_SECTION" | "VALIDEE_CHEF_SERVICE" | "REJETEE";
+type CessionStatus =
+  | "SAISIE_AGENT"
+  | "CONTROLE_CHEF_SECTION"
+  | "VALIDATION_N2"
+  | "VALIDEE_CHEF_SERVICE"
+  | "REJETEE";
 type CessionKind = "CESSION" | "DELOCALISATION";
 
 interface CessionItem {
@@ -157,7 +164,9 @@ function statusLabel(status: CessionStatus) {
     case "SAISIE_AGENT":
       return "Saisie agent";
     case "CONTROLE_CHEF_SECTION":
-      return "Contrôle chef section";
+      return "Validé N1 (chef section)";
+    case "VALIDATION_N2":
+      return "En validation N2";
     case "VALIDEE_CHEF_SERVICE":
       return "Validée chef service";
     case "REJETEE":
@@ -400,8 +409,20 @@ export default function CessionsPanel() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const canControl = meRole === "CHEF_SECTION" || meRole === "CHEF_SERVICE";
-  const canValidate = meRole === "CHEF_SERVICE";
+  const meRbacRole =
+    meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null;
+  const canValidateN1 = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "CESSIONS", action: "VALIDATE_N1" }).allowed
+    : false;
+  const canValidateN2 = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "CESSIONS", action: "VALIDATE_N2" }).allowed
+    : false;
+  const canFinalize = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "CESSIONS", action: "FINALIZE" }).allowed
+    : false;
+  const canReject = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "CESSIONS", action: "REJECT" }).allowed
+    : false;
 
   const concLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -569,35 +590,63 @@ export default function CessionsPanel() {
                     )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
-                    {row.statut === "SAISIE_AGENT" && canControl ? (
-                      <button
-                        type="button"
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}
-                        className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white"
-                      >
-                        Contrôler
-                      </button>
-                    ) : row.statut === "CONTROLE_CHEF_SECTION" && canValidate ? (
-                      <button
-                        type="button"
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}
-                        className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white"
-                      >
-                        Valider + transférer
-                      </button>
-                    ) : row.statut !== "VALIDEE_CHEF_SERVICE" && canControl ? (
-                      <button
-                        type="button"
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "REJETEE")}
-                        className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white"
-                      >
-                        Rejeter
-                      </button>
-                    ) : (
+                    {row.statut === "VALIDEE_CHEF_SERVICE" ? (
+                      <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                        Validée
+                      </span>
+                    ) : row.statut === "REJETEE" ? (
                       <span className="text-xs text-slate-400">—</span>
+                    ) : (
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {row.statut === "SAISIE_AGENT" && canValidateN1 ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}
+                            className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider N1
+                          </button>
+                        ) : null}
+                        {row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transition(row.id, "VALIDATION_N2")}
+                            className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider N2
+                          </button>
+                        ) : null}
+                        {row.statut === "VALIDATION_N2" && canFinalize ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}
+                            className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider + transférer
+                          </button>
+                        ) : null}
+                        {canReject ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transition(row.id, "REJETEE")}
+                            className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Rejeter
+                          </button>
+                        ) : null}
+                        {!(
+                          (row.statut === "SAISIE_AGENT" && canValidateN1) ||
+                          (row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2) ||
+                          (row.statut === "VALIDATION_N2" && canFinalize) ||
+                          canReject
+                        ) ? (
+                          <span className="text-xs text-slate-400">—</span>
+                        ) : null}
+                      </div>
                     )}
                   </td>
                 </tr>

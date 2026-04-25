@@ -6,7 +6,7 @@ import { ObjectId } from "mongodb";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
-import type { UserDocument } from "@/lib/lonaci/types";
+import { type UserDocument, userDisplayName } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -97,6 +97,7 @@ export async function createResiliation(input: {
   actor: UserDocument;
 }) {
   if (!input.actor._id) throw new Error("ACTOR_REQUIRED");
+  const actionBy = userDisplayName(input.actor);
   const concessionnaire = await findConcessionnaireById(input.concessionnaireId);
   if (!concessionnaire || concessionnaire.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
   if (concessionnaire.statut === "RESILIE") throw new Error("CONCESSIONNAIRE_ALREADY_RESILIE");
@@ -145,8 +146,13 @@ export async function createResiliation(input: {
   await notifyRoleTargets(
     "CHEF_SERVICE",
     "Nouvelle demande de résiliation",
-    `Dossier de résiliation reçu pour ${doc.produitCode}.`,
-    { resiliationId: created.insertedId.toHexString() },
+    `Opération résiliation | référence ${created.insertedId.toHexString()} | action dossier reçu pour ${doc.produitCode} | acteur ${actionBy}.`,
+    {
+      resiliationId: created.insertedId.toHexString(),
+      concessionnaireId: input.concessionnaireId,
+      produitCode: doc.produitCode,
+      statut: doc.statut,
+    },
   );
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: created.insertedId });
   if (!row) throw new Error("RESILIATION_NOT_FOUND");
@@ -215,6 +221,7 @@ export async function validateResiliation(input: {
   actor: UserDocument;
 }) {
   if (!input.actor._id) throw new Error("ACTOR_REQUIRED");
+  const actionBy = userDisplayName(input.actor);
   if (!ObjectId.isValid(input.id)) throw new Error("RESILIATION_NOT_FOUND");
   if (input.confirmIrreversible !== true) throw new Error("RESILIATION_CONFIRMATION_REQUIRED");
   const db = await getDatabase();
@@ -251,6 +258,18 @@ export async function validateResiliation(input: {
     userId: input.actor._id,
     details: { resiliationId: input.id, produitCode: row.produitCode },
   });
+  const reasonSuffix = input.commentaire?.trim() ? ` | motif ${input.commentaire.trim()}` : "";
+  await notifyRoleTargets(
+    "ASSIST_CDS",
+    "Resiliation validee",
+    `Opération résiliation | référence ${input.id} | action ${row.produitCode} validée | acteur ${actionBy}.${reasonSuffix}`,
+    {
+      resiliationId: input.id,
+      concessionnaireId: row.concessionnaireId,
+      produitCode: row.produitCode,
+      statut: "RESILIE",
+    },
+  );
 }
 
 export async function getResiliationAttachment(input: { id: string; attachmentId: string }) {

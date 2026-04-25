@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { buildReportSummary, summaryToCsv, type ReportPeriod, type ReportSummary } from "@/lib/lonaci/reports";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { LONACI_ROLES } from "@/lib/lonaci/constants";
 
 const schema = z.object({
   period: z.enum(["daily", "weekly", "monthly"]).default("daily"),
@@ -14,7 +15,8 @@ const schema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...LONACI_ROLES],
+    rbac: { resource: "REPORTS", action: "READ" },
   });
   if ("error" in auth) return auth.error;
 

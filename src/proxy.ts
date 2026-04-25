@@ -79,6 +79,8 @@ const RL_AUTH_MAX = parseIntEnv("PROXY_RATE_LIMIT_AUTH_MAX", 20);
 const RL_PUBLIC_MAX = parseIntEnv("PROXY_RATE_LIMIT_PUBLIC_MAX", 120);
 const RL_PRIVATE_MAX = parseIntEnv("PROXY_RATE_LIMIT_PRIVATE_MAX", 300);
 const RL_WINDOW_MS = parseIntEnv("PROXY_RATE_LIMIT_WINDOW_MS", 60_000);
+const PROXY_RATE_LIMIT_ENABLED =
+  process.env.PROXY_RATE_LIMIT_ENABLED === "true" || process.env.NODE_ENV !== "production";
 
 function consumeProxyRateLimit(request: NextRequest, keyKind: "auth" | "public" | "private"): number | null {
   if (request.method === "OPTIONS") return null;
@@ -115,6 +117,7 @@ function isPublicApiPath(pathname: string): boolean {
   if (pathname === "/api/auth/login" || pathname === "/api/auth/logout") return true;
   if (pathname.startsWith("/api/auth/reset-password")) return true;
   if (pathname === "/api/cron/daily-jobs") return true;
+  if (pathname === "/api/cron/monthly-password-reminders") return true;
   if (pathname.startsWith("/api/signatures/dossier/")) return true;
   return false;
 }
@@ -167,15 +170,17 @@ export function proxy(request: NextRequest) {
   }
 
   if (effectivePathname !== "/api/health") {
-    const keyKind: "auth" | "public" | "private" =
-      effectivePathname.startsWith("/api/auth/") ? "auth" : isPublicApiPath(effectivePathname) ? "public" : "private";
-    const retryAfterSec = consumeProxyRateLimit(request, keyKind);
-    if (retryAfterSec) {
-      const limited = NextResponse.json(
-        { message: "Trop de requêtes", code: "RATE_LIMITED" },
-        { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
-      );
-      return applyCorsHeaders(request, withRequestId(limited));
+    if (PROXY_RATE_LIMIT_ENABLED) {
+      const keyKind: "auth" | "public" | "private" =
+        effectivePathname.startsWith("/api/auth/") ? "auth" : isPublicApiPath(effectivePathname) ? "public" : "private";
+      const retryAfterSec = consumeProxyRateLimit(request, keyKind);
+      if (retryAfterSec) {
+        const limited = NextResponse.json(
+          { message: "Trop de requêtes", code: "RATE_LIMITED" },
+          { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+        );
+        return applyCorsHeaders(request, withRequestId(limited));
+      }
     }
   }
 
@@ -196,6 +201,24 @@ export function proxy(request: NextRequest) {
       request,
       withRequestId(NextResponse.json({ message: "Non authentifié" }, { status: 401 })),
     );
+  }
+
+  const unsafeMethod =
+    request.method === "POST" ||
+    request.method === "PUT" ||
+    request.method === "PATCH" ||
+    request.method === "DELETE";
+  if (unsafeMethod) {
+    const origin = request.headers.get("origin")?.trim();
+    if (origin) {
+      const requestOrigin = request.nextUrl.origin;
+      if (origin !== requestOrigin) {
+        return applyCorsHeaders(
+          request,
+          withRequestId(NextResponse.json({ message: "Origine non autorisée (CSRF)" }, { status: 403 })),
+        );
+      }
+    }
   }
 
   const response = apiVersion

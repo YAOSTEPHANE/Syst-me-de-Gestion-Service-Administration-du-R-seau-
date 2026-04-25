@@ -8,11 +8,16 @@ import type {
   PdvIntegrationDocument,
   UserDocument,
 } from "@/lib/lonaci/types";
+import { userDisplayName } from "@/lib/lonaci/types";
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole } from "@/lib/lonaci/critical-email";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import { isStatutBloquant } from "@/lib/lonaci/access";
+import { notifyRoleTargets } from "@/lib/lonaci/notifications";
+import { listContratsAllMatching, type ListContratsParams } from "@/lib/lonaci/contracts";
+import { listProduits } from "@/lib/lonaci/referentials";
+import { formatAgenceLibelle, listAgenceIdsZoneAbidjan, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -64,6 +69,7 @@ export async function createCaution(input: {
   observations: string | null;
   actor: UserDocument;
 }) {
+  const actionBy = userDisplayName(input.actor);
   const contrat = await findContratById(input.contratId);
   if (!contrat) throw new Error("CONTRAT_NOT_FOUND");
   if (contrat.status !== "ACTIF") throw new Error("CONTRAT_NOT_ACTIF");
@@ -74,17 +80,16 @@ export async function createCaution(input: {
 
   const db = await getDatabase();
   const now = new Date();
-  const autoValidate = input.actor.role === "CHEF_SERVICE";
   const doc: InsertCaution = {
     contratId: input.contratId,
     montant: input.montant,
     modeReglement: input.modeReglement,
-    status: autoValidate ? "PAYEE" : "EN_ATTENTE",
+    status: "EN_ATTENTE",
     dueDate: input.dueDate,
     paymentReference: input.paymentReference,
     observations: input.observations,
-    paidAt: autoValidate ? now : null,
-    immutableAfterFinal: autoValidate,
+    paidAt: null,
+    immutableAfterFinal: false,
     createdByUserId: input.actor._id ?? "",
     updatedByUserId: input.actor._id ?? "",
     createdAt: now,
@@ -101,10 +106,71 @@ export async function createCaution(input: {
       cautionId: result.insertedId.toHexString(),
       montant: input.montant,
       status: doc.status,
-      autoValidated: autoValidate,
+      autoValidated: false,
     },
   });
+  await notifyRoleTargets(
+    "CHEF_SECTION",
+    "Nouvelle caution enregistree",
+    `Opération caution | référence ${result.insertedId.toHexString()} | action validation N1 attendue | contrat ${input.contratId} | acteur ${actionBy}.`,
+    {
+      cautionId: result.insertedId.toHexString(),
+      contratId: input.contratId,
+      status: doc.status,
+      montant: input.montant,
+    },
+  );
   return { ...doc, _id: result.insertedId.toHexString() };
+}
+
+export async function validateCautionN1(cautionId: string, actor: UserDocument) {
+  if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
+  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  const db = await getDatabase();
+  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
+    _id: new ObjectId(cautionId),
+    deletedAt: null,
+  });
+  if (!caution) throw new Error("CAUTION_NOT_FOUND");
+  if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
+  if (!["EN_ATTENTE", "A_CORRIGER"].includes(caution.status)) throw new Error("CAUTION_WRONG_STATUS");
+  const now = new Date();
+  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: caution._id },
+    { $set: { status: "VALIDE_N1" as CautionStatus, updatedAt: now, updatedByUserId: actor._id ?? "" } },
+  );
+  const actionBy = userDisplayName(actor);
+  await notifyRoleTargets(
+    "ASSIST_CDS",
+    "Caution : validation N2 attendue",
+    `Opération caution | id ${cautionId} | action validation N2 attendue | acteur ${actionBy}.`,
+    { cautionId, contratId: caution.contratId },
+  );
+}
+
+export async function validateCautionN2(cautionId: string, actor: UserDocument) {
+  if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
+  if (actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
+  const db = await getDatabase();
+  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
+    _id: new ObjectId(cautionId),
+    deletedAt: null,
+  });
+  if (!caution) throw new Error("CAUTION_NOT_FOUND");
+  if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
+  if (caution.status !== "VALIDE_N1") throw new Error("CAUTION_WRONG_STATUS");
+  const now = new Date();
+  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: caution._id },
+    { $set: { status: "VALIDE_N2" as CautionStatus, updatedAt: now, updatedByUserId: actor._id ?? "" } },
+  );
+  const actionBy = userDisplayName(actor);
+  await notifyRoleTargets(
+    "CHEF_SERVICE",
+    "Caution : finalisation attendue",
+    `Opération caution | id ${cautionId} | action finalisation (paiement / rejet) attendue | acteur ${actionBy}.`,
+    { cautionId, contratId: caution.contratId },
+  );
 }
 
 export async function finalizeCaution(cautionId: string, paid: boolean, actor: UserDocument) {
@@ -116,6 +182,7 @@ export async function finalizeCaution(cautionId: string, paid: boolean, actor: U
   });
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
+  if (caution.status !== "VALIDE_N2") throw new Error("CAUTION_WRONG_STATUS");
   const status = paid ? "PAYEE" : "ANNULEE";
   const now = new Date();
   await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
@@ -137,6 +204,17 @@ export async function finalizeCaution(cautionId: string, paid: boolean, actor: U
     userId: actor._id ?? "",
     details: { cautionId, status },
   });
+  const actionBy = userDisplayName(actor);
+  await notifyRoleTargets(
+    "ASSIST_CDS",
+    "Caution finalisee",
+    `Opération caution | référence ${cautionId} | action caution passée à ${status} sur contrat ${caution.contratId} | acteur ${actionBy}.`,
+    {
+      cautionId,
+      contratId: caution.contratId,
+      status,
+    },
+  );
 }
 
 export async function returnCautionForCorrection(input: {
@@ -152,6 +230,9 @@ export async function returnCautionForCorrection(input: {
   });
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
+  if (!["EN_ATTENTE", "VALIDE_N1", "VALIDE_N2", "A_CORRIGER"].includes(caution.status)) {
+    throw new Error("CAUTION_WRONG_STATUS");
+  }
   const now = new Date();
   await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
     { _id: new ObjectId(input.cautionId) },
@@ -182,6 +263,17 @@ export async function returnCautionForCorrection(input: {
     userId: input.actor._id ?? "",
     details: { cautionId: input.cautionId, comment: input.comment },
   });
+  const actionBy = userDisplayName(input.actor);
+  await notifyRoleTargets(
+    "ASSIST_CDS",
+    "Caution retournee pour correction",
+    `Opération caution | référence ${input.cautionId} | action caution retournée pour correction sur contrat ${caution.contratId} | acteur ${actionBy} | motif ${input.comment}`,
+    {
+      cautionId: input.cautionId,
+      contratId: caution.contratId,
+      status: "A_CORRIGER",
+    },
+  );
 }
 
 export async function listCautionAlertsJ10(agenceId?: string | null) {
@@ -208,7 +300,7 @@ export async function listCautionAlertsJ10(agenceId?: string | null) {
     }
   }
   const cautionFilter: Record<string, unknown> = {
-    status: "EN_ATTENTE",
+    status: { $in: ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] },
     dueDate: { $lte: threshold },
     deletedAt: null,
   };
@@ -502,7 +594,7 @@ export async function resiliateConcessionnaire(input: {
   await broadcastCriticalEmailToRole(
     "ASSIST_CDS",
     `Resiliation concessionnaire ${concessionnaire.codePdv}`,
-    `Une resiliation a ete enregistree. Motif: ${input.reason}`,
+    `Opération résiliation | référence ${concessionnaire.codePdv} | action résiliation enregistrée | acteur ${userDisplayName(input.actor)} | motif ${input.reason}`,
   );
 }
 
@@ -512,6 +604,9 @@ export type CautionListTab = (typeof CAUTION_LIST_TABS)[number];
 export interface CautionListRowDto {
   id: string;
   contratId: string;
+  concessionnaireNom: string;
+  produitCode: string;
+  agenceLabel: string;
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
@@ -548,15 +643,17 @@ export async function getCautionCounters(): Promise<{
 
   const base = { deletedAt: null };
 
+  const pendingStatuses = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+
   const [overdueJ10, enAttente, validatedThisMonth] = await Promise.all([
     db.collection(CAUTIONS_COLLECTION).countDocuments({
       ...base,
-      status: { $in: ["EN_ATTENTE", "A_CORRIGER"] },
+      status: { $in: [...pendingStatuses] },
       dueDate: { $lte: threshold },
     }),
     db.collection(CAUTIONS_COLLECTION).countDocuments({
       ...base,
-      status: { $in: ["EN_ATTENTE", "A_CORRIGER"] },
+      status: { $in: [...pendingStatuses] },
       dueDate: { $gt: threshold },
     }),
     db.collection(CAUTIONS_COLLECTION).countDocuments({
@@ -573,28 +670,71 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
   const today = new Date();
   const contratIds = [...new Set(rows.map((r) => r.contratId))];
   let pdvByContratId = new Map<string, string>();
+  let concessionnaireNomByContratId = new Map<string, string>();
+  let produitByContratId = new Map<string, string>();
+  let agenceByContratId = new Map<string, string>();
   if (contratIds.length > 0) {
     const contrats = await prisma.contrat.findMany({
       where: { id: { in: contratIds }, deletedAt: null },
-      select: { id: true, concessionnaireId: true },
+      select: { id: true, concessionnaireId: true, produitCode: true },
     });
     const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
-    const pdvs =
+    const concessionnaires =
       pdvIds.length === 0
         ? []
         : await prisma.concessionnaire.findMany({
             where: { id: { in: pdvIds }, deletedAt: null },
-            select: { id: true, codePdv: true },
+            select: { id: true, codePdv: true, nomComplet: true, raisonSociale: true, agenceId: true },
           });
-    const pdvMap = new Map(pdvs.map((p) => [p.id, p.codePdv]));
+    const pdvMap = new Map(concessionnaires.map((p) => [p.id, p.codePdv]));
+    const concessionnaireById = new Map(concessionnaires.map((p) => [p.id, p]));
+    const concessionnaireMap = new Map(
+      concessionnaires.map((p) => [p.id, (p.nomComplet || p.raisonSociale || p.codePdv || "—").trim() || "—"]),
+    );
+    const agenceIds = [
+      ...new Set(
+        concessionnaires
+          .map((p) => p.agenceId)
+          .filter((v): v is string => typeof v === "string" && ObjectId.isValid(v)),
+      ),
+    ];
+    const db = await getDatabase();
+    const agences =
+      agenceIds.length === 0
+        ? []
+        : await db
+            .collection<{ _id: ObjectId; code: string; libelle: string }>("agences")
+            .find(
+              { _id: { $in: agenceIds.map((id) => new ObjectId(id)) } },
+              { projection: { _id: 1, code: 1, libelle: 1 } },
+            )
+            .toArray();
+    const agenceMap = new Map(
+      agences.map((a) => [a._id.toHexString(), `${a.code} - ${a.libelle}`.trim() || a.code || "—"]),
+    );
     pdvByContratId = new Map(
       contrats.map((c) => [c.id, pdvMap.get(c.concessionnaireId) ?? ""]),
+    );
+    concessionnaireNomByContratId = new Map(
+      contrats.map((c) => [c.id, concessionnaireMap.get(c.concessionnaireId) ?? "—"]),
+    );
+    produitByContratId = new Map(
+      contrats.map((c) => [c.id, (c.produitCode || "").trim() || "—"]),
+    );
+    agenceByContratId = new Map(
+      contrats.map((c) => {
+        const agenceId = concessionnaireById.get(c.concessionnaireId)?.agenceId ?? null;
+        return [c.id, agenceId ? (agenceMap.get(agenceId) ?? agenceId) : "Sans agence"];
+      }),
     );
   }
 
   return rows.map((row) => ({
     id: row._id.toHexString(),
     contratId: row.contratId,
+    concessionnaireNom: concessionnaireNomByContratId.get(row.contratId) ?? "—",
+    produitCode: produitByContratId.get(row.contratId) ?? "—",
+    agenceLabel: agenceByContratId.get(row.contratId) ?? "Sans agence",
     montant: row.montant,
     modeReglement: row.modeReglement,
     status: row.status,
@@ -623,10 +763,12 @@ export async function listCautionsForTab(
   const base = { deletedAt: null };
   let filter: Record<string, unknown> = base;
 
+  const pendingStatuses = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+
   if (tab === "J10_OVERDUE") {
-    filter = { ...base, status: { $in: ["EN_ATTENTE", "A_CORRIGER"] }, dueDate: { $lte: threshold } };
+    filter = { ...base, status: { $in: [...pendingStatuses] }, dueDate: { $lte: threshold } };
   } else if (tab === "EN_ATTENTE") {
-    filter = { ...base, status: { $in: ["EN_ATTENTE", "A_CORRIGER"] }, dueDate: { $gt: threshold } };
+    filter = { ...base, status: { $in: [...pendingStatuses] }, dueDate: { $gt: threshold } };
   } else {
     filter = {
       ...base,
@@ -652,3 +794,517 @@ export async function listCautionsForTab(
   const items = await mapCautionsToListRows(rows);
   return { items, total };
 }
+
+const CAUTION_PENDING_STATUSES = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+
+export interface ContratCautionAttendusDto {
+  contratId: string;
+  reference: string;
+  produitCode: string;
+  contratStatus: string;
+  codePdv: string;
+  nomPdv: string;
+  montantTotalCautions: number;
+  nombreCautionsAEncaisser: number;
+  montantCautionsAEncaisser: number;
+  nombreCautionsEncaissees: number;
+  montantCautionsEncaissees: number;
+  nombreCautionsNonEncaissees: number;
+  montantCautionsNonEncaissees: number;
+  ecartMontant: number;
+}
+
+function singleCautionAttendusMetrics(
+  row: Pick<StoredCaution, "montant" | "status"> | null,
+): Omit<
+  ContratCautionAttendusDto,
+  "contratId" | "reference" | "produitCode" | "contratStatus" | "codePdv" | "nomPdv"
+> {
+  const zero = (): Omit<
+    ContratCautionAttendusDto,
+    "contratId" | "reference" | "produitCode" | "contratStatus" | "codePdv" | "nomPdv"
+  > => ({
+    montantTotalCautions: 0,
+    nombreCautionsAEncaisser: 0,
+    montantCautionsAEncaisser: 0,
+    nombreCautionsEncaissees: 0,
+    montantCautionsEncaissees: 0,
+    nombreCautionsNonEncaissees: 0,
+    montantCautionsNonEncaissees: 0,
+    ecartMontant: 0,
+  });
+  if (!row) return zero();
+  const status = row.status as string;
+  if (status === "ANNULEE") return zero();
+  const m = Number.isFinite(row.montant) ? row.montant : 0;
+  let nAEncaisser = 0;
+  let mAEncaisser = 0;
+  let nPayee = 0;
+  let mPayee = 0;
+  let nNonEnc = 0;
+  let mNonEnc = 0;
+  if (status === "PAYEE") {
+    nPayee = 1;
+    mPayee = m;
+  } else if (CAUTION_PENDING_STATUSES.includes(status as (typeof CAUTION_PENDING_STATUSES)[number])) {
+    nNonEnc = 1;
+    mNonEnc = m;
+    if (status === "VALIDE_N2") {
+      nAEncaisser = 1;
+      mAEncaisser = m;
+    }
+  }
+  return {
+    montantTotalCautions: m,
+    nombreCautionsAEncaisser: nAEncaisser,
+    montantCautionsAEncaisser: mAEncaisser,
+    nombreCautionsEncaissees: nPayee,
+    montantCautionsEncaissees: mPayee,
+    nombreCautionsNonEncaissees: nNonEnc,
+    montantCautionsNonEncaissees: mNonEnc,
+    ecartMontant: mNonEnc - mPayee,
+  };
+}
+
+/**
+ * Indicateurs caution par contrat (0 ou 1 caution par contrat) : à encaisser (VALIDE_N2), encaissées (PAYEE), etc.
+ */
+export async function listContratsCautionAttendus(
+  listBase: Omit<ListContratsParams, "page" | "pageSize">,
+): Promise<ContratCautionAttendusDto[]> {
+  await ensureSprint4Indexes();
+  const contrats = await listContratsAllMatching(listBase);
+  if (contrats.length === 0) return [];
+
+  const ids = contrats.map((c) => c.id);
+  const db = await getDatabase();
+  const cautionRows = await db
+    .collection<StoredCaution>(CAUTIONS_COLLECTION)
+    .find({ contratId: { $in: ids }, deletedAt: null })
+    .toArray();
+  const cautionByContratId = new Map(cautionRows.map((c) => [c.contratId, c]));
+
+  const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
+  const concessionnaires =
+    pdvIds.length === 0
+      ? []
+      : await prisma.concessionnaire.findMany({
+          where: { id: { in: pdvIds }, deletedAt: null },
+          select: { id: true, codePdv: true, nomComplet: true, raisonSociale: true },
+        });
+  const pdvMeta = new Map(
+    concessionnaires.map((p) => [
+      p.id,
+      {
+        code: p.codePdv ?? "",
+        nom: (p.nomComplet || p.raisonSociale || p.codePdv || "").trim() || "—",
+      },
+    ]),
+  );
+
+  return contrats.map((c) => {
+    const cau = cautionByContratId.get(c.id) ?? null;
+    const metrics = singleCautionAttendusMetrics(cau);
+    const pdv = pdvMeta.get(c.concessionnaireId);
+    return {
+      contratId: c.id,
+      reference: c.reference,
+      produitCode: c.produitCode,
+      contratStatus: c.status,
+      codePdv: pdv?.code ?? "",
+      nomPdv: pdv?.nom ?? "—",
+      ...metrics,
+    };
+  });
+}
+
+const MONTHLY_ETAT_PENDING = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+
+function calendarMonthBounds(year: number, monthIndex0to11: number): { start: Date; end: Date } {
+  const start = new Date(year, monthIndex0to11, 1, 0, 0, 0, 0);
+  const end = new Date(year, monthIndex0to11 + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function formatYearMonthLabel(year: number, monthIndex0to11: number): string {
+  return `${year}-${String(monthIndex0to11 + 1).padStart(2, "0")}`;
+}
+
+function monthTitleFr(year: number, monthIndex0to11: number): string {
+  const d = new Date(year, monthIndex0to11, 1);
+  return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(d);
+}
+
+function lastNCalendarMonths(n: number): { year: number; monthIndex: number; yearMonth: string; moisLabel: string }[] {
+  const out: { year: number; monthIndex: number; yearMonth: string; moisLabel: string }[] = [];
+  const anchor = new Date();
+  for (let i = 0; i < n; i++) {
+    const d = new Date(anchor.getFullYear(), anchor.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const monthIndex = d.getMonth();
+    out.push({
+      year,
+      monthIndex,
+      yearMonth: formatYearMonthLabel(year, monthIndex),
+      moisLabel: monthTitleFr(year, monthIndex),
+    });
+  }
+  return out;
+}
+
+function cautionAnnulledByEnd(c: StoredCaution, monthEnd: Date): boolean {
+  return c.status === "ANNULEE" && c.updatedAt <= monthEnd;
+}
+
+function cautionPaidByEnd(c: StoredCaution, monthEnd: Date): boolean {
+  return Boolean(c.paidAt && c.paidAt <= monthEnd);
+}
+
+function cautionInScopeAtMonthEnd(c: StoredCaution, monthEnd: Date): boolean {
+  if (c.createdAt > monthEnd) return false;
+  if (c.deletedAt && c.deletedAt <= monthEnd) return false;
+  return true;
+}
+
+function cautionEncaisseePendantMois(c: StoredCaution, monthStart: Date, monthEnd: Date): boolean {
+  return Boolean(
+    c.paidAt && c.paidAt >= monthStart && c.paidAt <= monthEnd && c.status === "PAYEE",
+  );
+}
+
+export interface CautionEtatMensuelProduitRow {
+  yearMonth: string;
+  moisLabel: string;
+  produitCode: string;
+  libelle: string;
+  montantAttendusCautions: number;
+  nombreCautionsAEncaisser: number;
+  montantCautionsAEncaisser: number;
+  montantCautionsEncaissees: number;
+  nombreCautionsEncaissees: number;
+  ecartMontant: number;
+  montantCautionsNonEncaissees: number;
+  nombreCautionsNonEncaissees: number;
+}
+
+type CautionEtatMensuelMetricsFields = Pick<
+  CautionEtatMensuelProduitRow,
+  | "montantAttendusCautions"
+  | "nombreCautionsAEncaisser"
+  | "montantCautionsAEncaisser"
+  | "montantCautionsEncaissees"
+  | "nombreCautionsEncaissees"
+  | "ecartMontant"
+  | "montantCautionsNonEncaissees"
+  | "nombreCautionsNonEncaissees"
+>;
+
+function emptyCautionEtatMensuelMetrics(): CautionEtatMensuelMetricsFields {
+  return {
+    montantAttendusCautions: 0,
+    nombreCautionsAEncaisser: 0,
+    montantCautionsAEncaisser: 0,
+    montantCautionsEncaissees: 0,
+    nombreCautionsEncaissees: 0,
+    ecartMontant: 0,
+    montantCautionsNonEncaissees: 0,
+    nombreCautionsNonEncaissees: 0,
+  };
+}
+
+function accumulateCautionForMonthMetrics(
+  c: StoredCaution,
+  MStart: Date,
+  MEnd: Date,
+  acc: CautionEtatMensuelMetricsFields,
+): void {
+  if (cautionEncaisseePendantMois(c, MStart, MEnd)) {
+    const m = Number.isFinite(c.montant) ? c.montant : 0;
+    acc.montantCautionsEncaissees += m;
+    acc.nombreCautionsEncaissees += 1;
+  }
+
+  if (!cautionInScopeAtMonthEnd(c, MEnd)) return;
+  if (cautionAnnulledByEnd(c, MEnd)) return;
+  if (cautionPaidByEnd(c, MEnd)) return;
+
+  const m = Number.isFinite(c.montant) ? c.montant : 0;
+  acc.montantAttendusCautions += m;
+
+  const st = c.status as string;
+  if (st === "VALIDE_N2") {
+    acc.nombreCautionsAEncaisser += 1;
+    acc.montantCautionsAEncaisser += m;
+  }
+  if (MONTHLY_ETAT_PENDING.includes(st as (typeof MONTHLY_ETAT_PENDING)[number])) {
+    acc.nombreCautionsNonEncaissees += 1;
+    acc.montantCautionsNonEncaissees += m;
+  }
+}
+
+function finalizeCautionEtatMensuelMetrics(acc: CautionEtatMensuelMetricsFields): void {
+  acc.ecartMontant = acc.montantCautionsNonEncaissees - acc.montantCautionsEncaissees;
+}
+
+function computeCautionBucketMetrics(
+  cautionRows: readonly StoredCaution[],
+  MStart: Date,
+  MEnd: Date,
+  includeCaution: (c: StoredCaution) => boolean,
+): CautionEtatMensuelMetricsFields {
+  const acc = emptyCautionEtatMensuelMetrics();
+  for (const c of cautionRows) {
+    if (!includeCaution(c)) continue;
+    accumulateCautionForMonthMetrics(c, MStart, MEnd, acc);
+  }
+  finalizeCautionEtatMensuelMetrics(acc);
+  return acc;
+}
+
+export async function listCautionEtatMensuelParProduit(months: number): Promise<CautionEtatMensuelProduitRow[]> {
+  await ensureSprint4Indexes();
+  const n = Math.min(36, Math.max(1, Math.floor(months)));
+  const monthDefs = lastNCalendarMonths(n);
+
+  const oldestStart = calendarMonthBounds(
+    monthDefs[monthDefs.length - 1]!.year,
+    monthDefs[monthDefs.length - 1]!.monthIndex,
+  ).start;
+
+  const db = await getDatabase();
+  const cautionRows = await db
+    .collection<StoredCaution>(CAUTIONS_COLLECTION)
+    .find(
+      {
+        deletedAt: null,
+        $or: [
+          { createdAt: { $gte: oldestStart } },
+          { paidAt: { $gte: oldestStart } },
+          { status: { $in: [...MONTHLY_ETAT_PENDING] } },
+        ],
+      },
+      { projection: { contratId: 1, montant: 1, status: 1, paidAt: 1, createdAt: 1, updatedAt: 1, deletedAt: 1 } },
+    )
+    .toArray();
+
+  const contratIds = [...new Set(cautionRows.map((r) => r.contratId))];
+  const contrats =
+    contratIds.length === 0
+      ? []
+      : await prisma.contrat.findMany({
+          where: { id: { in: contratIds }, deletedAt: null },
+          select: { id: true, produitCode: true },
+        });
+  const produitByContratId = new Map(
+    contrats.map((c) => [c.id, (c.produitCode || "").trim().toUpperCase() || "—"]),
+  );
+
+  const produits = await listProduits();
+  const libelleByCode = new Map(produits.map((p) => [p.code.toUpperCase(), p.libelle]));
+  const activeCodes = new Set(produits.filter((p) => p.actif).map((p) => p.code.toUpperCase()));
+
+  const codesFromData = new Set<string>();
+  for (const row of cautionRows) {
+    const pc = produitByContratId.get(row.contratId) ?? "—";
+    codesFromData.add(pc);
+  }
+  for (const c of activeCodes) codesFromData.add(c);
+
+  const allCodes = [...codesFromData].sort((a, b) => a.localeCompare(b, "fr"));
+  const rows: CautionEtatMensuelProduitRow[] = [];
+
+  for (const md of monthDefs) {
+    const { start: MStart, end: MEnd } = calendarMonthBounds(md.year, md.monthIndex);
+    for (const produitCode of allCodes) {
+      const metrics = computeCautionBucketMetrics(cautionRows, MStart, MEnd, (c) => {
+        const pc = produitByContratId.get(c.contratId) ?? "—";
+        return pc === produitCode;
+      });
+      const hasAny =
+        metrics.montantAttendusCautions > 0 ||
+        metrics.nombreCautionsAEncaisser > 0 ||
+        metrics.montantCautionsAEncaisser > 0 ||
+        metrics.montantCautionsEncaissees > 0 ||
+        metrics.nombreCautionsEncaissees > 0 ||
+        metrics.montantCautionsNonEncaissees > 0 ||
+        metrics.nombreCautionsNonEncaissees > 0;
+      if (!hasAny && !activeCodes.has(produitCode)) continue;
+      rows.push({
+        yearMonth: md.yearMonth,
+        moisLabel: md.moisLabel,
+        produitCode,
+        libelle: libelleByCode.get(produitCode) ?? (produitCode === "—" ? "Sans code produit" : "Hors référentiel"),
+        ...metrics,
+      });
+    }
+  }
+
+  return rows;
+}
+
+function contratMatrixAgencePartitionKey(agenceId: string | null | undefined): string {
+  return agenceId?.trim() || "__sans_agence__";
+}
+
+export interface ContratEtatMensuelMatrixAgenceCol {
+  agenceKey: string;
+  libelle: string;
+}
+
+export interface ContratEtatMensuelMatrixProduitRow {
+  produitCode: string;
+  libelle: string;
+  valeursParAgence: Record<string, number>;
+  totalContrats: number;
+}
+
+export interface ContratEtatMensuelMatrixZone {
+  agences: ContratEtatMensuelMatrixAgenceCol[];
+  produits: ContratEtatMensuelMatrixProduitRow[];
+}
+
+export interface ContratEtatMensuelMatrixMonth {
+  yearMonth: string;
+  moisLabel: string;
+  zoneAbidjan: ContratEtatMensuelMatrixZone | null;
+  interieur: ContratEtatMensuelMatrixZone | null;
+}
+
+function buildMatrixZoneFull(
+  pairValues: Map<string, number>,
+  pairKeyFn: (produitCode: string, agenceKey: string) => string,
+  agenceCols: ContratEtatMensuelMatrixAgenceCol[],
+  produitCodesSorted: readonly string[],
+  libelleByCode: Map<string, string>,
+): ContratEtatMensuelMatrixZone | null {
+  if (agenceCols.length === 0 || produitCodesSorted.length === 0) return null;
+  const produits: ContratEtatMensuelMatrixProduitRow[] = [];
+  for (const produitCode of produitCodesSorted) {
+    const valeursParAgence: Record<string, number> = {};
+    let totalContrats = 0;
+    for (const col of agenceCols) {
+      const v = pairValues.get(pairKeyFn(produitCode, col.agenceKey)) ?? 0;
+      valeursParAgence[col.agenceKey] = v;
+      totalContrats += v;
+    }
+    produits.push({
+      produitCode,
+      libelle: libelleByCode.get(produitCode) ?? (produitCode === "—" ? "Sans code produit" : "Hors référentiel"),
+      valeursParAgence,
+      totalContrats,
+    });
+  }
+  return { agences: agenceCols, produits };
+}
+
+export async function listContratEtatMensuelProduitAgenceMatrix(
+  months: number,
+): Promise<ContratEtatMensuelMatrixMonth[]> {
+  await ensureSprint4Indexes();
+  const n = Math.min(36, Math.max(1, Math.floor(months)));
+  const monthDefs = lastNCalendarMonths(n);
+  const oldestStart = calendarMonthBounds(
+    monthDefs[monthDefs.length - 1]!.year,
+    monthDefs[monthDefs.length - 1]!.monthIndex,
+  ).start;
+
+  const db = await getDatabase();
+  const contrats = await prisma.contrat.findMany({
+    where: { deletedAt: null, createdAt: { gte: oldestStart } },
+    select: { id: true, produitCode: true, concessionnaireId: true, createdAt: true },
+  });
+
+  const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
+  const pdvs =
+    pdvIds.length === 0
+      ? []
+      : await prisma.concessionnaire.findMany({
+          where: { id: { in: pdvIds }, deletedAt: null },
+          select: { id: true, agenceId: true },
+        });
+  const pdvById = new Map(pdvs.map((p) => [p.id, p]));
+
+  const contratById = new Map<
+    string,
+    { produitCode: string; agenceKey: string; createdAt: Date }
+  >();
+  for (const ct of contrats) {
+    const pdv = pdvById.get(ct.concessionnaireId);
+    const agenceKey = contratMatrixAgencePartitionKey(pdv?.agenceId ?? null);
+    const produitCode = (ct.produitCode || "").trim().toUpperCase() || "—";
+    contratById.set(ct.id, { produitCode, agenceKey, createdAt: ct.createdAt });
+  }
+
+  const hasSansAgence = [...contratById.values()].some((z) => z.agenceKey === "__sans_agence__");
+
+  const produitsRef = await listProduits();
+  const libelleByCode = new Map(produitsRef.map((p) => [p.code.toUpperCase(), p.libelle]));
+  const activeCodes = new Set(produitsRef.filter((p) => p.actif).map((p) => p.code.toUpperCase()));
+  const codesFromData = new Set<string>();
+  for (const ct of contrats) {
+    const z = contratById.get(ct.id);
+    if (z) codesFromData.add(z.produitCode);
+  }
+  for (const c of activeCodes) codesFromData.add(c);
+  const allProduitCodesSorted = [...codesFromData].sort((a, b) => a.localeCompare(b, "fr"));
+
+  const allAgenceDocs = await db
+    .collection<{ _id: ObjectId; actif?: boolean }>("agences")
+    .find({ $or: [{ actif: true }, { actif: { $exists: false } }] })
+    .project({ _id: 1 })
+    .toArray();
+  const abidjanAgenceIds = new Set(await listAgenceIdsZoneAbidjan(db));
+  const agenceIdsForLabels = allAgenceDocs.map((d) => d._id.toHexString());
+  const agenceLibelleFull = await loadAgenceLibelleMap(db, agenceIdsForLabels);
+  const colFor = (id: string): ContratEtatMensuelMatrixAgenceCol => ({
+    agenceKey: id,
+    libelle: formatAgenceLibelle(agenceLibelleFull.get(id), id),
+  });
+  const abidjanColsSorted = allAgenceDocs
+    .filter((d) => abidjanAgenceIds.has(d._id.toHexString()))
+    .map((d) => colFor(d._id.toHexString()))
+    .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }));
+  const interieurCoreCols = allAgenceDocs
+    .filter((d) => !abidjanAgenceIds.has(d._id.toHexString()))
+    .map((d) => colFor(d._id.toHexString()))
+    .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }));
+  const interieurCols = hasSansAgence
+    ? [...interieurCoreCols, { agenceKey: "__sans_agence__", libelle: "Sans agence PDV" }]
+    : interieurCoreCols;
+
+  const out: ContratEtatMensuelMatrixMonth[] = [];
+  const PAIR_SEP = "\x1f";
+  const pairKey = (produitCode: string, agenceKey: string) => `${produitCode}${PAIR_SEP}${agenceKey}`;
+
+  for (const md of monthDefs) {
+    const { start: MStart, end: MEnd } = calendarMonthBounds(md.year, md.monthIndex);
+    const pairValues = new Map<string, number>();
+    for (const z of contratById.values()) {
+      if (z.createdAt < MStart || z.createdAt > MEnd) continue;
+      const k = pairKey(z.produitCode, z.agenceKey);
+      pairValues.set(k, (pairValues.get(k) ?? 0) + 1);
+    }
+
+    const zoneAbidjan = buildMatrixZoneFull(
+      pairValues,
+      pairKey,
+      abidjanColsSorted,
+      allProduitCodesSorted,
+      libelleByCode,
+    );
+    const interieur = buildMatrixZoneFull(
+      pairValues,
+      pairKey,
+      interieurCols,
+      allProduitCodesSorted,
+      libelleByCode,
+    );
+    if (zoneAbidjan || interieur) {
+      out.push({ yearMonth: md.yearMonth, moisLabel: md.moisLabel, zoneAbidjan, interieur });
+    }
+  }
+
+  return out;
+}
+
+

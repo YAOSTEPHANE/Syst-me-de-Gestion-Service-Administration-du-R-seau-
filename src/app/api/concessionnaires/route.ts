@@ -19,6 +19,8 @@ import {
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
 
+const OTHER_PRODUCT_CODE = "AUTRES";
+
 function emptyStringToNull(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -170,7 +172,11 @@ export async function POST(request: NextRequest) {
 
   const produits = await listProduits();
   const produitCodes = new Set(produits.filter((p) => p.actif).map((p) => p.code));
-  const invalidProduits = parsed.data.produitsAutorises.filter((code) => !produitCodes.has(code.trim().toUpperCase()));
+  const invalidProduits = parsed.data.produitsAutorises.filter((code) => {
+    const normalized = code.trim().toUpperCase();
+    if (normalized === OTHER_PRODUCT_CODE) return false;
+    return !produitCodes.has(normalized);
+  });
   if (invalidProduits.length > 0) {
     return badRequest(`Produits invalides: ${invalidProduits.join(", ")}`, "INVALID_PRODUCTS");
   }

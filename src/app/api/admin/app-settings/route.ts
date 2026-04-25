@@ -8,6 +8,9 @@ import { requireApiAuth } from "@/lib/auth/guards";
 const patchSchema = z
   .object({
     criticalWorkflowEmailEnabled: z.boolean().optional(),
+    supervisionExportCronEnabled: z.boolean().optional(),
+    supervisionExportFormat: z.enum(["pdf", "csv", "xlsx"]).optional(),
+    supervisionExportCronHourUtc: z.number().int().min(0).max(23).optional(),
     alertCautionMaxDays: z.number().int().min(1).max(365).optional(),
     alertDossierIdleHours: z.number().int().min(1).max(168).optional(),
     alertPdvIntegrationMaxDays: z.number().int().min(1).max(90).optional(),
@@ -26,12 +29,17 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       criticalWorkflowEmailEnabled: settings.criticalWorkflowEmailEnabled,
+      supervisionExportCronEnabled: settings.supervisionExportCronEnabled,
+      supervisionExportFormat: settings.supervisionExportFormat,
+      supervisionExportCronHourUtc: settings.supervisionExportCronHourUtc,
       alertCautionMaxDays: settings.alertCautionMaxDays,
       alertDossierIdleHours: settings.alertDossierIdleHours,
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
       dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
+      supervisionExportLastRunAt: settings.supervisionExportLastRunAt?.toISOString() ?? null,
+      supervisionExportLastStatus: settings.supervisionExportLastStatus,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },
@@ -53,12 +61,17 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json(
     {
       criticalWorkflowEmailEnabled: settings.criticalWorkflowEmailEnabled,
+      supervisionExportCronEnabled: settings.supervisionExportCronEnabled,
+      supervisionExportFormat: settings.supervisionExportFormat,
+      supervisionExportCronHourUtc: settings.supervisionExportCronHourUtc,
       alertCautionMaxDays: settings.alertCautionMaxDays,
       alertDossierIdleHours: settings.alertDossierIdleHours,
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
       dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
+      supervisionExportLastRunAt: settings.supervisionExportLastRunAt?.toISOString() ?? null,
+      supervisionExportLastStatus: settings.supervisionExportLastStatus,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },

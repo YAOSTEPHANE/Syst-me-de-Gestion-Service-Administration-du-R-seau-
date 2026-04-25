@@ -75,6 +75,7 @@ export async function getActivityLast7Days(agenceId?: string | null): Promise<Ac
 
 export interface ProduitSlice {
   code: string;
+  libelle?: string;
   count: number;
 }
 
@@ -97,10 +98,29 @@ export async function getContratsActifsByProduit(topN = 5, agenceId?: string | n
   const total = rows.reduce((s, r) => s + r.c, 0);
   if (total === 0) return [];
 
+  const productCodes = rows
+    .map((r) => (r._id || "").trim().toUpperCase())
+    .filter((v) => v.length > 0);
+  const referentials =
+    productCodes.length === 0
+      ? []
+      : await db
+          .collection<{ code: string; libelle: string }>("produits")
+          .find({ code: { $in: [...new Set(productCodes)] }, actif: true }, { projection: { _id: 0, code: 1, libelle: 1 } })
+          .toArray();
+  const labelByCode = new Map(referentials.map((p) => [p.code.trim().toUpperCase(), p.libelle.trim()]));
+
   const top = rows.slice(0, topN);
   const topSum = top.reduce((s, r) => s + r.c, 0);
   const autres = total - topSum;
-  const slices: ProduitSlice[] = top.map((r) => ({ code: r._id || "—", count: r.c }));
+  const slices: ProduitSlice[] = top.map((r) => {
+    const code = r._id || "—";
+    return {
+      code,
+      libelle: labelByCode.get(code.trim().toUpperCase()),
+      count: r.c,
+    };
+  });
   if (autres > 0) {
     slices.push({ code: "Autres", count: autres });
   }
@@ -160,9 +180,23 @@ export interface DossierDelaySnapshot {
 
 export interface ProduitVolume30jItem {
   produitCode: string;
+  produitLibelle?: string;
   current30d: number;
   previous30d: number;
   trendPct: number;
+}
+
+export interface AgenceSlaSnapshotItem {
+  agenceId: string;
+  agenceCode?: string;
+  agenceLabel: string;
+  contratsPending: number;
+  contratsOverdue: number;
+  pdvPending: number;
+  pdvOverdue: number;
+  pendingTotal: number;
+  overdueTotal: number;
+  overdueRatePct: number;
 }
 
 export async function getAgrementRegistryQueueCounts(staleDays: number): Promise<{ enAttente: number; retard: number }> {
@@ -220,7 +254,7 @@ export async function getDossierValidationSnapshot(
       }),
       db.collection("cautions").countDocuments({
         deletedAt: null,
-        status: "EN_ATTENTE",
+        status: { $in: ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] },
         ...(scopedContratIds
           ? { contratId: { $in: scopedContratIds.length ? scopedContratIds : ["__none__"] } }
           : {}),
@@ -524,11 +558,24 @@ export async function getProduitVolumesLast30Days(topN = 8, agenceId?: string | 
   ]);
 
   const prevMap = new Map(previousRows.map((r) => [r._id, r.c]));
+  const codes = currentRows
+    .map((r) => (r._id || "").trim().toUpperCase())
+    .filter((v) => v.length > 0);
+  const referentials =
+    codes.length === 0
+      ? []
+      : await db
+          .collection<{ code: string; libelle: string }>("produits")
+          .find({ code: { $in: [...new Set(codes)] }, actif: true }, { projection: { _id: 0, code: 1, libelle: 1 } })
+          .toArray();
+  const labelByCode = new Map(referentials.map((p) => [p.code.trim().toUpperCase(), p.libelle.trim()]));
   const merged = currentRows.map((r) => {
     const prev = prevMap.get(r._id) ?? 0;
     const trendPct = prev > 0 ? Math.round(((r.c - prev) / prev) * 100) : r.c > 0 ? 100 : 0;
+    const produitCode = r._id || "—";
     return {
-      produitCode: r._id || "—",
+      produitCode,
+      produitLibelle: labelByCode.get(produitCode.trim().toUpperCase()),
       current30d: r.c,
       previous30d: prev,
       trendPct,
@@ -536,4 +583,117 @@ export async function getProduitVolumesLast30Days(topN = 8, agenceId?: string | 
   });
 
   return merged.sort((a, b) => b.current30d - a.current30d).slice(0, topN);
+}
+
+export async function getAgenceSlaSnapshot(agenceId?: string | null): Promise<AgenceSlaSnapshotItem[]> {
+  const db = await getDatabase();
+  const thresholds = await getResolvedAlertThresholds();
+  const dossierIdleBefore = new Date(Date.now() - thresholds.dossierIdleMs);
+  const pdvStaleBefore = new Date(Date.now() - thresholds.pdvIntegrationMaxMs);
+  const scopedAgenceId = agenceId?.trim();
+
+  const agences = await getAllAgencesTrendsLast30Days(scopedAgenceId);
+  const baseRows = new Map<string, AgenceSlaSnapshotItem>();
+  for (const row of agences) {
+    if (!row.agenceId) continue;
+    baseRows.set(row.agenceId, {
+      agenceId: row.agenceId,
+      agenceCode: row.agenceCode,
+      agenceLabel: row.agenceLabel,
+      contratsPending: 0,
+      contratsOverdue: 0,
+      pdvPending: 0,
+      pdvOverdue: 0,
+      pendingTotal: 0,
+      overdueTotal: 0,
+      overdueRatePct: 0,
+    });
+  }
+
+  const dossiersFilter: Record<string, unknown> = {
+    deletedAt: null,
+    type: "CONTRAT_ACTUALISATION",
+    status: "SOUMIS",
+  };
+  const pdvFilter: Record<string, unknown> = {
+    deletedAt: null,
+    status: { $in: ["BROUILLON", "EN_COURS"] },
+  };
+  if (scopedAgenceId) {
+    dossiersFilter.agenceId = scopedAgenceId;
+    pdvFilter.agenceId = scopedAgenceId;
+  }
+
+  const [contratsPendingByAgence, contratsOverdueByAgence, pdvPendingByAgence, pdvOverdueByAgence] = await Promise.all([
+    db
+      .collection("dossiers")
+      .aggregate<{ _id: string; count: number }>([
+        { $match: dossiersFilter },
+        { $group: { _id: "$agenceId", count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    db
+      .collection("dossiers")
+      .aggregate<{ _id: string; count: number }>([
+        { $match: { ...dossiersFilter, updatedAt: { $lt: dossierIdleBefore } } },
+        { $group: { _id: "$agenceId", count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    db
+      .collection("pdv_integrations")
+      .aggregate<{ _id: string; count: number }>([
+        { $match: pdvFilter },
+        { $group: { _id: "$agenceId", count: { $sum: 1 } } },
+      ])
+      .toArray(),
+    db
+      .collection("pdv_integrations")
+      .aggregate<{ _id: string; count: number }>([
+        { $match: { ...pdvFilter, updatedAt: { $lt: pdvStaleBefore } } },
+        { $group: { _id: "$agenceId", count: { $sum: 1 } } },
+      ])
+      .toArray(),
+  ]);
+
+  const upsert = (agenceIdKey: string, patch: Partial<AgenceSlaSnapshotItem>) => {
+    const key = agenceIdKey?.trim();
+    if (!key) return;
+    const prev = baseRows.get(key);
+    if (prev) {
+      baseRows.set(key, { ...prev, ...patch });
+      return;
+    }
+    baseRows.set(key, {
+      agenceId: key,
+      agenceLabel: key,
+      contratsPending: 0,
+      contratsOverdue: 0,
+      pdvPending: 0,
+      pdvOverdue: 0,
+      pendingTotal: 0,
+      overdueTotal: 0,
+      overdueRatePct: 0,
+      ...patch,
+    });
+  };
+
+  for (const row of contratsPendingByAgence) upsert(row._id, { contratsPending: row.count });
+  for (const row of contratsOverdueByAgence) upsert(row._id, { contratsOverdue: row.count });
+  for (const row of pdvPendingByAgence) upsert(row._id, { pdvPending: row.count });
+  for (const row of pdvOverdueByAgence) upsert(row._id, { pdvOverdue: row.count });
+
+  const out = [...baseRows.values()].map((row) => {
+    const pendingTotal = row.contratsPending + row.pdvPending;
+    const overdueTotal = row.contratsOverdue + row.pdvOverdue;
+    const overdueRatePct = pendingTotal > 0 ? Math.round((overdueTotal / pendingTotal) * 100) : 0;
+    return { ...row, pendingTotal, overdueTotal, overdueRatePct };
+  });
+
+  return out.sort((a, b) => {
+    if (b.overdueTotal !== a.overdueTotal) return b.overdueTotal - a.overdueTotal;
+    if (b.pendingTotal !== a.pendingTotal) return b.pendingTotal - a.pendingTotal;
+    const ca = a.agenceCode ?? a.agenceLabel;
+    const cb = b.agenceCode ?? b.agenceLabel;
+    return ca.localeCompare(cb, "fr", { sensitivity: "base" });
+  });
 }

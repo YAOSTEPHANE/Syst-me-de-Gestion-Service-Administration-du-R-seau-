@@ -9,9 +9,11 @@ import {
 } from "@/lib/lonaci/constants";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type TabId = "fiche" | "contrats" | "historique" | "pieces";
+const OTHER_PRODUCT_CODE = "AUTRES";
+const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
 
 interface AgenceRef {
   id: string;
@@ -214,6 +216,8 @@ export default function ConcessionnaireFicheModal({
   const [compteBancaire, setCompteBancaire] = useState("");
   const [observations, setObservations] = useState("");
   const [notesInternes, setNotesInternes] = useState("");
+  const [otherFiles, setOtherFiles] = useState<File[]>([]);
+  const otherFilesInputRef = useRef<HTMLInputElement>(null);
 
   const [auditItems, setAuditItems] = useState<AuditItem[]>([]);
   const [auditPage, setAuditPage] = useState(1);
@@ -236,6 +240,12 @@ export default function ConcessionnaireFicheModal({
     saisieReferentiel && (me?.role === "ASSIST_CDS" || me?.role === "CHEF_SERVICE");
   const canChangeAgence = saisieReferentiel && me?.role === "CHEF_SERVICE";
   const chefService = me?.role === "CHEF_SERVICE";
+
+  useEffect(() => {
+    if (produitsAutorises.includes(OTHER_PRODUCT_CODE)) return;
+    setOtherFiles([]);
+    if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
+  }, [produitsAutorises]);
 
   /** Actives pour les nouveaux choix ; inclut toujours l’agence actuelle si elle est inactive (sinon la liste déroulante ne peut pas afficher la valeur). */
   const agencesPourSelect = useMemo(() => {
@@ -303,6 +313,8 @@ export default function ConcessionnaireFicheModal({
       setCompteBancaire(c.compteBancaire ?? "");
       setObservations(c.observations ?? "");
       setNotesInternes(c.notesInternes ?? "");
+      setOtherFiles([]);
+      if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
       setDetail(null);
@@ -501,6 +513,28 @@ export default function ConcessionnaireFicheModal({
         throw new Error(b?.message ?? "Enregistrement impossible");
       }
       await res.json();
+      const selectedOtherFiles = produitsAutorises.includes(OTHER_PRODUCT_CODE) ? otherFiles : [];
+      if (selectedOtherFiles.length > 0) {
+        const failedNames: string[] = [];
+        for (const file of selectedOtherFiles) {
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("kind", "DOCUMENT");
+          const up = await fetch(`/api/concessionnaires/${concessionnaireId}/pieces`, {
+            method: "POST",
+            body: fd,
+            credentials: "include",
+          });
+          if (!up.ok) failedNames.push(file.name);
+        }
+        if (failedNames.length > 0) {
+          throw new Error(
+            `Fiche enregistrée, mais certains fichiers AUTRES n'ont pas été envoyés: ${failedNames.join(", ")}.`,
+          );
+        }
+        setOtherFiles([]);
+        if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
+      }
       onClose();
       queueMicrotask(() => onSaved());
     } catch (err) {
@@ -821,7 +855,54 @@ export default function ConcessionnaireFicheModal({
                           </span>
                         </label>
                       ))}
+                      <label className="flex items-center gap-2 text-xs text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={produitsAutorises.includes(OTHER_PRODUCT_CODE)}
+                          onChange={(e) =>
+                            setProduitsAutorises((curr) =>
+                              e.target.checked
+                                ? [...curr, OTHER_PRODUCT_CODE]
+                                : curr.filter((code) => code !== OTHER_PRODUCT_CODE),
+                            )
+                          }
+                        />
+                        <span>{OTHER_PRODUCT_CODE}</span>
+                      </label>
                     </div>
+                    {produitsAutorises.includes(OTHER_PRODUCT_CODE) ? (
+                      <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50/50 p-2">
+                        <p className="text-[11px] font-semibold text-indigo-900">
+                          Pièces justificatives (AUTRES)
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-indigo-800/90">
+                          Ajoutez un ou plusieurs fichiers (PDF, JPG, PNG, WebP). Ils seront joints
+                          lors de l'enregistrement.
+                        </p>
+                        <input
+                          ref={otherFilesInputRef}
+                          type="file"
+                          multiple
+                          accept={OTHER_FILES_ACCEPT}
+                          aria-label="Fichiers AUTRES"
+                          onChange={(e) => setOtherFiles(Array.from(e.currentTarget.files ?? []))}
+                          className="mt-2 block w-full text-[11px] text-slate-700 file:mr-2 file:rounded-md file:border file:border-indigo-300 file:bg-white file:px-2 file:py-1 file:text-[11px] file:font-semibold file:text-indigo-800"
+                        />
+                        {otherFiles.length > 0 ? (
+                          <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-700">
+                            {otherFiles.map((file) => (
+                              <li
+                                key={`${file.name}-${file.size}-${file.lastModified}`}
+                                className="truncate"
+                                title={file.name}
+                              >
+                                {file.name}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <label className="grid gap-1">

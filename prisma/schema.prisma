@@ -25,6 +25,10 @@ model User {
   lastActivityAt   DateTime?
   resetPasswordTokenHash String?
   resetPasswordExpiresAt DateTime?
+  /** Dernier changement de mot de passe (politique de rotation mensuelle). */
+  passwordChangedAt DateTime?
+  /** Dernier mois (UTC, format YYYY-MM) pour lequel l’e-mail automatique de fin de mois avec lien de réinitialisation a été envoyé. */
+  passwordResetReminderSentForMonth String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?

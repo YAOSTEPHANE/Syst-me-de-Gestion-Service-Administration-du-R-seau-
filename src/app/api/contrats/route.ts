@@ -7,17 +7,16 @@ import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
 import { isStatutBloquant } from "@/lib/lonaci/access";
 import {
-  finalizeContratFromDossier,
   findContratById,
   hasActiveContractForProduct,
   listContrats,
+  listScopeAgenceIdForContratsList,
 } from "@/lib/lonaci/contracts";
-import { createDossier, ensureDossierIndexes } from "@/lib/lonaci/dossiers";
+import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
-
 const createSchema = z.object({
   concessionnaireId: z.string().min(1),
   agenceId: z.string().min(1),
@@ -47,15 +46,6 @@ const listSchema = z.object({
   dateTo: z.string().optional(),
 });
 
-/** Aligné sur l’export CSV contrats : vue nationale vs agence fixée. */
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
-
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -69,7 +59,7 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
-  const scopeAgenceId = listScopeAgenceId(auth.user);
+  const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
   let allowedConcessionnaireIds: string[] | null = null;
   if (scopeAgenceId) {
     const scoped = await prisma.concessionnaire.findMany({
@@ -365,8 +355,6 @@ export async function POST(request: NextRequest) {
 
   await ensureDossierIndexes();
   try {
-    const autoValidate = auth.user.role === "CHEF_SERVICE";
-    const now = new Date();
     const dossier = await createDossier({
       type: "CONTRAT_ACTUALISATION",
       concessionnaireId: parsed.data.concessionnaireId,
@@ -380,35 +368,9 @@ export async function POST(request: NextRequest) {
         observations: parsed.data.observations ?? null,
       },
       actor: auth.user,
-      initialStatus: autoValidate ? "FINALISE" : undefined,
-      initialHistory: autoValidate
-        ? [
-            {
-              status: "FINALISE",
-              actedByUserId: auth.user._id ?? "",
-              actedAt: now,
-              comment: "Auto-validé (création Chef(fe) de service)",
-            },
-          ]
-        : undefined,
     });
-
-    if (autoValidate) {
-      const produitCode = parsed.data.produitCode.trim().toUpperCase();
-      const operationType = parsed.data.operationType;
-      const dateEffet = new Date(parsed.data.dateOperation);
-      const contrat = await finalizeContratFromDossier({
-        dossierId: dossier._id ?? "",
-        concessionnaireId: parsed.data.concessionnaireId,
-        produitCode,
-        operationType,
-        dateEffet,
-        actor: auth.user,
-      });
-      return NextResponse.json({ dossier, contrat }, { status: 201 });
-    }
-
-    return NextResponse.json({ dossier }, { status: 201 });
+    const submitted = await transitionDossier(dossier._id ?? "", "SOUMIS", auth.user, "Soumis automatiquement à la création.");
+    return NextResponse.json({ dossier: submitted }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_BLOQUE") {

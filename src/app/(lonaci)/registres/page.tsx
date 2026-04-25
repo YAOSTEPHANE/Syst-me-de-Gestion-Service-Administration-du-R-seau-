@@ -1,7 +1,13 @@
 import RegistryModulePanel from "@/components/lonaci/registry-module-panel";
 
 const AGREMENT_STATUTS = ["SOUMIS", "EN_COURS", "VALIDE", "REJETE"] as const;
-const CESSION_STATUTS = ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"] as const;
+const CESSION_STATUTS = [
+  "SAISIE_AGENT",
+  "CONTROLE_CHEF_SECTION",
+  "VALIDATION_N2",
+  "VALIDEE_CHEF_SERVICE",
+  "REJETEE",
+] as const;
 const GPR_STATUTS = ["SOUMIS_AGENT", "VALIDE_N1", "VALIDE_N2", "SUIVI_CHEF_SERVICE", "REJETE"] as const;
 
 export default function RegistresPage() {

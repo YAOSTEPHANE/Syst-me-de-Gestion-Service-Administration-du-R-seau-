@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { z } from "zod";
 
-import { badRequest, forbidden, notFound, unauthorized } from "@/lib/api/error-responses";
+import { badRequest, notFound, unauthorized } from "@/lib/api/error-responses";
 import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { hashPassword, verifyPassword } from "@/lib/auth/password";
@@ -74,9 +74,6 @@ export async function POST(request: NextRequest) {
   if (rateLimitResponseAuthed) return rateLimitResponseAuthed;
   if (!currentPassword) {
     return badRequest("Mot de passe actuel requis", "CURRENT_PASSWORD_REQUIRED");
-  }
-  if (auth.user.role === "AGENT") {
-    return forbidden("Un agent ne peut pas modifier son compte.", "PASSWORD_CHANGE_FORBIDDEN");
   }
   const user = await findUserById(auth.user._id ?? "");
   if (!user) {

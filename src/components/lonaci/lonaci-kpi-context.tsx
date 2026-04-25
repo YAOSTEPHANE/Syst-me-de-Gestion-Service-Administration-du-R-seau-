@@ -13,11 +13,24 @@ type Ctx = {
 
 const LonaciKpiContext = createContext<Ctx>({ kpi: null, error: null, refresh: async () => {} });
 
+function isForcedPasswordChangeRoute() {
+  if (typeof window === "undefined") return false;
+  const isParametres = window.location.pathname.startsWith("/parametres");
+  if (!isParametres) return false;
+  const search = new URLSearchParams(window.location.search);
+  return search.get("motDePasse") === "obligatoire";
+}
+
 export function LonaciKpiProvider({ children }: { children: ReactNode }) {
   const [kpi, setKpi] = useState<LonaciKpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function refresh() {
+    if (isForcedPasswordChangeRoute()) {
+      setKpi(null);
+      setError(null);
+      return;
+    }
     try {
       const res = await lonaciFetch("/api/dashboard/kpi");
       if (!res.ok) throw new Error("Données tableau de bord indisponibles");

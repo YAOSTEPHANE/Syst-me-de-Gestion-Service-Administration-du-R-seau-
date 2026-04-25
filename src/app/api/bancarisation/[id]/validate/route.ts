@@ -8,7 +8,7 @@ import {
   sanitizeBancarisationRequestPublic,
   validateBancarisationRequest,
 } from "@/lib/lonaci/bancarisation";
-import { checkPermission } from "@/lib/auth/checkPermission";
+import { requireApiAuth } from "@/lib/auth/guards";
 
 const schema = z.object({
   decision: z.enum(["VALIDER", "REJETER"]),
@@ -24,10 +24,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
-  const auth = await checkPermission(request, {
-    roles: ["CHEF_SERVICE"],
-    resource: "CONCESSIONNAIRES",
-    action: parsed.data.decision === "VALIDER" ? "FINALIZE" : "REJECT",
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
   });
   if ("error" in auth) return auth.error;
   const { id } = await context.params;
@@ -57,6 +55,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (code === "REQUEST_NOT_PENDING") {
       return NextResponse.json({ message: "Cette demande a deja ete traitee." }, { status: 409 });
+    }
+    if (code === "FORBIDDEN_TRANSITION") {
+      return NextResponse.json({ message: "Action non autorisee pour votre role ou le statut de la demande." }, { status: 403 });
     }
     return NextResponse.json({ message: "Validation impossible." }, { status: 500 });
   }

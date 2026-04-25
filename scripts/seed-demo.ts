@@ -123,6 +123,8 @@ function prismaUserToActor(row: {
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+  passwordChangedAt: Date | null;
+  passwordResetReminderSentForMonth?: string | null;
 }): UserDocument {
   return {
     _id: row.id,
@@ -145,6 +147,8 @@ function prismaUserToActor(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     deletedAt: row.deletedAt,
+    passwordChangedAt: row.passwordChangedAt,
+    passwordResetReminderSentForMonth: row.passwordResetReminderSentForMonth ?? null,
   };
 }
 
@@ -220,6 +224,8 @@ async function main() {
       createdAt: fromDb.createdAt,
       updatedAt: fromDb.updatedAt,
       deletedAt: fromDb.deletedAt,
+      passwordChangedAt: fromDb.passwordChangedAt ?? null,
+      passwordResetReminderSentForMonth: fromDb.passwordResetReminderSentForMonth ?? null,
     };
   }
 
@@ -233,6 +239,17 @@ async function main() {
 
   const abjId = await ensureAgence(getDatabase, "ABJ", "Agence Abidjan Plateau");
   const yamId = await ensureAgence(getDatabase, "YAM", "Agence Yamoussoukro");
+  /** Villes / communes du district pour ventiler les contrats zone Abidjan dans l’UI. */
+  const VILLES_SEED_ZONE_ABIDJAN = [
+    "Cocody",
+    "Plateau",
+    "Marcory",
+    "Yopougon",
+    "Koumassi",
+    "Treichville",
+    "Port-Bouët",
+    "Adjamé",
+  ] as const;
   await ensureProduit(getDatabase, "LOTO", "Lonaci Loto", 250_000);
   await ensureProduit(getDatabase, "PMU", "Paris mutuels urbains", 180_000);
 
@@ -322,7 +339,12 @@ async function main() {
 
   const createdIds: string[] = [];
 
+  let abjVilleIdx = 0;
   for (const p of plan) {
+    const ville =
+      p.agenceId === abjId
+        ? VILLES_SEED_ZONE_ABIDJAN[abjVilleIdx++ % VILLES_SEED_ZONE_ABIDJAN.length]!
+        : "Yamoussoukro";
     const row = await prisma.concessionnaire.create({
       data: {
         codePdv: p.codePdv,
@@ -335,7 +357,7 @@ async function main() {
         telephoneSecondaire: null,
         telephone: "+225 07 00 12 34 56",
         adresse: "Boulevard de la République",
-        ville: p.agenceId === abjId ? "Abidjan" : "Yamoussoukro",
+        ville,
         codePostal: null,
         agenceId: p.agenceId,
         produitsAutorises: p.produits,

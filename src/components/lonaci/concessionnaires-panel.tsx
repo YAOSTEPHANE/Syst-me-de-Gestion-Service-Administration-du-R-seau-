@@ -20,6 +20,8 @@ import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type FicheModalTab = "fiche" | "contrats" | "historique" | "pieces";
+const OTHER_PRODUCT_CODE = "AUTRES";
+const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
 
 /** Libellés courts dans le tableau (cohérents avec la fiche : Oui / Non / En cours). */
 const BANCARISATION_TABLE_COURT: Record<BancarisationStatut, string> = {
@@ -402,7 +404,9 @@ export default function ConcessionnairesPanel() {
     modulesAutorises?: string[];
   } | null>(null);
   const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const [otherFiles, setOtherFiles] = useState<File[]>([]);
   const photoInputRef = useRef<HTMLInputElement>(null);
+  const otherFilesInputRef = useRef<HTMLInputElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const directImportInputRef = useRef<HTMLInputElement>(null);
   const [creating, setCreating] = useState(false);
@@ -560,7 +564,15 @@ export default function ConcessionnairesPanel() {
       return null;
     });
     if (photoInputRef.current) photoInputRef.current.value = "";
+    setOtherFiles([]);
+    if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
   }, [createOpen]);
+
+  useEffect(() => {
+    if (produitsAutorises.includes(OTHER_PRODUCT_CODE)) return;
+    setOtherFiles([]);
+    if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
+  }, [produitsAutorises]);
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -623,6 +635,7 @@ export default function ConcessionnairesPanel() {
       const created = (await res.json()) as { concessionnaire?: { id: string } };
       const newId = created.concessionnaire?.id;
       const photoFile = photoInputRef.current?.files?.[0];
+      const selectedOtherFiles = produitsAutorises.includes(OTHER_PRODUCT_CODE) ? otherFiles : [];
       if (newId && photoFile) {
         const fd = new FormData();
         fd.append("file", photoFile);
@@ -637,6 +650,30 @@ export default function ConcessionnairesPanel() {
           setToast({
             type: "error",
             message: b?.message ?? "Concessionnaire créé, mais l’import de la photo a échoué.",
+          });
+          await load(1);
+          return;
+        }
+      }
+      if (newId && selectedOtherFiles.length > 0) {
+        const failedNames: string[] = [];
+        for (const file of selectedOtherFiles) {
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("kind", "DOCUMENT");
+          const up = await fetch(`/api/concessionnaires/${newId}/pieces`, {
+            method: "POST",
+            body: fd,
+            credentials: "include",
+          });
+          if (!up.ok) {
+            failedNames.push(file.name);
+          }
+        }
+        if (failedNames.length > 0) {
+          setToast({
+            type: "error",
+            message: `Concessionnaire créé, mais certains fichiers AUTRES n'ont pas été envoyés: ${failedNames.join(", ")}.`,
           });
           await load(1);
           return;
@@ -662,6 +699,8 @@ export default function ConcessionnairesPanel() {
         return null;
       });
       if (photoInputRef.current) photoInputRef.current.value = "";
+      setOtherFiles([]);
+      if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
       await load(1);
       setCreateOpen(false);
       setToast({ type: "success", message: "Concessionnaire créé." });
@@ -735,6 +774,10 @@ export default function ConcessionnairesPanel() {
   }
   const photoFile = photoInputRef.current?.files?.[0] ?? null;
 
+  function onOtherFilesChange(ev: ChangeEvent<HTMLInputElement>) {
+    setOtherFiles(Array.from(ev.target.files ?? []));
+  }
+
   async function onImportConcessionnaireFileChange(ev: ChangeEvent<HTMLInputElement>) {
     const file = ev.target.files?.[0];
     if (!file) return;
@@ -778,6 +821,10 @@ export default function ConcessionnairesPanel() {
         const selectedCodes = new Set<string>();
         for (const t of tokens) {
           const tk = normalizeToken(t);
+          if (tk === normalizeToken(OTHER_PRODUCT_CODE)) {
+            selectedCodes.add(OTHER_PRODUCT_CODE);
+            continue;
+          }
           const matched =
             produits.find((p) => normalizeToken(p.code) === tk) ??
             produits.find((p) => normalizeToken(p.libelle) === tk);
@@ -1380,7 +1427,47 @@ export default function ConcessionnairesPanel() {
                               </span>
                             </label>
                           ))}
+                          <label className="flex items-center gap-2 text-xs text-slate-800">
+                            <input
+                              type="checkbox"
+                              checked={produitsAutorises.includes(OTHER_PRODUCT_CODE)}
+                              onChange={(e) =>
+                                setProduitsAutorises((curr) =>
+                                  e.target.checked
+                                    ? [...curr, OTHER_PRODUCT_CODE]
+                                    : curr.filter((code) => code !== OTHER_PRODUCT_CODE),
+                                )
+                              }
+                            />
+                            <span>{OTHER_PRODUCT_CODE}</span>
+                          </label>
                         </div>
+                        {produitsAutorises.includes(OTHER_PRODUCT_CODE) ? (
+                          <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50/50 p-2">
+                            <p className="text-[11px] font-semibold text-indigo-900">Pièces justificatives (AUTRES)</p>
+                            <p className="mt-0.5 text-[11px] text-indigo-800/90">
+                              Ajoutez un ou plusieurs fichiers (PDF, JPG, PNG, WebP). Ils seront attachés après la création.
+                            </p>
+                            <input
+                              ref={otherFilesInputRef}
+                              type="file"
+                              multiple
+                              accept={OTHER_FILES_ACCEPT}
+                              aria-label="Fichiers AUTRES"
+                              onChange={onOtherFilesChange}
+                              className="mt-2 block w-full text-[11px] text-slate-700 file:mr-2 file:rounded-md file:border file:border-indigo-300 file:bg-white file:px-2 file:py-1 file:text-[11px] file:font-semibold file:text-indigo-800"
+                            />
+                            {otherFiles.length > 0 ? (
+                              <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-700">
+                                {otherFiles.map((file) => (
+                                  <li key={`${file.name}-${file.size}-${file.lastModified}`} className="truncate" title={file.name}>
+                                    {file.name}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                     </section>
                   </div>
@@ -1514,12 +1601,13 @@ export default function ConcessionnairesPanel() {
               <table className="w-full min-w-[980px] table-fixed border-collapse text-left text-xs">
                 <colgroup>
                   <col style={{ width: "13%" }} />
-                  <col style={{ width: "20%" }} />
+                  <col style={{ width: "19%" }} />
                   <col style={{ width: "11%" }} />
-                  <col style={{ width: "18%" }} />
-                  <col style={{ width: "14%" }} />
+                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "7%" }} />
+                  <col style={{ width: "13%" }} />
                   <col style={{ width: "12%" }} />
-                  <col style={{ width: "12%" }} />
+                  <col style={{ width: "8%" }} />
                 </colgroup>
                 <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-slate-600 shadow-[0_1px_0_0_rgb(226_232_240)]">
                   <tr>
@@ -1534,6 +1622,9 @@ export default function ConcessionnairesPanel() {
                     </th>
                     <th className="px-2 py-2 font-medium" scope="col">
                       Produits
+                    </th>
+                    <th className="px-2 py-2 text-center font-medium" scope="col">
+                      Nb produits
                     </th>
                     <th className="px-2 py-2 font-medium" scope="col">
                       Statut
@@ -1629,6 +1720,9 @@ export default function ConcessionnairesPanel() {
                           "—"
                         )}
                       </td>
+                      <td className="px-2 py-1.5 text-center text-[11px] font-semibold tabular-nums text-slate-800">
+                        {row.produitsAutorises?.length ?? 0}
+                      </td>
                       <td className="px-2 py-1.5 align-middle">
                         <span
                           className={`block max-w-full truncate rounded-full border px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight ${
@@ -1670,7 +1764,7 @@ export default function ConcessionnairesPanel() {
                   })}
                   {!items.length ? (
                     <tr>
-                      <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
                         Aucun concessionnaire.
                       </td>
                     </tr>

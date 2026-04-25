@@ -29,7 +29,7 @@ const schema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
   });
   if ("error" in auth) return auth.error;
 

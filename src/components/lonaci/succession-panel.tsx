@@ -16,6 +16,8 @@ interface CaseRow {
   stepsCompleted: number;
   stepsTotal: number;
   stepHistory: { step: string; completedAt: string; comment: string | null }[];
+  validationN1At?: string | null;
+  validationN2At?: string | null;
 }
 
 interface StaleRow {
@@ -68,6 +70,10 @@ interface CaseDetailResponse {
       comment: string | null;
       decidedByUser: { prenom: string; nom: string; role: string } | null;
     } | null;
+    validationN1At: string | null;
+    validationN1ByUser: { prenom: string; nom: string; role: string } | null;
+    validationN2At: string | null;
+    validationN2ByUser: { prenom: string; nom: string; role: string } | null;
   };
 }
 
@@ -81,6 +87,12 @@ function friendlySuccessionError(raw: string): string {
       return "Accès refusé : vous n’avez pas les droits sur ce dossier.";
     case "ACTE_DECES_REQUIRED":
       return "Acte de décès obligatoire pour ouvrir le dossier.";
+    case "SUCCESSION_VALIDATION_N1_N2_REQUIRED":
+      return "Les validations N1 (chef de section) et N2 (assistant CDS) sont obligatoires avant la décision finale.";
+    case "SUCCESSION_VALIDATION_N1_REQUIRED":
+      return "La validation N1 (chef de section) est obligatoire avant la validation N2.";
+    case "SUCCESSION_VALIDATION_ALREADY_DONE":
+      return "Cette validation a déjà été enregistrée.";
     default:
       return raw;
   }
@@ -128,6 +140,8 @@ export default function SuccessionPanel() {
   const [fDecisionType, setFDecisionType] = useState<"" | "TRANSFERT" | "RESILIATION">("");
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
+  const [meRole, setMeRole] = useState<string | null>(null);
+  const [validationBusy, setValidationBusy] = useState<"N1" | "N2" | null>(null);
 
   const handleAuthFailure = useCallback(
     (status: number, rawMessage?: string): boolean => {
@@ -219,6 +233,22 @@ export default function SuccessionPanel() {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fStatus, fConcessionnaireId, fDecisionType, fDateFrom, fDateTo]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!res.ok) {
+          setMeRole(null);
+          return;
+        }
+        const me = (await res.json()) as { user?: { role?: string } };
+        setMeRole(me.user?.role ?? null);
+      } catch {
+        setMeRole(null);
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (selectedCaseId) {
@@ -316,6 +346,37 @@ export default function SuccessionPanel() {
       setToast({ type: "error", message });
     } finally {
       setCreating(false);
+    }
+  }
+
+  async function postSuccessionValidation(caseId: string, level: "N1" | "N2") {
+    setValidationBusy(level);
+    try {
+      const path =
+        level === "N1"
+          ? `/api/succession-cases/${encodeURIComponent(caseId)}/validation-n1`
+          : `/api/succession-cases/${encodeURIComponent(caseId)}/validation-n2`;
+      const res = await fetch(path, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => null)) as { message?: string } | null;
+        if (handleAuthFailure(res.status, b?.message)) return;
+        throw new Error(friendlySuccessionError(b?.message ?? "Erreur"));
+      }
+      await load();
+      if (selectedCaseId === caseId) await loadDetail(caseId);
+      setToast({ type: "success", message: level === "N1" ? "Validation N1 enregistrée." : "Validation N2 enregistrée." });
+    } catch (e) {
+      setToast({
+        type: "error",
+        message: friendlySuccessionError(e instanceof Error ? e.message : "Erreur"),
+      });
+    } finally {
+      setValidationBusy(null);
     }
   }
 
@@ -863,6 +924,65 @@ export default function SuccessionPanel() {
               </ul>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-3">
+              <p className="font-semibold">Validations N1 / N2 (avant décision finale)</p>
+              <ul className="mt-1 list-inside list-disc space-y-1 text-slate-700">
+                <li>
+                  N1 (chef de section) :{" "}
+                  {detail.validationN1At
+                    ? `${new Date(detail.validationN1At).toLocaleString("fr-FR")}${
+                        detail.validationN1ByUser
+                          ? ` · ${detail.validationN1ByUser.prenom} ${detail.validationN1ByUser.nom} (${getLonaciRoleLabel(detail.validationN1ByUser.role)})`
+                          : ""
+                      }`
+                    : "en attente"}
+                </li>
+                <li>
+                  N2 (assistant CDS) :{" "}
+                  {detail.validationN2At
+                    ? `${new Date(detail.validationN2At).toLocaleString("fr-FR")}${
+                        detail.validationN2ByUser
+                          ? ` · ${detail.validationN2ByUser.prenom} ${detail.validationN2ByUser.nom} (${getLonaciRoleLabel(detail.validationN2ByUser.role)})`
+                          : ""
+                      }`
+                    : "en attente"}
+                </li>
+              </ul>
+              {detail.status === "OUVERT" ? (
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {!detail.validationN1At && meRole === "CHEF_SECTION" ? (
+                    <button
+                      type="button"
+                      disabled={validationBusy !== null}
+                      onClick={() => void postSuccessionValidation(detail.id, "N1")}
+                      className="rounded-lg border border-sky-600 bg-sky-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {validationBusy === "N1" ? "…" : "Enregistrer validation N1"}
+                    </button>
+                  ) : null}
+                  {detail.validationN1At && !detail.validationN2At && meRole === "ASSIST_CDS" ? (
+                    <button
+                      type="button"
+                      disabled={validationBusy !== null}
+                      onClick={() => void postSuccessionValidation(detail.id, "N2")}
+                      className="rounded-lg border border-violet-600 bg-violet-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                    >
+                      {validationBusy === "N2" ? "…" : "Enregistrer validation N2"}
+                    </button>
+                  ) : null}
+                  {detail.validationN1At ? (
+                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                      Validée N1
+                    </span>
+                  ) : null}
+                  {detail.validationN2At ? (
+                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-700">
+                      Validée N2
+                    </span>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold">Décision</p>
               <p className="text-slate-700">
                 {detail.decision
@@ -941,9 +1061,19 @@ export default function SuccessionPanel() {
                       {row.status === "OUVERT" && row.currentStepLabel ? (
                         <button
                           type="button"
-                          disabled={advancingId === row.id}
+                          disabled={
+                            advancingId === row.id ||
+                            (row.currentStepLabel === "DECISION" &&
+                              (!row.validationN1At || !row.validationN2At))
+                          }
+                          title={
+                            row.currentStepLabel === "DECISION" &&
+                            (!row.validationN1At || !row.validationN2At)
+                              ? "Enregistrez les validations N1 et N2 (fiche dossier) avant la décision finale."
+                              : undefined
+                          }
                           onClick={() => void advance(row.id, row.currentStepLabel)}
-                        className="rounded-lg border border-cyan-600 px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
+                          className="rounded-lg border border-cyan-600 px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
                         >
                           {advancingId === row.id ? "…" : "Valider étape"}
                         </button>

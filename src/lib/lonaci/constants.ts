@@ -34,7 +34,7 @@ export const LONACI_ROLE_PROFILES: Record<LonaciRole, LonaciRoleProfile> = {
   CHEF_SECTION: {
     designation: "Chef(fe) de section",
     responsabilite:
-      "Contrôle N1. Valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
+      "Contrôle N1 — valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
   },
   ASSIST_CDS: {
     designation: "Assistant(e) chef(fe) de service",
@@ -99,7 +99,8 @@ export type ContratStatus = (typeof CONTRAT_STATUSES)[number];
 export const CAUTION_PAYMENT_MODES = ["ESPECES", "MOBILE_MONEY", "VIREMENT", "CHEQUE"] as const;
 export type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
-export const CAUTION_STATUSES = ["EN_ATTENTE", "A_CORRIGER", "PAYEE", "ANNULEE"] as const;
+/** Après saisie : N1 (chef section) puis N2 (assistant CDS) ; la finalisation paiement / rejet reste au chef de service. */
+export const CAUTION_STATUSES = ["EN_ATTENTE", "VALIDE_N1", "VALIDE_N2", "A_CORRIGER", "PAYEE", "ANNULEE"] as const;
 export type CautionStatus = (typeof CAUTION_STATUSES)[number];
 
 export const PDV_INTEGRATION_STATUSES = [

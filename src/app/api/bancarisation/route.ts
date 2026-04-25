@@ -8,6 +8,7 @@ import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { type BancarisationStatut, BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
 import {
   bancarisationCountersByAgenceProduit,
+  countBancarisationRequestsByStatus,
   createBancarisationRequest,
   listBancarisationRequests,
   sanitizeBancarisationRequestPublic,
@@ -26,7 +27,7 @@ import {
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  status: z.enum(["SOUMIS", "VALIDE", "REJETE"]).optional(),
+  status: z.enum(["SOUMIS", "VALIDE_N1", "VALIDE_N2", "VALIDE", "REJETE"]).optional(),
   statut: z.enum(BANCARISATION_STATUTS).optional(),
   agenceId: z.string().optional(),
 });
@@ -43,7 +44,7 @@ export async function GET(request: NextRequest) {
   }
 
   const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
-  const [requests, counters, agences] = await Promise.all([
+  const [requests, counters, agences, allStatusCounts] = await Promise.all([
     listBancarisationRequests({
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,
@@ -54,6 +55,7 @@ export async function GET(request: NextRequest) {
     }),
     bancarisationCountersByAgenceProduit(scopeAgenceId),
     listAgences(),
+    countBancarisationRequestsByStatus(scopeAgenceId),
   ]);
   const agenceLabelById = Object.fromEntries(agences.map((a) => [a._id ?? "", `${a.code} - ${a.libelle}`]));
 
@@ -64,6 +66,7 @@ export async function GET(request: NextRequest) {
       ...c,
       agenceLabel: c.agenceId ? (agenceLabelById[c.agenceId] ?? c.agenceId) : "Sans agence",
     })),
+    allStatusCounts,
   });
 }
 

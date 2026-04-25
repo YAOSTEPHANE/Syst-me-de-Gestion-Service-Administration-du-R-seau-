@@ -47,7 +47,16 @@ Message oral:
 - Adoption utilisateur -> accompagnement et guide d usage.
 - Qualite des donnees -> validations metier et controles API.
 - Evolution du perimetre -> priorisation par lots.
-- Securite -> revue continue des permissions RBAC.
+- Securite -> revue continue des permissions RBAC:
+  - matrice roles-actions maintenue et validee avec les metiers,
+  - controle periodique des habilitations et retrait des droits non utilises,
+  - journalisation des acces sensibles et des changements de droits,
+  - tests de non-regression securite a chaque evolution.
+- Sauvegarde des donnees -> politique de continuite et de reprise:
+  - sauvegardes automatiques quotidiennes avec retention multi-periode (court, moyen, long terme),
+  - copie hors environnement de production pour limiter le risque de perte totale,
+  - chiffrement des sauvegardes et acces restreint aux seuls profils habilites,
+  - tests de restauration planifies pour verifier le RPO/RTO et la recuperation effective.
 
 Message oral:
 "Les risques sont identifies et deja couverts par un plan pragmatique."

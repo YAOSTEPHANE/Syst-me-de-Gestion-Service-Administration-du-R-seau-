@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ChartArea, ChartOptions, TooltipItem, TooltipOptions } from "chart.js";
 import {
   ArcElement,
@@ -13,9 +13,10 @@ import {
   LinearScale,
   LineElement,
   PointElement,
+  RadialLinearScale,
   Tooltip,
 } from "chart.js";
-import { Bar, Doughnut, Line } from "react-chartjs-2";
+import { Bar, Doughnut, Line, Radar } from "react-chartjs-2";
 
 import DashboardNotifications from "@/components/lonaci/dashboard-notifications";
 import { useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
@@ -27,6 +28,7 @@ ChartJS.register(
   LineElement,
   PointElement,
   ArcElement,
+  RadialLinearScale,
   Filler,
   Tooltip,
   Legend,
@@ -55,21 +57,23 @@ function verticalGradient(
 }
 
 const PREMIUM_ANIMATION = {
-  duration: 1100,
-  easing: "easeOutQuart" as const,
+  duration: 1450,
+  easing: "easeOutCubic" as const,
 };
 
 const premiumTooltipDefaults = {
-  backgroundColor: "rgba(255, 255, 255, 0.98)",
-  titleColor: "#0f172a",
-  bodyColor: "#475569",
-  borderColor: "rgba(148, 163, 184, 0.35)",
+  backgroundColor: "rgba(15, 23, 42, 0.94)",
+  titleColor: "#f8fafc",
+  bodyColor: "#e2e8f0",
+  borderColor: "rgba(125, 211, 252, 0.45)",
   borderWidth: 1,
   padding: 14,
   cornerRadius: 12,
   boxPadding: 6,
   displayColors: true,
   usePointStyle: true,
+  titleMarginBottom: 6,
+  bodySpacing: 5,
   titleFont: { size: 12, weight: "bold" },
   bodyFont: { size: 12 },
   caretSize: 8,
@@ -93,8 +97,74 @@ function formatTrendPct(pct: number): string {
   return `${sign}${pct} %`;
 }
 
+function produitLabel(code: string, libelle?: string): string {
+  const cleanCode = (code || "—").trim();
+  const cleanLibelle = (libelle || "").trim();
+  if (cleanCode.toLowerCase() === "autres") return cleanCode;
+  if (!cleanLibelle) return `${cleanCode} (non référencé)`;
+  return `${cleanCode} - ${cleanLibelle}`;
+}
+
 export default function LonaciDashboardHome() {
-  const { kpi, error } = useLonaciKpi();
+  const { kpi, error, refresh } = useLonaciKpi();
+  const [analyticsTheme, setAnalyticsTheme] = useState<"dark" | "light">(() => {
+    if (typeof window === "undefined") return "dark";
+    const raw = window.localStorage.getItem("lonaci:analytics-theme");
+    return raw === "dark" || raw === "light" ? raw : "dark";
+  });
+  const analyticsThemeClass =
+    analyticsTheme === "dark" ? "lonaci-db-analytics-card--dark" : "lonaci-db-analytics-card--light";
+  const analyticsThemeLabel = analyticsTheme === "dark" ? "Dark executive" : "Clair premium";
+  const [isCompactView, setIsCompactView] = useState<boolean>(() => {
+    if (typeof window === "undefined") return true;
+    const raw = window.localStorage.getItem("lonaci:dashboard:compact-view");
+    if (raw === "1") return true;
+    if (raw === "0") return false;
+    return true;
+  });
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+
+  useEffect(() => {
+    window.localStorage.setItem("lonaci:analytics-theme", analyticsTheme);
+  }, [analyticsTheme]);
+
+  useEffect(() => {
+    window.localStorage.setItem("lonaci:dashboard:compact-view", isCompactView ? "1" : "0");
+  }, [isCompactView]);
+
+  useEffect(() => {
+    if (kpi) setLastRefreshedAt(new Date());
+  }, [kpi]);
+
+  async function handleRefreshDashboard() {
+    setIsRefreshing(true);
+    try {
+      await refresh();
+    } finally {
+      setIsRefreshing(false);
+    }
+  }
+  const topPdv = kpi?.topConcessionnairesActifs ?? [];
+  const agencesTableRows = useMemo(() => {
+    const list = kpi?.agencesOverview30j;
+    if (!list?.length) return [];
+    return [...list].sort((a, b) => {
+      if (b.total30j !== a.total30j) return b.total30j - a.total30j;
+      const ca = a.agenceCode ?? a.agenceLabel;
+      const cb = b.agenceCode ?? b.agenceLabel;
+      return ca.localeCompare(cb, "fr", { sensitivity: "base" });
+    });
+  }, [kpi]);
+  const produitVol = useMemo(() => kpi?.produitVolumes30j ?? [], [kpi]);
+  const productsToWatch = useMemo(
+    () =>
+      [...produitVol]
+        .sort((a, b) => Math.abs(b.trendPct) - Math.abs(a.trendPct))
+        .slice(0, 3),
+    [produitVol],
+  );
+  const delays = kpi?.dossierDelays30j;
 
   const barDataPremium = useMemo(() => {
     const rows = kpi?.activity7d ?? [];
@@ -159,7 +229,7 @@ export default function LonaciDashboardHome() {
   const donutData = useMemo(() => {
     const slices = kpi?.produitSlices ?? [];
     return {
-      labels: slices.map((s) => s.code),
+      labels: slices.map((s) => produitLabel(s.code, s.libelle)),
       datasets: [
         {
           data: slices.map((s) => s.count),
@@ -178,9 +248,297 @@ export default function LonaciDashboardHome() {
     if (total <= 0) return [];
     return slices.map((row) => ({
       code: row.code,
+      label: produitLabel(row.code, row.libelle),
       pct: Math.round((row.count / total) * 100),
     }));
   }, [kpi]);
+
+  const agenceVolumeData = useMemo(() => {
+    const rows = agencesTableRows.slice(0, 6);
+    return {
+      labels: rows.map((r) => r.agenceCode ?? r.agenceLabel),
+      datasets: [
+        {
+          label: "Volume 30 j.",
+          data: rows.map((r) => r.total30j),
+          borderRadius: 10,
+          borderSkipped: false as const,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, "#38bdf8", "#0369a1");
+          },
+        },
+      ],
+    };
+  }, [agencesTableRows]);
+
+  const agenceVolumeOptions = useMemo<ChartOptions<"bar">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: "y",
+      animation: PREMIUM_ANIMATION,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...premiumTooltipDefaults },
+      },
+      scales: {
+        x: {
+          beginAtZero: true,
+          border: { display: false },
+          grid: { color: "rgba(148, 163, 184, 0.16)" },
+          ticks: { color: "#94a3b8", font: { size: 10 } },
+        },
+        y: {
+          border: { display: false },
+          grid: { display: false },
+          ticks: { color: "#64748b", font: { size: 10 } },
+        },
+      },
+    }),
+    [],
+  );
+
+  const delaysRadarData = useMemo(() => {
+    const d = delays;
+    const values = d
+      ? [d.avgSubmitHours, d.avgN1Hours, d.avgN2Hours, d.avgFinalizeHours].map((v) =>
+          Number.isFinite(v) ? Number(v.toFixed(1)) : 0,
+        )
+      : [0, 0, 0, 0];
+    return {
+      labels: ["Soumission", "Validation N1", "Validation N2", "Finalisation"],
+      datasets: [
+        {
+          label: "Heures moyennes",
+          data: values,
+          borderColor: "#0ea5e9",
+          backgroundColor: "rgba(14, 165, 233, 0.2)",
+          pointBackgroundColor: "#0284c7",
+          pointBorderColor: "#ffffff",
+          pointHoverBackgroundColor: "#0369a1",
+          pointBorderWidth: 2,
+        },
+      ],
+    };
+  }, [delays]);
+
+  const delaysRadarOptions = useMemo<ChartOptions<"radar">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: PREMIUM_ANIMATION,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...premiumTooltipDefaults,
+          callbacks: {
+            label: (ctx) => {
+              const n = typeof ctx.raw === "number" ? ctx.raw : Number(ctx.raw) || 0;
+              return ` ${n.toFixed(1).replace(".", ",")} h`;
+            },
+          },
+        },
+      },
+      scales: {
+        r: {
+          beginAtZero: true,
+          angleLines: { color: "rgba(148, 163, 184, 0.2)" },
+          grid: { color: "rgba(148, 163, 184, 0.2)" },
+          pointLabels: { color: "#475569", font: { size: 11 } },
+          ticks: { display: false },
+        },
+      },
+    }),
+    [],
+  );
+
+  const modulePressureData = useMemo(() => {
+    const validation = kpi?.dossierValidation;
+    const pending = validation
+      ? [
+          validation.contratSoumis,
+          validation.cautionsEnAttente,
+          validation.pdvNonFinalise,
+          validation.agrementsEnAttente,
+          validation.successionOuverts,
+        ]
+      : [0, 0, 0, 0, 0];
+    const overdue = validation
+      ? [
+          validation.contratSoumisRetard48h,
+          validation.cautionsJ10,
+          validation.pdvEnCoursRetard5j,
+          validation.agrementsRetard,
+          validation.successionStale30j,
+        ]
+      : [0, 0, 0, 0, 0];
+    return {
+      labels: ["Contrats", "Cautions", "PDV", "Agréments", "Successions"],
+      datasets: [
+        {
+          label: "En attente",
+          data: pending,
+          borderRadius: 8,
+          borderSkipped: false as const,
+          maxBarThickness: 20,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, "#7dd3fc", "#0284c7");
+          },
+        },
+        {
+          label: "En retard",
+          data: overdue,
+          borderRadius: 8,
+          borderSkipped: false as const,
+          maxBarThickness: 20,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, "#fda4af", "#dc2626");
+          },
+        },
+      ],
+    };
+  }, [kpi]);
+
+  const modulePressureOptions = useMemo<ChartOptions<"bar">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: PREMIUM_ANIMATION,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          position: "bottom",
+          labels: { boxWidth: 10, color: "#475569", usePointStyle: true, pointStyle: "circle", padding: 14 },
+        },
+        tooltip: { ...premiumTooltipDefaults },
+      },
+      datasets: {
+        bar: { barPercentage: 0.72, categoryPercentage: 0.68 },
+      },
+      scales: {
+        x: {
+          stacked: true,
+          grid: { display: false },
+          ticks: { color: "#64748b", font: { size: 10 } },
+          border: { display: false },
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          grid: { color: "rgba(148, 163, 184, 0.16)" },
+          ticks: { color: "#94a3b8", font: { size: 10 } },
+          border: { display: false },
+        },
+      },
+    }),
+    [],
+  );
+
+  const modulePressureSummary = useMemo(() => {
+    const v = kpi?.dossierValidation;
+    if (!v) return { pending: 0, overdue: 0 };
+    const pending =
+      v.contratSoumis + v.cautionsEnAttente + v.pdvNonFinalise + v.agrementsEnAttente + v.successionOuverts;
+    const overdue =
+      v.contratSoumisRetard48h + v.cautionsJ10 + v.pdvEnCoursRetard5j + v.agrementsRetard + v.successionStale30j;
+    return { pending, overdue };
+  }, [kpi]);
+
+  const productTopRows = useMemo(
+    () =>
+      [...produitVol]
+        .sort((a, b) => {
+          if (b.current30d !== a.current30d) return b.current30d - a.current30d;
+          return a.produitCode.localeCompare(b.produitCode, "fr", { sensitivity: "base" });
+        })
+        .slice(0, 6),
+    [produitVol],
+  );
+
+  const productComparisonData = useMemo(() => {
+    const rows = productTopRows;
+    return {
+      labels: rows.map((p) => p.produitCode),
+      datasets: [
+        {
+          label: "30 j. courant",
+          data: rows.map((p) => p.current30d),
+          borderRadius: 8,
+          borderSkipped: false as const,
+          maxBarThickness: 20,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, "#7dd3fc", "#0284c7");
+          },
+        },
+        {
+          label: "30 j. précédents",
+          data: rows.map((p) => p.previous30d),
+          borderRadius: 8,
+          borderSkipped: false as const,
+          maxBarThickness: 20,
+          backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
+            const { ctx, chartArea } = context.chart;
+            return verticalGradient(ctx, chartArea, "#cbd5e1", "#64748b");
+          },
+        },
+      ],
+    };
+  }, [productTopRows]);
+
+  const productComparisonOptions = useMemo<ChartOptions<"bar">>(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: PREMIUM_ANIMATION,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: {
+          display: true,
+          position: "bottom",
+          labels: { boxWidth: 10, color: "#475569", usePointStyle: true, pointStyle: "rectRounded", padding: 14 },
+        },
+        tooltip: {
+          ...premiumTooltipDefaults,
+          callbacks: {
+            title: (items: TooltipItem<"bar">[]) => {
+              if (!items.length) return "";
+              const row = productTopRows[items[0].dataIndex];
+              return row ? produitLabel(row.produitCode, row.produitLibelle) : String(items[0].label ?? "");
+            },
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+          ticks: { color: "#64748b", font: { size: 10 } },
+          border: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          grid: { color: "rgba(148, 163, 184, 0.16)" },
+          ticks: { color: "#94a3b8", font: { size: 10 } },
+          border: { display: false },
+        },
+      },
+      datasets: {
+        bar: { barPercentage: 0.72, categoryPercentage: 0.66 },
+      },
+    }),
+    [productTopRows],
+  );
+
+  const productTopSummary = useMemo(() => {
+    const current = productTopRows.reduce((sum, row) => sum + row.current30d, 0);
+    const previous = productTopRows.reduce((sum, row) => sum + row.previous30d, 0);
+    const delta = current - previous;
+    return { current, previous, delta };
+  }, [productTopRows]);
 
   const barChartOptions = useMemo<ChartOptions<"bar">>(
     () => ({
@@ -316,19 +674,6 @@ export default function LonaciDashboardHome() {
       kpi.dossierValidation.agrementsRetard
     : 0;
 
-  const topPdv = kpi?.topConcessionnairesActifs ?? [];
-  const agencesTableRows = useMemo(() => {
-    const list = kpi?.agencesOverview30j;
-    if (!list?.length) return [];
-    return [...list].sort((a, b) => {
-      if (b.total30j !== a.total30j) return b.total30j - a.total30j;
-      const ca = a.agenceCode ?? a.agenceLabel;
-      const cb = b.agenceCode ?? b.agenceLabel;
-      return ca.localeCompare(cb, "fr", { sensitivity: "base" });
-    });
-  }, [kpi]);
-  const produitVol = kpi?.produitVolumes30j ?? [];
-  const delays = kpi?.dossierDelays30j;
   const th = kpi?.alertThresholds;
   const cautionDays = th?.cautionMaxDays ?? 10;
   const idleHours = th?.dossierIdleHours ?? 48;
@@ -371,6 +716,45 @@ export default function LonaciDashboardHome() {
 
       {kpi ? (
         <>
+          <div className="lonaci-db-analytics-global-toggle-wrap">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="lonaci-db-analytics-global-toggle-label">Thème analytics</span>
+              <button
+                type="button"
+                className="lonaci-db-analytics-theme-toggle"
+                onClick={() => setAnalyticsTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                aria-label="Basculer le thème analytics"
+                title="Basculer le thème analytics"
+              >
+                {analyticsThemeLabel}
+              </button>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                className="lonaci-db-analytics-theme-toggle"
+                onClick={() => setIsCompactView((prev) => !prev)}
+                aria-label="Basculer la densité du tableau de bord"
+                title="Basculer la densité du tableau de bord"
+              >
+                {isCompactView ? "Vue complète" : "Vue compacte"}
+              </button>
+              <button
+                type="button"
+                className="lonaci-db-analytics-theme-toggle"
+                onClick={() => void handleRefreshDashboard()}
+                disabled={isRefreshing}
+                aria-label="Rafraîchir les données du tableau de bord"
+                title="Rafraîchir les données du tableau de bord"
+              >
+                {isRefreshing ? "Rafraîchissement..." : "Rafraîchir"}
+              </button>
+              <span className="text-[11px] text-slate-500">
+                {lastRefreshedAt ? `Maj: ${lastRefreshedAt.toLocaleTimeString("fr-FR")}` : "Maj: —"}
+              </span>
+            </div>
+          </div>
+
           <section className="lonaci-db-prem-hero" aria-labelledby="lonaci-prem-hero-title">
             <div className="lonaci-db-prem-hero__mesh" aria-hidden />
             <div className="lonaci-db-prem-hero__inner">
@@ -541,7 +925,7 @@ export default function LonaciDashboardHome() {
           </div>
 
           <div className="lonaci-db-row-2">
-            <div className="lonaci-db-kpi">
+            <div className={`lonaci-db-kpi lonaci-db-analytics-card ${analyticsThemeClass}`}>
               <div className="lonaci-db-flex-between lonaci-db-mb-14">
                 <div>
                   <div className="lonaci-db-section-title">Activité — 7 derniers jours</div>
@@ -562,15 +946,15 @@ export default function LonaciDashboardHome() {
                 </div>
               </div>
               <div className="lonaci-db-prem-chart-split">
-                <div className="lonaci-db-prem-chart-panel">
+                <div className="lonaci-db-prem-chart-panel lonaci-db-prem-chart-panel--ultra">
                   <p className="lonaci-db-prem-chart-panel-title">Répartition par canal</p>
-                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-bar">
+                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-bar lonaci-db-chart-wrap--ultra">
                     <Bar data={barDataPremium} options={barChartOptions} />
                   </div>
                 </div>
-                <div className="lonaci-db-prem-chart-panel">
+                <div className="lonaci-db-prem-chart-panel lonaci-db-prem-chart-panel--ultra">
                   <p className="lonaci-db-prem-chart-panel-title">Dynamique cumulée</p>
-                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-line">
+                  <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--premium-line lonaci-db-chart-wrap--ultra">
                     <Line data={lineActivityData} options={lineChartOptions} />
                   </div>
                 </div>
@@ -640,8 +1024,10 @@ export default function LonaciDashboardHome() {
             </div>
           </div>
 
+          {!isCompactView ? (
+            <>
           <div className="lonaci-db-row-insights-equal">
-            <div className="lonaci-db-kpi lonaci-db-insight-card">
+            <div className="lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-1">
               <div className="lonaci-db-flex-between lonaci-db-mb-12">
                 <div>
                   <div className="lonaci-db-section-title">Top PDV</div>
@@ -671,7 +1057,7 @@ export default function LonaciDashboardHome() {
               </div>
             </div>
 
-            <div className="lonaci-db-kpi lonaci-db-insight-card">
+            <div className="lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-2">
               <div className="lonaci-db-mb-12">
                 <div className="lonaci-db-section-title">Délais moyens (dossiers)</div>
                 <div className="lonaci-db-section-subtitle">
@@ -699,6 +1085,96 @@ export default function LonaciDashboardHome() {
                     <div className="lonaci-db-delay-value lonaci-db-delay-green">{formatDelayHours(delays.avgFinalizeHours)}</div>
                     <div className="lonaci-db-delay-label lonaci-db-delay-green-sub">Jusqu&apos;à finalisation</div>
                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="lonaci-db-row-insights-equal">
+            <div
+              className={`lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-3 lonaci-db-analytics-card ${analyticsThemeClass}`}
+            >
+              <div className="lonaci-db-mb-12">
+                <div className="lonaci-db-section-title">Top agences par volume</div>
+                <div className="lonaci-db-section-subtitle">Contrats + cautions + integrations sur 30 jours</div>
+              </div>
+              {agencesTableRows.length === 0 ? (
+                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune agence avec activité sur la période.</p>
+              ) : (
+                <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--ultra">
+                  <Bar data={agenceVolumeData} options={agenceVolumeOptions} />
+                </div>
+              )}
+            </div>
+
+            <div
+              className={`lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-4 lonaci-db-analytics-card ${analyticsThemeClass}`}
+            >
+              <div className="lonaci-db-mb-12">
+                <div className="lonaci-db-section-title">Profil des délais</div>
+                <div className="lonaci-db-section-subtitle">Visualisation radar des étapes de traitement</div>
+              </div>
+              {!delays || delays.sampleSize === 0 ? (
+                <p className="lonaci-db-muted lonaci-db-fs-10">Pas assez de données sur la période.</p>
+              ) : (
+                <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--ultra">
+                  <Radar data={delaysRadarData} options={delaysRadarOptions} />
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="lonaci-db-row-insights-equal">
+            <div
+              className={`lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-5 lonaci-db-analytics-card ${analyticsThemeClass}`}
+            >
+              <div className="lonaci-db-mb-12">
+                <div className="lonaci-db-section-title">Pression opérationnelle</div>
+                <div className="lonaci-db-section-subtitle">En attente vs retard par module</div>
+              </div>
+              <div className="lonaci-db-insight-metrics">
+                <span className="lonaci-db-insight-metric-chip lonaci-db-insight-metric-chip--info">
+                  En attente: {modulePressureSummary.pending}
+                </span>
+                <span className="lonaci-db-insight-metric-chip lonaci-db-insight-metric-chip--danger">
+                  En retard: {modulePressureSummary.overdue}
+                </span>
+              </div>
+              <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--glass lonaci-db-chart-wrap--ultra">
+                <Bar data={modulePressureData} options={modulePressureOptions} />
+              </div>
+            </div>
+
+            <div
+              className={`lonaci-db-kpi lonaci-db-insight-card lonaci-db-insight-card--lift lonaci-db-insight-card--delay-6 lonaci-db-analytics-card ${analyticsThemeClass}`}
+            >
+              <div className="lonaci-db-mb-12">
+                <div className="lonaci-db-section-title">Performance produits</div>
+                <div className="lonaci-db-section-subtitle">Top 6 · 30 j. courant vs 30 j. précédents</div>
+              </div>
+              <div className="lonaci-db-insight-metrics">
+                <span className="lonaci-db-insight-metric-chip lonaci-db-insight-metric-chip--info">
+                  30 j. courant: {productTopSummary.current}
+                </span>
+                <span className="lonaci-db-insight-metric-chip lonaci-db-insight-metric-chip--neutral">
+                  30 j. préc.: {productTopSummary.previous}
+                </span>
+                <span
+                  className={`lonaci-db-insight-metric-chip ${
+                    productTopSummary.delta >= 0
+                      ? "lonaci-db-insight-metric-chip--success"
+                      : "lonaci-db-insight-metric-chip--danger"
+                  }`}
+                >
+                  Delta: {productTopSummary.delta >= 0 ? "+" : ""}
+                  {productTopSummary.delta}
+                </span>
+              </div>
+              {productTopRows.length === 0 ? (
+                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune activité produit sur la période.</p>
+              ) : (
+                <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--glass lonaci-db-chart-wrap--ultra">
+                  <Bar data={productComparisonData} options={productComparisonOptions} />
                 </div>
               )}
             </div>
@@ -790,7 +1266,7 @@ export default function LonaciDashboardHome() {
                       <tr key={p.produitCode || `pr-${i}`}>
                         <td>
                           <Link href={`/contrats?produitCode=${encodeURIComponent(p.produitCode)}`}>
-                            {p.produitCode}
+                            {produitLabel(p.produitCode, p.produitLibelle)}
                           </Link>
                         </td>
                         <td className="lonaci-db-td-num">
@@ -804,7 +1280,32 @@ export default function LonaciDashboardHome() {
                 </table>
               )}
             </div>
+            <div className="lonaci-db-products-watch">
+              <div className="lonaci-db-products-watch__title">Top 3 produits à surveiller</div>
+              {productsToWatch.length === 0 ? (
+                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune variation notable sur la période.</p>
+              ) : (
+                <div className="lonaci-db-products-watch__grid">
+                  {productsToWatch.map((row) => (
+                    <article key={`watch-${row.produitCode}`} className="lonaci-db-products-watch__card">
+                      <p className="lonaci-db-products-watch__name">{produitLabel(row.produitCode, row.produitLibelle)}</p>
+                      <p className="lonaci-db-products-watch__meta">
+                        30 j.: <strong>{row.current30d}</strong> · préc.: <strong>{row.previous30d}</strong>
+                      </p>
+                      <p className={`lonaci-db-products-watch__trend ${trendClass(row.trendPct)}`}>
+                        {row.trendPct >= 0 ? "Hausse" : "Baisse"} {formatTrendPct(row.trendPct)}
+                      </p>
+                      <Link href={`/contrats?produitCode=${encodeURIComponent(row.produitCode)}`} className="lonaci-db-abtn lonaci-db-abtn-ghost">
+                        Ouvrir
+                      </Link>
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
+            </>
+          ) : null}
 
           <div className="lonaci-db-row-bottom">
             <div className="lonaci-db-kpi lonaci-db-pending-validation">
@@ -927,10 +1428,10 @@ export default function LonaciDashboardHome() {
               </div>
             </div>
 
-            <div className="lonaci-db-kpi lonaci-db-flex-col">
+            <div className={`lonaci-db-kpi lonaci-db-flex-col lonaci-db-analytics-card ${analyticsThemeClass}`}>
               <div className="lonaci-db-section-title lonaci-db-mb-3">Répartition par produit</div>
               <div className="lonaci-db-section-subtitle lonaci-db-mb-12">Contrats actifs · mois courant</div>
-              <div className="lonaci-db-donut-wrap lonaci-db-donut-wrap--premium">
+              <div className="lonaci-db-donut-wrap lonaci-db-donut-wrap--premium lonaci-db-donut-wrap--ultra">
                 <Doughnut data={donutData} options={donutChartOptions} />
               </div>
               <div className="lonaci-db-donut-legend">
@@ -940,7 +1441,7 @@ export default function LonaciDashboardHome() {
                     className={`lonaci-db-donut-legend-row lonaci-db-donut-legend-tone-${idx % DONUT_COLORS.length}`}
                   >
                     <span className="lonaci-db-donut-legend-dot" />
-                    {row.code} <strong>{row.pct}%</strong>
+                    {row.label} <strong>{row.pct}%</strong>
                   </div>
                 ))}
               </div>

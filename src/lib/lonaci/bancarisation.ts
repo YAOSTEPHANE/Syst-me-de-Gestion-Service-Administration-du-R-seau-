@@ -142,6 +142,29 @@ export async function findBancarisationRequestById(id: string) {
   return row ? mapRequest(row) : null;
 }
 
+const BANCARISATION_PENDING_STATUSES = ["SOUMIS", "VALIDE_N1", "VALIDE_N2"] as const;
+
+export async function countBancarisationRequestsByStatus(scopeAgenceId?: string | null) {
+  const col = await getBancarisationRequestsCollection();
+  const match: Record<string, unknown> = {};
+  if (scopeAgenceId?.trim()) match.agenceId = scopeAgenceId.trim();
+  const rows = await col
+    .aggregate<{ _id: string; c: number }>([{ $match: match }, { $group: { _id: "$status", c: { $sum: 1 } } }])
+    .toArray();
+  const out: Record<string, number> = {
+    SOUMIS: 0,
+    VALIDE_N1: 0,
+    VALIDE_N2: 0,
+    VALIDE: 0,
+    REJETE: 0,
+  };
+  for (const r of rows) {
+    const k = String(r._id ?? "");
+    if (k in out) out[k] = r.c;
+  }
+  return out as Record<BancarisationRequestStatus, number>;
+}
+
 export async function validateBancarisationRequest(input: {
   requestId: string;
   decision: "VALIDER" | "REJETER";
@@ -153,28 +176,80 @@ export async function validateBancarisationRequest(input: {
   const objectId = new ObjectId(input.requestId);
   const existing = await col.findOne({ _id: objectId });
   if (!existing) throw new Error("REQUEST_NOT_FOUND");
-  if (existing.status !== "SOUMIS") throw new Error("REQUEST_NOT_PENDING");
+  if (!BANCARISATION_PENDING_STATUSES.includes(existing.status as (typeof BANCARISATION_PENDING_STATUSES)[number])) {
+    if (existing.status === "VALIDE" || existing.status === "REJETE") throw new Error("REQUEST_NOT_PENDING");
+    throw new Error("REQUEST_NOT_PENDING");
+  }
 
   const now = new Date();
-  const status = input.decision === "VALIDER" ? "VALIDE" : "REJETE";
+  const actorRole = input.actor.role;
+
+  if (input.decision === "REJETER") {
+    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(actorRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
+    await col.updateOne(
+      { _id: objectId },
+      {
+        $set: {
+          status: "REJETE",
+          validationComment: input.comment,
+          validatedByUserId: input.actor._id ?? "",
+          validatedAt: now,
+          updatedByUserId: input.actor._id ?? "",
+          updatedAt: now,
+        },
+      },
+    );
+    const updated = await col.findOne({ _id: objectId });
+    if (!updated) throw new Error("REQUEST_NOT_FOUND");
+    await appendAuditLog({
+      entityType: "CONCESSIONNAIRE",
+      entityId: existing.concessionnaireId,
+      action: "BANCARISATION_DECISION",
+      userId: input.actor._id ?? "",
+      details: {
+        requestId: input.requestId,
+        decision: "REJETER",
+        statusAfter: "REJETE",
+        nouveauStatut: existing.nouveauStatut,
+      },
+    });
+    return mapRequest(updated);
+  }
+
+  // VALIDER — enchaînement N1 (chef section) → N2 (assistant CDS) → application (chef de service)
+  let nextStatus: BancarisationRequestStatus;
+  if (existing.status === "SOUMIS") {
+    if (actorRole !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+    nextStatus = "VALIDE_N1";
+  } else if (existing.status === "VALIDE_N1") {
+    if (actorRole !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    nextStatus = "VALIDE_N2";
+  } else if (existing.status === "VALIDE_N2") {
+    if (actorRole !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    nextStatus = "VALIDE";
+  } else {
+    throw new Error("REQUEST_NOT_PENDING");
+  }
 
   await col.updateOne(
     { _id: objectId },
     {
       $set: {
-      status,
-      validationComment: input.comment,
-      validatedByUserId: input.actor._id ?? "",
-      validatedAt: now,
-      updatedByUserId: input.actor._id ?? "",
-      updatedAt: now,
+        status: nextStatus,
+        validationComment: input.comment,
+        validatedByUserId: input.actor._id ?? "",
+        validatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+        updatedAt: now,
       },
     },
   );
   const updated = await col.findOne({ _id: objectId });
   if (!updated) throw new Error("REQUEST_NOT_FOUND");
 
-  if (input.decision === "VALIDER") {
+  if (nextStatus === "VALIDE") {
     await prisma.concessionnaire.updateMany({
       where: { id: existing.concessionnaireId, deletedAt: null },
       data: {
@@ -195,7 +270,7 @@ export async function validateBancarisationRequest(input: {
     details: {
       requestId: input.requestId,
       decision: input.decision,
-      statusAfter: status,
+      statusAfter: nextStatus,
       nouveauStatut: existing.nouveauStatut,
     },
   });

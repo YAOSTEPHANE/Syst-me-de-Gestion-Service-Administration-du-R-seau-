@@ -63,7 +63,7 @@ Les **profils** suivants sont définis dans l’application (libellés métier) 
 | Rôle technique | Libellé métier | Mission résumée |
 |----------------|----------------|-----------------|
 | `AGENT` | Agent opérationnel | Saisie des dossiers ; périmètre agence et **modules assignés**. |
-| `CHEF_SECTION` | Chef(fe) de section | **Contrôle N1** : valide ou rejette ; rapports hebdomadaires. |
+| `CHEF_SECTION` | Chef(fe) de section | **Contrôle N1** — valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires. |
 | `ASSIST_CDS` | Assistant(e) chef de service | **Contrôle N2** ; rapports mensuels / semestriels / annuels. |
 | `CHEF_SERVICE` | Chef(fe) de service | **Validation finale** ; accès large ; paramétrage système. |
 | `SUPERVISEUR_REGIONAL` | Superviseur régional | Supervision **inter-agences** selon périmètre. |

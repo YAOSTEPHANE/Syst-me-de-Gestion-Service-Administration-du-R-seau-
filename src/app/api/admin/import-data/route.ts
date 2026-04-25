@@ -163,12 +163,10 @@ function validateAndNormalizeImportRow(
     if (!kind) return { row: null, error: "kind invalide (CESSION|DELOCALISATION)" };
     normalized.kind = kind;
 
-    const statut = normalizeEnum(
-      normalized.statut ?? "SAISIE_AGENT",
-      ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"] as const,
-    );
-    if (!statut) return { row: null, error: "statut invalide pour cession" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une cession démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "SAISIE_AGENT", ["SAISIE_AGENT"] as const);
+    if (!statut) return { row: null, error: "statut invalide pour cession (autorisé: SAISIE_AGENT uniquement à la création)" };
+    normalized.statut = "SAISIE_AGENT";
 
     if (kind === "CESSION") {
       if (!isObjectIdLike(normalized.cedantId)) return { row: null, error: "cedantId requis (ObjectId)" };
@@ -196,9 +194,11 @@ function validateAndNormalizeImportRow(
     if (!isNonEmptyString(normalized.produitCode)) return { row: null, error: "produitCode requis" };
     normalized.produitCode = normalized.produitCode.trim().toUpperCase();
     if (!isNonEmptyString(normalized.motif)) return { row: null, error: "motif requis" };
-    const statut = normalizeEnum(normalized.statut ?? "DOSSIER_RECU", ["DOSSIER_RECU", "RESILIE"] as const);
-    if (!statut) return { row: null, error: "statut invalide pour résiliation" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une résiliation démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "DOSSIER_RECU", ["DOSSIER_RECU"] as const);
+    if (!statut)
+      return { row: null, error: "statut invalide pour résiliation (autorisé: DOSSIER_RECU uniquement à la création)" };
+    normalized.statut = "DOSSIER_RECU";
     return { row: normalized };
   }
 
@@ -213,9 +213,21 @@ function validateAndNormalizeImportRow(
       return { row: null, error: "concessionnaireId invalide (ObjectId)" };
     }
     if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
-    const statut = normalizeEnum(normalized.statut ?? "DEMANDE_RECUE", ["DEMANDE_RECUE", "TRANSMIS", "FINALISE"] as const);
-    if (!statut) return { row: null, error: "statut invalide pour attestation/domiciliation" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une demande démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "DEMANDE_RECUE", ["DEMANDE_RECUE"] as const);
+    if (!statut)
+      return { row: null, error: "statut invalide pour attestation/domiciliation (autorisé: DEMANDE_RECUE uniquement à la création)" };
+    normalized.statut = "DEMANDE_RECUE";
+    return { row: normalized };
+  }
+
+  if (collection === "dossiers") {
+    // Règle métier: création/import dossier strictement avant validation N1.
+    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["BROUILLON", "SOUMIS"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour dossier (autorisés: BROUILLON ou SOUMIS à la création)" };
+    }
+    normalized.status = status;
     return { row: normalized };
   }
 
@@ -228,9 +240,9 @@ function validateAndNormalizeImportRow(
     if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
     const statutActuel = normalizeEnum(normalized.statutActuel ?? "NON_BANCARISE", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
     const nouveauStatut = normalizeEnum(normalized.nouveauStatut ?? "EN_COURS", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
-    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS", "VALIDE", "REJETE"] as const);
+    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS"] as const);
     if (!statutActuel || !nouveauStatut || !status) {
-      return { row: null, error: "statuts bancarisation invalides" };
+      return { row: null, error: "statuts bancarisation invalides (creation: SOUMIS uniquement)" };
     }
     normalized.statutActuel = statutActuel;
     normalized.nouveauStatut = nouveauStatut;
@@ -238,6 +250,29 @@ function validateAndNormalizeImportRow(
     if (nouveauStatut === "BANCARISE" && !isNonEmptyString(normalized.compteBancaire)) {
       return { row: null, error: "compteBancaire requis pour nouveauStatut=BANCARISE" };
     }
+    return { row: normalized };
+  }
+
+  if (collection === "cautions") {
+    // Règle métier: à la création/import, une caution ne peut pas être validée directement.
+    const status = normalizeEnum(normalized.status ?? "EN_ATTENTE", ["EN_ATTENTE"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour caution (autorisé: EN_ATTENTE uniquement à la création)" };
+    }
+    normalized.status = "EN_ATTENTE";
+    normalized.paidAt = null;
+    normalized.immutableAfterFinal = false;
+    return { row: normalized };
+  }
+
+  if (collection === "pdv_integrations") {
+    // Règle métier: à la création/import, une intégration PDV démarre avant validation N1.
+    const status = normalizeEnum(normalized.status ?? "DEMANDE_RECUE", ["DEMANDE_RECUE"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour intégration PDV (autorisé: DEMANDE_RECUE uniquement à la création)" };
+    }
+    normalized.status = "DEMANDE_RECUE";
+    normalized.finalizedAt = null;
     return { row: normalized };
   }
 

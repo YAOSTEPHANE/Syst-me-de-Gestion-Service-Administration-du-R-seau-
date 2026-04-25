@@ -43,6 +43,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
   if (doc.acteDeces?.uploadedByUserId) allUserIds.add(doc.acteDeces.uploadedByUserId);
   if (doc.decision?.decidedByUserId) allUserIds.add(doc.decision.decidedByUserId);
+  if (doc.validationN1ByUserId) allUserIds.add(doc.validationN1ByUserId);
+  if (doc.validationN2ByUserId) allUserIds.add(doc.validationN2ByUserId);
 
   const users = await Promise.all([...allUserIds].map(async (userId) => [userId, await findUserById(userId)] as const));
   const userMap = new Map(users.map(([id2, u]) => [id2, u]));
@@ -118,6 +120,28 @@ export async function GET(request: NextRequest, context: RouteContext) {
                   }
                 : null,
             }
+          : null,
+        validationN1At: doc.validationN1At ? doc.validationN1At.toISOString() : null,
+        validationN1ByUser: doc.validationN1ByUserId
+          ? userMap.get(doc.validationN1ByUserId)
+            ? {
+                id: userMap.get(doc.validationN1ByUserId)?._id ?? "",
+                nom: userMap.get(doc.validationN1ByUserId)?.nom ?? "",
+                prenom: userMap.get(doc.validationN1ByUserId)?.prenom ?? "",
+                role: userMap.get(doc.validationN1ByUserId)?.role ?? "",
+              }
+            : null
+          : null,
+        validationN2At: doc.validationN2At ? doc.validationN2At.toISOString() : null,
+        validationN2ByUser: doc.validationN2ByUserId
+          ? userMap.get(doc.validationN2ByUserId)
+            ? {
+                id: userMap.get(doc.validationN2ByUserId)?._id ?? "",
+                nom: userMap.get(doc.validationN2ByUserId)?.nom ?? "",
+                prenom: userMap.get(doc.validationN2ByUserId)?.prenom ?? "",
+                role: userMap.get(doc.validationN2ByUserId)?.role ?? "",
+              }
+            : null
           : null,
         createdAt: doc.createdAt.toISOString(),
         updatedAt: doc.updatedAt.toISOString(),

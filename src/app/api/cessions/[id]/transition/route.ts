@@ -6,7 +6,7 @@ import { ensureCessionIndexes, transitionCession, type CessionStatus } from "@/l
 import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
 
 const schema = z.object({
-  target: z.enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"]),
+  target: z.enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "VALIDEE_CHEF_SERVICE", "REJETEE"]),
   commentaire: z.string().max(10000).optional(),
 });
 
@@ -21,13 +21,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
   const rbacAction = resolveRbacAction(parsed.data.target, {
     CONTROLE_CHEF_SECTION: "VALIDATE_N1",
+    VALIDATION_N2: "VALIDATE_N2",
     VALIDEE_CHEF_SERVICE: "FINALIZE",
     REJETEE: "REJECT",
     SAISIE_AGENT: "UPDATE",
   });
   const auth = await checkPermission(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
-    resource: "DOSSIERS",
+    resource: "CESSIONS",
     action: rbacAction,
   });
   if ("error" in auth) return auth.error;

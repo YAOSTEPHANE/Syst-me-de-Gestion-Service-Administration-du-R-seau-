@@ -9,7 +9,47 @@ import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concess
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type Banc = "NON_BANCARISE" | "EN_COURS" | "BANCARISE";
-type RequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
+type RequestStatus = "SOUMIS" | "VALIDE_N1" | "VALIDE_N2" | "VALIDE" | "REJETE";
+
+const REQUEST_TABS: RequestStatus[] = ["SOUMIS", "VALIDE_N1", "VALIDE_N2", "VALIDE", "REJETE"];
+
+function emptyRequestStatusCounts(): Record<RequestStatus, number> {
+  return { SOUMIS: 0, VALIDE_N1: 0, VALIDE_N2: 0, VALIDE: 0, REJETE: 0 };
+}
+
+function requestStatusLabel(s: RequestStatus): string {
+  switch (s) {
+    case "SOUMIS":
+      return "Soumis";
+    case "VALIDE_N1":
+      return "Validé N1";
+    case "VALIDE_N2":
+      return "Validé N2";
+    case "VALIDE":
+      return "Validé (appliqué)";
+    case "REJETE":
+      return "Rejeté";
+    default:
+      return s;
+  }
+}
+
+function tabShortLabel(s: RequestStatus): string {
+  switch (s) {
+    case "SOUMIS":
+      return "Soumis";
+    case "VALIDE_N1":
+      return "N1";
+    case "VALIDE_N2":
+      return "N2";
+    case "VALIDE":
+      return "OK";
+    case "REJETE":
+      return "Rejet";
+    default:
+      return s;
+  }
+}
 
 interface ConcRow {
   id: string;
@@ -44,6 +84,20 @@ interface ReqRow {
   justificatif: { url: string; filename: string };
   createdAt: string;
 }
+
+function canValidateBancarisationRequest(r: ReqRow, role: string): boolean {
+  if (r.status === "SOUMIS") return role === "CHEF_SECTION";
+  if (r.status === "VALIDE_N1") return role === "ASSIST_CDS";
+  if (r.status === "VALIDE_N2") return role === "CHEF_SERVICE";
+  return false;
+}
+
+function canRejectBancarisationRequest(r: ReqRow, role: string): boolean {
+  return (
+    ["SOUMIS", "VALIDE_N1", "VALIDE_N2"].includes(r.status) &&
+    ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)
+  );
+}
 interface CounterRow {
   agenceId: string | null;
   agenceLabel: string;
@@ -73,11 +127,13 @@ const STATUS_TOKENS = {
   },
 } as const;
 
-const REQUEST_STATUS_TOKENS = {
+const REQUEST_STATUS_TOKENS: Record<RequestStatus, string> = {
   SOUMIS: "bg-indigo-100 text-indigo-950 ring-1 ring-indigo-400",
+  VALIDE_N1: "bg-sky-100 text-sky-950 ring-1 ring-sky-400",
+  VALIDE_N2: "bg-violet-100 text-violet-950 ring-1 ring-violet-400",
   VALIDE: "bg-emerald-100 text-emerald-950 ring-1 ring-emerald-400",
   REJETE: "bg-rose-100 text-rose-950 ring-1 ring-rose-400",
-} as const;
+};
 
 async function downloadBancarisationExcelTemplate() {
   const XLSX = await import("xlsx");
@@ -171,6 +227,7 @@ export default function BancarisationPanel() {
   const [refsAgences, setRefsAgences] = useState<RefAgence[]>([]);
   const [refsProduits, setRefsProduits] = useState<RefProduit[]>([]);
   const [requests, setRequests] = useState<ReqRow[]>([]);
+  const [allStatusCounts, setAllStatusCounts] = useState<Record<RequestStatus, number> | null>(null);
   const [counters, setCounters] = useState<CounterRow[]>([]);
   const [userRole, setUserRole] = useState<string>("");
   /** null = chargement initial ; false = pas de module CONCESSIONNAIRES (pas d’API bancarisation). */
@@ -212,9 +269,11 @@ export default function BancarisationPanel() {
     return acc;
   }, [counters]);
 
-  const requestCounters = useMemo(() => {
-    const c = { SOUMIS: 0, VALIDE: 0, REJETE: 0 };
-    for (const r of requests) c[r.status] += 1;
+  const requestCountersPage = useMemo(() => {
+    const c = emptyRequestStatusCounts();
+    for (const r of requests) {
+      if (r.status in c) c[r.status] += 1;
+    }
     return c;
   }, [requests]);
 
@@ -261,13 +320,19 @@ export default function BancarisationPanel() {
         const reqData = (await reqRes.json()) as {
           items: ReqRow[];
           counters: CounterRow[];
-          allStatusCounts?: { SOUMIS: number; VALIDE: number; REJETE: number };
+          allStatusCounts?: Partial<Record<RequestStatus, number>>;
         };
         setRequests(reqData.items);
         setCounters(reqData.counters);
+        if (reqData.allStatusCounts) {
+          setAllStatusCounts({ ...emptyRequestStatusCounts(), ...reqData.allStatusCounts });
+        } else {
+          setAllStatusCounts(null);
+        }
       } else {
         setRequests([]);
         setCounters([]);
+        setAllStatusCounts(null);
       }
     } catch {
       setError("Impossible de charger les données.");
@@ -279,6 +344,13 @@ export default function BancarisationPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!decisionTarget) return;
+    if (decision === "VALIDER" && !canValidateBancarisationRequest(decisionTarget, userRole)) {
+      setDecision("REJETER");
+    }
+  }, [decisionTarget, userRole, decision]);
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -307,7 +379,10 @@ export default function BancarisationPanel() {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Creation impossible");
       }
-      setToast({ type: "success", message: "Demande soumise pour validation Chef(fe) de service." });
+      setToast({
+        type: "success",
+        message: "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service.",
+      });
       setCreateOpen(false);
       setConcessionnaireId("");
       setCompteBancaire("");
@@ -343,7 +418,10 @@ export default function BancarisationPanel() {
       }
       setToast({
         type: "success",
-        message: action === "VALIDER" ? "Demande validée." : "Demande rejetée.",
+        message:
+          action === "VALIDER"
+            ? "Décision enregistrée (étape suivante ou application sur la fiche PDV)."
+            : "Demande rejetée.",
       });
       setDecisionTarget(null);
       setDecisionComment("");
@@ -582,22 +660,25 @@ export default function BancarisationPanel() {
       {saisieBancarisation ? (
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Validation et transfert (Chef(fe) de service)</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Circuit de validation (N1 → N2 → chef de service)</h3>
           <div className="flex flex-wrap gap-2">
-            {(["SOUMIS", "VALIDE", "REJETE"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setRequestTab(s)}
-                className={`rounded-xl border px-2.5 py-1 text-xs transition ${
-                  requestTab === s
-                    ? "border-amber-300 bg-amber-50 text-amber-700"
-                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {s} ({requestCounters[s]})
-              </button>
-            ))}
+            {REQUEST_TABS.map((s) => {
+              const tabCounts = allStatusCounts ?? requestCountersPage;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setRequestTab(s)}
+                  className={`rounded-xl border px-2.5 py-1 text-xs transition ${
+                    requestTab === s
+                      ? "border-amber-300 bg-amber-50 text-amber-700"
+                      : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {tabShortLabel(s)} ({tabCounts[s]})
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -637,36 +718,45 @@ export default function BancarisationPanel() {
                   </td>
                   <td className="py-1.5 pr-3 text-slate-400">{r.validationComment || "—"}</td>
                   <td className="py-1.5">
-                    {saisieBancarisation && userRole === "CHEF_SERVICE" && r.status === "SOUMIS" ? (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecision("VALIDER");
-                            setDecisionComment("");
-                            setDecisionAck(false);
-                            setDecisionTarget(r);
-                          }}
-                          className="rounded-xl bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500"
-                        >
-                          Valider
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecision("REJETER");
-                            setDecisionComment("");
-                            setDecisionAck(false);
-                            setDecisionTarget(r);
-                          }}
-                          className="rounded-xl bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-500"
-                        >
-                          Rejeter
-                        </button>
+                    {saisieBancarisation &&
+                    (canValidateBancarisationRequest(r, userRole) || canRejectBancarisationRequest(r, userRole)) ? (
+                      <div className="flex flex-wrap gap-2">
+                        {canValidateBancarisationRequest(r, userRole) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDecision("VALIDER");
+                              setDecisionComment("");
+                              setDecisionAck(false);
+                              setDecisionTarget(r);
+                            }}
+                            className="rounded-xl bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500"
+                          >
+                            {r.status === "SOUMIS"
+                              ? "Valider N1"
+                              : r.status === "VALIDE_N1"
+                                ? "Valider N2"
+                                : "Valider (appliquer)"}
+                          </button>
+                        ) : null}
+                        {canRejectBancarisationRequest(r, userRole) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDecision("REJETER");
+                              setDecisionComment("");
+                              setDecisionAck(false);
+                              setDecisionTarget(r);
+                            }}
+                            className="rounded-xl bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-500"
+                          >
+                            Rejeter
+                          </button>
+                        ) : null}
                       </div>
                     ) : (
                       <span className={`rounded-full px-2 py-0.5 text-[10px] ${requestStatusBadge(r.status)}`}>
-                        {r.status === "SOUMIS" ? "Réservé Chef(fe) de service" : r.status}
+                        {requestStatusLabel(r.status)}
                       </span>
                     )}
                   </td>
@@ -749,7 +839,7 @@ export default function BancarisationPanel() {
       </section>
 
       <p className="text-xs text-slate-600">
-        La mise à jour de la fiche concessionnaire est automatique après validation Chef(fe) de service. Vous pouvez aussi ouvrir la fiche depuis{" "}
+        La fiche concessionnaire est mise à jour automatiquement après la validation finale (chef de service), une fois les étapes N1 et N2 effectuées. Vous pouvez aussi ouvrir la fiche depuis{" "}
         <Link href="/concessionnaires" className="text-sky-600 hover:underline">
           Concessionnaires
         </Link>
@@ -883,31 +973,36 @@ export default function BancarisationPanel() {
           <div className="relative z-10 w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
             <h3 className="text-sm font-semibold text-slate-900">Confirmation de décision</h3>
             <p className="mt-1 text-xs text-slate-600">
-              Demande: {decisionTarget.statutActuel} → {decisionTarget.nouveauStatut}
+              Demande: {decisionTarget.statutActuel} → {decisionTarget.nouveauStatut} · statut workflow :{" "}
+              {requestStatusLabel(decisionTarget.status)}
             </p>
             <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setDecision("VALIDER")}
-                className={`rounded-xl px-3 py-1 text-xs transition ${
-                  decision === "VALIDER"
-                    ? "bg-emerald-700 text-white"
-                    : "border border-emerald-700 text-emerald-400"
-                }`}
-              >
-                Valider
-              </button>
-              <button
-                type="button"
-                onClick={() => setDecision("REJETER")}
-                className={`rounded-xl px-3 py-1 text-xs transition ${
-                  decision === "REJETER"
-                    ? "bg-rose-700 text-white"
-                    : "border border-rose-700 text-rose-400"
-                }`}
-              >
-                Rejeter
-              </button>
+              {canValidateBancarisationRequest(decisionTarget, userRole) ? (
+                <button
+                  type="button"
+                  onClick={() => setDecision("VALIDER")}
+                  className={`rounded-xl px-3 py-1 text-xs transition ${
+                    decision === "VALIDER"
+                      ? "bg-emerald-700 text-white"
+                      : "border border-emerald-700 text-emerald-400"
+                  }`}
+                >
+                  Valider
+                </button>
+              ) : null}
+              {canRejectBancarisationRequest(decisionTarget, userRole) ? (
+                <button
+                  type="button"
+                  onClick={() => setDecision("REJETER")}
+                  className={`rounded-xl px-3 py-1 text-xs transition ${
+                    decision === "REJETER"
+                      ? "bg-rose-700 text-white"
+                      : "border border-rose-700 text-rose-400"
+                  }`}
+                >
+                  Rejeter
+                </button>
+              ) : null}
             </div>
             <label className="mt-3 block text-xs text-slate-600">Commentaire (optionnel)</label>
             <textarea
@@ -936,7 +1031,12 @@ export default function BancarisationPanel() {
               </button>
               <button
                 type="button"
-                disabled={!decisionAck || validating}
+                disabled={
+                  !decisionAck ||
+                  validating ||
+                  (decision === "VALIDER" && !canValidateBancarisationRequest(decisionTarget, userRole)) ||
+                  (decision === "REJETER" && !canRejectBancarisationRequest(decisionTarget, userRole))
+                }
                 onClick={() => void decideRequest(decisionTarget.id, decision)}
                 className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-60"
               >

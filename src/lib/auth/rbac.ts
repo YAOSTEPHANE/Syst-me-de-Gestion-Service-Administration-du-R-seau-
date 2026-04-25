@@ -122,6 +122,10 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "CAUTIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CAUTIONS", action: "RETURN_FOR_CORRECTION", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "FINALIZE", allowed: false },
 
     { resource: "PDV_INTEGRATIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -139,6 +143,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CESSIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CESSIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CESSIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CESSIONS", action: "FINALIZE", allowed: false },
 
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -171,6 +176,10 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "CAUTIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N1", allowed: false },
+    { resource: "CAUTIONS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "RETURN_FOR_CORRECTION", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "FINALIZE", allowed: false },
 
     { resource: "PDV_INTEGRATIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -180,15 +189,16 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "AGREMENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: false },
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "AGREMENTS", action: "FINALIZE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
 
     { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: false },
     { resource: "CESSIONS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "CESSIONS", action: "FINALIZE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
 
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -264,7 +274,13 @@ export const RBAC_MATRIX: RoleMatrix = {
     return actions.map((action) => ({
       resource,
       action,
-      allowed: true,
+      allowed: !(
+        (action === "VALIDATE_N1" || action === "VALIDATE_N2") &&
+        (resource === "DOSSIERS" ||
+          resource === "AGREMENTS" ||
+          resource === "CESSIONS" ||
+          resource === "CAUTIONS")
+      ),
       scope: "GLOBAL" as const,
     }));
   }),

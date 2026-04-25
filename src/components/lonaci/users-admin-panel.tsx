@@ -805,6 +805,11 @@ export default function UsersAdminPanel() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<AdminUser | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [passwordTarget, setPasswordTarget] = useState<AdminUser | null>(null);
+  const [adminNewPassword, setAdminNewPassword] = useState("");
+  const [adminNewPasswordConfirm, setAdminNewPasswordConfirm] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [createEmail, setCreateEmail] = useState("");
   const [createMatricule, setCreateMatricule] = useState("");
@@ -935,6 +940,31 @@ export default function UsersAdminPanel() {
   }, [createOpen, busyId]);
 
   useEffect(() => {
+    if (!passwordTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && busyId !== passwordTarget.id) {
+        setPasswordTarget(null);
+        setAdminNewPassword("");
+        setAdminNewPasswordConfirm("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [passwordTarget, busyId]);
+
+  useEffect(() => {
+    if (!deleteTarget) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && busyId !== deleteTarget.id) {
+        setDeleteTarget(null);
+        setDeleteConfirmText("");
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [deleteTarget, busyId]);
+
+  useEffect(() => {
     if (!rowMenuOpenId) return;
 
     const onMouseDown = (event: MouseEvent) => {
@@ -981,6 +1011,33 @@ export default function UsersAdminPanel() {
     }
   }
 
+  async function confirmDeleteUser() {
+    if (!deleteTarget) return;
+    const userId = deleteTarget.id;
+    setBusyId(userId);
+    setToast(null);
+    try {
+      const res = await fetch(`/api/admin/users/${userId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Suppression impossible");
+      }
+      await load();
+      setDeleteTarget(null);
+      setDeleteConfirmText("");
+      setToast({ type: "success", message: "Utilisateur supprimé." });
+    } catch (e) {
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
+      setError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
   async function adminResetPassword(userId: string) {
     setBusyId(userId);
     setToast(null);
@@ -988,9 +1045,11 @@ export default function UsersAdminPanel() {
       const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
         method: "POST",
         credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
       });
       const body = (await res.json().catch(() => null)) as
-        | { message?: string; resetToken?: string }
+        | { message?: string; resetToken?: string; mode?: string }
         | null;
       if (!res.ok) throw new Error(body?.message ?? "Reset impossible");
       await load();
@@ -999,6 +1058,53 @@ export default function UsersAdminPanel() {
         message: body?.resetToken
           ? `Token reset généré (SMTP off): ${body.resetToken}`
           : body?.message ?? "Lien de reset envoyé.",
+      });
+    } catch (e) {
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
+      setError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function closePasswordModal() {
+    setPasswordTarget(null);
+    setAdminNewPassword("");
+    setAdminNewPasswordConfirm("");
+  }
+
+  async function adminSetPasswordDirect() {
+    if (!passwordTarget) return;
+    const pwd = adminNewPassword.trim();
+    const pwd2 = adminNewPasswordConfirm.trim();
+    if (pwd.length < 8) {
+      setToast({ type: "error", message: "Le mot de passe doit contenir au moins 8 caractères." });
+      return;
+    }
+    if (pwd !== pwd2) {
+      setToast({ type: "error", message: "La confirmation ne correspond pas au mot de passe." });
+      return;
+    }
+    setBusyId(passwordTarget.id);
+    setToast(null);
+    try {
+      const res = await fetch(`/api/admin/users/${encodeURIComponent(passwordTarget.id)}/reset-password`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ newPassword: pwd }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; mode?: string } | null;
+      if (!res.ok) throw new Error(body?.message ?? "Mise à jour impossible");
+      await load();
+      closePasswordModal();
+      setToast({
+        type: "success",
+        message:
+          body?.mode === "direct"
+            ? "Mot de passe mis à jour. L’utilisateur devra se reconnecter."
+            : "Mot de passe mis à jour.",
       });
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
@@ -1271,6 +1377,31 @@ export default function UsersAdminPanel() {
           >
             Créer un compte
           </button>
+          <button
+            type="button"
+            onClick={() =>
+              window.open(
+                `/api/admin/users/export?${new URLSearchParams({
+                  status: statusFilter,
+                  ...(roleFilter !== "ALL" ? { role: roleFilter } : {}),
+                  ...(agenceFilter !== "ALL" ? { agenceId: agenceFilter } : {}),
+                  ...(searchQuery.trim() ? { q: searchQuery.trim() } : {}),
+                }).toString()}`,
+                "_blank",
+                "noopener,noreferrer",
+              )
+            }
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-center text-sm font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Export PDF (utilisateurs)
+          </button>
+          <button
+            type="button"
+            onClick={() => window.open("/api/admin/auth-logs/export", "_blank", "noopener,noreferrer")}
+            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-center text-sm font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Export PDF (journal auth)
+          </button>
         </div>
       </div>
 
@@ -1482,7 +1613,21 @@ export default function UsersAdminPanel() {
                               disabled={busyId === u.id}
                               className="w-full px-3 py-2 text-left text-sm text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
                             >
-                              Reset MDP
+                              Lien reset (e-mail)
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setRowMenuOpenId(null);
+                                setPasswordTarget(u);
+                                setAdminNewPassword("");
+                                setAdminNewPasswordConfirm("");
+                              }}
+                              disabled={busyId === u.id}
+                              className="w-full px-3 py-2 text-left text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
+                            >
+                              Définir le mot de passe
                             </button>
                             <button
                               type="button"
@@ -1495,6 +1640,19 @@ export default function UsersAdminPanel() {
                               className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                             >
                               Modifier
+                            </button>
+                            <button
+                              type="button"
+                              role="menuitem"
+                              onClick={() => {
+                                setRowMenuOpenId(null);
+                                setDeleteTarget(u);
+                                setDeleteConfirmText("");
+                              }}
+                              disabled={busyId === u.id}
+                              className="w-full px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-50"
+                            >
+                              Supprimer l&apos;utilisateur
                             </button>
                           </div>
                         ) : null}
@@ -1550,6 +1708,65 @@ export default function UsersAdminPanel() {
         </div>
       ) : null}
 
+      {passwordTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <p className="text-xs uppercase tracking-[0.16em] text-indigo-600">Mot de passe</p>
+            <h3 className="mt-1 text-lg font-semibold text-slate-900">
+              Définir le mot de passe — {passwordTarget.prenom} {passwordTarget.nom}
+            </h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Compte : <span className="font-mono text-xs">{passwordTarget.email}</span>. L’utilisateur sera
+              déconnecté de ses sessions actives.
+            </p>
+            <div className="mt-4 grid gap-3">
+              <label className="grid gap-1">
+                <span className="text-xs text-slate-600">Nouveau mot de passe (min. 8 caractères)</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={adminNewPassword}
+                  onChange={(e) => setAdminNewPassword(e.target.value)}
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs text-slate-600">Confirmation</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={adminNewPasswordConfirm}
+                  onChange={(e) => setAdminNewPasswordConfirm(e.target.value)}
+                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+            </div>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closePasswordModal}
+                disabled={busyId === passwordTarget.id}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => void adminSetPasswordDirect()}
+                disabled={
+                  busyId === passwordTarget.id ||
+                  adminNewPassword.trim().length < 8 ||
+                  adminNewPassword.trim() !== adminNewPasswordConfirm.trim()
+                }
+                className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {busyId === passwordTarget.id ? "Enregistrement…" : "Enregistrer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {confirmTarget ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
@@ -1578,6 +1795,57 @@ export default function UsersAdminPanel() {
                 className="rounded-lg border border-rose-600 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100 disabled:opacity-50"
               >
                 {busyId === confirmTarget.id ? "Déconnexion..." : "Confirmer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteTarget ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
+            <p className="text-xs uppercase tracking-[0.16em] text-rose-600">Suppression</p>
+            <h3 className="mt-1 text-lg font-semibold text-slate-900">Supprimer cet utilisateur ?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Tu vas retirer définitivement{" "}
+              <span className="font-medium text-slate-900">
+                {deleteTarget.prenom} {deleteTarget.nom}
+              </span>{" "}
+              ({deleteTarget.email}) des comptes actifs.
+            </p>
+            <p className="mt-1 text-xs text-slate-500">
+              Cette action désactive la session en cours et masque le compte des listes.
+            </p>
+            <label className="mt-3 grid gap-1">
+              <span className="text-xs text-slate-600">
+                Tapez <span className="font-semibold text-slate-900">SUPPRIMER</span> pour confirmer
+              </span>
+              <input
+                value={deleteConfirmText}
+                onChange={(e) => setDeleteConfirmText(e.target.value)}
+                placeholder="SUPPRIMER"
+                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              />
+            </label>
+            <div className="mt-5 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setDeleteTarget(null);
+                  setDeleteConfirmText("");
+                }}
+                disabled={busyId === deleteTarget.id}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDeleteUser()}
+                disabled={busyId === deleteTarget.id || deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER"}
+                className="rounded-lg border border-rose-700 bg-rose-700 px-3 py-2 text-sm font-medium text-white hover:bg-rose-800 disabled:opacity-50"
+              >
+                {busyId === deleteTarget.id ? "Suppression..." : "Supprimer"}
               </button>
             </div>
           </div>

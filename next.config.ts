@@ -16,7 +16,8 @@ const cspReportOnlyDirectives = [
 /** CSP bloquante (enforce) plus stricte pour la production. */
 const cspEnforcedDirectives = [
   "default-src 'self'",
-  "script-src 'self'",
+  // Next.js injecte des scripts inline (runtime/hydratation) : sans nonce/hashes, il faut autoriser unsafe-inline.
+  "script-src 'self' 'unsafe-inline'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
@@ -29,13 +30,16 @@ const cspEnforcedDirectives = [
 ].join("; ");
 
 /** À `true` au build : applique `Content-Security-Policy` (bloquant) au lieu de Report-Only. */
-const cspEnforce = process.env.ENABLE_CSP_ENFORCE === "true";
+const cspEnforce = process.env.ENABLE_CSP_ENFORCE !== "false" && process.env.NODE_ENV === "production";
 const firstAllowedCorsOrigin = process.env.CORS_ALLOWED_ORIGINS
   ?.split(",")
   .map((v) => v.trim())
   .find(Boolean);
 
 const securityHeaders = [
+  ...(process.env.NODE_ENV === "production"
+    ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains; preload" }]
+    : []),
   { key: "X-Frame-Options", value: "DENY" },
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
@@ -67,6 +71,9 @@ const apiCorsHeaders = [
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["pdfkit"],
+  outputFileTracingExcludes: {
+    "/api/admin/backups/restore": ["./next.config.ts"],
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

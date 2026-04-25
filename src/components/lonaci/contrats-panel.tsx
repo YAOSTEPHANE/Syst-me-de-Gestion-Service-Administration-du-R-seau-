@@ -5,6 +5,7 @@ import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -415,6 +416,34 @@ export default function ContratsPanel() {
     setListPage(1);
   }, [listRefDebounced]);
 
+  const buildContratsListFiltersParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (listStatus) params.set("status", listStatus);
+    if (listProduit.trim()) params.set("produitCode", listProduit.trim().toUpperCase());
+    if (listRefDebounced) params.set("q", listRefDebounced);
+    if (listAgenceId.trim()) params.set("agenceId", listAgenceId.trim());
+    if (listMonthCurrent) params.set("monthCurrent", "true");
+    else {
+      if (listDateFrom.trim()) {
+        params.set("dateFrom", new Date(`${listDateFrom.trim()}T00:00:00`).toISOString());
+      }
+      if (listDateTo.trim()) {
+        params.set("dateTo", new Date(`${listDateTo.trim()}T23:59:59.999`).toISOString());
+      }
+    }
+    if (listWorkflowStatus) params.set("dossierStatus", listWorkflowStatus);
+    return params;
+  }, [
+    listStatus,
+    listProduit,
+    listRefDebounced,
+    listAgenceId,
+    listMonthCurrent,
+    listDateFrom,
+    listDateTo,
+    listWorkflowStatus,
+  ]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -432,24 +461,9 @@ export default function ContratsPanel() {
     setListLoading(true);
     setListError(null);
     try {
-      const params = new URLSearchParams({
-        page: String(listPage),
-        pageSize: String(listPageSize),
-      });
-      if (listStatus) params.set("status", listStatus);
-      if (listProduit.trim()) params.set("produitCode", listProduit.trim().toUpperCase());
-      if (listRefDebounced) params.set("q", listRefDebounced);
-      if (listAgenceId.trim()) params.set("agenceId", listAgenceId.trim());
-      if (listMonthCurrent) params.set("monthCurrent", "true");
-      else {
-        if (listDateFrom.trim()) {
-          params.set("dateFrom", new Date(`${listDateFrom.trim()}T00:00:00`).toISOString());
-        }
-        if (listDateTo.trim()) {
-          params.set("dateTo", new Date(`${listDateTo.trim()}T23:59:59.999`).toISOString());
-        }
-      }
-      if (listWorkflowStatus) params.set("dossierStatus", listWorkflowStatus);
+      const params = buildContratsListFiltersParams();
+      params.set("page", String(listPage));
+      params.set("pageSize", String(listPageSize));
       const res = await fetch(`/api/contrats?${params}`, { credentials: "include", cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -483,6 +497,7 @@ export default function ContratsPanel() {
     listDateTo,
     listWorkflowStatus,
     listRefDebounced,
+    buildContratsListFiltersParams,
   ]);
 
   useEffect(() => {
@@ -798,7 +813,7 @@ export default function ContratsPanel() {
       setCreateFormError(null);
       setCreateOpen(false);
       setToast({ type: "success", message: "Contrat créé avec succès." });
-      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
@@ -826,7 +841,6 @@ export default function ContratsPanel() {
         | null;
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
 
-      setListReloadTick((n) => n + 1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
@@ -874,7 +888,7 @@ export default function ContratsPanel() {
       }
 
       setToast({ type: "success", message: payload.successMessage });
-      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
       closeDecision();
       return true;
     } catch (err) {
@@ -1045,7 +1059,7 @@ export default function ContratsPanel() {
         throw new Error(body?.message ?? "Modification contrat impossible.");
       }
       setToast({ type: "success", message: "Contrat modifié avec succès." });
-      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
       closeEditContrat();
     } catch (err) {
       setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
@@ -1058,8 +1072,11 @@ export default function ContratsPanel() {
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
   const decisionIntermediateStep =
     decisionEtape === "SOUMIS" || decisionEtape === "VALIDE_N1" || decisionEtape === "VALIDE_N2";
+  const hideN1N2ForAdmin =
+    meRole === "CHEF_SERVICE" &&
+    (decisionPrimary?.action === "VALIDATE_N1" || decisionPrimary?.action === "VALIDATE_N2");
   const mayApprouverDossier =
-    decisionPrimary !== null && userMayPerformDossierTransition(meRole, decisionPrimary.action);
+    decisionPrimary !== null && !hideN1N2ForAdmin && userMayPerformDossierTransition(meRole, decisionPrimary.action);
   const mayRejectDossier = userMayPerformDossierTransition(meRole, "REJECT");
   const mayReturnDossier = userMayPerformDossierTransition(meRole, "RETURN_PREVIOUS");
 
@@ -1101,19 +1118,6 @@ export default function ContratsPanel() {
   const resileCount = chartsData?.statusCounts.resile ?? 0;
   const activeRatio = portfolioTotal > 0 ? Math.round((activeCount / portfolioTotal) * 100) : 0;
   const resileRatio = portfolioTotal > 0 ? Math.round((resileCount / portfolioTotal) * 100) : 0;
-  const topProduits = useMemo(() => {
-    if (!chartsData) return [];
-    return [...(chartsData.totalsByProduct ?? [])]
-      .sort((a, b) => (b.monthly ?? 0) - (a.monthly ?? 0))
-      .slice(0, 5)
-      .map((row) => ({
-        produitCode: row.produitCode,
-        produitLabel: produitLabelByCode.get(row.produitCode) ?? row.produitCode,
-        weekly: row.weekly ?? 0,
-        monthly: row.monthly ?? 0,
-      }));
-  }, [chartsData, produitLabelByCode]);
-
   return (
     <div className="min-w-0 space-y-5">
       <section className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-r from-slate-900 via-slate-800 to-cyan-900 p-5 shadow-sm">
@@ -1153,7 +1157,7 @@ export default function ContratsPanel() {
       {toast ? (
         toast.type === "success" ? (
           <div
-            className="fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 shadow-lg"
+            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 shadow-lg"
             role="status"
           >
             <div className="flex items-start justify-between gap-3">
@@ -1183,7 +1187,7 @@ export default function ContratsPanel() {
           </div>
         ) : (
           <div
-            className="fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 shadow-lg"
+            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 shadow-lg"
             role="alert"
           >
             <div className="flex items-start justify-between gap-3">
@@ -1316,42 +1320,7 @@ export default function ContratsPanel() {
         </div>
 
         <div className="border-t border-slate-100 p-4 sm:p-5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-700">Top produits (30 jours)</h4>
-          {chartsLoading ? (
-            <p className="mt-3 text-sm text-slate-500">Chargement des produits…</p>
-          ) : topProduits.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">Pas de données sur la période.</p>
-          ) : (
-            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Produit</th>
-                    <th className="px-3 py-2 font-semibold">7 jours</th>
-                    <th className="px-3 py-2 font-semibold">30 jours</th>
-                    <th className="px-3 py-2 font-semibold">Intensité</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topProduits.map((row) => {
-                    const intensity = row.monthly > 0 ? Math.min(100, Math.round((row.weekly / row.monthly) * 100)) : 0;
-                    return (
-                      <tr key={row.produitCode} className="border-t border-slate-100">
-                        <td className="px-3 py-2 text-slate-800">{row.produitLabel}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-900">{row.weekly}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-900">{row.monthly}</td>
-                        <td className="px-3 py-2">
-                          <div className="h-1.5 w-full rounded-full bg-slate-100">
-                            <div className="h-1.5 rounded-full bg-cyan-500" style={{ width: `${intensity}%` }} />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ContratEtatMensuelProduitAgenceMatrix domIdPrefix="contrats-etat-matrix" months={12} />
         </div>
       </section>
 
@@ -1568,7 +1537,7 @@ export default function ContratsPanel() {
           </label>
           <button
             type="button"
-            onClick={() => setListReloadTick((n) => n + 1)}
+            onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
             className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700"
           >
             Actualiser

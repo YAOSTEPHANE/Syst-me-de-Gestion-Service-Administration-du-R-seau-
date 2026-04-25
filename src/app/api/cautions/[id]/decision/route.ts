@@ -27,7 +27,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         ? "REJECT"
         : "RETURN_FOR_CORRECTION";
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SERVICE"],
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
     rbac: { resource: "CAUTIONS", action: rbacAction },
   });
   if ("error" in auth) return auth.error;

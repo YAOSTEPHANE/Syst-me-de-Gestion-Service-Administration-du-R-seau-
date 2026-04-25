@@ -4,10 +4,12 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { CAUTION_PAYMENT_MODES, type CautionStatus } from "@/lib/lonaci/constants";
+import { canRole } from "@/lib/auth/rbac";
+import { CAUTION_PAYMENT_MODES, LONACI_ROLES, type CautionStatus, type LonaciRole } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 
 type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
@@ -44,6 +46,9 @@ function isCautionListTab(value: string): value is CautionListTab {
 interface CautionListItem {
   id: string;
   contratId: string;
+  concessionnaireNom: string;
+  produitCode: string;
+  agenceLabel: string;
   montant: number;
   modeReglement: (typeof CAUTION_PAYMENT_MODES)[number];
   status: CautionStatus;
@@ -55,6 +60,12 @@ interface CautionListItem {
   immutableAfterFinal: boolean;
   pdvCode: string;
   depotAt: string | null;
+}
+
+interface ProduitContratOption {
+  value: string;
+  label: string;
+  disabled: boolean;
 }
 
 type FinalizeModalTarget =
@@ -89,11 +100,11 @@ const CAUTION_COLOR_TOKENS = {
 function labelTab(tab: CautionListTab): string {
   switch (tab) {
     case "J10_OVERDUE":
-      return "Dépassées J+10";
+      return "Retardé";
     case "EN_ATTENTE":
-      return "En attente";
+      return "Attendu caution";
     case "VALIDATED_THIS_MONTH":
-      return "Validées ce mois";
+      return "Terminées";
     default:
       return "Cautions";
   }
@@ -271,6 +282,32 @@ function normalizeProduitCodesAutorises(raw: string[] | undefined): string[] {
   return (raw ?? []).map((c) => c.trim().toUpperCase()).filter(Boolean);
 }
 
+/**
+ * Tous les produits « concernant » le PDV pour le formulaire caution : ordre fiche (`produitsAutorises`),
+ * puis tout code produit présent sur un contrat actif non encore listé.
+ */
+function mergeOrderedProductCodesForCaution(ficheCodes: string[], contracts: ContratItem[]): string[] {
+  const fromFiche = normalizeProduitCodesAutorises(ficheCodes);
+  const fromContracts = contracts
+    .map((c) => (c.produitCode ?? "").trim().toUpperCase())
+    .filter(Boolean);
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const code of fromFiche) {
+    if (!seen.has(code)) {
+      seen.add(code);
+      out.push(code);
+    }
+  }
+  for (const code of fromContracts) {
+    if (!seen.has(code)) {
+      seen.add(code);
+      out.push(code);
+    }
+  }
+  return out;
+}
+
 /** Choisit le contrat actif dont le produit correspond à l’ordre d’inscription (`produitsAutorises`). */
 function pickContratFromFicheProduits(list: ContratItem[], produitsAutorises: string[]): ContratItem | null {
   if (list.length === 0) return null;
@@ -311,6 +348,8 @@ export default function CautionsPanel() {
   const [dealerContractsLoading, setDealerContractsLoading] = useState(false);
   /** Produits enregistrés sur la fiche PDV (inscription), ordre conservé. */
   const [dealerProduitsAutorises, setDealerProduitsAutorises] = useState<string[]>([]);
+  /** Libellés référentiels produits (code → libellé), chargés à l’ouverture du formulaire. */
+  const [produitLibelleByCode, setProduitLibelleByCode] = useState<Record<string, string>>({});
   const [contratQuickPick, setContratQuickPick] = useState("");
   const [montant, setMontant] = useState("");
   const [modeReglement, setModeReglement] = useState<CautionPaymentMode>("VIREMENT");
@@ -329,6 +368,12 @@ export default function CautionsPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [importingFile, setImportingFile] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const [meRole, setMeRole] = useState<string | null>(null);
+  const meRbacRole = useMemo<LonaciRole | null>(
+    () => (meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null),
+    [meRole],
+  );
+  const [pipelineBusyId, setPipelineBusyId] = useState<string | null>(null);
 
   useEffect(() => {
     if (contratPrefill) {
@@ -389,6 +434,61 @@ export default function CautionsPanel() {
   }, [contrats, dealerFromSearch]);
 
   const contratsForSelectedConcessionnaire = dealerContracts;
+  const produitOptions = useMemo<ProduitContratOption[]>(() => {
+    const options: ProduitContratOption[] = [];
+    const seenCodes = new Set<string>();
+    const contractByProduit = new Map<string, ContratItem>();
+
+    for (const c of contratsForSelectedConcessionnaire) {
+      const code = (c.produitCode ?? "").trim().toUpperCase();
+      if (!code) continue;
+      if (!contractByProduit.has(code)) {
+        contractByProduit.set(code, c);
+      }
+    }
+
+    const orderedCodes = mergeOrderedProductCodesForCaution(
+      dealerProduitsAutorises,
+      contratsForSelectedConcessionnaire,
+    );
+
+    const labelForProduit = (code: string) => {
+      const lib = produitLibelleByCode[code];
+      return lib && lib !== code ? `${code} — ${lib}` : code;
+    };
+
+    for (const code of orderedCodes) {
+      if (seenCodes.has(code)) continue;
+      seenCodes.add(code);
+      const activeContract = contractByProduit.get(code);
+      if (activeContract) {
+        options.push({
+          value: activeContract.id,
+          label: `${labelForProduit(code)} · réf. ${activeContract.reference}`,
+          disabled: false,
+        });
+      } else {
+        options.push({
+          value: `NO_CONTRAT::${code}`,
+          label: `${labelForProduit(code)} · Aucun contrat actif`,
+          disabled: true,
+        });
+      }
+    }
+
+    for (const c of contratsForSelectedConcessionnaire) {
+      const code = (c.produitCode ?? "").trim().toUpperCase();
+      if (code && seenCodes.has(code)) continue;
+      const labelCode = code ? labelForProduit(code) : "PRODUIT_NON_RENSEIGNE";
+      options.push({
+        value: c.id,
+        label: `${labelCode} · réf. ${c.reference}`,
+        disabled: false,
+      });
+    }
+
+    return options;
+  }, [contratsForSelectedConcessionnaire, dealerProduitsAutorises, produitLibelleByCode]);
 
   useEffect(() => {
     if (!selectedConcessionnaireId) {
@@ -417,6 +517,7 @@ export default function CautionsPanel() {
   useEffect(() => {
     if (!selectedConcessionnaireId) {
       setDealerProduitsAutorises([]);
+      setProduitLibelleByCode({});
       return;
     }
     let cancelled = false;
@@ -427,16 +528,29 @@ export default function CautionsPanel() {
           cache: "no-store",
         });
         if (!res.ok || cancelled) return;
-        const data = (await res.json()) as { concessionnaire?: { produitsAutorises?: string[] } };
+        const data = (await res.json()) as {
+          concessionnaire?: { produitsAutorises?: string[] };
+          produitLibelles?: Record<string, string>;
+        };
         const codes = normalizeProduitCodesAutorises(data.concessionnaire?.produitsAutorises);
         if (!cancelled) setDealerProduitsAutorises(codes);
+        const lib = data.produitLibelles;
+        if (!cancelled) {
+          setProduitLibelleByCode(
+            lib && typeof lib === "object" ? lib : {},
+          );
+        }
       } catch {
-        if (!cancelled) setDealerProduitsAutorises([]);
+        if (!cancelled) {
+          setDealerProduitsAutorises([]);
+          setProduitLibelleByCode({});
+        }
       }
     })();
     return () => {
       cancelled = true;
       setDealerProduitsAutorises([]);
+      setProduitLibelleByCode({});
     };
   }, [selectedConcessionnaireId]);
 
@@ -522,14 +636,21 @@ export default function CautionsPanel() {
     setError(null);
     try {
       const tabEff = nextTab ?? tab;
-      const [c, list, a] = await Promise.all([
+      const [c, list, a, meRes] = await Promise.all([
         fetchContratsActifs(),
         fetchCautionsList({ tab: tabEff, pageSize }),
         fetchAlerts().catch(() => []),
+        fetch("/api/auth/me", { credentials: "include", cache: "no-store" }).catch(() => null),
       ]);
       setContrats(c);
       setItems(list);
       setAlerts(a);
+      if (meRes?.ok) {
+        const me = (await meRes.json()) as { user?: { role?: string } };
+        setMeRole(me.user?.role ?? null);
+      } else {
+        setMeRole(null);
+      }
       // Déclenche aussi le rechargement des compteurs.
       // (On ne casse pas l'affichage si les stats échouent.)
 
@@ -566,7 +687,7 @@ export default function CautionsPanel() {
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!contratId.trim()) {
-      setToast({ type: "error", message: "Indiquez un produit." });
+      setToast({ type: "error", message: "Choisissez un produit avec contrat actif." });
       return;
     }
     if (!dealerContracts.some((c) => c.id === contratId)) {
@@ -610,7 +731,7 @@ export default function CautionsPanel() {
         setContratId("");
         setContratQuickPick("");
       }
-      await load();
+      window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({ type: "success", message: "Caution créée." });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
@@ -638,7 +759,6 @@ export default function CautionsPanel() {
         | { message?: string; upserted?: number; modified?: number }
         | null;
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
-      await load(tab);
       window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
@@ -676,7 +796,7 @@ export default function CautionsPanel() {
       }
       closeFinalizeModal();
       setManualCautionId("");
-      await load();
+      window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
         message:
@@ -755,11 +875,14 @@ export default function CautionsPanel() {
       .join(" ");
     const pending = (counters?.overdueJ10 ?? 0) + (counters?.enAttente ?? 0);
     const validated = counters?.validatedThisMonth ?? 0;
+    const ecartCaution = pending - validated;
     return {
       totalKnown,
       pending,
       validated,
+      ecartCaution,
       validationRate: totalKnown > 0 ? Math.round((validated / totalKnown) * 100) : 0,
+      ecartRate: totalKnown > 0 ? Math.round((ecartCaution / totalKnown) * 100) : 0,
       riskRate: totalKnown > 0 ? Math.round(((counters?.overdueJ10 ?? 0) / totalKnown) * 100) : 0,
       modeEntries,
       topOverdue,
@@ -785,7 +908,7 @@ export default function CautionsPanel() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void load()}
+              onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
               className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
             >
               Actualiser
@@ -944,8 +1067,8 @@ export default function CautionsPanel() {
 
                   <label className="mb-1 block text-xs font-medium text-slate-700">Produit</label>
                   <p className="mb-1.5 text-[11px] text-slate-500">
-                    Sélection automatique selon l’ordre des produits autorisés enregistrés sur la fiche PDV
-                    (inscription) ; vous pouvez changer le produit si besoin.
+                    Liste des produits autorisés sur la fiche PDV (ordre d’inscription), complétée par tout produit
+                    présent sur un contrat actif ; sélection par défaut selon cet ordre — modifiez si besoin.
                   </p>
                   {dealerContractsLoading ? (
                     <p className="mb-2 text-[11px] text-slate-500">Chargement des produits (contrats actifs)…</p>
@@ -956,7 +1079,7 @@ export default function CautionsPanel() {
                       <span className="font-mono">{contractsError}</span>
                       <button
                         type="button"
-                        onClick={() => void load()}
+                        onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
                         className="ml-2 underline hover:text-rose-900"
                       >
                         Réessayer
@@ -974,7 +1097,7 @@ export default function CautionsPanel() {
                     disabled={
                       !selectedConcessionnaireId ||
                       dealerContractsLoading ||
-                      contratsForSelectedConcessionnaire.length === 0
+                      produitOptions.length === 0
                     }
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                   >
@@ -983,19 +1106,23 @@ export default function CautionsPanel() {
                         ? "Sélectionnez d'abord un concessionnaire"
                         : dealerContractsLoading
                           ? "Chargement…"
-                          : contratsForSelectedConcessionnaire.length === 0
-                            ? "Aucun produit (contrat actif) pour ce PDV"
+                          : produitOptions.length === 0
+                            ? "Aucun produit disponible pour ce PDV"
                             : "— Choisir un produit —"}
                     </option>
-                    {contratsForSelectedConcessionnaire.map((c) => {
-                      const code = (c.produitCode ?? "").trim() || "—";
-                      return (
-                        <option key={c.id} value={c.id}>
-                          {code} · réf. {c.reference}
-                        </option>
-                      );
-                    })}
+                    {produitOptions.map((o) => (
+                      <option key={o.value} value={o.value} disabled={o.disabled}>
+                        {o.label}
+                      </option>
+                    ))}
                   </select>
+                  {selectedConcessionnaireId &&
+                  (dealerProduitsAutorises.length > 0 || produitOptions.some((o) => o.disabled)) ? (
+                    <p className="mt-1 text-[11px] text-slate-500">
+                      Les lignes « Aucun contrat actif » correspondent à un produit PDV sans contrat actif : visibles
+                      pour information, non sélectionnables pour créer une caution.
+                    </p>
+                  ) : null}
                 </section>
 
                 <section className="rounded-xl border border-indigo-200/80 bg-white p-3 shadow-sm">
@@ -1130,7 +1257,7 @@ export default function CautionsPanel() {
 
         <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className={CAUTION_COLOR_TOKENS.risk.card}>
-            <div className={CAUTION_COLOR_TOKENS.risk.title}>Risque J+10</div>
+            <div className={CAUTION_COLOR_TOKENS.risk.title}>Retardé</div>
             <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.risk.value}`}>{counters?.overdueJ10 ?? "—"}</div>
             <div className="text-[11px] text-slate-600">{cautionAnalytics.riskRate}% du portefeuille caution</div>
           </div>
@@ -1140,14 +1267,16 @@ export default function CautionsPanel() {
             <div className="text-[11px] text-slate-600">En attente + retards</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.validated.card}>
-            <div className={CAUTION_COLOR_TOKENS.validated.title}>Validées ce mois</div>
+            <div className={CAUTION_COLOR_TOKENS.validated.title}>Terminées</div>
             <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.validated.value}`}>{counters?.validatedThisMonth ?? "—"}</div>
             <div className="text-[11px] text-slate-600">Taux de validation: {cautionAnalytics.validationRate}%</div>
           </div>
           <div className="rounded-xl border border-cyan-100 bg-linear-to-br from-cyan-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Volume suivi</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.totalKnown}</div>
-            <div className="text-[11px] text-slate-600">Total des 3 indicateurs</div>
+            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Écart caution</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.ecartCaution}</div>
+            <div className="text-[11px] text-slate-600">
+              Attendu caution − Terminées ({cautionAnalytics.ecartRate}% du portefeuille)
+            </div>
           </div>
         </div>
 
@@ -1222,6 +1351,8 @@ export default function CautionsPanel() {
         </div>
       </section>
 
+      <CautionEtatMensuelParProduitBlock domIdPrefix="cautions-etat-mensuel" months={12} />
+
       <div className="grid gap-3 sm:grid-cols-3">
         <button
           type="button"
@@ -1233,7 +1364,7 @@ export default function CautionsPanel() {
             tab === "J10_OVERDUE" ? "ring-2 ring-rose-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-rose-700">Dépassées J+10</div>
+          <div className="text-xs font-medium text-rose-700">Retardé</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-rose-900">
             {counters?.overdueJ10 ?? "—"}
           </div>
@@ -1249,7 +1380,7 @@ export default function CautionsPanel() {
             tab === "EN_ATTENTE" ? "ring-2 ring-amber-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-amber-700">En attente</div>
+          <div className="text-xs font-medium text-amber-700">Attendu caution</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-amber-900">
             {counters?.enAttente ?? "—"}
           </div>
@@ -1265,7 +1396,7 @@ export default function CautionsPanel() {
             tab === "VALIDATED_THIS_MONTH" ? "ring-2 ring-emerald-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-emerald-700">Validées ce mois</div>
+          <div className="text-xs font-medium text-emerald-700">Terminées</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-emerald-900">
             {counters?.validatedThisMonth ?? "—"}
           </div>
@@ -1302,19 +1433,16 @@ export default function CautionsPanel() {
                   Réf.
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
-                  Contrat
+                  Nom concessionnaire
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
-                  PDV
+                  Produit
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
-                  Montant (FCFA)
+                  Montant
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
-                  Dépôt
-                </th>
-                <th className="px-2 py-2 font-medium" scope="col">
-                  Délai
+                  Agence
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
                   Statut
@@ -1327,19 +1455,52 @@ export default function CautionsPanel() {
             <tbody className="text-slate-900">
               {items.map((row) => {
                 const statutLabel =
-                  tab === "J10_OVERDUE" ? "Dépassée" : tab === "EN_ATTENTE" ? "En attente" : "Validée ce mois";
+                  tab === "VALIDATED_THIS_MONTH"
+                    ? "Terminée"
+                    : row.status === "VALIDE_N1"
+                      ? "Validé N1"
+                      : row.status === "VALIDE_N2"
+                        ? "Validé N2"
+                        : row.status === "A_CORRIGER"
+                          ? "À corriger"
+                          : tab === "J10_OVERDUE"
+                            ? "Retardé"
+                            : "Att. validation";
+                const pipelineStatus = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"].includes(row.status);
+                const mayValidateN1 = meRbacRole
+                  ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "VALIDATE_N1" }).allowed
+                  : false;
+                const mayValidateN2 = meRbacRole
+                  ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "VALIDATE_N2" }).allowed
+                  : false;
+                const mayFinalize = meRbacRole
+                  ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "FINALIZE" }).allowed
+                  : false;
+                const mayReject = meRbacRole
+                  ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "REJECT" }).allowed
+                  : false;
+                const mayReturn = meRbacRole
+                  ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "RETURN_FOR_CORRECTION" }).allowed
+                  : false;
+                const showN1 =
+                  (row.status === "EN_ATTENTE" || row.status === "A_CORRIGER") && mayValidateN1;
+                const showN2 = row.status === "VALIDE_N1" && mayValidateN2;
+                const showFinalize = row.status === "VALIDE_N2" && mayFinalize;
+                const showReturn = pipelineStatus && mayReturn;
+                const showReject = pipelineStatus && mayReject;
+                const showActionCell =
+                  tab !== "VALIDATED_THIS_MONTH" &&
+                  !row.immutableAfterFinal &&
+                  (showN1 || showN2 || showFinalize || showReturn || showReject);
                 return (
                   <tr key={row.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50">
                     <td className="px-2 py-2 font-mono whitespace-nowrap">
                       {row.paymentReference || "—"}
                     </td>
-                    <td className="px-2 py-2 font-mono whitespace-nowrap">{row.contratId || "—"}</td>
-                    <td className="px-2 py-2 font-mono whitespace-nowrap">{row.pdvCode || "—"}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{row.concessionnaireNom || "—"}</td>
+                    <td className="px-2 py-2 font-mono whitespace-nowrap">{row.produitCode || "—"}</td>
                     <td className="px-2 py-2">{row.montant?.toLocaleString("fr-FR") ?? row.montant}</td>
-                    <td className="px-2 py-2 whitespace-nowrap">
-                      {row.depotAt ? new Date(row.depotAt).toLocaleDateString("fr-FR") : "—"}
-                    </td>
-                    <td className="px-2 py-2">{row.daysOverdue}</td>
+                    <td className="px-2 py-2">{row.agenceLabel || "Sans agence"}</td>
                     <td className="px-2 py-2">
                       <span
                         className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
@@ -1354,23 +1515,126 @@ export default function CautionsPanel() {
                       </span>
                     </td>
                     <td className="px-2 py-2 text-right">
-                      {(row.status === "EN_ATTENTE" || row.status === "A_CORRIGER") &&
-                      tab !== "VALIDATED_THIS_MONTH" ? (
-                        <button
-                          type="button"
-                          disabled={row.immutableAfterFinal || finalizingId === row.id}
-                          onClick={() => {
-                            setFinalizeAck(false);
-                            setFinalizeDecision("APPROUVER");
-                            setFinalizeComment("");
-                            setFinalizeModal({ mode: "row", row });
-                          }}
-                          className={tab === "J10_OVERDUE" ? CAUTION_COLOR_TOKENS.risk.action : CAUTION_COLOR_TOKENS.validated.action}
-                        >
-                          {tab === "J10_OVERDUE" ? "Traitement d'urgence" : "VALIDÉ"}
-                        </button>
+                      {showActionCell ? (
+                        <div className="flex flex-wrap justify-end gap-1">
+                          {showN1 ? (
+                            <button
+                              type="button"
+                              disabled={pipelineBusyId === row.id}
+                              onClick={async () => {
+                                setPipelineBusyId(row.id);
+                                try {
+                                  const res = await fetch(`/api/cautions/${encodeURIComponent(row.id)}/validate-n1`, {
+                                    method: "POST",
+                                    credentials: "include",
+                                  });
+                                  if (!res.ok) throw new Error("Validation N1 impossible");
+                                  setToast({ type: "success", message: "Validation N1 enregistrée." });
+                                  window.dispatchEvent(new Event("lonaci:data-imported"));
+                                } catch (e) {
+                                  setToast({
+                                    type: "error",
+                                    message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
+                                  });
+                                } finally {
+                                  setPipelineBusyId(null);
+                                }
+                              }}
+                              className="rounded-lg border border-sky-600 bg-sky-600 px-2 py-1 text-[10px] font-semibold text-white"
+                            >
+                              Valider N1
+                            </button>
+                          ) : null}
+                          {showN2 ? (
+                            <button
+                              type="button"
+                              disabled={pipelineBusyId === row.id}
+                              onClick={async () => {
+                                setPipelineBusyId(row.id);
+                                try {
+                                  const res = await fetch(`/api/cautions/${encodeURIComponent(row.id)}/validate-n2`, {
+                                    method: "POST",
+                                    credentials: "include",
+                                  });
+                                  if (!res.ok) throw new Error("Validation N2 impossible");
+                                  setToast({ type: "success", message: "Validation N2 enregistrée." });
+                                  window.dispatchEvent(new Event("lonaci:data-imported"));
+                                } catch (e) {
+                                  setToast({
+                                    type: "error",
+                                    message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
+                                  });
+                                } finally {
+                                  setPipelineBusyId(null);
+                                }
+                              }}
+                              className="rounded-lg border border-violet-600 bg-violet-600 px-2 py-1 text-[10px] font-semibold text-white"
+                            >
+                              Valider N2
+                            </button>
+                          ) : null}
+                          {showFinalize ? (
+                            <button
+                              type="button"
+                              disabled={finalizingId === row.id}
+                              onClick={() => {
+                                setFinalizeAck(false);
+                                setFinalizeDecision("APPROUVER");
+                                setFinalizeComment("");
+                                setFinalizeModal({ mode: "row", row });
+                              }}
+                              className={
+                                tab === "J10_OVERDUE"
+                                  ? CAUTION_COLOR_TOKENS.risk.action
+                                  : CAUTION_COLOR_TOKENS.validated.action
+                              }
+                            >
+                              {tab === "J10_OVERDUE" ? "Finaliser (urgence)" : "Finaliser"}
+                            </button>
+                          ) : null}
+                          {showReturn ? (
+                            <button
+                              type="button"
+                              disabled={finalizingId === row.id}
+                              onClick={() => {
+                                setFinalizeAck(false);
+                                setFinalizeDecision("RETOURNER_POUR_CORRECTION");
+                                setFinalizeComment("");
+                                setFinalizeModal({ mode: "row", row });
+                              }}
+                              className="rounded-lg border border-amber-600 bg-white px-2 py-1 text-[10px] font-semibold text-amber-800"
+                            >
+                              Retour
+                            </button>
+                          ) : null}
+                          {showReject ? (
+                            <button
+                              type="button"
+                              disabled={finalizingId === row.id}
+                              onClick={() => {
+                                setFinalizeAck(false);
+                                setFinalizeDecision("REJETER");
+                                setFinalizeComment("");
+                                setFinalizeModal({ mode: "row", row });
+                              }}
+                              className="rounded-lg border border-rose-600 bg-white px-2 py-1 text-[10px] font-semibold text-rose-800"
+                            >
+                              Rejeter
+                            </button>
+                          ) : null}
+                        </div>
                       ) : (
-                        <span className="text-[11px] text-slate-500">—</span>
+                        <span
+                          className={
+                            tab === "VALIDATED_THIS_MONTH" || row.status === "VALIDE_N1" || row.status === "VALIDE_N2"
+                              ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
+                              : "text-[11px] text-slate-500"
+                          }
+                        >
+                          {tab === "VALIDATED_THIS_MONTH" || row.status === "VALIDE_N1" || row.status === "VALIDE_N2"
+                            ? "Validée"
+                            : "—"}
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -1378,7 +1642,7 @@ export default function CautionsPanel() {
               })}
               {!items.length ? (
                 <tr>
-                  <td className="px-2 py-6 text-center text-slate-500" colSpan={8}>
+                  <td className="px-2 py-6 text-center text-slate-500" colSpan={7}>
                     Aucune caution pour ce filtre.
                   </td>
                 </tr>
@@ -1392,7 +1656,7 @@ export default function CautionsPanel() {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-slate-800">Finaliser par ID (hors liste)</h3>
         <p className="mb-3 text-xs text-slate-600">
-          Rôle requis : Chef(fe) de service. Double confirmation avant envoi.
+          Rôle requis : Chef(fe) de service, après validations N1 et N2. Double confirmation avant envoi.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -1431,16 +1695,13 @@ export default function CautionsPanel() {
             disabled={finalizingId !== null}
             onClick={() => (finalizingId ? null : closeFinalizeModal())}
           />
-          <div className="relative z-10 w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-100 pb-3">
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
               <div>
-                <h3 id="finalize-caution-title" className="text-lg font-semibold text-slate-900">
+                <h3 id="finalize-caution-title" className="text-base font-semibold text-slate-900">
                   Validation finale
                 </h3>
-                <p className="mt-1 text-xs text-slate-600">
-                  Décision de validation : approuver, rejeter, ou retourner pour correction. Réservé au rôle{" "}
-                  <span className="text-[11px] font-semibold">Chef(fe) de service</span>.
-                </p>
+                <p className="mt-0.5 text-[11px] text-slate-600">Approuver, rejeter ou retourner pour correction.</p>
               </div>
               <button
                 type="button"
@@ -1453,22 +1714,22 @@ export default function CautionsPanel() {
               </button>
             </div>
 
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+            <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-950">
               <strong>Approuver</strong> ou <strong>Rejeter</strong> rend la caution immuable.{" "}
               <strong>Retourner pour correction</strong> garde la caution modifiable.
             </div>
 
-            <div className="mt-4 grid gap-2">
-              <p className="text-xs font-semibold text-slate-700">Décision</p>
-              <div className="flex flex-wrap gap-2">
+            <div className="mt-3 grid gap-1.5">
+              <p className="text-[11px] font-semibold text-slate-700">Décision</p>
+              <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
                   disabled={finalizingId !== null}
                   onClick={() => setFinalizeDecision("APPROUVER")}
                   className={
                     finalizeDecision === "APPROUVER"
-                      ? "rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white"
-                      : "rounded-lg border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+                      ? "rounded-md bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white"
+                      : "rounded-md border border-emerald-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-50"
                   }
                 >
                   Approuver
@@ -1479,8 +1740,8 @@ export default function CautionsPanel() {
                   onClick={() => setFinalizeDecision("REJETER")}
                   className={
                     finalizeDecision === "REJETER"
-                      ? "rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white"
-                      : "rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                      ? "rounded-md bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white"
+                      : "rounded-md border border-rose-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-rose-700 hover:bg-rose-50"
                   }
                 >
                   Rejeter
@@ -1491,79 +1752,53 @@ export default function CautionsPanel() {
                   onClick={() => setFinalizeDecision("RETOURNER_POUR_CORRECTION")}
                   className={
                     finalizeDecision === "RETOURNER_POUR_CORRECTION"
-                      ? "rounded-lg bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white"
-                      : "rounded-lg border border-amber-200 bg-white px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-50"
+                      ? "rounded-md bg-amber-600 px-2.5 py-1 text-[11px] font-semibold text-white"
+                      : "rounded-md border border-amber-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50"
                   }
                 >
-                  Retourner pour correction
+                  Retour correction
                 </button>
               </div>
             </div>
 
             {finalizeModal.mode === "row" ? (
-              <dl className="mt-4 grid gap-2 text-sm text-slate-800">
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">Réf. paiement</dt>
-                  <dd className="font-mono text-xs">{finalizeModal.row.paymentReference || "—"}</dd>
+              <dl className="mt-3 grid grid-cols-2 gap-1.5 text-[11px] text-slate-800">
+                <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                  <dt className="text-slate-500">Réf.</dt>
+                  <dd className="font-mono">{finalizeModal.row.paymentReference || "—"}</dd>
                 </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
+                <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
                   <dt className="text-slate-500">Contrat</dt>
-                  <dd className="font-mono text-xs">{finalizeModal.row.contratId}</dd>
+                  <dd className="font-mono">{finalizeModal.row.contratId}</dd>
                 </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">PDV</dt>
-                  <dd className="font-mono text-xs">{finalizeModal.row.pdvCode || "—"}</dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
+                <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
                   <dt className="text-slate-500">Montant</dt>
                   <dd className="font-semibold tabular-nums">
                     {finalizeModal.row.montant?.toLocaleString("fr-FR") ?? finalizeModal.row.montant} FCFA
                   </dd>
                 </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">Mode de règlement</dt>
-                  <dd>{labelModeReglement(finalizeModal.row.modeReglement)}</dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">Échéance</dt>
-                  <dd>{new Date(finalizeModal.row.dueDate).toLocaleString("fr-FR")}</dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">Dépôt</dt>
-                  <dd>
-                    {finalizeModal.row.depotAt
-                      ? new Date(finalizeModal.row.depotAt).toLocaleDateString("fr-FR")
-                      : "—"}
-                  </dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                  <dt className="text-slate-500">Délai (j.)</dt>
-                  <dd className="tabular-nums">{finalizeModal.row.daysOverdue}</dd>
-                </div>
-                <div className="py-1.5">
-                  <dt className="text-slate-500">Observations</dt>
-                  <dd className="mt-1 text-xs text-slate-700">
-                    {finalizeModal.row.observations?.trim() ? finalizeModal.row.observations : "—"}
-                  </dd>
+                <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
+                  <dt className="text-slate-500">Retard</dt>
+                  <dd className="tabular-nums">{finalizeModal.row.daysOverdue} j</dd>
                 </div>
               </dl>
             ) : (
-              <div className="mt-4 rounded-lg bg-slate-50 px-3 py-2">
-                <p className="text-xs text-slate-600">Identifiant caution (saisie manuelle)</p>
-                <p className="mt-1 font-mono text-sm text-slate-900">{finalizeModal.id}</p>
+              <div className="mt-3 rounded-lg bg-slate-50 px-2.5 py-2">
+                <p className="text-[11px] text-slate-600">Identifiant caution (manuel)</p>
+                <p className="mt-0.5 font-mono text-xs text-slate-900">{finalizeModal.id}</p>
               </div>
             )}
 
-            <div className="mt-4">
-              <label className="mb-1 block text-xs font-semibold text-slate-700">
+            <div className="mt-3">
+              <label className="mb-1 block text-[11px] font-semibold text-slate-700">
                 Motif {finalizeDecision === "APPROUVER" ? "(optionnel)" : "(obligatoire)"}
               </label>
               <textarea
                 value={finalizeComment}
                 onChange={(e) => setFinalizeComment(e.target.value)}
                 disabled={finalizingId !== null}
-                rows={3}
-                className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                rows={2}
+                className="w-full rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs text-slate-900"
                 placeholder={
                   finalizeDecision === "APPROUVER"
                     ? "Optionnel"
@@ -1572,7 +1807,7 @@ export default function CautionsPanel() {
               />
             </div>
 
-            <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-sm text-slate-800">
+            <label className="mt-3 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-2.5 py-2 text-xs text-slate-800">
               <input
                 type="checkbox"
                 checked={finalizeAck}
@@ -1581,16 +1816,16 @@ export default function CautionsPanel() {
                 className="mt-0.5 rounded border-slate-300"
               />
               <span>
-                J’ai contrôlé les informations ci-dessus et je confirme ma décision.
+                Je confirme ma décision.
               </span>
             </label>
 
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <div className="mt-3 flex flex-wrap justify-end gap-1.5">
               <button
                 type="button"
                 disabled={finalizingId !== null}
                 onClick={closeFinalizeModal}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
               >
                 Annuler
               </button>
@@ -1602,7 +1837,7 @@ export default function CautionsPanel() {
                   (finalizeDecision !== "APPROUVER" && !finalizeComment.trim())
                 }
                 onClick={() => void confirmFinalizeFromModal()}
-                className="rounded-lg border border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                className="rounded-md border border-emerald-700 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
               >
                 {finalizingId ? "Envoi…" : "Confirmer"}
               </button>

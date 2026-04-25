@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { RbacAction, RbacResource } from "@/lib/auth/rbac";
 import { canRole } from "@/lib/auth/rbac";
+import { isApiPathExemptFromPasswordRotation, userRequiresPasswordRotation } from "@/lib/auth/password-policy";
 import { getSessionFromRequest } from "@/lib/auth/session";
 import {
   userHasConcessionnairesLectureModule,
@@ -161,6 +162,23 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     };
   }
 
+  const pathnameForAuth = request.nextUrl.pathname;
+  if (
+    !isApiPathExemptFromPasswordRotation(pathnameForAuth) &&
+    userRequiresPasswordRotation(user)
+  ) {
+    return {
+      error: NextResponse.json(
+        {
+          message:
+            "Mot de passe a renouveler : politique de rotation mensuelle. Modifiez-le dans Parametres > Mon compte.",
+          code: "PASSWORD_ROTATION_REQUIRED",
+        },
+        { status: 403 },
+      ),
+    };
+  }
+
   if (options?.roles && !options.roles.includes(user.role)) {
     return { error: NextResponse.json({ message: "Acces refuse" }, { status: 403 }) };
   }
@@ -227,8 +245,15 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   }
 
   // Contrôle de module autorisé (si liste de modules non vide).
+  // CHEF_SERVICE / AUDITEUR : périmètre global (fiches rôle) — ne pas bloquer pour une liste
+  // de modules incomplète saisie côté admin.
   const moduleKey = inferModuleKeyFromPath(request.nextUrl.pathname);
-  if (moduleKey && !hasModuleAuthorization(user.modulesAutorises, moduleKey)) {
+  if (
+    moduleKey &&
+    user.role !== "CHEF_SERVICE" &&
+    user.role !== "AUDITEUR" &&
+    !hasModuleAuthorization(user.modulesAutorises, moduleKey)
+  ) {
     // Le module ADMIN agit comme surcouche d'administration transverse.
     // Un compte admin ne doit pas être bloqué sur les modules métiers (ex: CONTRATS/DOSSIERS).
     return { error: NextResponse.json({ message: "Module non autorisé" }, { status: 403 }) };

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { listResiliations, type ResiliationStatus } from "@/lib/lonaci/resiliations";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { LONACI_ROLES } from "@/lib/lonaci/constants";
 
 const schema = z.object({
   format: z.enum(["csv", "pdf"]).default("csv"),
@@ -15,7 +16,7 @@ const schema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...LONACI_ROLES],
   });
   if ("error" in auth) return auth.error;
   const parsed = schema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));

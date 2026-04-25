@@ -19,6 +19,14 @@ interface NotificationApiResponse {
   total: number;
 }
 
+function isForcedPasswordChangeRoute() {
+  if (typeof window === "undefined") return false;
+  const isParametres = window.location.pathname.startsWith("/parametres");
+  if (!isParametres) return false;
+  const search = new URLSearchParams(window.location.search);
+  return search.get("motDePasse") === "obligatoire";
+}
+
 async function fetchNotifications(): Promise<NotificationApiResponse> {
   const response = await lonaciFetch("/api/notifications?page=1&pageSize=20");
   if (!response.ok) {
@@ -42,6 +50,12 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
   const [items, setItems] = useState<NotificationItem[]>([]);
 
   async function load() {
+    if (isForcedPasswordChangeRoute()) {
+      setItems([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {

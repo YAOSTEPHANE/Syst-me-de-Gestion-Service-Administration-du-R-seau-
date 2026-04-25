@@ -48,9 +48,24 @@ export interface UserDocument {
   lastActivityAt: Date | null;
   resetPasswordTokenHash: string | null;
   resetPasswordExpiresAt: Date | null;
+  /** Dernier enregistrement d’un nouveau mot de passe (rotation mensuelle). */
+  passwordChangedAt: Date | null;
+  /** Dernier `YYYY-MM` UTC pour lequel un e-mail automatique fin de mois (lien reset) a été envoyé. */
+  passwordResetReminderSentForMonth: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+}
+
+/** Libellé acteur pour messages / audits (pas de `nomComplet` en base utilisateur). */
+export function userDisplayName(user: Pick<UserDocument, "prenom" | "nom" | "email" | "matricule">): string {
+  const full = `${user.prenom} ${user.nom}`.trim();
+  if (full) return full;
+  const email = user.email.trim();
+  if (email) return email;
+  const m = user.matricule?.trim();
+  if (m) return m;
+  return "un utilisateur";
 }
 
 export interface AgenceDocument {
@@ -134,7 +149,8 @@ export interface ConcessionnaireDocument {
   deletedAt: Date | null;
 }
 
-export type BancarisationRequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
+/** Demande : SOUMIS → VALIDE_N1 → VALIDE_N2 → VALIDE (application) | REJETE */
+export type BancarisationRequestStatus = "SOUMIS" | "VALIDE_N1" | "VALIDE_N2" | "VALIDE" | "REJETE";
 
 export interface BancarisationRequestDocument {
   _id?: string;
@@ -301,6 +317,11 @@ export interface SuccessionCaseDocument {
     autoDossierContratId?: string;
     autoDossierContratReference?: string;
   } | null;
+  /** Contrôles N1 / N2 obligatoires avant l’étape « Décision ». */
+  validationN1At: Date | null;
+  validationN1ByUserId: string | null;
+  validationN2At: Date | null;
+  validationN2ByUserId: string | null;
   stepHistory: SuccessionStepCompletion[];
   createdByUserId: string;
   updatedByUserId: string;

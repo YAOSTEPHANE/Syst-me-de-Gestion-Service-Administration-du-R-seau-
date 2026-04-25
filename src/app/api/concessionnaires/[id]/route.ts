@@ -16,8 +16,10 @@ import {
   softDeleteConcessionnaire,
   updateConcessionnaire,
 } from "@/lib/lonaci/concessionnaires";
-import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
+import { ensureReferentialsIndexes, findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
+
+const OTHER_PRODUCT_CODE = "AUTRES";
 
 /** E-mail vide ou invalide en base → null (évite 400 Zod sur enregistrement sans toucher au champ). */
 function preprocessEmail(value: unknown): string | null | undefined {
@@ -112,7 +114,20 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Acces refuse" }, { status: 403 });
   }
 
-  return NextResponse.json({ concessionnaire: sanitizeConcessionnairePublic(doc) }, { status: 200 });
+  await ensureReferentialsIndexes();
+  const produits = await listProduits();
+  const produitLibelles: Record<string, string> = {};
+  for (const p of produits) {
+    const code = (p.code ?? "").trim().toUpperCase();
+    if (!code) continue;
+    const lib = (p.libelle ?? "").trim();
+    produitLibelles[code] = lib || code;
+  }
+
+  return NextResponse.json(
+    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles },
+    { status: 200 },
+  );
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
@@ -231,6 +246,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
      */
     const invalidProduits = parsed.data.produitsAutorises.filter((code) => {
       const u = code.trim().toUpperCase();
+      if (u === OTHER_PRODUCT_CODE) return false;
       if (codesActifs.has(u)) return false;
       if (codesDejaSurFiche.has(u)) return false;
       return true;
