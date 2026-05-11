@@ -22,6 +22,7 @@ import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
 const CAUTIONS_COLLECTION = "cautions";
+const CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION = "caution_etat_attendus_saisis";
 const PDV_INTEGRATIONS_COLLECTION = "pdv_integrations";
 const CONTRATS_COLLECTION = "contrats";
 const COUNTERS_COLLECTION = "counters";
@@ -46,6 +47,9 @@ export async function ensureSprint4Indexes() {
   ]);
   await db.collection<StoredContrat>(CONTRATS_COLLECTION).createIndexes([
     { key: { status: 1, concessionnaireId: 1 }, name: "idx_status_concessionnaire" },
+  ]);
+  await db.collection(CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION).createIndexes([
+    { key: { yearMonth: 1, produitCode: 1 }, unique: true, name: "uniq_caution_etat_attendus_month_produit" },
   ]);
 }
 
@@ -977,11 +981,20 @@ export interface CautionEtatMensuelProduitRow {
   moisLabel: string;
   produitCode: string;
   libelle: string;
+  /** `ADMIN` si un montant a été saisi côté administration (remplace le total calculé depuis les dossiers). */
+  attendusMontantsSource: "CALCULE" | "ADMIN";
+  /** Total attendu calculé depuis les cautions (avant toute saisie admin sur la ligne). */
+  attendusMontantDossiers: number;
   montantAttendusCautions: number;
   nombreCautionsAEncaisser: number;
   montantCautionsAEncaisser: number;
   montantCautionsEncaissees: number;
   nombreCautionsEncaissees: number;
+  /**
+   * En FCFA : attendu (fin de mois, éventuellement saisi admin) − cautions encaissées dans le mois.
+   * Distinct de la colonne UI « Écart » du tableau état mensuel par produit, qui est un **nombre** de cautions
+   * (à encaisser affiché − encaissées) et sert de base au « % du total ref. dossiers ».
+   */
   ecartMontant: number;
   montantCautionsNonEncaissees: number;
   nombreCautionsNonEncaissees: number;
@@ -1043,7 +1056,78 @@ function accumulateCautionForMonthMetrics(
 }
 
 function finalizeCautionEtatMensuelMetrics(acc: CautionEtatMensuelMetricsFields): void {
-  acc.ecartMontant = acc.montantCautionsNonEncaissees - acc.montantCautionsEncaissees;
+  acc.ecartMontant = acc.montantAttendusCautions - acc.montantCautionsEncaissees;
+}
+
+type CautionEtatAttendusSaisiStored = {
+  _id: ObjectId;
+  yearMonth: string;
+  produitCode: string;
+  montantAttendusCautions: number;
+  updatedAt: Date;
+  updatedByUserId: string;
+};
+
+function normalizeProduitCodeAttendusSaisi(code: string): string {
+  const c = (code || "").trim().toUpperCase().replace(/\s+/g, "_");
+  return c || "—";
+}
+
+export async function listCautionEtatAttendusOverridesByYearMonths(
+  yearMonths: readonly string[],
+): Promise<Map<string, number>> {
+  if (yearMonths.length === 0) return new Map();
+  await ensureSprint4Indexes();
+  const db = await getDatabase();
+  const rows = await db
+    .collection<CautionEtatAttendusSaisiStored>(CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION)
+    .find({ yearMonth: { $in: [...yearMonths] } })
+    .project({ yearMonth: 1, produitCode: 1, montantAttendusCautions: 1 })
+    .toArray();
+  const map = new Map<string, number>();
+  for (const r of rows) {
+    map.set(`${r.yearMonth}|${normalizeProduitCodeAttendusSaisi(r.produitCode)}`, r.montantAttendusCautions);
+  }
+  return map;
+}
+
+export async function upsertCautionEtatAttendusSaisi(input: {
+  yearMonth: string;
+  produitCode: string;
+  montantAttendusCautions: number;
+  updatedByUserId: string;
+}): Promise<void> {
+  await ensureSprint4Indexes();
+  const db = await getDatabase();
+  const yearMonth = input.yearMonth.trim();
+  const produitCode = normalizeProduitCodeAttendusSaisi(input.produitCode);
+  const montant = Number.isFinite(input.montantAttendusCautions)
+    ? Math.max(0, Math.round(input.montantAttendusCautions))
+    : 0;
+  const now = new Date();
+  await db.collection<CautionEtatAttendusSaisiStored>(CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION).updateOne(
+    { yearMonth, produitCode },
+    {
+      $set: {
+        yearMonth,
+        produitCode,
+        montantAttendusCautions: montant,
+        updatedAt: now,
+        updatedByUserId: input.updatedByUserId,
+      },
+    },
+    { upsert: true },
+  );
+}
+
+export async function deleteCautionEtatAttendusSaisi(yearMonth: string, produitCode: string): Promise<boolean> {
+  await ensureSprint4Indexes();
+  const db = await getDatabase();
+  const result = await db.collection(CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION).deleteOne({
+    yearMonth: yearMonth.trim(),
+    produitCode: normalizeProduitCodeAttendusSaisi(produitCode),
+  });
+  return result.deletedCount > 0;
 }
 
 function computeCautionBucketMetrics(
@@ -1112,6 +1196,8 @@ export async function listCautionEtatMensuelParProduit(months: number): Promise<
 
   const allCodes = [...codesFromData].sort((a, b) => a.localeCompare(b, "fr"));
   const rows: CautionEtatMensuelProduitRow[] = [];
+  const yearMonthKeys = monthDefs.map((md) => md.yearMonth);
+  const attendusOverrideByKey = await listCautionEtatAttendusOverridesByYearMonths(yearMonthKeys);
 
   for (const md of monthDefs) {
     const { start: MStart, end: MEnd } = calendarMonthBounds(md.year, md.monthIndex);
@@ -1134,8 +1220,24 @@ export async function listCautionEtatMensuelParProduit(months: number): Promise<
         moisLabel: md.moisLabel,
         produitCode,
         libelle: libelleByCode.get(produitCode) ?? (produitCode === "—" ? "Sans code produit" : "Hors référentiel"),
+        attendusMontantsSource: "CALCULE",
         ...metrics,
+        attendusMontantDossiers: metrics.montantAttendusCautions,
       });
+    }
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    const k = `${row.yearMonth}|${normalizeProduitCodeAttendusSaisi(row.produitCode)}`;
+    const v = attendusOverrideByKey.get(k);
+    if (v !== undefined) {
+      rows[i] = {
+        ...row,
+        montantAttendusCautions: v,
+        attendusMontantsSource: "ADMIN",
+        ecartMontant: v - row.montantCautionsEncaissees,
+      };
     }
   }
 

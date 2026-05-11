@@ -24,5 +24,13 @@ export async function GET(request: NextRequest) {
   await ensureSprint4Indexes();
   const rows = await listCautionEtatMensuelParProduit(parsed.data.months);
 
-  return NextResponse.json({ rows, months: parsed.data.months }, { status: 200 });
+  return NextResponse.json(
+    { rows, months: parsed.data.months },
+    {
+      status: 200,
+      headers: {
+        "Cache-Control": "no-store, must-revalidate",
+      },
+    },
+  );
 }

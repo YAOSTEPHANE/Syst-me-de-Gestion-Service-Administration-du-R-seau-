@@ -10,6 +10,8 @@ import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericS
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
+import { aggregateEtatMensuelLatestMonth } from "@/lib/lonaci/caution-etat-mensuel-display";
+import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
 
 type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
@@ -331,6 +333,8 @@ export default function CautionsPanel() {
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [contrats, setContrats] = useState<ContratItem[]>([]);
   const [counters, setCounters] = useState<CautionCounters | null>(null);
+  /** Données brutes état mensuel par produit (même API que le tableau) — pour aligner les Analytics. */
+  const [etatMensuelRows, setEtatMensuelRows] = useState<CautionEtatMensuelProduitRow[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [tab, setTab] = useState<CautionListTab>("EN_ATTENTE");
   const [items, setItems] = useState<CautionListItem[]>([]);
@@ -350,9 +354,11 @@ export default function CautionsPanel() {
   const [dealerProduitsAutorises, setDealerProduitsAutorises] = useState<string[]>([]);
   /** Libellés référentiels produits (code → libellé), chargés à l’ouverture du formulaire. */
   const [produitLibelleByCode, setProduitLibelleByCode] = useState<Record<string, string>>({});
+  /** Prix caution référentiel (FCFA) par code produit — renvoyé avec GET concessionnaire. */
+  const [produitPrixCautionByCode, setProduitPrixCautionByCode] = useState<Record<string, number>>({});
   const [contratQuickPick, setContratQuickPick] = useState("");
   const [montant, setMontant] = useState("");
-  const [modeReglement, setModeReglement] = useState<CautionPaymentMode>("VIREMENT");
+  const [modeReglement, setModeReglement] = useState<CautionPaymentMode>("ESPECES");
   const [dueDateLocal, setDueDateLocal] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [observations, setObservations] = useState("");
@@ -403,7 +409,7 @@ export default function CautionsPanel() {
     setPaymentReference("");
     setObservations("");
     setMontant("");
-    setModeReglement("VIREMENT");
+    setModeReglement("ESPECES");
     setDealerSearchInput("");
     setDealerSearchHits([]);
     setDealerFromSearch(null);
@@ -490,6 +496,24 @@ export default function CautionsPanel() {
     return options;
   }, [contratsForSelectedConcessionnaire, dealerProduitsAutorises, produitLibelleByCode]);
 
+  /** Prix caution référentiel (FCFA) pour le contrat sélectionné, si disponible. */
+  const referentielMontantPourContrat = useMemo(() => {
+    if (!contratId.trim()) return null;
+    const row = dealerContracts.find((c) => c.id === contratId);
+    if (!row) return null;
+    const code = (row.produitCode ?? "").trim().toUpperCase();
+    if (!code) return null;
+    const prix = produitPrixCautionByCode[code];
+    return typeof prix === "number" && prix > 0 ? prix : null;
+  }, [contratId, dealerContracts, produitPrixCautionByCode]);
+
+  /** Remplit le montant dès que le PDV + contrat + tarif référentiel sont connus (changement produit = nouveau tarif). */
+  useEffect(() => {
+    if (referentielMontantPourContrat !== null) {
+      setMontant(String(referentielMontantPourContrat));
+    }
+  }, [referentielMontantPourContrat]);
+
   useEffect(() => {
     if (!selectedConcessionnaireId) {
       setDealerContracts([]);
@@ -518,6 +542,7 @@ export default function CautionsPanel() {
     if (!selectedConcessionnaireId) {
       setDealerProduitsAutorises([]);
       setProduitLibelleByCode({});
+      setProduitPrixCautionByCode({});
       return;
     }
     let cancelled = false;
@@ -531,6 +556,7 @@ export default function CautionsPanel() {
         const data = (await res.json()) as {
           concessionnaire?: { produitsAutorises?: string[] };
           produitLibelles?: Record<string, string>;
+          produitPrixCaution?: Record<string, number>;
         };
         const codes = normalizeProduitCodesAutorises(data.concessionnaire?.produitsAutorises);
         if (!cancelled) setDealerProduitsAutorises(codes);
@@ -540,10 +566,26 @@ export default function CautionsPanel() {
             lib && typeof lib === "object" ? lib : {},
           );
         }
+        const prix = data.produitPrixCaution;
+        if (!cancelled) {
+          if (prix && typeof prix === "object") {
+            const normalized: Record<string, number> = {};
+            for (const [k, v] of Object.entries(prix)) {
+              const code = k.trim().toUpperCase();
+              if (!code) continue;
+              const n = typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.round(v)) : 0;
+              normalized[code] = n;
+            }
+            setProduitPrixCautionByCode(normalized);
+          } else {
+            setProduitPrixCautionByCode({});
+          }
+        }
       } catch {
         if (!cancelled) {
           setDealerProduitsAutorises([]);
           setProduitLibelleByCode({});
+          setProduitPrixCautionByCode({});
         }
       }
     })();
@@ -551,6 +593,7 @@ export default function CautionsPanel() {
       cancelled = true;
       setDealerProduitsAutorises([]);
       setProduitLibelleByCode({});
+      setProduitPrixCautionByCode({});
     };
   }, [selectedConcessionnaireId]);
 
@@ -559,6 +602,7 @@ export default function CautionsPanel() {
       if (!contratPrefill) {
         setContratId("");
         setContratQuickPick("");
+        setMontant("");
       }
       return;
     }
@@ -566,6 +610,7 @@ export default function CautionsPanel() {
       if (!contratPrefill) {
         setContratId("");
         setContratQuickPick("");
+        setMontant("");
       }
       return;
     }
@@ -573,6 +618,7 @@ export default function CautionsPanel() {
     if (list.length === 0) {
       setContratId("");
       setContratQuickPick("");
+      setMontant("");
       return;
     }
     const prefilled = contratPrefill ? list.find((c) => c.id === contratPrefill) : null;
@@ -636,15 +682,25 @@ export default function CautionsPanel() {
     setError(null);
     try {
       const tabEff = nextTab ?? tab;
-      const [c, list, a, meRes] = await Promise.all([
+      const [c, list, a, meRes, etatRes] = await Promise.all([
         fetchContratsActifs(),
         fetchCautionsList({ tab: tabEff, pageSize }),
         fetchAlerts().catch(() => []),
         fetch("/api/auth/me", { credentials: "include", cache: "no-store" }).catch(() => null),
+        fetch(`/api/cautions/etat-mensuel-produits?months=12&_=${Date.now()}`, {
+          credentials: "include",
+          cache: "no-store",
+        }).catch(() => null),
       ]);
       setContrats(c);
       setItems(list);
       setAlerts(a);
+      if (etatRes?.ok) {
+        const etatJson = (await etatRes.json().catch(() => null)) as { rows?: CautionEtatMensuelProduitRow[] } | null;
+        setEtatMensuelRows(Array.isArray(etatJson?.rows) ? etatJson.rows : []);
+      } else {
+        setEtatMensuelRows([]);
+      }
       if (meRes?.ok) {
         const me = (await meRes.json()) as { user?: { role?: string } };
         setMeRole(me.user?.role ?? null);
@@ -698,6 +754,13 @@ export default function CautionsPanel() {
       setToast({ type: "error", message: "Indiquez la référence du paiement." });
       return;
     }
+    if (referentielMontantPourContrat === null || referentielMontantPourContrat <= 0) {
+      setToast({
+        type: "error",
+        message: "Montant : aucun tarif caution référentiel pour ce contrat / produit.",
+      });
+      return;
+    }
     setCreating(true);
     setError(null);
     try {
@@ -711,7 +774,7 @@ export default function CautionsPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contratId,
-          montant: Number(montant),
+          montant: referentielMontantPourContrat,
           modeReglement,
           dueDate: due.toISOString(),
           paymentReference: paymentReference.trim(),
@@ -727,6 +790,7 @@ export default function CautionsPanel() {
       setDueDateLocal("");
       setPaymentReference("");
       setObservations("");
+      setModeReglement("ESPECES");
       if (!contratPrefill) {
         setContratId("");
         setContratQuickPick("");
@@ -835,7 +899,7 @@ export default function CautionsPanel() {
     setDueDateLocal("");
     setPaymentReference("");
     setObservations("");
-    setModeReglement("VIREMENT");
+    setModeReglement("ESPECES");
 
     if (!contratPrefill) {
       setContratId("");
@@ -847,6 +911,11 @@ export default function CautionsPanel() {
     setDealerFromSearch(null);
     setDealerProduitsAutorises([]);
   }
+
+  const etatTableauDernierMois = useMemo(
+    () => aggregateEtatMensuelLatestMonth(etatMensuelRows),
+    [etatMensuelRows],
+  );
 
   const cautionAnalytics = useMemo(() => {
     const totalKnown =
@@ -875,14 +944,15 @@ export default function CautionsPanel() {
       .join(" ");
     const pending = (counters?.overdueJ10 ?? 0) + (counters?.enAttente ?? 0);
     const validated = counters?.validatedThisMonth ?? 0;
-    const ecartCaution = pending - validated;
+    /** Écart arithmétique sur les onglets liste (≠ « Écart » du tableau ref. dossiers). */
+    const pipelineEcart = pending - validated;
     return {
       totalKnown,
       pending,
       validated,
-      ecartCaution,
+      pipelineEcart,
       validationRate: totalKnown > 0 ? Math.round((validated / totalKnown) * 100) : 0,
-      ecartRate: totalKnown > 0 ? Math.round((ecartCaution / totalKnown) * 100) : 0,
+      pipelineEcartRate: totalKnown > 0 ? Math.round((pipelineEcart / totalKnown) * 100) : 0,
       riskRate: totalKnown > 0 ? Math.round(((counters?.overdueJ10 ?? 0) / totalKnown) * 100) : 0,
       modeEntries,
       topOverdue,
@@ -1130,9 +1200,9 @@ export default function CautionsPanel() {
                     Détails du paiement
                   </p>
                   <div className="grid gap-2.5 sm:grid-cols-2">
-                    <div>
+                    <div className="sm:col-span-2">
                       <label htmlFor="caution-montant" className="mb-1 block text-xs font-medium text-slate-700">
-                        Montant
+                        Montant (tarif référentiel)
                       </label>
                       <input
                         id="caution-montant"
@@ -1141,36 +1211,40 @@ export default function CautionsPanel() {
                         min={0.01}
                         step="0.01"
                         value={montant}
-                        onChange={(e) => setMontant(e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        readOnly
+                        aria-readonly="true"
+                        title="Montant calculé depuis le tarif caution du produit — non modifiable"
+                        className="w-full min-w-0 rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-800 outline-none cursor-not-allowed"
                       />
+                      {referentielMontantPourContrat === null && contratId.trim() ? (
+                        <p className="mt-1 text-[11px] text-amber-800">
+                          Aucun tarif caution référentiel pour ce produit : création impossible tant que le tarif
+                          manque.
+                        </p>
+                      ) : null}
                     </div>
 
                     <div>
                       <label className="mb-1 block text-xs font-medium text-slate-700">Mode règlement</label>
-                      <select
-                        aria-label="Mode de règlement"
-                        value={modeReglement}
-                        onChange={(e) => setModeReglement(e.target.value as CautionPaymentMode)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      <div
+                        className="w-full rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700"
+                        aria-label="Mode de règlement : espèces (non modifiable)"
                       >
-                        {CAUTION_PAYMENT_MODES.map((m) => (
-                          <option key={m} value={m}>
-                            {labelModeReglement(m)}
-                          </option>
-                        ))}
-                      </select>
+                        {labelModeReglement("ESPECES")}
+                      </div>
                     </div>
 
                     <div>
-                      <label className="mb-1 block text-xs font-medium text-slate-700">Date du paiement</label>
+                      <label className="mb-1 block text-xs font-medium text-slate-700">
+                        Date du paiement <span className="font-normal text-slate-500">(fixée à l’ouverture du formulaire)</span>
+                      </label>
                       <input
-                        aria-label="Date et heure du paiement"
+                        aria-label="Date et heure du paiement (non modifiable)"
                         required
                         type="datetime-local"
                         value={dueDateLocal}
-                        onChange={(e) => setDueDateLocal(e.target.value)}
-                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                        disabled
+                        className="w-full cursor-not-allowed rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700 outline-none"
                       />
                     </div>
 
@@ -1251,7 +1325,8 @@ export default function CautionsPanel() {
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Analytics cautions</h3>
           <p className="mt-0.5 text-xs text-slate-600">
-            Vue moderne des risques, du pipeline de validation et des modes de règlement.
+            Pipeline liste (onglets) et dernier mois du tableau « État mensuel par produit » — mêmes formules d’affichage
+            que le tableau (à encaisser affiché, encaissées, écart cautions, non encaissées FCFA).
           </p>
         </div>
 
@@ -1262,9 +1337,9 @@ export default function CautionsPanel() {
             <div className="text-[11px] text-slate-600">{cautionAnalytics.riskRate}% du portefeuille caution</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.pending.card}>
-            <div className={CAUTION_COLOR_TOKENS.pending.title}>Attendu caution</div>
+            <div className={CAUTION_COLOR_TOKENS.pending.title}>En cours (liste)</div>
             <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.pending.value}`}>{cautionAnalytics.pending}</div>
-            <div className="text-[11px] text-slate-600">En attente + retards</div>
+            <div className="text-[11px] text-slate-600">Onglets « Attendu caution » + retards J+10 — hors ref. dossiers du tableau</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.validated.card}>
             <div className={CAUTION_COLOR_TOKENS.validated.title}>Terminées</div>
@@ -1272,13 +1347,72 @@ export default function CautionsPanel() {
             <div className="text-[11px] text-slate-600">Taux de validation: {cautionAnalytics.validationRate}%</div>
           </div>
           <div className="rounded-xl border border-cyan-100 bg-linear-to-br from-cyan-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Écart caution</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.ecartCaution}</div>
+            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Écart pipeline (liste)</div>
+            <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.pipelineEcart}</div>
             <div className="text-[11px] text-slate-600">
-              Attendu caution − Terminées ({cautionAnalytics.ecartRate}% du portefeuille)
+              (En cours + retards) − Terminées ce mois · {cautionAnalytics.pipelineEcartRate}% du portefeuille liste — distinct
+              de la colonne « Écart » du tableau
             </div>
           </div>
         </div>
+
+        {etatTableauDernierMois ? (
+          <div className="border-b border-slate-100 bg-amber-50/40 px-4 py-3">
+            <p className="text-xs font-semibold text-amber-950">
+              Tableau par produit — {etatTableauDernierMois.moisLabel}{" "}
+              <span className="font-mono font-normal text-amber-900/80">({etatTableauDernierMois.yearMonth})</span>
+            </p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[11px] tabular-nums text-slate-800">
+              <span>
+                À encaisser affiché :{" "}
+                <strong className="text-slate-950">{etatTableauDernierMois.totals.nombreCautionsAEncaisser}</strong>{" "}
+                cautions
+              </span>
+              <span className="text-slate-300" aria-hidden>
+                ·
+              </span>
+              <span>
+                Encaissées :{" "}
+                <strong className="text-slate-950">{etatTableauDernierMois.totals.nombreCautionsEncaissees}</strong> /{" "}
+                <strong className="text-slate-950">
+                  {etatTableauDernierMois.totals.montantCautionsEncaissees.toLocaleString("fr-FR")}
+                </strong>{" "}
+                FCFA
+              </span>
+              <span className="text-slate-300" aria-hidden>
+                ·
+              </span>
+              <span>
+                Écart (cautions) :{" "}
+                <strong className="text-slate-950">
+                  {etatTableauDernierMois.totals.ecartNombreCautionsAffiche.toLocaleString("fr-FR")}
+                </strong>
+              </span>
+              <span className="text-slate-300" aria-hidden>
+                ·
+              </span>
+              <span>
+                Non encaissées (FCFA) :{" "}
+                <strong className="text-slate-950">
+                  {etatTableauDernierMois.totals.montantCautionsNonEncaissees.toLocaleString("fr-FR")}
+                </strong>
+              </span>
+              <span className="text-slate-300" aria-hidden>
+                ·
+              </span>
+              <span>
+                Attendus (FCFA) :{" "}
+                <strong className="text-slate-950">
+                  {etatTableauDernierMois.totals.montantAttendusCautions.toLocaleString("fr-FR")}
+                </strong>
+              </span>
+            </div>
+          </div>
+        ) : (
+          <div className="border-b border-slate-100 px-4 py-2.5 text-[11px] text-slate-500">
+            État mensuel par produit indisponible ou vide — les totaux du tableau ne peuvent pas être affichés ici.
+          </div>
+        )}
 
         <div className="grid gap-4 p-4 lg:grid-cols-12">
           <div className="rounded-xl border border-slate-200 p-3 lg:col-span-5">
@@ -1351,7 +1485,11 @@ export default function CautionsPanel() {
         </div>
       </section>
 
-      <CautionEtatMensuelParProduitBlock domIdPrefix="cautions-etat-mensuel" months={12} />
+      <CautionEtatMensuelParProduitBlock
+        domIdPrefix="cautions-etat-mensuel"
+        months={12}
+        allowAdminAttendusMontants={meRbacRole === "CHEF_SERVICE" || meRbacRole === "ASSIST_CDS"}
+      />
 
       <div className="grid gap-3 sm:grid-cols-3">
         <button

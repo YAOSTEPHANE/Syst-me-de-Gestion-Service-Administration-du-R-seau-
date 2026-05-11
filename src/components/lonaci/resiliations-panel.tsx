@@ -1,5 +1,9 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -102,7 +106,7 @@ export default function ResiliationsPanel() {
   const [produits, setProduits] = useState<ProduitRef[]>([]);
   const [refLoading, setRefLoading] = useState(true);
 
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [produitCode, setProduitCode] = useState("");
   const [dateReception, setDateReception] = useState("");
   const [motif, setMotif] = useState("");
@@ -114,7 +118,7 @@ export default function ResiliationsPanel() {
   const [creating, setCreating] = useState(false);
 
   const [fStatus, setFStatus] = useState<ResiliationStatus | "">("");
-  const [fConcessionnaireId, setFConcessionnaireId] = useState("");
+  const [fFilterPdv, setFFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [fProduitCode, setFProduitCode] = useState("");
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
@@ -128,7 +132,7 @@ export default function ResiliationsPanel() {
     try {
       const q = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
       if (fStatus) q.set("statut", fStatus);
-      if (fConcessionnaireId) q.set("concessionnaireId", fConcessionnaireId);
+      if (fFilterPdv?.id) q.set("concessionnaireId", fFilterPdv.id);
       if (fProduitCode) q.set("produitCode", fProduitCode);
       if (fDateFrom) q.set("dateFrom", new Date(fDateFrom).toISOString());
       if (fDateTo) q.set("dateTo", new Date(fDateTo).toISOString());
@@ -143,7 +147,7 @@ export default function ResiliationsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [fConcessionnaireId, fDateFrom, fDateTo, fProduitCode, fStatus, page, pageSize]);
+  }, [fDateFrom, fDateTo, fFilterPdv?.id, fProduitCode, fStatus, page, pageSize]);
 
   useEffect(() => {
     void load(1);
@@ -180,8 +184,14 @@ export default function ResiliationsPanel() {
     setCreating(true);
     setError(null);
     try {
+      if (!createPdv?.id) {
+        setError("Sélectionnez un concessionnaire.");
+        setToast({ type: "error", message: "Sélectionnez un concessionnaire." });
+        setCreating(false);
+        return;
+      }
       const form = new FormData();
-      form.set("concessionnaireId", concessionnaireId);
+      form.set("concessionnaireId", createPdv.id);
       form.set("produitCode", produitCode);
       form.set("dateReception", new Date(dateReception).toISOString());
       form.set("motif", motif);
@@ -192,7 +202,7 @@ export default function ResiliationsPanel() {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Création impossible");
       }
-      setConcessionnaireId("");
+      setCreatePdv(null);
       setProduitCode("");
       setDateReception("");
       setMotif("");
@@ -293,7 +303,7 @@ export default function ResiliationsPanel() {
   function closeCreate() {
     if (creating) return;
     setCreateOpen(false);
-    setConcessionnaireId("");
+    setCreatePdv(null);
     setProduitCode("");
     setDateReception("");
     setMotif("");
@@ -302,7 +312,7 @@ export default function ResiliationsPanel() {
   }
   const exportBase = `/api/resiliations/export?${new URLSearchParams({
     ...(fStatus ? { statut: fStatus } : {}),
-    ...(fConcessionnaireId ? { concessionnaireId: fConcessionnaireId } : {}),
+    ...(fFilterPdv?.id ? { concessionnaireId: fFilterPdv.id } : {}),
     ...(fProduitCode ? { produitCode: fProduitCode } : {}),
     ...(fDateFrom ? { dateFrom: new Date(fDateFrom).toISOString() } : {}),
     ...(fDateTo ? { dateTo: new Date(fDateTo).toISOString() } : {}),
@@ -379,12 +389,15 @@ export default function ResiliationsPanel() {
           <option value="DOSSIER_RECU">DOSSIER_RECU</option>
           <option value="RESILIE">RESILIE</option>
         </select>
-        <select value={fConcessionnaireId} onChange={(e) => setFConcessionnaireId(e.target.value)} className={inputClass}>
-          <option value="">Tous concessionnaires</option>
-          {concessionnaires.map((c) => (
-            <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-          ))}
-        </select>
+        <ConcessionnaireSearchPicker
+          label={<span className="text-xs font-medium text-slate-600">Concessionnaire (filtre)</span>}
+          selected={fFilterPdv}
+          onSelectedChange={setFFilterPdv}
+          statutActifOnly
+          inputClassName={inputClass}
+          showClearLink
+          searchPlaceholder="Rechercher un PDV…"
+        />
         <select value={fProduitCode} onChange={(e) => setFProduitCode(e.target.value)} className={inputClass}>
           <option value="">Tous produits</option>
           {produits.map((p) => (
@@ -500,15 +513,21 @@ export default function ResiliationsPanel() {
               <div className="grid gap-3">
                 <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Informations dossier</p>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>
-                  <select required value={concessionnaireId} onChange={(e) => setConcessionnaireId(e.target.value)} className={inputClass} disabled={refLoading}>
-                    <option value="">{refLoading ? "Chargement..." : "Sélectionner"}</option>
-                    {concessionnaires.map((c) => (
-                      <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-                    ))}
-                  </select>
-                </label>
+                <ConcessionnaireSearchPicker
+                  key={`resiliation-create-${createOpen}`}
+                  label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>}
+                  selected={createPdv}
+                  onSelectedChange={(r) => {
+                    setCreatePdv(r);
+                    const codes = produits.map((p) => p.code);
+                    const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                    if (picked) setProduitCode(picked);
+                  }}
+                  statutActifOnly
+                  inputClassName={inputClass}
+                  disabled={refLoading}
+                  searchPlaceholder="Rechercher (code, nom…)"
+                />
                 <label className="grid gap-1">
                   <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
                   <select required value={produitCode} onChange={(e) => setProduitCode(e.target.value)} className={inputClass} disabled={refLoading}>

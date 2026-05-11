@@ -20,6 +20,7 @@ export async function GET(request: NextRequest) {
         code: a.code,
         libelle: a.libelle,
         actif: a.actif,
+        zoneGeographique: a.zoneGeographique,
       })),
       produits: produits.map((p) => ({
         id: p._id ?? "",

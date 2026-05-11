@@ -16,6 +16,49 @@ function getAllowedOrigins(): string[] {
     .filter(Boolean);
 }
 
+function tryParseOrigin(value: string): URL | null {
+  try {
+    return new URL(value);
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackHostname(hostname: string): boolean {
+  const h = hostname.toLowerCase();
+  return h === "localhost" || h === "127.0.0.1" || h === "[::1]" || h === "::1";
+}
+
+/**
+ * Vérifie que l'en-tête `Origin` correspond à une navigation same-site vers cette app.
+ * - Égalité stricte avec `request.nextUrl.origin` (cas nominal).
+ * - Si `CORS_ALLOWED_ORIGINS` contient `Origin`, on accepte (URL publique / tunnel alors que
+ *   Node voit encore une origine interne).
+ * - En développement uniquement : localhost, 127.0.0.1 et ::1 avec le même port et le même
+ *   schéma sont équivalents (évite 403 quand `next dev --hostname 127.0.0.1` et le navigateur
+ *   est sur `localhost`).
+ */
+export function isSameSiteOriginForCsrf(originHeader: string, request: NextRequest): boolean {
+  const trimmed = originHeader.trim();
+  if (!trimmed) return false;
+
+  const requestOrigin = request.nextUrl.origin;
+  if (trimmed === requestOrigin) return true;
+
+  const allowed = getAllowedOrigins();
+  if (allowed.includes(trimmed)) return true;
+
+  // Uniquement `next dev` (NODE_ENV=development) : Vitest utilise `test`, on ne relâche pas le CSRF là.
+  if (process.env.NODE_ENV !== "development") return false;
+
+  const a = tryParseOrigin(trimmed);
+  const b = tryParseOrigin(requestOrigin);
+  if (!a || !b) return false;
+  if (a.protocol !== b.protocol) return false;
+  if (a.port !== b.port) return false;
+  return isLoopbackHostname(a.hostname) && isLoopbackHostname(b.hostname);
+}
+
 function resolveCorsOrigin(request: NextRequest): string | null {
   const origin = request.headers.get("origin")?.trim();
   if (!origin) return null;
@@ -210,14 +253,11 @@ export function proxy(request: NextRequest) {
     request.method === "DELETE";
   if (unsafeMethod) {
     const origin = request.headers.get("origin")?.trim();
-    if (origin) {
-      const requestOrigin = request.nextUrl.origin;
-      if (origin !== requestOrigin) {
-        return applyCorsHeaders(
-          request,
-          withRequestId(NextResponse.json({ message: "Origine non autorisée (CSRF)" }, { status: 403 })),
-        );
-      }
+    if (origin && !isSameSiteOriginForCsrf(origin, request)) {
+      return applyCorsHeaders(
+        request,
+        withRequestId(NextResponse.json({ message: "Origine non autorisée (CSRF)" }, { status: 403 })),
+      );
     }
   }
 

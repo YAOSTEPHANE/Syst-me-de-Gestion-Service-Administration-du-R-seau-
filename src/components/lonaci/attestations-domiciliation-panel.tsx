@@ -1,5 +1,9 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -104,7 +108,7 @@ export default function AttestationsDomiciliationPanel() {
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   const [filterType, setFilterType] = useState<"" | DemandeType>("");
-  const [filterConcessionnaireId, setFilterConcessionnaireId] = useState("");
+  const [filterPdv, setFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [filterStatut, setFilterStatut] = useState<"" | DemandeStatut>("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
@@ -114,17 +118,11 @@ export default function AttestationsDomiciliationPanel() {
   const [referentialsError, setReferentialsError] = useState<string | null>(null);
 
   const [type, setType] = useState<DemandeType>("ATTESTATION_REVENU");
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [produitCode, setProduitCode] = useState("");
   const [dateDemande, setDateDemande] = useState("");
   const [observations, setObservations] = useState("");
   const [creating, setCreating] = useState(false);
-
-  const [concessionnaires, setConcessionnaires] = useState<Array<{ id: string; codePdv: string; label: string }>>(
-    [],
-  );
-  const [concessionnairesLoading, setConcessionnairesLoading] = useState(false);
-  const [concessionnairesError, setConcessionnairesError] = useState<string | null>(null);
 
   async function load(nextPage = page) {
     setLoading(true);
@@ -132,7 +130,7 @@ export default function AttestationsDomiciliationPanel() {
     try {
       const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
       if (filterType) params.set("type", filterType);
-      if (filterConcessionnaireId.trim()) params.set("concessionnaireId", filterConcessionnaireId.trim());
+      if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
       if (filterStatut) params.set("statut", filterStatut);
       if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
       if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
@@ -153,7 +151,7 @@ export default function AttestationsDomiciliationPanel() {
   useEffect(() => {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterType, filterConcessionnaireId, filterStatut, filterDateFrom, filterDateTo]);
+  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo]);
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -162,7 +160,7 @@ export default function AttestationsDomiciliationPanel() {
     try {
       const payload = {
         type,
-        concessionnaireId: concessionnaireId.trim() ? concessionnaireId.trim() : null,
+        concessionnaireId: createPdv?.id ?? null,
         produitCode: produitCode.trim() ? produitCode.trim().toUpperCase() : null,
         dateDemande: new Date(dateDemande).toISOString(),
         observations: observations.trim() ? observations.trim() : null,
@@ -256,12 +254,12 @@ export default function AttestationsDomiciliationPanel() {
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (filterType) params.set("type", filterType);
-    if (filterConcessionnaireId.trim()) params.set("concessionnaireId", filterConcessionnaireId.trim());
+    if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
     if (filterStatut) params.set("statut", filterStatut);
     if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
     if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
     return params.toString();
-  }, [filterType, filterConcessionnaireId, filterStatut, filterDateFrom, filterDateTo]);
+  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo]);
 
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
@@ -276,12 +274,10 @@ export default function AttestationsDomiciliationPanel() {
 
   function resetCreateFields() {
     setType("ATTESTATION_REVENU");
-    setConcessionnaireId("");
+    setCreatePdv(null);
     setProduitCode("");
     setDateDemande("");
     setObservations("");
-    setConcessionnaires([]);
-    setConcessionnairesError(null);
   }
 
   function closeCreate() {
@@ -331,41 +327,6 @@ export default function AttestationsDomiciliationPanel() {
       cancelled = true;
     };
   }, [createOpen, produits.length]);
-
-  useEffect(() => {
-    if (!createOpen) return;
-
-    let cancelled = false;
-    setConcessionnairesLoading(true);
-    setConcessionnairesError(null);
-
-    void (async () => {
-      try {
-        const params = new URLSearchParams({ page: "1", pageSize: "100", statut: "ACTIF" });
-        const res = await fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" });
-        if (!res.ok) throw new Error("Concessionnaires indisponibles");
-        const data = (await res.json()) as {
-          items?: Array<{ id: string; codePdv?: string; nomComplet?: string; raisonSociale?: string }>;
-        };
-        const next = (data.items ?? [])
-          .map((c) => {
-            const label = (c.nomComplet || c.raisonSociale || c.codePdv || "").trim();
-            return { id: c.id, codePdv: c.codePdv ?? "", label };
-          })
-          .filter((c) => c.id && c.label);
-        next.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-        if (!cancelled) setConcessionnaires(next);
-      } catch (e) {
-        if (!cancelled) setConcessionnairesError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
-      } finally {
-        if (!cancelled) setConcessionnairesLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [createOpen]);
 
   return (
     <section className="space-y-4">
@@ -457,13 +418,16 @@ export default function AttestationsDomiciliationPanel() {
           <option value="ATTESTATION_REVENU">ATTESTATION_REVENU</option>
           <option value="DOMICILIATION_PRODUIT">DOMICILIATION_PRODUIT</option>
         </select>
-        <input
-          aria-label="Filtre concessionnaire"
-          value={filterConcessionnaireId}
-          onChange={(e) => setFilterConcessionnaireId(e.target.value)}
-          placeholder="Concessionnaire (id)"
-          className={inputClassXs}
-        />
+        <div className="min-w-0">
+          <ConcessionnaireSearchPicker
+            label={<span className="sr-only">Filtre concessionnaire</span>}
+            selected={filterPdv}
+            onSelectedChange={setFilterPdv}
+            inputClassName={inputClassXs}
+            showClearLink
+            searchPlaceholder="Filtrer par PDV…"
+          />
+        </div>
         <select
           aria-label="Filtre statut"
           value={filterStatut}
@@ -654,27 +618,20 @@ export default function AttestationsDomiciliationPanel() {
                     </select>
                   </label>
 
-                  <label className="grid gap-1 sm:col-span-2">
-                    <span className="text-xs font-medium text-slate-700">Concessionnaire concerné</span>
-                    <select
-                      value={concessionnaireId}
-                      onChange={(e) => setConcessionnaireId(e.target.value)}
-                      className={inputClass}
-                      disabled={concessionnairesLoading}
-                    >
-                      <option value="">
-                        {concessionnairesLoading ? "Chargement des concessionnaires…" : "Aucun concessionnaire"}
-                      </option>
-                      {concessionnaires.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                    {concessionnairesError ? (
-                      <span className="text-[11px] leading-4 text-rose-700">{concessionnairesError}</span>
-                    ) : null}
-                  </label>
+                  <ConcessionnaireSearchPicker
+                    key={`attestation-create-${createOpen}`}
+                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné</span>}
+                    selected={createPdv}
+                    onSelectedChange={(r) => {
+                      setCreatePdv(r);
+                      const codes = produits.filter((p) => p.actif).map((p) => p.code);
+                      const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                      if (picked) setProduitCode(picked);
+                    }}
+                    statutActifOnly
+                    inputClassName={inputClass}
+                    searchPlaceholder="Rechercher (code, nom…)"
+                  />
 
                   <label className="grid gap-1 sm:col-span-2">
                     <span className="text-xs font-medium text-slate-700">Produit concerné</span>

@@ -28,6 +28,8 @@ export default function AdminProduitsPanel() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
+  /** Sauvegarde rapide du montant attendu (prix) depuis la cellule du tableau. */
+  const [savingPrixId, setSavingPrixId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [sortBy, setSortBy] = useState<"CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC">("CODE");
@@ -172,6 +174,41 @@ export default function AdminProduitsPanel() {
       setError("Erreur réseau ou serveur.");
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function savePrixFromTable(p: ProduitRow, raw: string) {
+    const prixNum = Number.parseInt(raw.replace(/\s/g, ""), 10);
+    if (!Number.isFinite(prixNum) || prixNum < 0 || !Number.isInteger(prixNum)) {
+      setError("Montant attendu invalide : indiquez un entier ≥ 0 (FCFA).");
+      return;
+    }
+    const current = typeof p.prix === "number" ? p.prix : 0;
+    if (prixNum === current) {
+      setError(null);
+      return;
+    }
+    setError(null);
+    setSuccess(null);
+    setSavingPrixId(p._id);
+    try {
+      const res = await fetch(`/api/admin/produits/${p._id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prix: prixNum }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
+      if (!res.ok || !body?.produit) {
+        setError(body?.message ?? "Enregistrement du montant impossible.");
+        return;
+      }
+      setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
+      setSuccess(`Montant attendu « ${body.produit.code} » : ${prixNum.toLocaleString("fr-FR")} FCFA.`);
+    } catch {
+      setError("Erreur réseau ou serveur.");
+    } finally {
+      setSavingPrixId(null);
     }
   }
 
@@ -325,7 +362,7 @@ export default function AdminProduitsPanel() {
           />
         </label>
         <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Prix caution (FCFA) *</span>
+          <span className="text-xs font-medium text-slate-700">Montant attendu caution (FCFA) *</span>
           <input
             value={prix}
             onChange={(e) => setPrix(e.target.value.replace(/[^\d\s]/g, ""))}
@@ -333,7 +370,7 @@ export default function AdminProduitsPanel() {
             inputMode="numeric"
             className={inputClass}
             autoComplete="off"
-            aria-label="Prix caution en FCFA"
+            aria-label="Montant attendu caution en FCFA"
           />
         </label>
         <button
@@ -363,7 +400,7 @@ export default function AdminProduitsPanel() {
           </strong>
         </p>
         <p>
-          Prix caution moyen : <strong>{avgPrice.toLocaleString("fr-FR")} FCFA</strong>
+          Montant attendu moyen : <strong>{avgPrice.toLocaleString("fr-FR")} FCFA</strong>
         </p>
       </div>
 
@@ -410,7 +447,9 @@ export default function AdminProduitsPanel() {
             <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
               <th className="px-3 py-2 font-semibold">Code</th>
               <th className="px-3 py-2 font-semibold">Libellé</th>
-              <th className="px-3 py-2 font-semibold">Prix caution (FCFA)</th>
+              <th className="px-3 py-2 font-semibold" title="Référentiel caution : saisie directe, enregistrement au blur ou Entrée">
+                Montant attendu (FCFA)
+              </th>
               <th className="px-3 py-2 font-semibold">Statut</th>
               <th className="px-3 py-2 font-semibold">Actions</th>
               <th className="px-3 py-2 font-mono font-normal text-slate-500">ID</th>
@@ -453,13 +492,13 @@ export default function AdminProduitsPanel() {
                           />
                         </label>
                         <label className="grid gap-1 lg:col-span-2">
-                          <span className="text-xs font-medium text-slate-700">Prix (FCFA)</span>
+                          <span className="text-xs font-medium text-slate-700">Montant attendu (FCFA)</span>
                           <input
                             value={editPrix}
                             onChange={(e) => setEditPrix(e.target.value.replace(/[^\d\s]/g, ""))}
                             inputMode="numeric"
                             className={inputClass}
-                            aria-label="Modifier le prix"
+                            aria-label="Modifier le montant attendu"
                           />
                         </label>
                         <label className="flex items-center gap-2 lg:col-span-2">
@@ -495,8 +534,30 @@ export default function AdminProduitsPanel() {
                   <tr key={p._id} className="border-b border-slate-100 last:border-b-0">
                     <td className="px-3 py-2 font-mono font-medium">{p.code}</td>
                     <td className="px-3 py-2">{p.libelle}</td>
-                    <td className="px-3 py-2 tabular-nums">
-                      {typeof p.prix === "number" ? p.prix.toLocaleString("fr-FR") : "—"}
+                    <td className="px-3 py-2">
+                      <input
+                        key={`prix-inline-${p._id}-${p.prix ?? "x"}`}
+                        type="text"
+                        inputMode="numeric"
+                        defaultValue={typeof p.prix === "number" ? String(p.prix) : ""}
+                        placeholder="0"
+                        aria-label={`Montant attendu FCFA pour ${p.code}`}
+                        title="Modifier le montant puis valider avec Entrée ou en cliquant ailleurs"
+                        disabled={
+                          savingPrixId === p._id ||
+                          deletingId === p._id ||
+                          quickUpdatingId === p._id ||
+                          editingId !== null
+                        }
+                        onBlur={(e) => void savePrixFromTable(p, e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-full min-w-[7rem] max-w-[11rem] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:bg-slate-100 disabled:text-slate-500"
+                      />
                     </td>
                     <td className="px-3 py-2">
                       {p.actif ? (

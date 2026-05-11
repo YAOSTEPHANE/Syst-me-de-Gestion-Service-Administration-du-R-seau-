@@ -1,5 +1,10 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickAgenceIdFromConcessionnaire,
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -134,16 +139,10 @@ export default function AgrementsPanel() {
   const [dateReception, setDateReception] = useState("");
   const [referenceOfficielle, setReferenceOfficielle] = useState("");
   const [agenceId, setAgenceId] = useState("");
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [observations, setObservations] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const [concessionnaires, setConcessionnaires] = useState<Array<{ id: string; codePdv: string; label: string }>>(
-    [],
-  );
-  const [concessionnairesLoading, setConcessionnairesLoading] = useState(false);
-  const [concessionnairesError, setConcessionnairesError] = useState<string | null>(null);
 
   async function load(nextPage = page) {
     setLoading(true);
@@ -202,7 +201,7 @@ export default function AgrementsPanel() {
       form.set("dateReception", new Date(dateReception).toISOString());
       form.set("referenceOfficielle", referenceOfficielle.trim());
       form.set("agenceId", agenceId.trim());
-      form.set("concessionnaireId", concessionnaireId.trim());
+      form.set("concessionnaireId", createPdv?.id?.trim() ?? "");
       form.set("observations", observations.trim());
       form.set("document", pdfFile);
       const res = await fetch("/api/agrements", { method: "POST", credentials: "include", body: form });
@@ -214,7 +213,7 @@ export default function AgrementsPanel() {
       setDateReception("");
       setReferenceOfficielle("");
       setAgenceId("");
-      setConcessionnaireId("");
+      setCreatePdv(null);
       setObservations("");
       setPdfFile(null);
       setCreateOpen(false);
@@ -307,7 +306,7 @@ export default function AgrementsPanel() {
     setDateReception("");
     setReferenceOfficielle("");
     setAgenceId("");
-    setConcessionnaireId("");
+    setCreatePdv(null);
     setObservations("");
     setPdfFile(null);
   }
@@ -369,45 +368,6 @@ export default function AgrementsPanel() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createOpen]);
-
-  useEffect(() => {
-    if (!createOpen) return;
-
-    let cancelled = false;
-    setConcessionnairesLoading(true);
-    setConcessionnairesError(null);
-
-    void (async () => {
-      try {
-        // /api/concessionnaires limite pageSize à 100 (validation Zod)
-        const params = new URLSearchParams({ page: "1", pageSize: "100", statut: "ACTIF" });
-        if (agenceId.trim()) params.set("agenceId", agenceId.trim());
-        if (produitCode.trim()) params.set("produitCode", produitCode.trim().toUpperCase());
-
-        const res = await fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" });
-        if (!res.ok) throw new Error("Concessionnaires indisponibles");
-        const data = (await res.json()) as {
-          items?: Array<{ id: string; codePdv?: string; nomComplet?: string; raisonSociale?: string }>;
-        };
-        const items = (data.items ?? [])
-          .map((c) => {
-            const label = (c.nomComplet || c.raisonSociale || c.codePdv || "").trim();
-            return { id: c.id, codePdv: c.codePdv ?? "", label };
-          })
-          .filter((c) => c.id && c.label);
-        items.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-        if (!cancelled) setConcessionnaires(items);
-      } catch (e) {
-        if (!cancelled) setConcessionnairesError(e instanceof Error ? e.message : "Erreur");
-      } finally {
-        if (!cancelled) setConcessionnairesLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [createOpen, agenceId, produitCode]);
 
   return (
     <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
@@ -700,27 +660,27 @@ export default function AgrementsPanel() {
                     </select>
                   </label>
 
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-xs font-medium text-slate-700">Concessionnaire</span>
-                    <select
-                      value={concessionnaireId}
-                      onChange={(e) => setConcessionnaireId(e.target.value)}
-                      className={inputClass}
-                      disabled={concessionnairesLoading}
-                    >
-                      <option value="">
-                        {concessionnairesLoading ? "Chargement des concessionnaires…" : "Aucun concessionnaire"}
-                      </option>
-                      {concessionnaires.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                    {concessionnairesError ? (
-                      <span className="text-[11px] leading-4 text-rose-700">{concessionnairesError}</span>
-                    ) : null}
-                  </label>
+                  <ConcessionnaireSearchPicker
+                    key={`agrement-create-${createOpen}`}
+                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire</span>}
+                    selected={createPdv}
+                    onSelectedChange={(r) => {
+                      setCreatePdv(r);
+                      const codes = produits.filter((p) => p.actif).map((p) => p.code);
+                      const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                      if (picked) setProduitCode(picked);
+                      const agIds = agences.filter((a) => a.actif && a.id).map((a) => a.id);
+                      const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                      if (pickedAg) setAgenceId(pickedAg);
+                    }}
+                    statutActifOnly
+                    listExtraParams={{
+                      ...(agenceId.trim() ? { agenceId: agenceId.trim() } : {}),
+                      ...(produitCode.trim() ? { produitCode: produitCode.trim().toUpperCase() } : {}),
+                    }}
+                    inputClassName={inputClass}
+                    searchPlaceholder="Rechercher (code, nom…)"
+                  />
                     </div>
                   </section>
 

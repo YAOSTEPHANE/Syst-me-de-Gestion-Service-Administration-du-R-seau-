@@ -1,5 +1,9 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
@@ -246,7 +250,7 @@ export default function BancarisationPanel() {
   const [decisionComment, setDecisionComment] = useState("");
   const [decisionAck, setDecisionAck] = useState(false);
 
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [nouveauStatut, setNouveauStatut] = useState<Banc>("EN_COURS");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [banqueEtablissement, setBanqueEtablissement] = useState("");
@@ -358,12 +362,13 @@ export default function BancarisationPanel() {
     setError(null);
     setToast(null);
     try {
+      if (!createPdv?.id) throw new Error("Sélectionnez un concessionnaire.");
       if (!file) throw new Error("Document justificatif obligatoire.");
       if (nouveauStatut === "BANCARISE" && !compteBancaire.trim()) {
         throw new Error("Le numero de compte bancaire est obligatoire pour BANCARISE.");
       }
       const form = new FormData();
-      form.set("concessionnaireId", concessionnaireId);
+      form.set("concessionnaireId", createPdv.id);
       form.set("nouveauStatut", nouveauStatut);
       form.set("compteBancaire", compteBancaire.trim());
       form.set("banqueEtablissement", banqueEtablissement.trim());
@@ -384,7 +389,7 @@ export default function BancarisationPanel() {
         message: "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service.",
       });
       setCreateOpen(false);
-      setConcessionnaireId("");
+      setCreatePdv(null);
       setCompteBancaire("");
       setBanqueEtablissement("");
       setDateEffet("");
@@ -864,21 +869,20 @@ export default function BancarisationPanel() {
               </button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-slate-600">Concessionnaire</label>
-                <select
-                  value={concessionnaireId}
-                  onChange={(e) => setConcessionnaireId(e.target.value)}
-                  required
-                  className="w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
-                >
-                  <option value="">Choisir…</option>
-                  {items.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.codePdv} - {c.nomComplet}
-                    </option>
-                  ))}
-                </select>
+              <div className="md:col-span-2">
+                <ConcessionnaireSearchPicker
+                  key={`banc-create-${createOpen}`}
+                  label={<span className="text-xs text-slate-600">Concessionnaire</span>}
+                  selected={createPdv}
+                  onSelectedChange={(r) => {
+                    setCreatePdv(r);
+                    const codes = refsProduits.filter((p) => p.actif).map((p) => p.code);
+                    const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                    if (picked) setProduitCode(picked);
+                  }}
+                  inputClassName="w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
+                  searchPlaceholder="Rechercher un PDV…"
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-slate-600">Nouveau statut</label>

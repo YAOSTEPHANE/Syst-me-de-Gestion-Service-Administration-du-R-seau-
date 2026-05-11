@@ -117,15 +117,19 @@ export async function GET(request: NextRequest, context: RouteContext) {
   await ensureReferentialsIndexes();
   const produits = await listProduits();
   const produitLibelles: Record<string, string> = {};
+  const produitPrixCaution: Record<string, number> = {};
   for (const p of produits) {
     const code = (p.code ?? "").trim().toUpperCase();
     if (!code) continue;
     const lib = (p.libelle ?? "").trim();
     produitLibelles[code] = lib || code;
+    const rawPrix = p.prix;
+    const n = typeof rawPrix === "number" && Number.isFinite(rawPrix) ? Math.max(0, Math.round(rawPrix)) : 0;
+    produitPrixCaution[code] = n;
   }
 
   return NextResponse.json(
-    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles },
+    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles, produitPrixCaution },
     { status: 200 },
   );
 }

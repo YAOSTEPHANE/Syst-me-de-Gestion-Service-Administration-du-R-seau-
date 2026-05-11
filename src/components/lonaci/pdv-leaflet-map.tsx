@@ -43,6 +43,19 @@ export default function PdvLeafletMap({
   const layerRef = useRef<L.LayerGroup | null>(null);
   const markersRef = useRef<Map<string, L.CircleMarker>>(new Map());
   const [zoomLevel, setZoomLevel] = useState(DEFAULT_ZOOM);
+  /** Évite de rappeler `fitBounds` à chaque zoom (sinon la vue est réinitialisée et le zoom « ne marche pas »). */
+  const lastPointsIdsRef = useRef<string>("");
+  const lastFocusNonceRef = useRef(0);
+  const lastHighlightIdRef = useRef<string | undefined>(undefined);
+
+  function googleMapsUrl(lat: number, lng: number): string {
+    return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`;
+  }
+
+  function googleMapsLinkHtml(lat: number, lng: number): string {
+    const href = escapeHtml(googleMapsUrl(lat, lng));
+    return `<div class="mt-2"><a class="text-sky-600 underline" href="${href}" target="_blank" rel="noopener noreferrer">Ouvrir dans Google Maps</a></div>`;
+  }
 
   function cellSizeForZoom(zoom: number): number {
     if (zoom <= 6) return 0.8;
@@ -59,6 +72,10 @@ export default function PdvLeafletMap({
     const map = L.map(el, {
       scrollWheelZoom: true,
       zoomControl: true,
+      doubleClickZoom: true,
+      boxZoom: true,
+      keyboard: true,
+      touchZoom: true,
     }).setView(DEFAULT_CENTER, DEFAULT_ZOOM);
 
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -100,6 +117,7 @@ export default function PdvLeafletMap({
     markersRef.current.clear();
 
     if (!points.length) {
+      lastPointsIdsRef.current = "";
       map.setView(DEFAULT_CENTER, DEFAULT_ZOOM);
       onRenderStatsChange?.({ mode: "points", renderedCount: 0, groupedPoints: 0, zoom: map.getZoom() });
       return;
@@ -176,6 +194,7 @@ export default function PdvLeafletMap({
               <ul class="mt-1 list-inside list-disc text-slate-700">${preview}</ul>
               ${more}
               <div class="mt-1 text-slate-500">Zoomez pour dissocier les points.</div>
+              ${googleMapsLinkHtml(cluster.lat, cluster.lng)}
             </div>`,
             { className: "pdv-map-popup", maxWidth: 300 },
           );
@@ -185,6 +204,7 @@ export default function PdvLeafletMap({
             `<div class="text-xs leading-snug">
               <div class="font-semibold">${escapeHtml(only.codePdv)}</div>
               <div class="mt-0.5 text-slate-700">${escapeHtml(only.label)}</div>
+              ${googleMapsLinkHtml(only.lat, only.lng)}
             </div>`,
             { className: "pdv-map-popup", maxWidth: 260 },
           );
@@ -215,6 +235,7 @@ export default function PdvLeafletMap({
           `<div class="text-xs leading-snug">
             <div class="font-semibold">${escapeHtml(p.codePdv)}</div>
             <div class="mt-0.5 text-slate-700">${escapeHtml(p.label)}</div>
+            ${googleMapsLinkHtml(p.lat, p.lng)}
           </div>`,
           { className: "pdv-map-popup", maxWidth: 260 },
         );
@@ -225,15 +246,29 @@ export default function PdvLeafletMap({
     }
 
     if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+      const idsKey = points.map((p) => p.id).join(",");
+      const shouldFitBounds = lastPointsIdsRef.current !== idsKey;
+      if (shouldFitBounds) {
+        lastPointsIdsRef.current = idsKey;
+        map.fitBounds(bounds, { padding: [28, 28], maxZoom: 16 });
+      }
+
+      const focusBump = lastFocusNonceRef.current !== focusNonce;
+      lastFocusNonceRef.current = focusNonce;
+      const highlightBump = (highlightId ?? "") !== (lastHighlightIdRef.current ?? "");
+      lastHighlightIdRef.current = highlightId;
+
       if (highlightId) {
         const highlighted = markersRef.current.get(highlightId) ?? focusLayer;
         const target = highlighted?.getLatLng() ?? focusLatLng;
         if (target && highlighted) {
-          map.panTo(target, { animate: true });
+          if (shouldFitBounds || focusBump || highlightBump) {
+            map.panTo(target, { animate: true });
+          }
           highlighted.openPopup();
         }
       }
+
       onRenderStatsChange?.({
         mode: shouldCluster ? "clusters" : "points",
         renderedCount,
@@ -244,11 +279,13 @@ export default function PdvLeafletMap({
   }, [points, highlightId, zoomLevel, focusNonce, onRenderStatsChange]);
 
   return (
-    <div
-      ref={containerRef}
-      className={`z-0 h-[min(60vh,680px)] min-h-[360px] w-full rounded-xl border border-slate-200 bg-slate-100 ${className}`}
-      role="region"
-      aria-label="Carte des points de vente géolocalisés"
-    />
+    <div className={`isolate z-0 h-[min(60vh,680px)] min-h-[360px] w-full rounded-xl border border-slate-200 bg-slate-100 ${className}`}>
+      <div
+        ref={containerRef}
+        className="h-full min-h-[360px] w-full rounded-[inherit]"
+        role="region"
+        aria-label="Carte des points de vente géolocalisés"
+      />
+    </div>
   );
 }

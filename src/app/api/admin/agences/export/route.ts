@@ -24,10 +24,12 @@ export async function GET(request: NextRequest) {
     doc.moveDown(0.6);
 
     for (const row of agences) {
+      const zone = row.zoneGeographique === "ABIDJAN" ? "Abidjan" : "Interieur";
+      const actif = row.actif ? "ACTIF" : "INACTIF";
       doc
         .fontSize(9)
         .text(
-          `${row.code} | ${row.libelle} | statut=${row.actif ? "ACTIF" : "INACTIF"} | id=${row._id ?? ""}`,
+          `${row.code} | ${row.libelle} | zone=${zone} | actif=${actif} | id=${row._id ?? ""}`,
         );
     }
 

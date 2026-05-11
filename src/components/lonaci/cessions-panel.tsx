@@ -1,5 +1,10 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickAgenceIdFromConcessionnaire,
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
@@ -190,9 +195,9 @@ export default function CessionsPanel() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [kind, setKind] = useState<CessionKind>("CESSION");
 
-  const [concessionnaireId, setConcessionnaireId] = useState("");
-  const [cedantId, setCedantId] = useState("");
-  const [beneficiaireId, setBeneficiaireId] = useState("");
+  const [cedantPdv, setCedantPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [beneficiairePdv, setBeneficiairePdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [delocPdv, setDelocPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [produitCode, setProduitCode] = useState("");
   const [oldAdresse, setOldAdresse] = useState("");
   const [oldAgenceId, setOldAgenceId] = useState("");
@@ -251,23 +256,38 @@ export default function CessionsPanel() {
   }, [load]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cedRes = await fetch("/api/concessionnaires?page=1&pageSize=100&statut=ACTIF", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!cedRes.ok || cancelled) return;
+        const c = (await cedRes.json()) as { items: ConcessionnaireOption[] };
+        if (!cancelled) setConcessionnaires(c.items ?? []);
+      } catch {
+        /* libellés tableau : optionnel */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     if (!createOpen) return;
     let cancelled = false;
     setRefLoading(true);
     setRefError(null);
     void (async () => {
       try {
-        const [refRes, cedRes] = await Promise.all([
-          fetch("/api/referentials", { credentials: "include", cache: "no-store" }),
-          fetch("/api/concessionnaires?page=1&pageSize=100&statut=ACTIF", { credentials: "include", cache: "no-store" }),
-        ]);
-        if (!refRes.ok || !cedRes.ok) throw new Error("Référentiels indisponibles");
+        const refRes = await fetch("/api/referentials", { credentials: "include", cache: "no-store" });
+        if (!refRes.ok) throw new Error("Référentiels indisponibles");
         const refs = (await refRes.json()) as { produits: ProduitRef[]; agences: AgenceRef[] };
-        const c = (await cedRes.json()) as { items: ConcessionnaireOption[] };
         if (!cancelled) {
           setProduits((refs.produits ?? []).filter((p) => p.actif));
           setAgences((refs.agences ?? []).filter((a) => a.actif));
-          setConcessionnaires(c.items ?? []);
         }
       } catch (e) {
         if (!cancelled) setRefError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
@@ -290,9 +310,9 @@ export default function CessionsPanel() {
 
   function closeCreate() {
     setCreateOpen(false);
-    setConcessionnaireId("");
-    setCedantId("");
-    setBeneficiaireId("");
+    setDelocPdv(null);
+    setCedantPdv(null);
+    setBeneficiairePdv(null);
     setProduitCode("");
     setOldAdresse("");
     setOldAgenceId("");
@@ -311,11 +331,22 @@ export default function CessionsPanel() {
     setCreating(true);
     setCreateError(null);
     try {
+      if (kind === "CESSION") {
+        if (!cedantPdv?.id || !beneficiairePdv?.id) {
+          setCreateError("Sélectionnez le cédant et le bénéficiaire.");
+          setCreating(false);
+          return;
+        }
+      } else if (!delocPdv?.id) {
+        setCreateError("Sélectionnez le concessionnaire concerné.");
+        setCreating(false);
+        return;
+      }
       const form = new FormData();
       form.set("kind", kind);
-      form.set("concessionnaireId", concessionnaireId);
-      form.set("cedantId", cedantId);
-      form.set("beneficiaireId", beneficiaireId);
+      form.set("concessionnaireId", delocPdv?.id ?? "");
+      form.set("cedantId", cedantPdv?.id ?? "");
+      form.set("beneficiaireId", beneficiairePdv?.id ?? "");
       form.set("produitCode", produitCode);
       form.set("oldAdresse", oldAdresse);
       form.set("oldAgenceId", oldAgenceId);
@@ -688,27 +719,36 @@ export default function CessionsPanel() {
                 {kind === "CESSION" ? (
                   <section className="grid gap-2 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Informations cession</p>
-                    <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Concessionnaire cédant *</span>
-                      <select required value={cedantId} onChange={(e) => setCedantId(e.target.value)} className={inputClass} disabled={refLoading}>
-                        <option value="">{refLoading ? "Chargement…" : "Sélectionner"}</option>
-                        {concessionnaires.map((c) => (
-                          <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Concessionnaire bénéficiaire *</span>
-                      <select required value={beneficiaireId} onChange={(e) => setBeneficiaireId(e.target.value)} className={inputClass} disabled={refLoading}>
-                        <option value="">{refLoading ? "Chargement…" : "Sélectionner"}</option>
-                        {concessionnaires.map((c) => (
-                          <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-                        ))}
-                      </select>
+                    <ConcessionnaireSearchPicker
+                      key={`cession-cedant-${createOpen}`}
+                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire cédant *</span>}
+                      selected={cedantPdv}
+                      onSelectedChange={(r) => {
+                        setCedantPdv(r);
+                        const codes = produits.map((p) => p.code);
+                        const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                        if (picked) setProduitCode(picked);
+                      }}
+                      statutActifOnly
+                      inputClassName={inputClass}
+                      disabled={refLoading}
+                      searchPlaceholder="Rechercher (code, nom…)"
+                    />
+                    <div className="grid gap-1">
+                      <ConcessionnaireSearchPicker
+                        key={`cession-benef-${createOpen}`}
+                        label={<span className="text-xs font-medium text-slate-700">Concessionnaire bénéficiaire *</span>}
+                        selected={beneficiairePdv}
+                        onSelectedChange={setBeneficiairePdv}
+                        statutActifOnly
+                        inputClassName={inputClass}
+                        disabled={refLoading}
+                        searchPlaceholder="Rechercher (code, nom…)"
+                      />
                       <span className="text-[11px] text-slate-500">
                         Bénéficiaire absent ? <Link href="/concessionnaires" className="underline">Créer un concessionnaire</Link>.
                       </span>
-                    </label>
+                    </div>
                     <label className="grid gap-1">
                       <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
                       <select required value={produitCode} onChange={(e) => setProduitCode(e.target.value)} className={inputClass} disabled={refLoading}>
@@ -722,15 +762,25 @@ export default function CessionsPanel() {
                 ) : (
                   <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Informations délocalisation</p>
-                    <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>
-                      <select required value={concessionnaireId} onChange={(e) => setConcessionnaireId(e.target.value)} className={inputClass} disabled={refLoading}>
-                        <option value="">{refLoading ? "Chargement…" : "Sélectionner"}</option>
-                        {concessionnaires.map((c) => (
-                          <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-                        ))}
-                      </select>
-                    </label>
+                    <ConcessionnaireSearchPicker
+                      key={`deloc-pdv-${createOpen}`}
+                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>}
+                      selected={delocPdv}
+                      onSelectedChange={(r) => {
+                        setDelocPdv(r);
+                        if (!r) {
+                          setOldAgenceId("");
+                          return;
+                        }
+                        const agIds = agences.map((a) => a.id);
+                        const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                        if (pickedAg) setOldAgenceId(pickedAg);
+                      }}
+                      statutActifOnly
+                      inputClassName={inputClass}
+                      disabled={refLoading}
+                      searchPlaceholder="Rechercher (code, nom…)"
+                    />
                     <label className="grid gap-1">
                       <span className="text-xs font-medium text-slate-700">Ancienne adresse / agence *</span>
                       <input required value={oldAdresse} onChange={(e) => setOldAdresse(e.target.value)} className={inputClass} placeholder="Adresse actuelle" />

@@ -12,7 +12,8 @@ import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import { findContratById, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
@@ -332,6 +333,156 @@ export async function transitionDossier(
   }
 
   await notifyAfterTransition(updated, targetStatus, actor, comment);
+  return updated;
+}
+
+/** Champs modifiables sur un dossier contrat en brouillon / rejeté (correction avant resoumission). */
+export type DossierContratPayloadPatch = {
+  observations?: string | null;
+  commentaire?: string | null;
+  dateEffet?: string;
+  parentContratId?: string | null;
+  agenceId?: string;
+  produitCode?: string;
+  operationType?: "NOUVEAU" | "ACTUALISATION";
+};
+
+export async function patchContratDossierPayload(
+  dossierId: string,
+  patch: DossierContratPayloadPatch,
+  actor: UserDocument,
+): Promise<DossierDocument> {
+  const dossier = await findDossierById(dossierId);
+  if (!dossier || dossier.deletedAt) {
+    throw new Error("DOSSIER_NOT_FOUND");
+  }
+  if (dossier.type !== "CONTRAT_ACTUALISATION") {
+    throw new Error("DOSSIER_TYPE_UNSUPPORTED");
+  }
+  if (dossier.status !== "BROUILLON" && dossier.status !== "REJETE") {
+    throw new Error("DOSSIER_NOT_EDITABLE");
+  }
+
+  const patchKeys = (Object.keys(patch) as (keyof DossierContratPayloadPatch)[]).filter(
+    (k) => patch[k] !== undefined,
+  );
+  if (patchKeys.length === 0) {
+    throw new Error("PATCH_EMPTY");
+  }
+
+  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt) {
+    throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  }
+  if (!canReadConcessionnaire(actor, concessionnaire)) {
+    throw new Error("AGENCE_FORBIDDEN");
+  }
+
+  const current = { ...(dossier.payload ?? {}) } as Record<string, unknown>;
+  const next: Record<string, unknown> = { ...current };
+
+  if (patch.observations !== undefined) {
+    next.observations = patch.observations;
+  }
+  if (patch.commentaire !== undefined) {
+    next.commentaire = patch.commentaire;
+  }
+  if (patch.produitCode !== undefined) {
+    next.produitCode = String(patch.produitCode).trim().toUpperCase();
+  }
+  if (patch.operationType !== undefined) {
+    next.operationType = patch.operationType;
+  }
+  if (patch.parentContratId !== undefined) {
+    const raw = patch.parentContratId;
+    next.parentContratId = raw && String(raw).trim() ? String(raw).trim() : null;
+  }
+  if (patch.dateEffet !== undefined) {
+    const d = new Date(patch.dateEffet);
+    if (Number.isNaN(d.getTime())) {
+      throw new Error("DATE_EFFET_INVALID");
+    }
+    const iso = d.toISOString();
+    next.dateEffet = iso;
+    next.dateOperation = iso;
+  }
+
+  let nextAgenceId = dossier.agenceId ?? null;
+  if (patch.agenceId !== undefined) {
+    if (!concessionnaire.agenceId || patch.agenceId.trim() !== concessionnaire.agenceId) {
+      throw new Error("AGENCE_INVALID");
+    }
+    next.agenceId = patch.agenceId.trim();
+    nextAgenceId = patch.agenceId.trim();
+  }
+
+  const op = String(next.operationType ?? "");
+  const produitCode = String(next.produitCode ?? "").trim().toUpperCase();
+  if (!produitCode) {
+    throw new Error("PRODUIT_REQUIRED");
+  }
+  const produit = await resolveProduitForContratWorkflow(produitCode);
+  if (!produit) {
+    throw new Error("PRODUIT_INVALID");
+  }
+  if (!produitAutorisePourConcessionnaire(concessionnaire.produitsAutorises ?? [], produitCode)) {
+    throw new Error("PRODUIT_NOT_ALLOWED");
+  }
+
+  if (op === "NOUVEAU") {
+    next.parentContratId = null;
+    const exists = await hasActiveContractForProduct(dossier.concessionnaireId, produitCode);
+    if (exists) {
+      throw new Error("ACTIVE_CONTRACT_EXISTS");
+    }
+  } else if (op === "ACTUALISATION") {
+    const pid = String(next.parentContratId ?? "").trim();
+    if (!pid) {
+      throw new Error("PARENT_CONTRAT_REQUIRED");
+    }
+    const parent = await findContratById(pid);
+    if (
+      !parent ||
+      parent.status !== "ACTIF" ||
+      parent.concessionnaireId !== dossier.concessionnaireId ||
+      parent.produitCode.trim().toUpperCase() !== produitCode
+    ) {
+      throw new Error("PARENT_CONTRAT_INVALID");
+    }
+  } else {
+    throw new Error("OPERATION_TYPE_INVALID");
+  }
+
+  const db = await getDatabase();
+  const now = new Date();
+  const result = await db.collection<StoredDossier>(COLLECTION).updateOne(
+    { _id: new ObjectId(dossierId), deletedAt: null },
+    {
+      $set: {
+        payload: next,
+        agenceId: nextAgenceId,
+        updatedAt: now,
+        updatedByUserId: actor._id ?? "",
+      },
+    },
+  );
+  if (result.matchedCount === 0) {
+    throw new Error("DOSSIER_NOT_FOUND");
+  }
+
+  const updated = await findDossierById(dossierId);
+  if (!updated) {
+    throw new Error("DOSSIER_NOT_FOUND");
+  }
+
+  await appendAuditLog({
+    entityType: "DOSSIER",
+    entityId: dossierId,
+    action: "UPDATE_PAYLOAD",
+    userId: actor._id ?? "",
+    details: { keys: patchKeys },
+  });
+
   return updated;
 }
 

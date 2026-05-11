@@ -124,6 +124,10 @@ export default function CartePdvPanel() {
     [filteredAndSorted, selectedPointId],
   );
 
+  const selectedGoogleMapsHref = selectedPoint
+    ? `https://www.google.com/maps?q=${encodeURIComponent(`${selectedPoint.lat},${selectedPoint.lng}`)}`
+    : null;
+
   const geoStats = useMemo(() => {
     if (!points.length) return null;
     let north = points[0];
@@ -200,7 +204,7 @@ export default function CartePdvPanel() {
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <h3 className="text-sm font-semibold text-slate-900">Carte interactive</h3>
           <p className="mt-1 text-xs text-slate-600">
-            OpenStreetMap, zoom libre, popup automatique sur la sélection.
+            OpenStreetMap, zoom libre (molette / pincement), popups avec lien Google Maps pour la sélection.
             {truncated ? <span className="mt-1 block text-amber-700">Affichage tronqué : resserrez les filtres.</span> : null}
           </p>
           {totalWithGps === 0 ? (
@@ -293,14 +297,30 @@ export default function CartePdvPanel() {
             {!filteredAndSorted.length ? <li className="text-sm text-slate-500">Aucun point à afficher.</li> : null}
           </ul>
           <div className="sticky bottom-0 mt-3 border-t border-slate-200 bg-white/95 pt-3 backdrop-blur">
-            <button
-              type="button"
-              onClick={() => setFocusNonce((n) => n + 1)}
-              disabled={!selectedPointId}
-              className="w-full rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              Centrer sur ma sélection
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => setFocusNonce((n) => n + 1)}
+                disabled={!selectedPointId}
+                className="min-h-[44px] flex-1 rounded-xl border border-cyan-300 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              >
+                Centrer sur ma sélection
+              </button>
+              {selectedGoogleMapsHref ? (
+                <a
+                  href={selectedGoogleMapsHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-xl border border-slate-300 bg-white px-3 py-2 text-center text-sm font-semibold text-slate-800 transition hover:bg-slate-50"
+                >
+                  Ouvrir dans Google Maps
+                </a>
+              ) : (
+                <span className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-2 text-center text-sm text-slate-400">
+                  Sélectionnez un PDV pour Google Maps
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>

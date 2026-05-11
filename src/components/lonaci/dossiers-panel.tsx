@@ -1,5 +1,6 @@
 "use client";
 
+import DossierContratActualisationForm from "@/components/lonaci/dossier-contrat-actualisation-form";
 import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -1352,6 +1353,29 @@ export default function DossiersPanel() {
                       {JSON.stringify(detailItem.payload ?? {}, null, 2)}
                     </pre>
                   </div>
+                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
+                  (detailItem.status === "BROUILLON" || detailItem.status === "REJETE") ? (
+                    <DossierContratActualisationForm
+                      dossier={detailItem}
+                      meRole={meRole}
+                      onUpdated={(d) => {
+                        setDetailItem({
+                          id: d.id,
+                          reference: d.reference,
+                          status: d.status as DossierStatus,
+                          type: d.type,
+                          concessionnaireId: d.concessionnaireId,
+                          agenceId: d.agenceId,
+                          payload: d.payload,
+                          history: d.history as DossierDetailItem["history"],
+                          createdAt: d.createdAt,
+                          updatedAt: d.updatedAt,
+                        });
+                        setToast({ type: "success", message: "Dossier actualisé." });
+                        void load();
+                      }}
+                    />
+                  ) : null}
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Historique</p>
                     {detailItem.history.length ? (

@@ -77,9 +77,12 @@ async function ensureAgence(
   const existing = await db.collection<{ _id: ObjectId }>("agences").findOne({ code: c });
   if (existing) return existing._id.toHexString();
   const now = new Date();
+  const { coalesceZoneGeographique } = await import("../src/lib/lonaci/zones-abidjan");
+  const zoneGeographique = coalesceZoneGeographique(undefined, c, libelle.trim());
   const r = await db.collection("agences").insertOne({
     code: c,
     libelle: libelle.trim(),
+    zoneGeographique,
     actif: true,
     createdAt: now,
     updatedAt: now,

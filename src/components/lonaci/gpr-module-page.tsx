@@ -1,5 +1,10 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickProduitCodeFromConcessionnaire,
+  pickProduitCodesFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
 type RefProduit = { code: string; libelle: string; actif: boolean };
@@ -68,7 +73,7 @@ export default function GprModulePage() {
   const [scratchItems, setScratchItems] = useState<ScratchItem[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
-  const [gprConcessionnaireId, setGprConcessionnaireId] = useState("");
+  const [gprPdv, setGprPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [gprProducts, setGprProducts] = useState<string[]>([]);
   const [gprDate, setGprDate] = useState("");
   const [creatingGpr, setCreatingGpr] = useState(false);
@@ -76,7 +81,7 @@ export default function GprModulePage() {
 
   const [lotId, setLotId] = useState("");
   const [lotCodes, setLotCodes] = useState("100");
-  const [lotConcessionnaireId, setLotConcessionnaireId] = useState("");
+  const [lotPdv, setLotPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [lotProduitCode, setLotProduitCode] = useState("");
   const [creatingLot, setCreatingLot] = useState(false);
   const [createLotOpen, setCreateLotOpen] = useState(false);
@@ -154,6 +159,10 @@ export default function GprModulePage() {
 
   async function onCreateGpr(e: FormEvent) {
     e.preventDefault();
+    if (!gprPdv?.id) {
+      setError("Sélectionnez un concessionnaire.");
+      return;
+    }
     setCreatingGpr(true);
     setError(null);
     try {
@@ -162,13 +171,14 @@ export default function GprModulePage() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          concessionnaireId: gprConcessionnaireId,
+          concessionnaireId: gprPdv.id,
           produitsActifs: gprProducts,
           dateEnregistrement: new Date(gprDate).toISOString(),
         }),
       });
       if (!response.ok) throw new Error("Création GPR impossible");
       setGprProducts([]);
+      setGprPdv(null);
       await loadData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
@@ -218,6 +228,10 @@ export default function GprModulePage() {
 
   async function onCreateLot(e: FormEvent) {
     e.preventDefault();
+    if (!lotPdv?.id) {
+      setError("Sélectionnez un concessionnaire pour le lot.");
+      return;
+    }
     setCreatingLot(true);
     setError(null);
     try {
@@ -228,14 +242,14 @@ export default function GprModulePage() {
         body: JSON.stringify({
           lotId: lotId.trim() ? lotId.trim() : undefined,
           nombreCodes: Number(lotCodes),
-          concessionnaireId: lotConcessionnaireId,
+          concessionnaireId: lotPdv.id,
           produitCode: lotProduitCode,
         }),
       });
       if (!response.ok) throw new Error("Création du lot impossible");
       setLotId("");
       setLotCodes("100");
-      setLotConcessionnaireId("");
+      setLotPdv(null);
       setLotProduitCode("");
       setCreateLotOpen(false);
       await loadData();
@@ -313,20 +327,21 @@ export default function GprModulePage() {
           </a>
         </div>
         <form onSubmit={onCreateGpr} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-4">
-          <select
-            required
-            value={gprConcessionnaireId}
-            onChange={(e) => setGprConcessionnaireId(e.target.value)}
-            className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
-            disabled={loadingRef}
-          >
-            <option value="">Concessionnaire</option>
-            {concessionnaires.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.codePdv} - {c.raisonSociale}
-              </option>
-            ))}
-          </select>
+          <div className="min-w-0">
+            <ConcessionnaireSearchPicker
+              label={<span className="text-[10px] font-medium text-slate-600">Concessionnaire *</span>}
+              selected={gprPdv}
+              onSelectedChange={(r) => {
+                setGprPdv(r);
+                const codes = produits.map((p) => p.code);
+                const next = r ? pickProduitCodesFromConcessionnaire(r, codes) : [];
+                setGprProducts(next);
+              }}
+              inputClassName="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
+              disabled={loadingRef}
+              searchPlaceholder="Rechercher un PDV…"
+            />
+          </div>
           <select
             multiple
             required
@@ -504,23 +519,24 @@ export default function GprModulePage() {
                     </div>
                   </section>
                   <section className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2">
-                    <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Concessionnaire *</span>
-                      <select
-                        required
-                        value={lotConcessionnaireId}
-                        onChange={(e) => setLotConcessionnaireId(e.target.value)}
-                        className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
-                        disabled={loadingRef}
-                      >
-                        <option value="">Concessionnaire</option>
-                        {concessionnaires.map((c) => (
-                          <option key={c.id} value={c.id}>
-                            {c.codePdv} - {c.raisonSociale}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                    <ConcessionnaireSearchPicker
+                      key={`scratch-lot-${createLotOpen}`}
+                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire *</span>}
+                      selected={lotPdv}
+                      onSelectedChange={(r) => {
+                        setLotPdv(r);
+                        if (!r) {
+                          setLotProduitCode("");
+                          return;
+                        }
+                        const codes = produits.map((p) => p.code);
+                        const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                        if (picked) setLotProduitCode(picked);
+                      }}
+                      inputClassName="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
+                      disabled={loadingRef}
+                      searchPlaceholder="Rechercher un PDV…"
+                    />
                     <label className="grid gap-1">
                       <span className="text-xs font-medium text-slate-700">Produit *</span>
                       <select

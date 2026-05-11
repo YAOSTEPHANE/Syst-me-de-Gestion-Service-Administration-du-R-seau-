@@ -1,14 +1,48 @@
 import { ObjectId, type Db } from "mongodb";
 
+import type { AgenceZoneGeographique } from "@/lib/lonaci/types";
+
 /**
- * Identifiants d’agences rattachées à la zone Abidjan (libellé ou code métier).
- * Utilisé pour ventiler les contrats / états par agence dans le district d’Abidjan.
+ * Valeur stockée ou, si absent / invalide, déduction héritée (libellé contient « abidjan » ou code `^ABJ`).
+ * Aligné sur la requête `listAgenceIdsZoneAbidjan` pour les lignes sans champ explicite.
+ */
+export function coalesceZoneGeographique(
+  stored: string | null | undefined,
+  code: string,
+  libelle: string,
+): AgenceZoneGeographique {
+  if (stored === "ABIDJAN" || stored === "INTERIEUR") return stored;
+  const lib = (libelle ?? "").toLowerCase();
+  const cod = (code ?? "").toUpperCase();
+  if (lib.includes("abidjan") || /^ABJ/i.test(cod)) return "ABIDJAN";
+  return "INTERIEUR";
+}
+
+/**
+ * Identifiants d’agences comptées en zone Abidjan : champ explicite `zoneGeographique: "ABIDJAN"`,
+ * ou anciennes lignes sans champ mais correspondant à l’heuristique libellé/code.
  */
 export async function listAgenceIdsZoneAbidjan(db: Db): Promise<string[]> {
   const rows = await db
     .collection<{ _id: ObjectId }>("agences")
     .find({
-      $or: [{ libelle: { $regex: "abidjan", $options: "i" } }, { code: { $regex: "^ABJ", $options: "i" } }],
+      $or: [
+        { zoneGeographique: "ABIDJAN" },
+        {
+          $and: [
+            {
+              $or: [
+                { zoneGeographique: { $exists: false } },
+                { zoneGeographique: null },
+                { zoneGeographique: "" },
+              ],
+            },
+            {
+              $or: [{ libelle: { $regex: "abidjan", $options: "i" } }, { code: { $regex: "^ABJ", $options: "i" } }],
+            },
+          ],
+        },
+      ],
     })
     .project({ _id: 1 })
     .toArray();

@@ -5,6 +5,11 @@ import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import ConcessionnaireSearchPicker, {
+  pickAgenceIdFromConcessionnaire,
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -12,20 +17,22 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 
 type OperationType = "NOUVEAU" | "ACTUALISATION";
 
-interface ConcessionnaireOption {
-  id: string;
-  codePdv: string;
-  nomComplet: string;
-  raisonSociale: string;
-  agenceId: string | null;
-  produitsAutorises: string[];
-}
+type ConcessionnaireOption = ConcessionnairePickerRow;
 
 interface AgenceRef {
   id: string;
   code: string;
   libelle: string;
   actif: boolean;
+  /** Présent si l’API référentiel expose la zone (Abidjan / intérieur). */
+  zoneGeographique?: "ABIDJAN" | "INTERIEUR";
+}
+
+function agenceOptionLabel(a: AgenceRef): string {
+  const base = `${a.code} — ${a.libelle}`;
+  if (a.zoneGeographique === "ABIDJAN") return `${base} · Abidjan`;
+  if (a.zoneGeographique === "INTERIEUR") return `${base} · Intérieur`;
+  return base;
 }
 
 interface ProduitRef {
@@ -290,10 +297,6 @@ function userCanOpenDossierDecisionModal(role: string | null, etape: string): bo
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
 
-function labelPdv(c: ConcessionnaireOption) {
-  return `${c.codePdv} — ${c.nomComplet || c.raisonSociale}`;
-}
-
 export default function ContratsPanel() {
   const searchParams = useSearchParams();
   const prefillConcessionnaireId = searchParams.get("concessionnaireId") ?? "";
@@ -315,10 +318,6 @@ export default function ContratsPanel() {
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  /** Recherche référentiel PDV */
-  const [pdvQuery, setPdvQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<ConcessionnaireOption[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [selectedPdv, setSelectedPdv] = useState<ConcessionnaireOption | null>(null);
 
   const [formAgenceId, setFormAgenceId] = useState("");
@@ -330,6 +329,8 @@ export default function ContratsPanel() {
 
   const [parentsActifs, setParentsActifs] = useState<ContratActif[]>([]);
   const [parentsLoading, setParentsLoading] = useState(false);
+  /** Permet de relancer le chargement des contrats actifs sans changer le produit (le select ne refire pas si la valeur est identique). */
+  const [parentsFetchTick, setParentsFetchTick] = useState(0);
 
   const [listPage, setListPage] = useState(1);
   const [listPageSize] = useState(100);
@@ -613,11 +614,9 @@ export default function ContratsPanel() {
     setOperationType("NOUVEAU");
     setParentContratId("");
     setProduitCode("");
-    setSearchResults([]);
     if (!prefillConcessionnaireId) {
       setSelectedPdv(null);
       setFormAgenceId("");
-      setPdvQuery("");
     }
   }, [createOpen, prefillConcessionnaireId]);
 
@@ -631,52 +630,17 @@ export default function ContratsPanel() {
         });
         if (!res.ok) return;
         const data = (await res.json()) as { concessionnaire: ConcessionnaireOption };
-        const c = data.concessionnaire;
+        const c = data.concessionnaire as ConcessionnaireOption;
         setSelectedPdv(c);
-        setFormAgenceId(c.agenceId ?? "");
-        setPdvQuery(labelPdv(c));
+        const agIds = agencesTriees.map((a) => a.id);
+        setFormAgenceId(
+          pickAgenceIdFromConcessionnaire(c, agIds) || (typeof c.agenceId === "string" ? c.agenceId.trim() : "") || "",
+        );
       } catch {
         /* ignore */
       }
     })();
-  }, [createOpen, prefillConcessionnaireId]);
-
-  useEffect(() => {
-    if (selectedPdv && labelPdv(selectedPdv) === pdvQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const q = pdvQuery.trim();
-    if (q.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        setSearchLoading(true);
-        try {
-          const params = new URLSearchParams({ page: "1", pageSize: "40", q });
-          const res = await fetch(`/api/concessionnaires?${params}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (cancelled || !res.ok) {
-            if (!cancelled) setSearchResults([]);
-            return;
-          }
-          const data = (await res.json()) as { items: ConcessionnaireOption[] };
-          if (!cancelled) setSearchResults(data.items);
-        } finally {
-          if (!cancelled) setSearchLoading(false);
-        }
-      })();
-    }, 320);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [pdvQuery, selectedPdv]);
+  }, [createOpen, prefillConcessionnaireId, agencesTriees]);
 
   useEffect(() => {
     if (operationType !== "ACTUALISATION" || !concessionnaireId || !produitCode.trim()) {
@@ -685,6 +649,7 @@ export default function ContratsPanel() {
     }
     void (async () => {
       setParentsLoading(true);
+      setParentsActifs([]);
       try {
         const params = new URLSearchParams({
           page: "1",
@@ -703,15 +668,19 @@ export default function ContratsPanel() {
         setParentsLoading(false);
       }
     })();
-  }, [operationType, concessionnaireId, produitCode]);
+  }, [operationType, concessionnaireId, produitCode, parentsFetchTick]);
 
   useEffect(() => {
-    if (operationType === "NOUVEAU") setParentContratId("");
-  }, [operationType]);
-
-  useEffect(() => {
-    if (operationType !== "ACTUALISATION" || parentsActifs.length !== 1) return;
-    setParentContratId(parentsActifs[0].id);
+    if (operationType === "NOUVEAU") {
+      setParentContratId("");
+      return;
+    }
+    setParentContratId((prev) => {
+      if (parentsActifs.length === 0) return "";
+      if (prev && parentsActifs.some((c) => c.id === prev)) return prev;
+      if (parentsActifs.length === 1) return parentsActifs[0].id;
+      return "";
+    });
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
@@ -719,28 +688,6 @@ export default function ContratsPanel() {
     const allowed = selectedPdv.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
   }, [selectedPdv, produitCode]);
-
-  function onPdvQueryChange(v: string) {
-    setPdvQuery(v);
-    if (selectedPdv && v.trim() !== labelPdv(selectedPdv)) {
-      setSelectedPdv(null);
-      setFormAgenceId("");
-    }
-  }
-
-  function pickPdv(c: ConcessionnaireOption) {
-    setSelectedPdv(c);
-    setFormAgenceId(c.agenceId ?? "");
-    setPdvQuery(labelPdv(c));
-    setSearchResults([]);
-  }
-
-  function clearPdv() {
-    setSelectedPdv(null);
-    setFormAgenceId("");
-    setPdvQuery("");
-    setSearchResults([]);
-  }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -1068,7 +1015,6 @@ export default function ContratsPanel() {
     }
   }
 
-  const showSearchPanel = pdvQuery.trim().length >= 2 && (!selectedPdv || labelPdv(selectedPdv) !== pdvQuery.trim());
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
   const decisionIntermediateStep =
     decisionEtape === "SOUMIS" || decisionEtape === "VALIDE_N1" || decisionEtape === "VALIDE_N2";
@@ -1460,7 +1406,7 @@ export default function ContratsPanel() {
               <option value="">Toutes</option>
               {agencesTriees.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.code} — {a.libelle}
+                  {agenceOptionLabel(a)}
                 </option>
               ))}
             </select>
@@ -1993,54 +1939,27 @@ export default function ContratsPanel() {
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
                       Point de vente
                     </p>
-                    <div className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">
-                        Sélection du concessionnaire (recherche dans le référentiel) *
-                      </span>
-                      <div className="relative">
-                        <input
-                          type="search"
-                          value={pdvQuery}
-                          onChange={(e) => onPdvQueryChange(e.target.value)}
-                          placeholder="Code PDV, nom, téléphone… (min. 2 caractères)"
-                          autoComplete="off"
-                          className={inputClass}
-                          aria-label="Rechercher un point de vente"
-                        />
-                        {selectedPdv ? (
-                          <button
-                            type="button"
-                            onClick={clearPdv}
-                            className="mt-1 text-[11px] font-medium text-cyan-700 underline hover:text-cyan-900"
-                          >
-                            Effacer la sélection
-                          </button>
-                        ) : null}
-                      </div>
-                      {searchLoading ? <p className="text-[11px] text-slate-500">Recherche…</p> : null}
-                      {showSearchPanel && searchResults.length > 0 ? (
-                        <div
-                          className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm"
-                          role="group"
-                          aria-label="Résultats de recherche concessionnaires"
-                        >
-                          {searchResults.map((c) => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              onClick={() => pickPdv(c)}
-                              className="flex w-full flex-wrap items-baseline gap-x-2 border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-800 transition-colors hover:bg-cyan-50 last:border-b-0"
-                            >
-                              <span className="font-mono text-xs text-slate-600">{c.codePdv}</span>
-                              <span>{c.nomComplet || c.raisonSociale}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      {showSearchPanel && !searchLoading && pdvQuery.trim().length >= 2 && searchResults.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">Aucun résultat.</p>
-                      ) : null}
-                    </div>
+                    <ConcessionnaireSearchPicker
+                      key={`contrat-create-${createOpen}-${prefillConcessionnaireId || "none"}`}
+                      label="Sélection du concessionnaire (recherche dans le référentiel) *"
+                      selected={selectedPdv}
+                      onSelectedChange={(row) => {
+                        setSelectedPdv(row);
+                        const agIds = agencesTriees.map((a) => a.id);
+                        const pickedAg = pickAgenceIdFromConcessionnaire(row, agIds);
+                        setFormAgenceId(pickedAg || (row ? "" : ""));
+                        const allCodes = produitsTries.map((p) => p.code);
+                        const pool =
+                          row && (row.produitsAutorises ?? []).length > 0
+                            ? allCodes.filter((code) =>
+                                produitAutorisePourConcessionnaire(row.produitsAutorises ?? [], code),
+                              )
+                            : allCodes;
+                        const picked = pickProduitCodeFromConcessionnaire(row, pool);
+                        if (picked) setProduitCode(picked);
+                      }}
+                      inputClassName={inputClass}
+                    />
                   </section>
 
                   <section className="rounded-xl border border-indigo-200/80 bg-white p-2.5 shadow-sm">
@@ -2095,7 +2014,7 @@ export default function ContratsPanel() {
                           <option value="">— Choisir une agence —</option>
                           {agencesTriees.map((a) => (
                             <option key={a.id} value={a.id}>
-                              {a.code} — {a.libelle}
+                              {agenceOptionLabel(a)}
                             </option>
                           ))}
                         </select>
@@ -2158,6 +2077,16 @@ export default function ContratsPanel() {
                             </option>
                           ))}
                         </select>
+                        {concessionnaireId && produitCode.trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => setParentsFetchTick((n) => n + 1)}
+                            disabled={parentsLoading}
+                            className="justify-self-start text-[11px] font-medium text-violet-800 underline decoration-violet-400/80 hover:text-violet-950 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Recharger la liste (même produit)
+                          </button>
+                        ) : null}
                       </label>
                     </section>
                   ) : null}

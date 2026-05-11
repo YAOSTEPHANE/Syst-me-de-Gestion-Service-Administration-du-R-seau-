@@ -114,6 +114,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONTRATS", action: "FINALIZE", allowed: false },
 
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "DOSSIERS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N2", allowed: false },
     { resource: "DOSSIERS", action: "FINALIZE", allowed: false },
@@ -168,6 +169,7 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONTRATS", action: "FINALIZE", allowed: false },
 
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "DOSSIERS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N1", allowed: false },
     { resource: "DOSSIERS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "FINALIZE", allowed: false },

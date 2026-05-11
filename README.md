@@ -50,6 +50,7 @@ Application: [http://127.0.0.1:3000](http://127.0.0.1:3000)
 ## Deploiement / hebergement
 
 Voir [docs/HEBERGEMENT.md](docs/HEBERGEMENT.md) (architecture, MongoDB, variables d environnement, cron, SMTP) et [docs/RISQUES.md](docs/RISQUES.md) (securite, controles automatises).
+Checklist operationnelle avant push prod: [docs/CHECKLIST-PROD-VERCEL.md](docs/CHECKLIST-PROD-VERCEL.md).
 
 ## Sauvegarde des donnees
 

@@ -68,10 +68,15 @@ export function userDisplayName(user: Pick<UserDocument, "prenom" | "nom" | "ema
   return "un utilisateur";
 }
 
+/** Rattachement géographique pour ventilation (matrices contrats, etc.). */
+export type AgenceZoneGeographique = "ABIDJAN" | "INTERIEUR";
+
 export interface AgenceDocument {
   _id?: string;
   code: string;
   libelle: string;
+  /** Toujours défini après lecture (`listAgences` / `findAgenceById`) via `coalesceZoneGeographique`. */
+  zoneGeographique: AgenceZoneGeographique;
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;

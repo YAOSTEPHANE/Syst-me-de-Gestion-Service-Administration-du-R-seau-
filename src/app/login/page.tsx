@@ -125,8 +125,13 @@ function LoginPageContent() {
 
             <form onSubmit={onSubmit} className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-300">Connexion</p>
+              {/* suppressHydrationWarning sur champs: extensions (mots de passe, autofill) modifient id/htmlFor/autocomplete avant hydratation */}
               <div>
-                <label className="mb-1 block text-xs text-slate-300" htmlFor="login-identifier">
+                <label
+                  className="mb-1 block text-xs text-slate-300"
+                  htmlFor="login-identifier"
+                  suppressHydrationWarning
+                >
                   Identifiant (email ou matricule)
                 </label>
                 <input
@@ -138,11 +143,15 @@ function LoginPageContent() {
                   className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
                   placeholder="vous@lonaci.ci ou MAT1234"
                   autoComplete="username"
+                  suppressHydrationWarning
                 />
               </div>
-              {/* suppressHydrationWarning: extensions (ex. KeePass) injectent des nœuds dans les champs password */}
-              <div suppressHydrationWarning>
-                <label className="mb-1 block text-xs text-slate-300" htmlFor="login-password">
+              <div>
+                <label
+                  className="mb-1 block text-xs text-slate-300"
+                  htmlFor="login-password"
+                  suppressHydrationWarning
+                >
                   Mot de passe
                 </label>
                 <input
@@ -154,6 +163,7 @@ function LoginPageContent() {
                   className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
                   placeholder="********"
                   autoComplete="current-password"
+                  suppressHydrationWarning
                 />
               </div>
               <button

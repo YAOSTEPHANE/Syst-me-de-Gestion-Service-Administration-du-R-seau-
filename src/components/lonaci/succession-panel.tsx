@@ -1,5 +1,8 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { getLonaciRoleLabel, SUCCESSION_STEP_LABELS } from "@/lib/lonaci/constants";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -26,13 +29,6 @@ interface StaleRow {
   concessionnaireId: string;
   daysInactive: number;
   nextStep: string | null;
-}
-
-interface ConcessionnaireOption {
-  id: string;
-  codePdv?: string;
-  nomComplet?: string;
-  raisonSociale?: string;
 }
 
 interface CaseDetailResponse {
@@ -111,11 +107,8 @@ export default function SuccessionPanel() {
   const [stale, setStale] = useState<StaleRow[]>([]);
 
   const [concId, setConcId] = useState("");
-  const [concessionnaireQuickPick, setConcessionnaireQuickPick] = useState("");
+  const [createFormPdv, setCreateFormPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [manualConcIdOpen, setManualConcIdOpen] = useState(false);
-  const [concessionnaires, setConcessionnaires] = useState<ConcessionnaireOption[]>([]);
-  const [concessionnairesLoading, setConcessionnairesLoading] = useState(false);
-  const [concessionnairesError, setConcessionnairesError] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
   const [dateDeces, setDateDeces] = useState("");
   const [declComment, setDeclComment] = useState("");
@@ -136,7 +129,7 @@ export default function SuccessionPanel() {
   const [detail, setDetail] = useState<CaseDetailResponse["case"] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [fStatus, setFStatus] = useState<"" | "OUVERT" | "CLOTURE">("");
-  const [fConcessionnaireId, setFConcessionnaireId] = useState("");
+  const [fFilterPdv, setFFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [fDecisionType, setFDecisionType] = useState<"" | "TRANSFERT" | "RESILIATION">("");
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
@@ -165,7 +158,7 @@ export default function SuccessionPanel() {
     try {
       const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
       if (fStatus) params.set("status", fStatus);
-      if (fConcessionnaireId) params.set("concessionnaireId", fConcessionnaireId);
+      if (fFilterPdv?.id) params.set("concessionnaireId", fFilterPdv.id);
       if (fDecisionType) params.set("decisionType", fDecisionType);
       if (fDateFrom) params.set("dateFrom", new Date(fDateFrom).toISOString());
       if (fDateTo) params.set("dateTo", new Date(fDateTo).toISOString());
@@ -232,7 +225,7 @@ export default function SuccessionPanel() {
   useEffect(() => {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fConcessionnaireId, fDecisionType, fDateFrom, fDateTo]);
+  }, [fStatus, fFilterPdv?.id, fDecisionType, fDateFrom, fDateTo]);
 
   useEffect(() => {
     void (async () => {
@@ -258,44 +251,39 @@ export default function SuccessionPanel() {
     }
   }, [selectedCaseId, loadDetail]);
 
-  useEffect(() => {
-    let cancelled = false;
-    setConcessionnairesLoading(true);
-    setConcessionnairesError(null);
-    void (async () => {
-      try {
-        const params = new URLSearchParams({ page: "1", pageSize: "100", statut: "ACTIF" });
-        const res = await fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" });
-        if (!res.ok) throw new Error("Impossible de charger les concessionnaires");
-        const data = (await res.json()) as { items: ConcessionnaireOption[] };
-        const next = (data.items ?? []).slice();
-        next.sort((a, b) => {
-          const la = (a.nomComplet || a.raisonSociale || a.codePdv || a.id).trim();
-          const lb = (b.nomComplet || b.raisonSociale || b.codePdv || b.id).trim();
-          return la.localeCompare(lb, "fr", { sensitivity: "base" });
-        });
-        if (!cancelled) setConcessionnaires(next);
-      } catch (e) {
-        if (!cancelled) setConcessionnairesError(friendlySuccessionError(e instanceof Error ? e.message : "Erreur"));
-      } finally {
-        if (!cancelled) setConcessionnairesLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const concFromUrl = searchParams.get("concessionnaireId")?.trim() ?? "";
   const statusFromUrl = searchParams.get("status")?.trim() ?? "";
   const staleOnlyFromUrl = searchParams.get("staleOnly")?.trim() ?? "";
   const staleOnlyActive = staleOnlyFromUrl === "1";
   useEffect(() => {
-    if (/^[a-f\d]{24}$/i.test(concFromUrl)) {
-      setConcId(concFromUrl);
-      setConcessionnaireQuickPick(concFromUrl);
-      setManualConcIdOpen(false);
-    }
+    if (!/^[a-f\d]{24}$/i.test(concFromUrl)) return;
+    setConcId(concFromUrl);
+    setManualConcIdOpen(false);
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch(`/api/concessionnaires/${encodeURIComponent(concFromUrl)}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok || cancelled) return;
+        const raw = (await res.json()) as Record<string, unknown>;
+        const id = String(raw.id ?? "").trim();
+        if (!id || cancelled) return;
+        setCreateFormPdv({
+          id,
+          codePdv: String(raw.codePdv ?? ""),
+          nomComplet: (raw.nomComplet as string | null | undefined) ?? null,
+          raisonSociale: (raw.raisonSociale as string | null | undefined) ?? null,
+          agenceId: (raw.agenceId as string | null | undefined) ?? null,
+        });
+      } catch {
+        if (!cancelled) setCreateFormPdv(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [concFromUrl]);
 
   useEffect(() => {
@@ -311,8 +299,21 @@ export default function SuccessionPanel() {
     ? items.filter((row) => stale.some((s) => s.id === row.id))
     : items;
 
+  function resetSuccessionCreateForm() {
+    setCreateFormPdv(null);
+    setConcId("");
+    setManualConcIdOpen(false);
+    setDateDeces("");
+    setDeclComment("");
+    setActeDecesFile(null);
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
+    if (!concId.trim()) {
+      setToast({ type: "error", message: "Sélectionnez un concessionnaire dans la liste ou saisissez son ID." });
+      return;
+    }
     setCreating(true);
     try {
       if (!acteDecesFile) {
@@ -334,10 +335,7 @@ export default function SuccessionPanel() {
         const raw = b?.message ?? `Création impossible (HTTP ${res.status})`;
         throw new Error(friendlySuccessionError(raw));
       }
-      setConcId("");
-      setDateDeces("");
-      setDeclComment("");
-      setActeDecesFile(null);
+      resetSuccessionCreateForm();
       setCreateOpen(false);
       await load();
       setToast({ type: "success", message: "Dossier de succession ouvert. Étape 1 enregistrée." });
@@ -516,17 +514,17 @@ export default function SuccessionPanel() {
           <option value="OUVERT">OUVERT</option>
           <option value="CLOTURE">CLOTURE</option>
         </select>
-        <select
-          aria-label="Filtrer par concessionnaire"
-          value={fConcessionnaireId}
-          onChange={(e) => setFConcessionnaireId(e.target.value)}
-          className={subtleFieldClass}
-        >
-          <option value="">Tous concessionnaires</option>
-          {concessionnaires.map((c) => (
-            <option key={c.id} value={c.id}>{(c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim()}</option>
-          ))}
-        </select>
+        <div className="min-w-0">
+          <ConcessionnaireSearchPicker
+            label={<span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Concessionnaire</span>}
+            selected={fFilterPdv}
+            onSelectedChange={setFFilterPdv}
+            statutActifOnly
+            inputClassName={subtleFieldClass}
+            showClearLink
+            searchPlaceholder="Filtrer par PDV…"
+          />
+        </div>
         <select
           aria-label="Filtrer par type de décision"
           value={fDecisionType}
@@ -555,7 +553,7 @@ export default function SuccessionPanel() {
           <a
             href={`/api/succession-cases/export?format=csv&${new URLSearchParams({
               ...(fStatus ? { status: fStatus } : {}),
-              ...(fConcessionnaireId ? { concessionnaireId: fConcessionnaireId } : {}),
+              ...(fFilterPdv?.id ? { concessionnaireId: fFilterPdv.id } : {}),
               ...(fDecisionType ? { decisionType: fDecisionType } : {}),
               ...(fDateFrom ? { dateFrom: new Date(fDateFrom).toISOString() } : {}),
               ...(fDateTo ? { dateTo: new Date(fDateTo).toISOString() } : {}),
@@ -569,7 +567,7 @@ export default function SuccessionPanel() {
           <a
             href={`/api/succession-cases/export?format=pdf&${new URLSearchParams({
               ...(fStatus ? { status: fStatus } : {}),
-              ...(fConcessionnaireId ? { concessionnaireId: fConcessionnaireId } : {}),
+              ...(fFilterPdv?.id ? { concessionnaireId: fFilterPdv.id } : {}),
               ...(fDecisionType ? { decisionType: fDecisionType } : {}),
               ...(fDateFrom ? { dateFrom: new Date(fDateFrom).toISOString() } : {}),
               ...(fDateTo ? { dateTo: new Date(fDateTo).toISOString() } : {}),
@@ -603,7 +601,11 @@ export default function SuccessionPanel() {
             type="button"
             className="absolute inset-0 bg-slate-900/60"
             aria-label="Fermer"
-            onClick={() => !creating && setCreateOpen(false)}
+            onClick={() => {
+              if (creating) return;
+              resetSuccessionCreateForm();
+              setCreateOpen(false);
+            }}
             disabled={creating}
           />
           <div className="relative z-10 flex max-h-[84vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
@@ -618,7 +620,11 @@ export default function SuccessionPanel() {
               </div>
               <button
                 type="button"
-                onClick={() => !creating && setCreateOpen(false)}
+                onClick={() => {
+                  if (creating) return;
+                  resetSuccessionCreateForm();
+                  setCreateOpen(false);
+                }}
                 disabled={creating}
                 className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600"
               >
@@ -629,40 +635,24 @@ export default function SuccessionPanel() {
               <div className="grid gap-3">
                 <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Informations dossier</p>
-                  <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Concessionnaire (ACTIF) *</span>
-                    <select
-                      required
-                      aria-label="Concessionnaire actif"
-                      value={concessionnaireQuickPick}
-                      onChange={(e) => {
-                        const v = e.target.value;
-                        setConcessionnaireQuickPick(v);
-                        setConcId(v);
-                        setManualConcIdOpen(false);
-                      }}
-                      disabled={concessionnairesLoading}
-                      className={fieldClass}
-                    >
-                      <option value="">
-                        {concessionnairesLoading ? "Chargement des concessionnaires…" : "— Sélectionner —"}
-                      </option>
-                      {concessionnaires.map((c) => {
-                        const label = (c.nomComplet || c.raisonSociale || c.codePdv || c.id).trim();
-                        return (
-                          <option key={c.id} value={c.id}>
-                            {label} · {c.id.slice(0, 8)}…
-                          </option>
-                        );
-                      })}
-                    </select>
-                  </label>
-                  {concessionnairesError ? <p className="text-xs text-rose-700">{concessionnairesError}</p> : null}
+                  <ConcessionnaireSearchPicker
+                    key={`succession-create-${createOpen}`}
+                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire (ACTIF) *</span>}
+                    selected={createFormPdv}
+                    onSelectedChange={(v) => {
+                      setCreateFormPdv(v);
+                      setConcId(v?.id ?? "");
+                      if (v) setManualConcIdOpen(false);
+                    }}
+                    statutActifOnly
+                    inputClassName={fieldClass}
+                    searchPlaceholder="Rechercher (code, nom…)"
+                  />
                   <button
                     type="button"
                     onClick={() => {
                       setManualConcIdOpen((v) => !v);
-                      setConcessionnaireQuickPick("");
+                      setCreateFormPdv(null);
                     }}
                     className="w-fit text-[11px] font-medium text-cyan-700 underline underline-offset-2 opacity-90 hover:opacity-100"
                   >
@@ -670,11 +660,10 @@ export default function SuccessionPanel() {
                   </button>
                   {manualConcIdOpen ? (
                     <input
-                      required
                       value={concId}
                       onChange={(e) => {
                         setConcId(e.target.value);
-                        setConcessionnaireQuickPick("");
+                        setCreateFormPdv(null);
                       }}
                       placeholder="Coller l’ID concessionnaire"
                       className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
@@ -722,7 +711,10 @@ export default function SuccessionPanel() {
             <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2">
               <button
                 type="button"
-                onClick={() => setCreateOpen(false)}
+                onClick={() => {
+                  resetSuccessionCreateForm();
+                  setCreateOpen(false);
+                }}
                 disabled={creating}
                 className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
               >

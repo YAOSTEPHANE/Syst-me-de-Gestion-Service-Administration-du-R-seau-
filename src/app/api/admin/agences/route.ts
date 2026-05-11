@@ -9,9 +9,13 @@ import {
   listAgences,
 } from "@/lib/lonaci/referentials";
 
+const agenceZoneSchema = z.enum(["ABIDJAN", "INTERIEUR"]);
+
 const createAgenceSchema = z.object({
   code: z.string().min(2).max(32),
   libelle: z.string().min(2).max(200),
+  zoneGeographique: agenceZoneSchema,
+  actif: z.boolean().optional().default(true),
 });
 
 export async function GET(request: NextRequest) {

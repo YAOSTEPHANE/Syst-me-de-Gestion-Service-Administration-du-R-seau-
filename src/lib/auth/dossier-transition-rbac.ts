@@ -32,3 +32,13 @@ export function userMayPerformDossierTransition(
     action: dossierTransitionToRbac(action),
   }).allowed;
 }
+
+/** Mise à jour du payload dossier (PATCH /api/dossiers/[id]). */
+export function userMayPatchDossierPayload(role: string | null): boolean {
+  if (!role) return false;
+  return canRole({
+    role: role as LonaciRole,
+    resource: "DOSSIERS",
+    action: "UPDATE",
+  }).allowed;
+}
