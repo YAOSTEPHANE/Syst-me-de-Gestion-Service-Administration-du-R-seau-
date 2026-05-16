@@ -71,6 +71,7 @@ const API_PASSWORD_ROTATION_CODE = "PASSWORD_ROTATION_REQUIRED";
 
 const NAV_RBAC_RULES: Partial<Record<string, { resource: RbacResource; action: RbacAction }>> = {
   "/concessionnaires": { resource: "CONCESSIONNAIRES", action: "READ" },
+  "/clients": { resource: "CLIENTS", action: "READ" },
   "/agrements": { resource: "AGREMENTS", action: "READ" },
   "/cautions": { resource: "CAUTIONS", action: "READ" },
   "/contrats": { resource: "CONTRATS", action: "READ" },

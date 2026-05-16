@@ -5,7 +5,7 @@ import { ObjectId } from "mongodb";
 import { apiError, badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
-import { isStatutBloquant } from "@/lib/lonaci/access";
+import { isStatutFicheGelee } from "@/lib/lonaci/access";
 import {
   findContratById,
   hasActiveContractForProduct,
@@ -339,9 +339,9 @@ export async function POST(request: NextRequest) {
   if (!concessionnaire || concessionnaire.deletedAt) {
     return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
   }
-  if (isStatutBloquant(concessionnaire.statut)) {
+  if (isStatutFicheGelee(concessionnaire.statut)) {
     return conflict(
-      "Operation interdite: concessionnaire résilié / inactif / décédé.",
+      "Operation interdite: concessionnaire résilié ou décédé.",
       "CONCESSIONNAIRE_BLOQUE",
     );
   }

@@ -38,8 +38,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
   await ensureSprint4Indexes();
   try {
     if (decision === "APPROUVER") {
-      await finalizeCaution(id, true, auth.user);
-      return NextResponse.json({ ok: true }, { status: 200 });
+      const fiche = await finalizeCaution(id, true, auth.user);
+      return NextResponse.json({ ok: true, fiche }, { status: 200 });
     }
     if (decision === "REJETER") {
       await finalizeCaution(id, false, auth.user);

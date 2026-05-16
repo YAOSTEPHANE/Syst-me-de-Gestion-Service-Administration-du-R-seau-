@@ -8,6 +8,26 @@ interface ProduitRow {
   libelle: string;
   prix?: number;
   actif: boolean;
+  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+}
+
+function checklistToTextarea(items: ProduitRow["documentsChecklist"]): string {
+  return (items ?? []).map((i) => i.libelle).join("\n");
+}
+
+function parseChecklistTextarea(
+  text: string,
+  existing: ProduitRow["documentsChecklist"],
+): NonNullable<ProduitRow["documentsChecklist"]> {
+  const lines = text
+    .split(/\n/)
+    .map((l) => l.trim())
+    .filter((l) => l.length >= 2);
+  const byLibelle = new Map((existing ?? []).map((e) => [e.libelle.toLowerCase(), e]));
+  return lines.map((libelle, i) => {
+    const prev = byLibelle.get(libelle.toLowerCase());
+    return { id: prev?.id ?? `doc_${i + 1}`, libelle, obligatoire: prev?.obligatoire !== false };
+  });
 }
 
 export default function AdminProduitsPanel() {
@@ -25,6 +45,7 @@ export default function AdminProduitsPanel() {
   const [editLibelle, setEditLibelle] = useState("");
   const [editPrix, setEditPrix] = useState("");
   const [editActif, setEditActif] = useState(true);
+  const [editChecklistText, setEditChecklistText] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
@@ -79,6 +100,7 @@ export default function AdminProduitsPanel() {
     setEditLibelle(p.libelle);
     setEditPrix(typeof p.prix === "number" ? String(p.prix) : "");
     setEditActif(p.actif);
+    setEditChecklistText(checklistToTextarea(p.documentsChecklist));
   }
 
   function cancelEdit() {
@@ -102,12 +124,19 @@ export default function AdminProduitsPanel() {
       return;
     }
     setSavingId(editingId);
+    const editingRow = produits.find((row) => row._id === editingId);
     try {
       const res = await fetch(`/api/admin/produits/${editingId}`, {
         method: "PATCH",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: c, libelle: l, prix: prixNum, actif: editActif }),
+        body: JSON.stringify({
+          code: c,
+          libelle: l,
+          prix: prixNum,
+          actif: editActif,
+          documentsChecklist: parseChecklistTextarea(editChecklistText, editingRow?.documentsChecklist),
+        }),
       });
       const body = (await res.json().catch(() => null)) as
         | { message?: string; produit?: ProduitRow; issues?: { message: string }[] }
@@ -509,6 +538,19 @@ export default function AdminProduitsPanel() {
                             className="h-4 w-4 rounded border-slate-300 text-cyan-600"
                           />
                           <span className="text-xs font-medium text-slate-700">Actif</span>
+                        </label>
+                        <label className="grid gap-1 sm:col-span-2 lg:col-span-12">
+                          <span className="text-xs font-medium text-slate-700">
+                            Checklist documents obligatoires (un libellé par ligne)
+                          </span>
+                          <textarea
+                            value={editChecklistText}
+                            onChange={(e) => setEditChecklistText(e.target.value)}
+                            rows={5}
+                            placeholder={"Pièce d'identité\nAttestation bancaire\nPhoto PDV"}
+                            className={`min-h-24 ${inputClass}`}
+                            aria-label="Checklist documents du produit"
+                          />
                         </label>
                         <div className="flex flex-wrap gap-2 lg:col-span-2">
                           <button

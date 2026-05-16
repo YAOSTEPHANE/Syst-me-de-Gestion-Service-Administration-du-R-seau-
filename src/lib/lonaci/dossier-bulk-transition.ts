@@ -1,4 +1,9 @@
 import { finalizeContratFromDossier, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import {
+  archiveContratSigneForDossier,
+  ensureContratFinalizationReady,
+  prepareContratFromDechargeDefinitive,
+} from "@/lib/lonaci/contrat-document";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import type { UserDocument } from "@/lib/lonaci/types";
 
@@ -96,8 +101,22 @@ export async function executeDossierBulkTransition(input: {
             continue;
           }
         }
-        await transitionDossier(id, target, input.actor, input.comment ?? null);
-        await finalizeContratFromDossier({
+        try {
+          await ensureContratFinalizationReady(id);
+        } catch {
+          results.push({ id, ok: false, message: "Décharge définitive requise (checklist + caution payée)." });
+          continue;
+        }
+        try {
+          await prepareContratFromDechargeDefinitive(id, input.actor);
+        } catch {
+          results.push({ id, ok: false, message: "Contrat non généré (décharge définitive requise)." });
+          continue;
+        }
+        if (before.status !== "FINALISE") {
+          await transitionDossier(id, target, input.actor, input.comment ?? null);
+        }
+        const contrat = await finalizeContratFromDossier({
           dossierId: id,
           concessionnaireId: before.concessionnaireId,
           produitCode,
@@ -105,6 +124,7 @@ export async function executeDossierBulkTransition(input: {
           dateEffet,
           actor: input.actor,
         });
+        await archiveContratSigneForDossier(id, contrat.reference, input.actor);
         succeeded += 1;
         results.push({ id, ok: true, message: "Finalisation effectuée." });
         continue;

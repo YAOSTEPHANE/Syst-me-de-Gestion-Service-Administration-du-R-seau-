@@ -4,6 +4,7 @@ import type {
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
+  CautionEncaissementMode,
   CautionPaymentMode,
   CautionStatus,
   DossierStatus,
@@ -19,6 +20,7 @@ export type {
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
+  CautionEncaissementMode,
   CautionPaymentMode,
   CautionStatus,
   DossierStatus,
@@ -82,12 +84,35 @@ export interface AgenceDocument {
   updatedAt: Date;
 }
 
+export interface ProduitDocumentChecklistItem {
+  id: string;
+  libelle: string;
+  /** Défaut : obligatoire. */
+  obligatoire?: boolean;
+}
+
+export type DossierDocumentChecklistStatut = "FOURNI" | "MANQUANT" | "EN_ATTENTE";
+
+export interface DossierDocumentChecklistEntry {
+  itemId: string;
+  libelle: string;
+  obligatoire: boolean;
+  statut: DossierDocumentChecklistStatut;
+}
+
+export interface DossierDocumentChecklistPayload {
+  entries: DossierDocumentChecklistEntry[];
+  complet: boolean;
+}
+
 export interface ProduitDocument {
   _id?: string;
   code: string;
   libelle: string;
   /** Prix caution référentiel (FCFA), entier. */
   prix?: number;
+  /** Documents obligatoires configurés pour la constitution de dossier. */
+  documentsChecklist?: ProduitDocumentChecklistItem[];
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -237,7 +262,14 @@ export interface NotificationDocument {
 
 export interface CautionDocument {
   _id?: string;
-  contratId: string;
+  /**
+   * Contrat PDV (historique) — absent pour une caution rattachée uniquement à un client Lonaci (module Clients).
+   */
+  contratId?: string;
+  /** Client Lonaci (`clients`) lorsque la caution est constituée sans contrat. */
+  lonaciClientId?: string | null;
+  /** Code produit référentiel (obligatoire si `lonaciClientId`). */
+  produitCode?: string | null;
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
@@ -249,6 +281,14 @@ export interface CautionDocument {
   dueDate: Date;
   /** Zone observations libre (optionnel). */
   observations: string | null;
+  /** True tant que le paiement réel n’a pas été régularisé (fiche provisoire). */
+  ficheProvisoire?: boolean;
+  /** Numéro document fiche provisoire (ex. FPC-2026-000001), conservé après régularisation. */
+  numeroFicheProvisoire?: string | null;
+  /** Numéro fiche définitive (ex. FPD-2026-000001), émis à la validation du paiement. */
+  numeroFicheDefinitive?: string | null;
+  /** Date d’émission de la fiche définitive. */
+  ficheDefinitiveEmiseLe?: Date | null;
   paidAt: Date | null;
   immutableAfterFinal: boolean;
   createdByUserId: string;
@@ -335,7 +375,7 @@ export interface SuccessionCaseDocument {
   deletedAt: Date | null;
 }
 
-export type AuditEntityType = "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";
+export type AuditEntityType = "CLIENT" | "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";
 
 export interface AuditLogDocument {
   entityType: AuditEntityType;

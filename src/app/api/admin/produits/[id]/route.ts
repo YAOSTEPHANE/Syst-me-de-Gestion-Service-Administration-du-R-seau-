@@ -9,11 +9,18 @@ import {
   findProduitById,
   updateProduit,
 } from "@/lib/lonaci/referentials";
+import { normalizeChecklistTemplate } from "@/lib/lonaci/produit-document-checklist";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
+
+const checklistItemSchema = z.object({
+  id: z.string().min(1).max(64).optional(),
+  libelle: z.string().min(2).max(200),
+  obligatoire: z.boolean().optional(),
+});
 
 const patchSchema = z
   .object({
@@ -21,10 +28,15 @@ const patchSchema = z
     prix: z.coerce.number().int().min(0).max(999_999_999_999).optional(),
     actif: z.boolean().optional(),
     code: z.string().min(2).max(32).optional(),
+    documentsChecklist: z.array(checklistItemSchema).max(50).optional(),
   })
   .refine(
     (o) =>
-      o.libelle !== undefined || o.prix !== undefined || o.actif !== undefined || o.code !== undefined,
+      o.libelle !== undefined ||
+      o.prix !== undefined ||
+      o.actif !== undefined ||
+      o.code !== undefined ||
+      o.documentsChecklist !== undefined,
     { message: "Au moins un champ est requis" },
   );
 
@@ -63,7 +75,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   try {
-    const produit = await updateProduit(id, parsed.data);
+    const patch = {
+      ...parsed.data,
+      documentsChecklist:
+        parsed.data.documentsChecklist !== undefined
+          ? normalizeChecklistTemplate(parsed.data.documentsChecklist)
+          : undefined,
+    };
+    const produit = await updateProduit(id, patch);
     if (!produit) {
       return NextResponse.json({ message: "Produit introuvable" }, { status: 404 });
     }

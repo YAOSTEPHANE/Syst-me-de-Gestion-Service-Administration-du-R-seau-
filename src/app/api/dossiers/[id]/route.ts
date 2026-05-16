@@ -51,6 +51,16 @@ const patchDossierPayloadSchema = z
     agenceId: z.string().min(1).optional(),
     produitCode: z.string().min(1).optional(),
     operationType: z.enum(CONTRAT_OPERATION_TYPES).optional(),
+    documentChecklist: z
+      .array(
+        z.object({
+          itemId: z.string().min(1).max(64),
+          statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+        }),
+      )
+      .min(1)
+      .max(50)
+      .optional(),
   })
   .refine(
     (body) =>
@@ -60,7 +70,8 @@ const patchDossierPayloadSchema = z
       body.parentContratId !== undefined ||
       body.agenceId !== undefined ||
       body.produitCode !== undefined ||
-      body.operationType !== undefined,
+      body.operationType !== undefined ||
+      body.documentChecklist !== undefined,
     { message: "Au moins un champ a actualiser est requis.", path: ["root"] },
   );
 

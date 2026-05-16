@@ -54,6 +54,9 @@ export function lonaciShellHeader(
       sub: n != null ? `${n} PDV · ${dl}` : dl,
     };
   }
+  if (pathname.startsWith("/clients")) {
+    return { title: "Clients", sub: `Référentiel tiers · ${dl}` };
+  }
   if (pathname.startsWith("/contrats")) {
     const pending = kpi?.dossierValidation.contratSoumis;
     return {

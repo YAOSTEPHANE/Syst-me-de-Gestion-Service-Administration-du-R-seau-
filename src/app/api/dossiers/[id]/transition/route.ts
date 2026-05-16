@@ -7,6 +7,12 @@ import {
   findContratByDossierId,
   hasActiveContractForProduct,
 } from "@/lib/lonaci/contracts";
+import {
+  archiveContratSigneForDossier,
+  ensureContratFinalizationReady,
+  parseContratGenerePayload,
+  prepareContratFromDechargeDefinitive,
+} from "@/lib/lonaci/contrat-document";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -130,6 +136,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
         return NextResponse.json({ dossier: before, contrat: existingContrat }, { status: 200 });
       }
 
+      if (!parseContratGenerePayload(before.payload ?? {})) {
+        try {
+          await prepareContratFromDechargeDefinitive(id, auth.user);
+        } catch {
+          return NextResponse.json(
+            { message: "Contrat non genere : decharge definitive requise (checklist complete et caution payee)." },
+            { status: 409 },
+          );
+        }
+      }
+
+      try {
+        await ensureContratFinalizationReady(id);
+      } catch {
+        return NextResponse.json(
+          { message: "Finalisation impossible : checklist incomplete ou caution non payee." },
+          { status: 409 },
+        );
+      }
+
       const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
       const operationType = String(before.payload.operationType ?? "");
       const dateEffetRaw = String(before.payload.dateEffet ?? "");
@@ -157,6 +183,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         dateEffet,
         actor: auth.user,
       });
+      await archiveContratSigneForDossier(id, contrat.reference, auth.user);
       const dossier = await findDossierById(id);
       return NextResponse.json({ dossier, contrat }, { status: 200 });
     }

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { notFound, serverError } from "@/lib/api/error-responses";
+import { conflict, notFound, serverError } from "@/lib/api/error-responses";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureSprint4Indexes, validateCautionN1 } from "@/lib/lonaci/sprint4";
 
@@ -25,6 +25,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CAUTION_NOT_FOUND") return notFound("Caution introuvable.", "CAUTION_NOT_FOUND");
     if (code === "ROLE_FORBIDDEN" || code === "CAUTION_WRONG_STATUS") {
       return NextResponse.json({ message: "Transition non autorisee." }, { status: 403 });
+    }
+    if (code === "CAUTION_FICHE_PROVISOIRE") {
+      return conflict(
+        "Fiche provisoire : regularisez le paiement (mode et reference) avant validation N1.",
+        "CAUTION_FICHE_PROVISOIRE",
+      );
     }
     return serverError("Validation N1 impossible.", "CAUTION_VALIDATE_N1_FAILED");
   }

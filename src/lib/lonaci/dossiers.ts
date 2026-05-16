@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type {
   DossierDocument,
+  DossierDocumentChecklistStatut,
   DossierValidationStep,
   DossierStatus,
   DossierType,
@@ -11,12 +12,17 @@ import type {
 import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import { canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
 import { findContratById, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
+import {
+  ensureDossierDocumentChecklist,
+  mergeChecklistStatutPatch,
+  serializeDocumentChecklistPayload,
+} from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "dossiers";
@@ -80,8 +86,8 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
   if (!canReadConcessionnaire(input.actor, concessionnaire)) {
     throw new Error("AGENCE_FORBIDDEN");
   }
-  // Règles métier : un contrat ne peut être créé que si le concessionnaire est ACTIF.
-  if (concessionnaire.statut !== "ACTIF") {
+  // Règles métier : résilié / décédé interdits ; INACTIF autorisé (activation à la finalisation contrat).
+  if (isStatutFicheGelee(concessionnaire.statut)) {
     throw new Error("CONCESSIONNAIRE_BLOQUE");
   }
 
@@ -101,6 +107,14 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
         throw new Error("ACTIVE_CONTRACT_EXISTS");
       }
     }
+    const checklist = ensureDossierDocumentChecklist(
+      input.payload,
+      produit.documentsChecklist ?? [],
+    );
+    input.payload = {
+      ...input.payload,
+      ...serializeDocumentChecklistPayload(checklist),
+    };
   }
 
   const db = await getDatabase();
@@ -345,6 +359,7 @@ export type DossierContratPayloadPatch = {
   agenceId?: string;
   produitCode?: string;
   operationType?: "NOUVEAU" | "ACTUALISATION";
+  documentChecklist?: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
 };
 
 export async function patchContratDossierPayload(
@@ -452,6 +467,12 @@ export async function patchContratDossierPayload(
   } else {
     throw new Error("OPERATION_TYPE_INVALID");
   }
+
+  let checklist = ensureDossierDocumentChecklist(next, produit.documentsChecklist ?? []);
+  if (patch.documentChecklist !== undefined) {
+    checklist = mergeChecklistStatutPatch(checklist, patch.documentChecklist);
+  }
+  Object.assign(next, serializeDocumentChecklistPayload(checklist));
 
   const db = await getDatabase();
   const now = new Date();

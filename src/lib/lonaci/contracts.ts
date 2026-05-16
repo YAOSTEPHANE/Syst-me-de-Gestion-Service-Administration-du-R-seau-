@@ -4,7 +4,8 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import { canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
+import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
 const REF_COUNTER_ID = "contrat_ref";
 
@@ -158,7 +159,7 @@ export interface FinalizeContratInput {
 
 export async function finalizeContratFromDossier(input: FinalizeContratInput): Promise<ContratDocument> {
   const concessionnaire = await findConcessionnaireById(input.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || concessionnaire.statut !== "ACTIF") {
+  if (!concessionnaire || concessionnaire.deletedAt || isStatutFicheGelee(concessionnaire.statut)) {
     throw new Error("CONCESSIONNAIRE_BLOQUE");
   }
 
@@ -238,6 +239,21 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
       operationType: created.operationType,
     },
   });
+
+  if (concessionnaire.statut !== "ACTIF") {
+    await updateConcessionnaire(
+      input.concessionnaireId,
+      { statut: "ACTIF" },
+      input.actor,
+    );
+    await appendAuditLog({
+      entityType: "CONCESSIONNAIRE",
+      entityId: input.concessionnaireId,
+      action: "ACTIVATE_FROM_CONTRAT_FINALIZE",
+      userId: input.actor._id ?? "",
+      details: { dossierId: input.dossierId, contratId: created.id },
+    });
+  }
 
   return mapContrat(created);
 }

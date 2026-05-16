@@ -96,10 +96,17 @@ export type ContratOperationType = (typeof CONTRAT_OPERATION_TYPES)[number];
 export const CONTRAT_STATUSES = ["ACTIF", "RESILIE", "CEDE"] as const;
 export type ContratStatus = (typeof CONTRAT_STATUSES)[number];
 
-export const CAUTION_PAYMENT_MODES = ["ESPECES", "MOBILE_MONEY", "VIREMENT", "CHEQUE"] as const;
+export const CAUTION_ENCAISSEMENT_MODES = ["ESPECES", "MOBILE_MONEY", "VIREMENT", "CHEQUE"] as const;
+export type CautionEncaissementMode = (typeof CAUTION_ENCAISSEMENT_MODES)[number];
+
+export const CAUTION_PAYMENT_MODES = [
+  ...CAUTION_ENCAISSEMENT_MODES,
+  /** Fiche provisoire : encaissement saisi ultérieurement (régularisation). */
+  "PAIEMENT_DIFFERE",
+] as const;
 export type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
-/** Après saisie : N1 (chef section) puis N2 (assistant CDS) ; la finalisation paiement / rejet reste au chef de service. */
+/** Après saisie : pas de circuit N1/N2 ; finalisation paiement / rejet par le chef de service (hors fiche provisoire). */
 export const CAUTION_STATUSES = ["EN_ATTENTE", "VALIDE_N1", "VALIDE_N2", "A_CORRIGER", "PAYEE", "ANNULEE"] as const;
 export type CautionStatus = (typeof CAUTION_STATUSES)[number];
 

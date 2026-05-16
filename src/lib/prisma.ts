@@ -40,7 +40,22 @@ if (!process.env.DATABASE_URL) {
 }
 process.env.DATABASE_URL = mergePrismaMongoParams(process.env.DATABASE_URL);
 
-const prisma = global.__prismaClient ?? new PrismaClient();
+function createPrismaClient() {
+  return new PrismaClient();
+}
+
+let prisma: PrismaClient = global.__prismaClient ?? createPrismaClient();
+
+/** Après `prisma generate` ou renommage de modèle, le singleton global peut rester une ancienne instance (HMR Next) sans les bons délégués. */
+const hasLonaciClient = (p: PrismaClient) =>
+  typeof (p as unknown as { lonaciClient?: unknown }).lonaciClient !== "undefined";
+
+if (!hasLonaciClient(prisma)) {
+  if (global.__prismaClient) {
+    void global.__prismaClient.$disconnect().catch(() => {});
+  }
+  prisma = createPrismaClient();
+}
 
 if (process.env.NODE_ENV !== "production") {
   global.__prismaClient = prisma;

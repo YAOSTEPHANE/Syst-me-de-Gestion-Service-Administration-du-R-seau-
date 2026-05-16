@@ -38,8 +38,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CAUTION_IMMUTABLE") {
       return conflict("Caution deja finalisee (statut immuable).", "CAUTION_IMMUTABLE");
     }
+    if (code === "CAUTION_FICHE_PROVISOIRE") {
+      return conflict(
+        "Regularisez le paiement de la fiche provisoire avant finalisation.",
+        "CAUTION_FICHE_PROVISOIRE",
+      );
+    }
     if (code === "CAUTION_WRONG_STATUS") {
-      return conflict("La caution doit etre validee en N1 puis N2 avant finalisation.", "CAUTION_WRONG_STATUS");
+      return conflict("La caution ne peut pas etre finalisee dans ce statut.", "CAUTION_WRONG_STATUS");
     }
     return serverError("Finalisation caution impossible.", "CAUTION_FINALIZE_FAILED");
   }

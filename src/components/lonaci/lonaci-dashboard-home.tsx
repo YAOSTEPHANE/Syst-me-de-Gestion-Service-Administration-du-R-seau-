@@ -861,7 +861,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-pbf lonaci-db-pbf-amber lonaci-db-pbf-w-30" />
               </div>
               <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
-                <span>{kpi.daily.cautions.enAttente} en attente de validation</span>
+                <span>{kpi.daily.cautions.enAttente} en attente de finalisation</span>
                 <Link href="/cautions?tab=EN_ATTENTE" className="lonaci-db-abtn lonaci-db-abtn-ghost">
                   Ouvrir
                 </Link>
@@ -1342,7 +1342,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
                     <div className="lonaci-db-cell-title">Cautions</div>
-                    <div className="lonaci-db-cell-sub">Validation finale</div>
+                    <div className="lonaci-db-cell-sub">Finalisation (chef de service)</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En attente</span>

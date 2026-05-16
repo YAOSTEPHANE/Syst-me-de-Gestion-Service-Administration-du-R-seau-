@@ -27,6 +27,7 @@ const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
 function inferModuleKeyFromPath(pathname: string): string | null {
   const p = pathname.toLowerCase();
   if (p.includes("/api/admin") || p.includes("/api/import-data")) return "ADMIN";
+  if (p.includes("/api/clients")) return "CLIENTS";
   if (p.includes("/api/contrats")) return "CONTRATS";
   if (p.includes("/api/dossiers")) return "DOSSIERS";
   // Référentiel PDV : contrôle fini lecture/saisie dans requireApiAuth (pas une seule clé ici).
@@ -51,6 +52,7 @@ function inferModuleKeyFromPath(pathname: string): string | null {
 function inferRbacResourceFromPath(pathname: string): RbacResource | null {
   const p = pathname.toLowerCase();
   if (p.includes("/api/concessionnaires")) return "CONCESSIONNAIRES";
+  if (p.includes("/api/clients")) return "CLIENTS";
   if (p.includes("/api/contrats")) return "CONTRATS";
   if (p.includes("/api/dossiers")) return "DOSSIERS";
   if (p.includes("/api/cautions")) return "CAUTIONS";

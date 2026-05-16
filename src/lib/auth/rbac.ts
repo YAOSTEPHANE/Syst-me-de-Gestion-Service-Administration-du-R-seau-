@@ -2,6 +2,7 @@ import type { LonaciRole } from "@/lib/lonaci/constants";
 
 export const RBAC_RESOURCES = [
   "CONCESSIONNAIRES",
+  "CLIENTS",
   "CONTRATS",
   "DOSSIERS",
   "CAUTIONS",
@@ -56,6 +57,11 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: false },
 
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: false },
+
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -107,6 +113,11 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: false },
+
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: false },
 
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -163,6 +174,11 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -214,6 +230,7 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   SUPERVISEUR_REGIONAL: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -230,6 +247,7 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   AUDITEUR: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "GLOBAL" },
@@ -246,6 +264,7 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   LECTURE_SEULE: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },

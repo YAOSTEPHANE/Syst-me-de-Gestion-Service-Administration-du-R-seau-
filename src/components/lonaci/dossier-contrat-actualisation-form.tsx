@@ -1,5 +1,6 @@
 "use client";
 
+import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import { userMayPatchDossierPayload } from "@/lib/auth/dossier-transition-rbac";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -193,17 +194,28 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
 
   if (!canEdit) {
     return (
-      <p className="text-[11px] text-slate-500">
-        Votre rôle ne permet pas de modifier le contenu de ce dossier (habilitation « mise à jour dossiers » requise).
-      </p>
+      <div className="space-y-3">
+        <p className="text-[11px] text-slate-500">
+          Votre rôle ne permet pas de modifier le contenu de ce dossier (habilitation « mise à jour dossiers » requise).
+        </p>
+        <DossierDocumentChecklistBlock
+          dossierId={dossier.id}
+          payload={asPayloadRecord(dossier.payload)}
+          editable={false}
+          onUpdated={() => {}}
+        />
+      </div>
     );
   }
 
+  const payloadRecord = asPayloadRecord(dossier.payload);
+
   return (
-    <form onSubmit={onSubmit} className="space-y-2.5 rounded-xl border border-amber-200/90 bg-amber-50/50 p-3">
-      <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
-        Actualisation du dossier (brouillon / rejeté)
-      </p>
+    <div className="space-y-3">
+      <form onSubmit={onSubmit} className="space-y-2.5 rounded-xl border border-amber-200/90 bg-amber-50/50 p-3">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+          Actualisation du dossier (brouillon / rejeté)
+        </p>
       <p className="text-[11px] text-amber-950/80">
         Les modifications sont enregistrées immédiatement. Elles sont soumises aux mêmes règles métier qu’à la création
         (produit autorisé, contrat parent actif pour une actualisation, etc.).
@@ -299,6 +311,20 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
           Réinitialiser le formulaire
         </button>
       </div>
-    </form>
+      </form>
+      <DossierDocumentChecklistBlock
+        dossierId={dossier.id}
+        payload={payloadRecord}
+        editable
+        onUpdated={(patch) =>
+          onUpdated({
+            ...dossier,
+            payload: patch.payload,
+            status: patch.status ?? dossier.status,
+            updatedAt: patch.updatedAt ?? dossier.updatedAt,
+          })
+        }
+      />
+    </div>
   );
 }

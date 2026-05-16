@@ -2,8 +2,9 @@ import { ObjectId } from "mongodb";
 
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
-import type { AgenceDocument, AgenceZoneGeographique, ProduitDocument } from "@/lib/lonaci/types";
+import type { AgenceDocument, AgenceZoneGeographique, ProduitDocument, ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
 import { coalesceZoneGeographique } from "@/lib/lonaci/zones-abidjan";
+import { normalizeChecklistTemplate } from "@/lib/lonaci/produit-document-checklist";
 
 const AGENCES_COLLECTION = "agences";
 const PRODUITS_COLLECTION = "produits";
@@ -131,6 +132,7 @@ function mapStoredProduit(item: StoredProduitDocument): ProduitDocument {
   return {
     ...item,
     _id: item._id.toHexString(),
+    documentsChecklist: normalizeChecklistTemplate(item.documentsChecklist),
   };
 }
 
@@ -300,6 +302,7 @@ export interface UpdateProduitInput {
   prix?: number;
   actif?: boolean;
   code?: string;
+  documentsChecklist?: ProduitDocumentChecklistItem[];
 }
 
 /**
@@ -328,6 +331,9 @@ export async function updateProduit(id: string, input: UpdateProduitInput): Prom
   }
   if (input.code !== undefined) {
     $set.code = normalizeCode(input.code);
+  }
+  if (input.documentsChecklist !== undefined) {
+    $set.documentsChecklist = normalizeChecklistTemplate(input.documentsChecklist);
   }
 
   try {

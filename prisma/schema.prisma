@@ -133,3 +133,34 @@ model Contrat {
   @@map("contrats")
   @@index([concessionnaireId, produitCode, status, deletedAt], map: "idx_unique_active_check")
 }
+
+/** Comptes clients / tiers (distinct des concessionnaires PDV). */
+model LonaciClient {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  code            String    @unique
+  raisonSociale   String
+  /** Nom et prénom(s) du client (identité principale). */
+  nomComplet      String?
+  cniNumero       String?
+  nomContact      String?
+  email           String?
+  telephone       String?
+  adresse         String?
+  ville           String?
+  codePostal      String?
+  agenceId        String?
+  statut          String
+  notes           String?
+  createdByUserId String
+  updatedByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@map("clients")
+  @@index([agenceId], map: "idx_client_agence")
+  @@index([statut], map: "idx_client_statut")
+  @@index([deletedAt], map: "idx_client_deleted")
+  @@index([raisonSociale], map: "idx_client_raison")
+  @@index([nomComplet], map: "idx_client_nom_complet")
+}

@@ -1,6 +1,7 @@
 "use client";
 
 import DossierContratActualisationForm from "@/components/lonaci/dossier-contrat-actualisation-form";
+import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -1347,6 +1348,27 @@ export default function DossiersPanel() {
                     <p className="text-xs text-slate-700"><span className="font-semibold">Créé le:</span> {new Date(detailItem.createdAt).toLocaleString("fr-FR")}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Mis à jour:</span> {new Date(detailItem.updatedAt).toLocaleString("fr-FR")}</p>
                   </div>
+                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
+                  detailItem.status !== "BROUILLON" &&
+                  detailItem.status !== "REJETE" ? (
+                    <DossierDocumentChecklistBlock
+                      dossierId={detailItem.id}
+                      payload={(detailItem.payload ?? {}) as Record<string, unknown>}
+                      editable={false}
+                      onUpdated={(patch) =>
+                        setDetailItem((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                payload: patch.payload,
+                                status: (patch.status as DossierStatus) ?? prev.status,
+                                updatedAt: patch.updatedAt ?? prev.updatedAt,
+                              }
+                            : prev,
+                        )
+                      }
+                    />
+                  ) : null}
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Payload</p>
                     <pre className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
