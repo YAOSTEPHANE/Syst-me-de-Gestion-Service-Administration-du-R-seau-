@@ -1,3 +1,5 @@
+import "server-only";
+
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
@@ -66,15 +68,14 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 
 function getBackupRoot() {
   const cwd = /*turbopackIgnore: true*/ process.cwd();
-  const fallbackRoot = join(cwd, "backups");
+  const fallbackRoot = join(/*turbopackIgnore: true*/ cwd, "backups");
   const configured = process.env.BACKUP_DIR?.trim();
 
-  if (!configured) return fallbackRoot;
+  if (!configured || configured === "backups") return fallbackRoot;
   if (isAbsolute(configured)) return configured;
-  if (configured === "backups") return fallbackRoot;
 
-  // Ancre toujours les chemins relatifs sous /backups pour limiter le périmètre de tracing.
-  return join(cwd, "backups", configured);
+  // Sous-dossier relatif strictement sous backups/ (évite un join dynamique sur cwd seul).
+  return join(/*turbopackIgnore: true*/ fallbackRoot, configured);
 }
 
 function computeSha256(buffer: Buffer): string {

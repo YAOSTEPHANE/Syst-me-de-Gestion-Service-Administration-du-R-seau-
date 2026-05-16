@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { createLocalBackupArchive } from "@/lib/lonaci/local-backups";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const querySchema = z.object({
@@ -19,6 +18,7 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const { createLocalBackupArchive } = await import("@/lib/lonaci/local-backups");
     const archive = createLocalBackupArchive(parsed.data.name);
     const body = new Uint8Array(archive.data);
     return new NextResponse(body, {

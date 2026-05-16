@@ -71,9 +71,6 @@ const apiCorsHeaders = [
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["pdfkit"],
-  outputFileTracingExcludes: {
-    "/api/admin/backups/restore": ["./next.config.ts"],
-  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

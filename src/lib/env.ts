@@ -161,8 +161,16 @@ const g = globalThis as typeof globalThis & {
   __lonaciProdEnvHintsLogged?: boolean;
 };
 
+function isProductionRuntime(): boolean {
+  if (process.env.NODE_ENV !== "production") return false;
+  // `next build` charge les routes en workers avec NODE_ENV=production : ne pas bruiter la CI.
+  if (process.env.NEXT_PHASE === "phase-production-build") return false;
+  if (process.env.npm_lifecycle_event === "build") return false;
+  return true;
+}
+
 function logProductionEnvHintsOnce() {
-  if (process.env.NODE_ENV !== "production") return;
+  if (!isProductionRuntime()) return;
   if (process.env.SKIP_PROD_ENV_CONSOLE === "true") return;
   if (g.__lonaciProdEnvHintsLogged) return;
   g.__lonaciProdEnvHintsLogged = true;
@@ -177,9 +185,10 @@ function logProductionEnvHintsOnce() {
       "[env] CRON_SECRET absent : POST /api/cron/daily-jobs répondra 503 (jobs planifiés inopérants).",
     );
   }
-  if (process.env.RATE_LIMIT_FAIL_CLOSED !== "true") {
+  // En prod, fail-closed par défaut sauf si RATE_LIMIT_FAIL_CLOSED=false (voir mongo-rate-limit.ts).
+  if (process.env.RATE_LIMIT_FAIL_CLOSED === "false") {
     console.warn(
-      "[env] RATE_LIMIT_FAIL_CLOSED != true : si le store Mongo du rate limit est indisponible, les routes concernées peuvent rester accessibles (fail-open).",
+      "[env] RATE_LIMIT_FAIL_CLOSED=false : si le store Mongo du rate limit est indisponible, les routes concernées restent accessibles (fail-open).",
     );
   }
 }

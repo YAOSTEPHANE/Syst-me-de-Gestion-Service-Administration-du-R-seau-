@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { createLocalBackup, listLocalBackups } from "@/lib/lonaci/local-backups";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 export async function GET(request: NextRequest) {
@@ -8,6 +7,7 @@ export async function GET(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   try {
+    const { listLocalBackups } = await import("@/lib/lonaci/local-backups");
     const backups = listLocalBackups();
     return NextResponse.json({ backups }, { status: 200 });
   } catch (error) {
@@ -21,6 +21,7 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   try {
+    const { createLocalBackup } = await import("@/lib/lonaci/local-backups");
     const backup = await createLocalBackup();
     return NextResponse.json({ message: "Sauvegarde locale créée.", backup }, { status: 201 });
   } catch (error) {

@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { restoreLocalBackup } from "@/lib/lonaci/local-backups";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const schema = z.object({
@@ -23,6 +22,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
+    const { restoreLocalBackup } = await import("@/lib/lonaci/local-backups");
     const result = await restoreLocalBackup(parsed.data);
     const summary = result.dryRun
       ? "Simulation de restauration terminée (aucune écriture)."
