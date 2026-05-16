@@ -86,7 +86,7 @@ export default function AdminAuditLogPanel() {
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-slate-900">Journal d'audit unifie</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Journal d&apos;audit unifie</h3>
           <p className="text-xs text-slate-600">
             Historique consolide des connexions et des evenements de supervision.
           </p>
@@ -225,7 +225,7 @@ export default function AdminAuditLogPanel() {
                 {!items.length ? (
                   <tr>
                     <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
-                      Aucune entree d'audit.
+                      Aucune entree d&apos;audit.
                     </td>
                   </tr>
                 ) : null}

@@ -767,7 +767,6 @@ export default function CautionsPanel() {
     setSelectedLonaciClientId("");
     setSelectedProduitCodes([]);
     setProduitSearch("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createOpen]);
 
   const loadReferentialProduits = useCallback(async () => {
@@ -1331,7 +1330,7 @@ export default function CautionsPanel() {
       .join(" ");
     const pending = (counters?.overdueJ10 ?? 0) + (counters?.enAttente ?? 0);
     const validated = counters?.validatedThisMonth ?? 0;
-    /** —0cart arithmétique sur les onglets liste (—0— « —0cart » du tableau ref. dossiers). */
+    /** Écart arithmétique sur les onglets liste (≠ colonne « Écart » du tableau ref. dossiers). */
     const pipelineEcart = pending - validated;
     return {
       totalKnown,
@@ -1359,7 +1358,7 @@ export default function CautionsPanel() {
             </p>
             <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Cautions</h2>
             <p className="mt-1 text-sm text-amber-100/90">
-              Suivi des encaissements, contrôles d'échéance et finalisation par le chef de service.
+              Suivi des encaissements, contrôles d&apos;échéance et finalisation par le chef de service.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1831,7 +1830,7 @@ export default function CautionsPanel() {
               <span className="font-mono font-medium text-slate-800">
                 {regularizeTarget.numeroFicheProvisoire ?? "—"}
               </span>{" "}
-              — complétez le formulaire de paiement effectif (même rubrique que lors d'un encaissement direct).
+              — complétez le formulaire de paiement effectif (même rubrique que lors d&apos;un encaissement direct).
             </p>
             <fieldset className="mt-4 rounded-xl border border-indigo-200/90 bg-white/90 p-3">
               <legend className="px-1 text-[11px] font-bold uppercase tracking-wide text-indigo-900">
@@ -2085,7 +2084,7 @@ export default function CautionsPanel() {
               <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 text-xs leading-relaxed text-indigo-950 print:bg-white">
                 <p className="font-semibold text-indigo-950">Après paiement à la caisse (Lonaci)</p>
                 <p className="mt-1 text-indigo-900/95">
-                  Liste <strong>Cautions</strong> — ' pour <strong>chaque ligne</strong> du tableau :{" "}
+                  Liste <strong>Cautions</strong> — onglet <strong>Attendu caution</strong>, pour <strong>chaque ligne</strong> du tableau :{" "}
                   <strong>Régulariser paiement</strong> et saisir le mode ainsi que la référence figurant sur le reçu
                   caisse. Les références <strong>FPC</strong> et <strong>ID dossier</strong> ci-dessus identifient chaque
                   dossier ; la colonne « Réf. interne » est une trace Lonaci, distincte de la référence bancaire.
@@ -2135,7 +2134,7 @@ export default function CautionsPanel() {
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Analytics cautions</h3>
           <p className="mt-0.5 text-xs text-slate-600">
-            Pipeline liste (onglets) et dernier mois du tableau « État mensuel par produit » — mêmes formules d'affichage
+            Pipeline liste (onglets) et dernier mois du tableau « État mensuel par produit » — mêmes formules d&apos;affichage
             que le tableau (à encaisser affiché, encaissées, écart cautions, non encaissées FCFA).
           </p>
         </div>
@@ -2157,11 +2156,11 @@ export default function CautionsPanel() {
             <div className="text-[11px] text-slate-600">Taux finalisé (mois): {cautionAnalytics.validationRate}%</div>
           </div>
           <div className="rounded-xl border border-cyan-100 bg-linear-to-br from-cyan-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-cyan-700">—0cart pipeline (liste)</div>
+            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Écart pipeline (liste)</div>
             <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.pipelineEcart}</div>
             <div className="text-[11px] text-slate-600">
-              (En cours + retards) ——' Terminées ce mois · {cautionAnalytics.pipelineEcartRate}% du portefeuille liste — distinct
-              de la colonne « —0cart » du tableau
+              (En cours + retards) − Terminées ce mois · {cautionAnalytics.pipelineEcartRate}% du portefeuille liste — distinct
+              de la colonne « Écart » du tableau
             </div>
           </div>
         </div>
@@ -2193,7 +2192,7 @@ export default function CautionsPanel() {
                 ·
               </span>
               <span>
-                —0cart (cautions) :{" "}
+                Écart (cautions) :{" "}
                 <strong className="text-slate-950">
                   {etatTableauDernierMois.totals.ecartNombreCautionsAffiche.toLocaleString("fr-FR")}
                 </strong>
@@ -2251,7 +2250,7 @@ export default function CautionsPanel() {
                   );
                 })
               ) : (
-                <p className="text-xs text-slate-500">Aucune donnée sur l'onglet courant.</p>
+                <p className="text-xs text-slate-500">Aucune donnée sur l&apos;onglet courant.</p>
               )}
             </div>
           </div>
@@ -2272,7 +2271,7 @@ export default function CautionsPanel() {
                   />
                 </svg>
               ) : (
-                <p className="text-xs text-slate-500">Pas d'alerte disponible.</p>
+                <p className="text-xs text-slate-500">Pas d&apos;alerte disponible.</p>
               )}
             </div>
           </div>
@@ -2377,7 +2376,7 @@ export default function CautionsPanel() {
             <table className="min-w-full table-fixed border-collapse text-left text-xs">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <th className="px-2 py-2 font-medium" scope="col" title="Fiche provisoire : N° FPC comme sur l'imprimé ; sinon référence d'encaissement.">
+                <th className="px-2 py-2 font-medium" scope="col" title="Fiche provisoire : N° FPC comme sur l&apos;imprimé ; sinon référence d&apos;encaissement.">
                   Réf.
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">

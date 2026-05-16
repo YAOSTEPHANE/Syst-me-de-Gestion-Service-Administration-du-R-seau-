@@ -248,7 +248,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (!rule || !role) return true;
       return canRole({ role, resource: rule.resource, action: rule.action }).allowed;
     });
-    let last = "";
     const palette = [
       "#0ea5e9", // sky
       "#10b981", // emerald

@@ -59,7 +59,7 @@ export default function AdminSupervisionRunsPanel() {
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Historique des runs supervision</h3>
-          <p className="text-xs text-slate-600">Runs cron supervision avec statut et téléchargement de l'artefact.</p>
+          <p className="text-xs text-slate-600">Runs cron supervision avec statut et téléchargement de l&apos;artefact.</p>
         </div>
         <button
           type="button"

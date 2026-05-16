@@ -139,7 +139,7 @@ export default function AdminSlaOverviewPanel() {
       <div className="mb-3 flex items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold text-slate-900">SLA de traitement (vue transverse)</h3>
-          <p className="text-xs text-slate-600">Suivi des files d'attente et retards, global et par agence.</p>
+          <p className="text-xs text-slate-600">Suivi des files d&apos;attente et retards, global et par agence.</p>
         </div>
         <div className="flex items-center gap-2">
           <select

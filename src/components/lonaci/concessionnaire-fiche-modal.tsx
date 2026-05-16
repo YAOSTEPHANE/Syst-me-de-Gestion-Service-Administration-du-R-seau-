@@ -877,7 +877,7 @@ export default function ConcessionnaireFicheModal({
                         </p>
                         <p className="mt-0.5 text-[11px] text-indigo-800/90">
                           Ajoutez un ou plusieurs fichiers (PDF, JPG, PNG, WebP). Ils seront joints
-                          lors de l'enregistrement.
+                          lors de l&apos;enregistrement.
                         </p>
                         <input
                           ref={otherFilesInputRef}
