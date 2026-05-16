@@ -33,7 +33,7 @@ interface AlertItem {
   daysOverdue: number;
 }
 
-/** DonnÃ©es affichÃ©es sur la fiche de paiement caution imprimable (caisse + saisie Lonaci). */
+/** Données affichées sur la fiche de paiement caution imprimable (caisse + saisie Lonaci). */
 interface ProvisionalSlipData {
   numero: string;
   montantFCFA: number;
@@ -44,7 +44,7 @@ interface ProvisionalSlipData {
   produitCode: string;
   produitLibelle: string;
   cautionId: string;
-  /** RÃ©fÃ©rence interne enregistrÃ©e sur la caution (ex. PROVISOIRE:FPC-â€¦), distincte de la rÃ©fÃ©rence de paiement caisse. */
+  /** Référence interne enregistrée sur la caution (ex. PROVISOIRE:FPC-…), distincte de la référence de paiement caisse. */
   referenceInterneLonaci: string;
 }
 
@@ -55,8 +55,8 @@ function cautionListItemFromProvisionalSlip(slip: ProvisionalSlipData): CautionL
     lonaciClientId: slip.lonaciClientId,
     clientCode: slip.clientCode,
     concessionnaireNom: slip.clientLabel,
-    produitCode: slip.produitCode === "â€”" ? "" : slip.produitCode,
-    agenceLabel: "â€”",
+    produitCode: slip.produitCode === "—" ? "" : slip.produitCode,
+    agenceLabel: "—",
     montant: slip.montantFCFA,
     modeReglement: "PAIEMENT_DIFFERE",
     status: "EN_ATTENTE",
@@ -66,7 +66,7 @@ function cautionListItemFromProvisionalSlip(slip: ProvisionalSlipData): CautionL
     paidAt: null,
     daysOverdue: 0,
     immutableAfterFinal: false,
-    pdvCode: slip.clientCode || "â€”",
+    pdvCode: slip.clientCode || "—",
     depotAt: null,
     ficheProvisoire: true,
     numeroFicheProvisoire: slip.numero,
@@ -98,7 +98,7 @@ interface CautionListItem {
   montant: number;
   modeReglement: (typeof CAUTION_PAYMENT_MODES)[number];
   status: CautionStatus;
-  /** RÃ©f. encaissement ; en fiche provisoire la trace interne peut Ãªtre au format PROVISOIRE: + NÂ° FPC â€” lâ€™affichage liste utilise cautionReferenceListeOuFiche. */
+  /** Réf. encaissement ; en fiche provisoire la trace interne peut être au format PROVISOIRE: + N° FPC — l'affichage liste utilise cautionReferenceListeOuFiche. */
   paymentReference: string;
   observations: string | null;
   dueDate: string;
@@ -145,26 +145,26 @@ const CAUTION_COLOR_TOKENS = {
 function labelTab(tab: CautionListTab): string {
   switch (tab) {
     case "J10_OVERDUE":
-      return "RetardÃ©";
+      return "Retardé";
     case "EN_ATTENTE":
       return "Attendu caution";
     case "VALIDATED_THIS_MONTH":
-      return "TerminÃ©es";
+      return "Terminées";
     default:
       return "Cautions";
   }
 }
 
 function cautionStatutLabel(row: CautionListItem, tab: CautionListTab): string {
-  if (tab === "VALIDATED_THIS_MONTH") return "TerminÃ©e";
-  if (row.status === "VALIDE_N1") return "ValidÃ© N1";
-  if (row.status === "VALIDE_N2") return "ValidÃ© N2";
-  if (row.status === "A_CORRIGER") return "Ã€ corriger";
-  if (tab === "J10_OVERDUE") return "RetardÃ©";
+  if (tab === "VALIDATED_THIS_MONTH") return "Terminée";
+  if (row.status === "VALIDE_N1") return "Validé N1";
+  if (row.status === "VALIDE_N2") return "Validé N2";
+  if (row.status === "A_CORRIGER") return "ì corriger";
+  if (tab === "J10_OVERDUE") return "Retardé";
   return "En attente finalisation";
 }
 
-/** RÃ©fÃ©rence comme sur la fiche provisoire (NÂ° FPC indiquÃ© Ã  la caisse) ; hors fiche provisoire, rÃ©fÃ©rence dâ€™encaissement. */
+/** Référence comme sur la fiche provisoire (N° FPC indiqué à la caisse) ; hors fiche provisoire, référence d'encaissement. */
 function cautionReferenceListeOuFiche(row: CautionListItem): string {
   if (row.ficheProvisoire) {
     const n = row.numeroFicheProvisoire?.trim();
@@ -175,12 +175,12 @@ function cautionReferenceListeOuFiche(row: CautionListItem): string {
       const rest = pr.slice(prefix.length).trim();
       if (rest) return rest;
     }
-    return pr || "â€”";
+    return pr || "—";
   }
-  return (row.paymentReference ?? "").trim() || "â€”";
+  return (row.paymentReference ?? "").trim() || "—";
 }
 
-/** Fiche dÃ©finitive remise au porteur aprÃ¨s validation du paiement ou finalisation payÃ©e. */
+/** Fiche définitive remise au porteur après validation du paiement ou finalisation payée. */
 function buildCautionFicheModalData(
   row: CautionListItem,
   fiche: {
@@ -223,7 +223,7 @@ function buildCautionFicheModalData(
   };
 }
 
-/** Ligne affichÃ©e : seule, ou groupe (mÃªme client + mÃªme jour dâ€™Ã©chÃ©ance, fiches provisoires). */
+/** Ligne affichée : seule, ou groupe (même client + même jour d'échéance, fiches provisoires). */
 type CautionListDisplayRow =
   | { kind: "single"; row: CautionListItem }
   | { kind: "group"; key: string; rows: CautionListItem[] };
@@ -234,7 +234,7 @@ function cautionAttenduProvisoireGroupKey(row: CautionListItem): string {
     row.lonaciClientId?.trim() ||
     row.clientCode?.trim() ||
     row.concessionnaireNom?.trim() ||
-    "â€”"
+    "—"
   ).toUpperCase();
   return `${idPart}__${day}`;
 }
@@ -268,15 +268,15 @@ function buildCautionListDisplayRows(items: CautionListItem[], tab: CautionListT
 function labelModeReglement(m: CautionPaymentMode): string {
   switch (m) {
     case "ESPECES":
-      return "ESPÃˆCES";
+      return "ESP——CES";
     case "VIREMENT":
       return "VIREMENT";
     case "MOBILE_MONEY":
       return "MOBILE MONEY";
     case "CHEQUE":
-      return "CHÃˆQUE";
+      return "CH——QUE";
     case "PAIEMENT_DIFFERE":
-      return "Paiement diffÃ©rÃ© (fiche de paiement caution)";
+      return "Paiement différé (fiche de paiement caution)";
     default:
       return m;
   }
@@ -381,13 +381,13 @@ type ReferentialProduitRow = { code: string; libelle: string; actif: boolean; pr
 function formatClientHitLabel(hit: LonaciClientSearchHit): string {
   const name = hit.nomComplet?.trim() || hit.raisonSociale?.trim() || hit.id;
   const code = hit.code?.trim();
-  return code ? `${name} Â· ${code}` : name;
+  return code ? `${name} · ${code}` : name;
 }
 
 async function fetchReferentialProduitsActifs(): Promise<ReferentialProduitRow[]> {
   const response = await fetch("/api/referentials", { credentials: "include", cache: "no-store" });
   if (!response.ok) {
-    throw new Error("Impossible de charger le rÃ©fÃ©rentiel produits");
+    throw new Error("Impossible de charger le référentiel produits");
   }
   const data = (await response.json()) as { produits?: ReferentialProduitRow[] };
   return (data.produits ?? []).filter((p) => p.actif !== false);
@@ -405,7 +405,7 @@ async function fetchClientsSearch(q: string, signal?: AbortSignal): Promise<Lona
   return Array.isArray(data.items) ? data.items : [];
 }
 
-/** Codes produits uniques en conservant lâ€™ordre de sÃ©lection (coche la premiÃ¨re occurrence). */
+/** Codes produits uniques en conservant l'ordre de sélection (coche la première occurrence). */
 function uniqueOrderedProduitCodes(selected: string[]): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
@@ -419,7 +419,7 @@ function uniqueOrderedProduitCodes(selected: string[]): string[] {
 }
 
 /**
- * Impression : le navigateur imprime par dÃ©faut toute la page (liste Cautions comprise).
+ * Impression : le navigateur imprime par défaut toute la page (liste Cautions comprise).
  * On masque tout le corps sauf la modale portant la classe `lonaci-print-surface`, et on compacte la fiche pour A4.
  */
 const LONACI_PRINT_ISOLATION_CSS = `
@@ -511,25 +511,25 @@ function provisionalBundleClipboardLines(slips: ProvisionalSlipData[]): string[]
   const head = slips[0]!;
   const total = slips.reduce((a, s) => a + s.montantFCFA, 0);
   const lines: string[] = [
-    "Lonaci â€” Fiche de paiement caution (document unique)",
+    "Lonaci — Fiche de paiement caution (document unique)",
     `Client: ${head.clientLabel}`,
     `Code client: ${head.clientCode}`,
-    `ID client Lonaci: ${head.lonaciClientId || "â€”"}`,
-    `Total FCFA Ã  encaisser: ${total}`,
+    `ID client Lonaci: ${head.lonaciClientId || "—"}`,
+    `Total FCFA à encaisser: ${total}`,
     `Nombre de cautions / produits: ${slips.length}`,
     "",
-    "DÃ©tail par produit :",
+    "Détail par produit :",
   ];
   slips.forEach((s, i) => {
     lines.push(
       `--- Ligne ${i + 1} / ${slips.length} ---`,
-      `NÂ° FPC: ${s.numero}`,
-      `ID dossier caution: ${s.cautionId || "â€”"}`,
+      `N° FPC: ${s.numero}`,
+      `ID dossier caution: ${s.cautionId || "—"}`,
       `Code produit: ${s.produitCode}`,
-      ...(s.produitLibelle ? [`LibellÃ© produit: ${s.produitLibelle}`] : []),
+      ...(s.produitLibelle ? [`Libellé produit: ${s.produitLibelle}`] : []),
       `Montant FCFA: ${s.montantFCFA}`,
-      `Ã‰chÃ©ance: ${s.dueDate}`,
-      `RÃ©fÃ©rence interne Lonaci (trace): ${s.referenceInterneLonaci}`,
+      `—0chéance: ${s.dueDate}`,
+      `Référence interne Lonaci (trace): ${s.referenceInterneLonaci}`,
       "",
     );
   });
@@ -574,7 +574,7 @@ export default function CautionsPanel() {
   const referentialError = error;
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [counters, setCounters] = useState<CautionCounters | null>(null);
-  /** DonnÃ©es brutes Ã©tat mensuel par produit (mÃªme API que le tableau) â€” pour aligner les Analytics. */
+  /** Données brutes état mensuel par produit (même API que le tableau) — pour aligner les Analytics. */
   const [etatMensuelRows, setEtatMensuelRows] = useState<CautionEtatMensuelProduitRow[]>([]);
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [tab, setTab] = useState<CautionListTab>("EN_ATTENTE");
@@ -590,7 +590,7 @@ export default function CautionsPanel() {
   const [clientSearchLoading, setClientSearchLoading] = useState(false);
   const [clientFromPick, setClientFromPick] = useState<{ id: string; label: string; code: string } | null>(null);
   const [selectedProduitCodes, setSelectedProduitCodes] = useState<string[]>([]);
-  /** Filtre texte sur code / libellÃ© pour retrouver un produit dans une longue liste. */
+  /** Filtre texte sur code / libellé pour retrouver un produit dans une longue liste. */
   const [produitSearch, setProduitSearch] = useState("");
   const referentialLoadSeq = useRef(0);
   const [montant, setMontant] = useState("");
@@ -598,7 +598,7 @@ export default function CautionsPanel() {
   const [dueDateLocal, setDueDateLocal] = useState("");
   const [paymentReference, setPaymentReference] = useState("");
   const [observations, setObservations] = useState("");
-  /** Par dÃ©faut : fiche de paiement caution pour paiement Ã  la caisse (parcours nominal). */
+  /** Par défaut : fiche de paiement caution pour paiement à la caisse (parcours nominal). */
   const [ficheProvisoire, setFicheProvisoire] = useState(true);
   const [regularizeTarget, setRegularizeTarget] = useState<CautionListItem | null>(null);
   const [regularizeMode, setRegularizeMode] = useState<CautionEncaissementMode>("VIREMENT");
@@ -670,8 +670,8 @@ export default function CautionsPanel() {
             }
           >
             {tab === "VALIDATED_THIS_MONTH" || row.status === "VALIDE_N1" || row.status === "VALIDE_N2"
-              ? "ValidÃ©e"
-              : "â€”"}
+              ? "Validée"
+              : "—"}
           </span>
         );
       }
@@ -688,7 +688,7 @@ export default function CautionsPanel() {
               }}
               className="rounded-lg border border-amber-600 bg-amber-500 px-2 py-1 text-[10px] font-semibold text-white"
             >
-              RÃ©gulariser paiement
+              Régulariser paiement
             </button>
           ) : null}
           {showFinalize ? (
@@ -936,10 +936,10 @@ export default function CautionsPanel() {
       } else {
         setMeRole(null);
       }
-      // DÃ©clenche aussi le rechargement des compteurs.
-      // (On ne casse pas l'affichage si les stats Ã©chouent.)
+      // Déclenche aussi le rechargement des compteurs.
+      // (On ne casse pas l'affichage si les stats échouent.)
 
-      // Les compteurs sont indÃ©pendants de la table; on ne casse pas l'affichage si le backend est indisponible.
+      // Les compteurs sont indépendants de la table; on ne casse pas l'affichage si le backend est indisponible.
       try {
         const s = await fetchCautionCounters();
         setCounters(s);
@@ -976,23 +976,23 @@ export default function CautionsPanel() {
       return;
     }
     if (!clientFromPick || clientFromPick.id !== selectedLonaciClientId.trim()) {
-      setToast({ type: "error", message: "SÃ©lectionnez un client dans les rÃ©sultats de recherche." });
+      setToast({ type: "error", message: "Sélectionnez un client dans les résultats de recherche." });
       return;
     }
     const codes = uniqueOrderedProduitCodes(selectedProduitCodes);
     if (codes.length === 0) {
-      setToast({ type: "error", message: "Cochez au moins un produit du rÃ©fÃ©rentiel." });
+      setToast({ type: "error", message: "Cochez au moins un produit du référentiel." });
       return;
     }
     if (!paymentReference.trim() && !ficheProvisoire) {
-      setToast({ type: "error", message: "Indiquez la rÃ©fÃ©rence du paiement." });
+      setToast({ type: "error", message: "Indiquez la référence du paiement." });
       return;
     }
     if (referentielMontantTotal === null || referentielMontantTotal <= 0) {
       setToast({
         type: "error",
         message:
-          "Montant : chaque produit cochÃ© doit avoir un tarif caution rÃ©fÃ©rentiel valide (prix manquant ou nul sur au moins un).",
+          "Montant : chaque produit coché doit avoir un tarif caution référentiel valide (prix manquant ou nul sur au moins un).",
       });
       return;
     }
@@ -1002,7 +1002,7 @@ export default function CautionsPanel() {
     try {
       const due = new Date(dueDateLocal);
       if (Number.isNaN(due.getTime())) {
-        throw new Error("Date d'Ã©chÃ©ance invalide");
+        throw new Error("Date d'échéance invalide");
       }
       const clientId = selectedLonaciClientId.trim();
       const obs = observations.trim() ? observations.trim() : null;
@@ -1048,7 +1048,7 @@ export default function CautionsPanel() {
             }
           | null;
         if (!response.ok) {
-          throw new Error(raw?.message ?? `CrÃ©ation impossible pour le produit ${produitCode}.`);
+          throw new Error(raw?.message ?? `Création impossible pour le produit ${produitCode}.`);
         }
         const c = raw?.caution;
         if (c?.ficheProvisoire && c.numeroFicheProvisoire && clientFromPick) {
@@ -1065,7 +1065,7 @@ export default function CautionsPanel() {
             montantFCFA: typeof c.montant === "number" ? c.montant : montantLigne,
             dueDate: typeof c.dueDate === "string" ? c.dueDate : due.toISOString(),
             clientLabel: clientFromPick.label,
-            clientCode: clientFromPick.code.trim() || "â€”",
+            clientCode: clientFromPick.code.trim() || "—",
             lonaciClientId: clientFromPick.id,
             produitCode,
             produitLibelle,
@@ -1091,12 +1091,12 @@ export default function CautionsPanel() {
         type: "success",
         message:
           wasProvisoire && slipsOut.length > 1
-            ? `${slipsOut.length} cautions crÃ©Ã©es â€” une fiche de paiement caution unique affichÃ©e (${n} produit${n > 1 ? "s" : ""}).`
+            ? `${slipsOut.length} cautions créées — une fiche de paiement caution unique affichée (${n} produit${n > 1 ? "s" : ""}).`
             : wasProvisoire
-              ? "Fiche de paiement caution crÃ©Ã©e."
+              ? "Fiche de paiement caution créée."
               : n > 1
-                ? `${n} cautions crÃ©Ã©es.`
-                : "Caution crÃ©Ã©e.",
+                ? `${n} cautions créées.`
+                : "Caution créée.",
       });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
@@ -1112,7 +1112,7 @@ export default function CautionsPanel() {
     if (!regularizeTarget) return;
     const ref = regularizeRef.trim();
     if (!ref) {
-      setToast({ type: "error", message: "RÃ©fÃ©rence de paiement obligatoire." });
+      setToast({ type: "error", message: "Référence de paiement obligatoire." });
       return;
     }
     setRegularizing(true);
@@ -1141,7 +1141,7 @@ export default function CautionsPanel() {
         };
       } | null;
       if (!res.ok) {
-        throw new Error(raw?.message ?? "RÃ©gularisation impossible");
+        throw new Error(raw?.message ?? "Régularisation impossible");
       }
       const targetRow = regularizeTarget;
       setRegularizeTarget(null);
@@ -1153,8 +1153,8 @@ export default function CautionsPanel() {
       setToast({
         type: "success",
         message: raw?.fiche?.numeroFicheDefinitive
-          ? `Paiement validé — fiche définitive ${raw.fiche.numeroFicheDefinitive} générée.`
-          : "Paiement régularisé — finalisation possible.",
+          ? `Paiement valid—  fiche d—finitive ${raw.fiche.numeroFicheDefinitive} g—n—r—e.`
+          : "Paiement r—gularis—  finalisation possible.",
       });
     } catch (err) {
       setToast({
@@ -1186,7 +1186,7 @@ export default function CautionsPanel() {
       window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
-        message: `Import cautions terminÃ©: ${data?.upserted ?? 0} crÃ©Ã©e(s), ${data?.modified ?? 0} mise(s) Ã  jour.`,
+        message: `Import cautions terminé: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
       });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
@@ -1255,10 +1255,10 @@ export default function CautionsPanel() {
         type: "success",
         message:
           decision === "APPROUVER"
-            ? "Caution approuvÃ©e (payÃ©e)."
+            ? "Caution approuvée (payée)."
             : decision === "REJETER"
-              ? "Caution rejetÃ©e."
-              : "Caution retournÃ©e pour correction.",
+              ? "Caution rejetée."
+              : "Caution retournée pour correction.",
       });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
@@ -1331,7 +1331,7 @@ export default function CautionsPanel() {
       .join(" ");
     const pending = (counters?.overdueJ10 ?? 0) + (counters?.enAttente ?? 0);
     const validated = counters?.validatedThisMonth ?? 0;
-    /** Ã‰cart arithmÃ©tique sur les onglets liste (â‰  Â« Ã‰cart Â» du tableau ref. dossiers). */
+    /** —0cart arithmétique sur les onglets liste (—0— « —0cart » du tableau ref. dossiers). */
     const pipelineEcart = pending - validated;
     return {
       totalKnown,
@@ -1355,11 +1355,11 @@ export default function CautionsPanel() {
         <div className="relative flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100">
-              RÃ©fÃ©rentiel
+              Référentiel
             </p>
             <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Cautions</h2>
             <p className="mt-1 text-sm text-amber-100/90">
-              Suivi des encaissements, contrÃ´les dâ€™Ã©chÃ©ance et finalisation par le chef de service.
+              Suivi des encaissements, contrôles d'échéance et finalisation par le chef de service.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -1406,9 +1406,9 @@ export default function CautionsPanel() {
                 </h3>
                 <p className="mt-1 text-xs leading-relaxed text-slate-600">
                   <strong>1.</strong> Choisir un <strong>client Lonaci</strong> (module Clients). <strong>2.</strong>{" "}
-                  Choisir le <strong>produit</strong> dans le rÃ©fÃ©rentiel : le montant suit le tarif produit.{" "}
-                  <strong>3.</strong> GÃ©nÃ©rer en principe une <strong>fiche pour la caisse</strong> ; aprÃ¨s encaissement,
-                  rÃ©gulariser dans Lonaci.
+                  Choisir le <strong>produit</strong> dans le référentiel : le montant suit le tarif produit.{" "}
+                  <strong>3.</strong> Générer en principe une <strong>fiche pour la caisse</strong> ; après encaissement,
+                  régulariser dans Lonaci.
                 </p>
               </div>
               <button
@@ -1417,7 +1417,7 @@ export default function CautionsPanel() {
                 className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-600 transition hover:bg-slate-100"
                 aria-label="Fermer"
               >
-                Ã—
+                —
               </button>
             </div>
 
@@ -1430,7 +1430,7 @@ export default function CautionsPanel() {
                   2. Produit(s)
                 </span>
                 <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                  3. Constitution (caisse ou dÃ©jÃ  payÃ©)
+                  3. Constitution (caisse ou déjà payé)
                 </span>
               </div>
 
@@ -1440,12 +1440,12 @@ export default function CautionsPanel() {
                     1. Client Lonaci
                   </p>
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
-                    Recherchez un client <strong>actif</strong> du rÃ©fÃ©rentiel Clients Lonaci, puis cliquez sur une ligne
-                    pour valider la sÃ©lection.
+                    Recherchez un client <strong>actif</strong> du référentiel Clients Lonaci, puis cliquez sur une ligne
+                    pour valider la sélection.
                   </p>
                   <label className="mb-1 block text-xs font-medium text-slate-700">Recherche client</label>
                   <p className="mb-1.5 text-[11px] text-slate-500">
-                    Nom, raison sociale ou code (au moins 2 caractÃ¨res), puis choix dans les rÃ©sultats.
+                    Nom, raison sociale ou code (au moins 2 caractères), puis choix dans les résultats.
                   </p>
                   <div className="relative mb-3">
                     <input
@@ -1453,15 +1453,15 @@ export default function CautionsPanel() {
                       autoComplete="off"
                       value={clientSearchInput}
                       onChange={(e) => setClientSearchInput(e.target.value)}
-                      placeholder="Ex. Kouassi, SARL Horizon, code clientâ€¦"
+                      placeholder="Ex. Kouassi, SARL Horizon, code client…"
                       className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                       aria-label="Rechercher un client Lonaci"
                     />
                     {clientSearchLoading ? (
-                      <p className="mt-1 text-[11px] text-slate-500">Rechercheâ€¦</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Recherche…</p>
                     ) : null}
                     {clientSearchInput.trim().length >= 2 && !clientSearchLoading && clientSearchHits.length === 0 ? (
-                      <p className="mt-1 text-[11px] text-slate-500">Aucun rÃ©sultat.</p>
+                      <p className="mt-1 text-[11px] text-slate-500">Aucun résultat.</p>
                     ) : null}
                     {clientSearchHits.length > 0 ? (
                       <div className="absolute z-20 mt-1 max-h-48 w-full overflow-auto rounded-md border border-slate-200 bg-white py-1 shadow-lg">
@@ -1486,20 +1486,20 @@ export default function CautionsPanel() {
                   </div>
                   {selectedLonaciClientId.trim() ? (
                     <p className="text-[11px] text-emerald-800">
-                      Client sÃ©lectionnÃ© : <span className="font-semibold">{clientFromPick?.label ?? "â€”"}</span>
+                      Client sélectionné : <span className="font-semibold">{clientFromPick?.label ?? "—"}</span>
                     </p>
                   ) : null}
                 </section>
 
                 <section className="rounded-xl border border-indigo-200/80 bg-gradient-to-b from-indigo-50/30 to-white p-3 shadow-sm">
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
-                    2. Produit(s) rÃ©fÃ©rentiel
+                    2. Produit(s) référentiel
                   </p>
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
                     Cochez <strong>un ou plusieurs</strong> produits : une <strong>caution distincte</strong> par produit
-                    est crÃ©Ã©e si ce mode est choisi ; Ã  l&apos;issue, une <strong>seule fiche de paiement caution</strong>{" "}
-                    regroupe tous les lots (tableau + total). Le montant affichÃ© est la{" "}
-                    <strong>somme</strong> des tarifs rÃ©fÃ©rentiels.
+                    est créée si ce mode est choisi ; à l&apos;issue, une <strong>seule fiche de paiement caution</strong>{" "}
+                    regroupe tous les lots (tableau + total). Le montant affiché est la{" "}
+                    <strong>somme</strong> des tarifs référentiels.
                   </p>
                   <label className="mb-1 block text-xs font-medium text-slate-700" htmlFor="caution-produit-filter">
                     Filtrer la liste
@@ -1510,10 +1510,10 @@ export default function CautionsPanel() {
                     autoComplete="off"
                     value={produitSearch}
                     onChange={(e) => setProduitSearch(e.target.value)}
-                    placeholder="Code ou libellÃ© du produitâ€¦"
+                    placeholder="Code ou libellé du produit…"
                     disabled={referentialProduitsLoading || referentialProduits.length === 0}
                     className="mb-2 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    aria-label="Filtrer les produits par code ou libellÃ©"
+                    aria-label="Filtrer les produits par code ou libellé"
                   />
                   <div className="mb-2 flex flex-wrap gap-2">
                     <button
@@ -1522,7 +1522,7 @@ export default function CautionsPanel() {
                       onClick={() => selectAllFilteredProduits()}
                       className="rounded-md border border-indigo-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-indigo-900 hover:bg-indigo-50 disabled:opacity-50"
                     >
-                      Tout cocher (liste filtrÃ©e)
+                      Tout cocher (liste filtrée)
                     </button>
                     <button
                       type="button"
@@ -1530,24 +1530,24 @@ export default function CautionsPanel() {
                       onClick={() => clearProduitSelection()}
                       className="rounded-md border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
                     >
-                      DÃ©cocher tout
+                      Décocher tout
                     </button>
                   </div>
                     <p className="mb-1 text-[11px] font-medium text-slate-700">
-                      Produits ({selectedProduitCodes.length} sÃ©lectionnÃ©
+                      Produits ({selectedProduitCodes.length} sélectionné
                       {selectedProduitCodes.length !== 1 ? "s" : ""})
                     </p>
                   {referentialProduitsLoading ? (
-                    <p className="mb-2 text-[11px] text-slate-500">Chargement du rÃ©fÃ©rentielâ€¦</p>
+                    <p className="mb-2 text-[11px] text-slate-500">Chargement du référentiel…</p>
                   ) : null}
                   {referentialError && createOpen ? (
                     <div className="mb-2 rounded border border-rose-200 bg-rose-50/80 px-3 py-2 text-xs text-rose-700">
-                      Erreur de chargement Ã©cran : vÃ©rifiez la connexion puis actualisez.
+                      Erreur de chargement écran : vérifiez la connexion puis actualisez.
                     </div>
                   ) : null}
                   <div
                     role="group"
-                    aria-label="SÃ©lection des produits pour les cautions"
+                    aria-label="Sélection des produits pour les cautions"
                     className="max-h-52 overflow-y-auto rounded-md border border-slate-200 bg-white p-1"
                   >
                     {produitsPourSelect.map((p) => {
@@ -1555,11 +1555,11 @@ export default function CautionsPanel() {
                       const ku = code.toUpperCase();
                       const checked = selectedProduitCodes.some((c) => c.trim().toUpperCase() === ku);
                       const lib = p.libelle?.trim();
-                      const label = lib && lib !== code ? `${code} â€” ${lib}` : code;
+                      const label = lib && lib !== code ? `${code} — ${lib}` : code;
                       const prixLabel =
                         typeof p.prix === "number" && Number.isFinite(p.prix)
                           ? `${Math.round(p.prix).toLocaleString("fr-FR")} FCFA`
-                          : "â€”";
+                          : "—";
                       return (
                         <label
                           key={code}
@@ -1588,15 +1588,15 @@ export default function CautionsPanel() {
                   {!referentialProduitsLoading && referentialProduits.length > 0 ? (
                     <p className="mt-1 text-[11px] text-slate-500">
                       {produitsPourSelect.length === 1
-                        ? "1 produit affichÃ©"
-                        : `${produitsPourSelect.length} produits affichÃ©s`}
+                        ? "1 produit affiché"
+                        : `${produitsPourSelect.length} produits affichés`}
                       {produitSearch.trim() ? ` sur ${referentialProduits.length}.` : "."}
                     </p>
                   ) : null}
                   {selectedProduitCodes.length > 0 && referentielMontantTotal === null && !referentialProduitsLoading ? (
                     <p className="mt-1 text-[11px] text-amber-800">
-                      Au moins un produit cochÃ© n&apos;a pas de prix rÃ©fÃ©rentiel utilisable : dÃ©cochez-le ou complÃ©tez
-                      le tarif dans le rÃ©fÃ©rentiel.
+                      Au moins un produit coché n&apos;a pas de prix référentiel utilisable : décochez-le ou complétez
+                      le tarif dans le référentiel.
                     </p>
                   ) : null}
                 </section>
@@ -1606,8 +1606,8 @@ export default function CautionsPanel() {
                     3. Constitution de la caution
                   </legend>
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
-                    Cas nominal : vous remplissez ce formulaire avec le client inscrit, puis le porteur prÃ©sente la{" "}
-                    <strong>fiche de paiement caution</strong> Ã  la caisse pour payer. Si l&apos;argent a dÃ©jÃ  Ã©tÃ© encaissÃ© hors
+                    Cas nominal : vous remplissez ce formulaire avec le client inscrit, puis le porteur présente la{" "}
+                    <strong>fiche de paiement caution</strong> à la caisse pour payer. Si l&apos;argent a déjà été encaissé hors
                     ce flux, basculez sur la saisie directe.
                   </p>
 
@@ -1625,9 +1625,9 @@ export default function CautionsPanel() {
                         className="mt-1"
                       />
                       <span className="text-xs leading-relaxed text-amber-950">
-                        <span className="font-semibold">Paiement Ã  la caisse (recommandÃ©)</span> â€” enregistrement sans
-                        encaissement immÃ©diat ; gÃ©nÃ©ration d&apos;une fiche numÃ©rotÃ©e (FPC-â€¦) Ã  imprimer pour le
-                        guichet. AprÃ¨s paiement : <strong>RÃ©gulariser paiement</strong> dans Lonaci (rÃ©fÃ©rence reÃ§ue).
+                        <span className="font-semibold">Paiement à la caisse (recommandé)</span> — enregistrement sans
+                        encaissement immédiat ; génération d&apos;une fiche numérotée (FPC-…) à imprimer pour le
+                        guichet. Après paiement : <strong>Régulariser paiement</strong> dans Lonaci (référence reçue).
                       </span>
                     </label>
                     <label
@@ -1643,8 +1643,8 @@ export default function CautionsPanel() {
                         className="mt-1"
                       />
                       <span className="text-xs leading-relaxed text-slate-700">
-                        <span className="font-semibold">Encaissement dÃ©jÃ  effectuÃ©</span> â€” saisir tout de suite le
-                        mode, la date et la rÃ©fÃ©rence du paiement reÃ§u (hors fiche caisse).
+                        <span className="font-semibold">Encaissement déjà effectué</span> — saisir tout de suite le
+                        mode, la date et la référence du paiement reçu (hors fiche caisse).
                       </span>
                     </label>
                   </div>
@@ -1652,7 +1652,7 @@ export default function CautionsPanel() {
                   <div className="grid gap-2.5 sm:grid-cols-2">
                     <div className="sm:col-span-2">
                       <label htmlFor="caution-montant" className="mb-1 block text-xs font-medium text-slate-700">
-                        Total montants cautions (somme des produits cochÃ©s)
+                        Total montants cautions (somme des produits cochés)
                       </label>
                       <input
                         id="caution-montant"
@@ -1663,12 +1663,12 @@ export default function CautionsPanel() {
                         value={montant}
                         readOnly
                         aria-readonly="true"
-                        title="Somme des tarifs caution des produits cochÃ©s â€” non modifiable"
+                        title="Somme des tarifs caution des produits cochés — non modifiable"
                         className="w-full min-w-0 rounded-md border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-800 outline-none cursor-not-allowed"
                       />
                       {referentielMontantTotal === null && selectedProduitCodes.length > 0 && !referentialProduitsLoading ? (
                         <p className="mt-1 text-[11px] text-amber-800">
-                          Aucun total valide : vÃ©rifiez que chaque produit cochÃ© a un tarif dans le rÃ©fÃ©rentiel.
+                          Aucun total valide : vérifiez que chaque produit coché a un tarif dans le référentiel.
                         </p>
                       ) : null}
                     </div>
@@ -1676,10 +1676,10 @@ export default function CautionsPanel() {
                     {ficheProvisoire ? (
                       <div className="sm:col-span-2">
                         <label className="mb-1 block text-xs font-medium text-slate-700">
-                          Date limite de paiement Ã  la caisse <span className="text-rose-600">*</span>
+                          Date limite de paiement à la caisse <span className="text-rose-600">*</span>
                         </label>
                         <input
-                          aria-label="Date limite de paiement prÃ©vue pour la fiche de paiement caution"
+                          aria-label="Date limite de paiement prévue pour la fiche de paiement caution"
                           required
                           type="datetime-local"
                           value={dueDateLocal}
@@ -1687,19 +1687,19 @@ export default function CautionsPanel() {
                           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                         />
                         <p className="mt-1 text-[11px] text-slate-500">
-                          Ã‰chÃ©ance pour les alertes et le suivi jusqu&apos;Ã  la rÃ©gularisation aprÃ¨s passage en caisse.
+                          —0chéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
                         </p>
                       </div>
                     ) : (
                       <>
                         <div>
                           <label htmlFor="caution-mode-reglement" className="mb-1 block text-xs font-medium text-slate-700">
-                            Mode de rÃ¨glement <span className="text-rose-600">*</span>
+                            Mode de règlement <span className="text-rose-600">*</span>
                           </label>
                           <select
                             id="caution-mode-reglement"
                             required
-                            aria-label="Mode de rÃ¨glement du paiement de caution"
+                            aria-label="Mode de règlement du paiement de caution"
                             value={modeReglement}
                             onChange={(e) => setModeReglement(e.target.value as CautionEncaissementMode)}
                             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
@@ -1722,25 +1722,25 @@ export default function CautionsPanel() {
                             type="datetime-local"
                             value={dueDateLocal}
                             onChange={(e) => setDueDateLocal(e.target.value)}
-                            aria-label="Date et heure du paiement reÃ§u"
+                            aria-label="Date et heure du paiement reçu"
                             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                           />
                           <p className="mt-1 text-[11px] text-slate-500">
-                            Date d&apos;encaissement effectif (caisse, banque ou opÃ©rateur).
+                            Date d&apos;encaissement effectif (caisse, banque ou opérateur).
                           </p>
                         </div>
 
                         <div className="sm:col-span-2">
                           <label htmlFor="caution-ref-paiement" className="mb-1 block text-xs font-medium text-slate-700">
-                            RÃ©fÃ©rence du paiement <span className="text-rose-600">*</span>
+                            Référence du paiement <span className="text-rose-600">*</span>
                           </label>
                           <input
                             id="caution-ref-paiement"
                             required
-                            aria-label="RÃ©fÃ©rence du paiement"
+                            aria-label="Référence du paiement"
                             value={paymentReference}
                             onChange={(e) => setPaymentReference(e.target.value)}
-                            placeholder="Ex. nÂ° transaction, nÂ° chÃ¨que, rÃ©fÃ©rence virementâ€¦"
+                            placeholder="Ex. n° transaction, n° chèque, référence virement…"
                             className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                           />
                         </div>
@@ -1756,7 +1756,7 @@ export default function CautionsPanel() {
                     aria-label="Observations"
                     value={observations}
                     onChange={(e) => setObservations(e.target.value)}
-                    placeholder="Notes internes / dÃ©tails utiles (optionnel)"
+                    placeholder="Notes internes / détails utiles (optionnel)"
                     rows={2}
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400"
                   />
@@ -1784,7 +1784,7 @@ export default function CautionsPanel() {
                     onClick={() => void downloadCautionsExcelTemplate()}
                     className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                   >
-                    TÃ©lÃ©charger le modÃ¨le Excel
+                    Télécharger le modèle Excel
                   </button>
                   <button
                     type="button"
@@ -1800,10 +1800,10 @@ export default function CautionsPanel() {
                     className="rounded-lg border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-amber-600 hover:bg-amber-600 disabled:opacity-60"
                   >
                     {creating
-                      ? "CrÃ©ationâ€¦"
+                      ? "Création…"
                       : ficheProvisoire
-                        ? "GÃ©nÃ©rer la fiche caisse"
-                        : "Enregistrer la caution payÃ©e"}
+                        ? "Générer la fiche caisse"
+                        : "Enregistrer la caution payée"}
                   </button>
                 </div>
               </form>
@@ -1824,14 +1824,14 @@ export default function CautionsPanel() {
             className="w-full max-w-md rounded-2xl border-2 border-indigo-200 bg-gradient-to-b from-indigo-50/50 to-white p-4 shadow-2xl"
           >
             <h4 id="regularize-caution-title" className="text-base font-semibold text-slate-900">
-              RÃ©gulariser le paiement
+              Régulariser le paiement
             </h4>
             <p className="mt-1 text-xs text-slate-600">
               Fiche{" "}
               <span className="font-mono font-medium text-slate-800">
-                {regularizeTarget.numeroFicheProvisoire ?? "â€”"}
+                {regularizeTarget.numeroFicheProvisoire ?? "—"}
               </span>{" "}
-              â€” complÃ©tez le formulaire de paiement effectif (mÃªme rubrique que lors dâ€™un encaissement direct).
+              — complétez le formulaire de paiement effectif (même rubrique que lors d'un encaissement direct).
             </p>
             <fieldset className="mt-4 rounded-xl border border-indigo-200/90 bg-white/90 p-3">
               <legend className="px-1 text-[11px] font-bold uppercase tracking-wide text-indigo-900">
@@ -1839,9 +1839,9 @@ export default function CautionsPanel() {
               </legend>
               <div className="mt-2 grid gap-3">
                 <label className="block text-sm">
-                  <span className="text-slate-600">Mode de rÃ¨glement *</span>
+                  <span className="text-slate-600">Mode de règlement *</span>
                   <select
-                    aria-label="Mode de rÃ¨glement aprÃ¨s rÃ©gularisation"
+                    aria-label="Mode de règlement après régularisation"
                     value={regularizeMode}
                     onChange={(e) => setRegularizeMode(e.target.value as CautionEncaissementMode)}
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -1854,13 +1854,13 @@ export default function CautionsPanel() {
                   </select>
                 </label>
                 <label className="block text-sm">
-                  <span className="text-slate-600">RÃ©fÃ©rence du paiement *</span>
+                  <span className="text-slate-600">Référence du paiement *</span>
                   <input
                     required
                     value={regularizeRef}
                     onChange={(e) => setRegularizeRef(e.target.value)}
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"
-                    placeholder="RÃ©fÃ©rence transaction / chÃ¨que / etc."
+                    placeholder="Référence transaction / chèque / etc."
                   />
                 </label>
                 <label className="block text-sm">
@@ -1891,7 +1891,7 @@ export default function CautionsPanel() {
                 disabled={regularizing}
                 className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {regularizing ? "Enregistrementâ€¦" : "Valider la rÃ©gularisation"}
+                {regularizing ? "Enregistrement…" : "Valider la régularisation"}
               </button>
             </div>
           </form>
@@ -1907,14 +1907,14 @@ export default function CautionsPanel() {
                 Fiche de paiement caution
               </h2>
               <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                <strong>Document unique</strong> pour la caisse et Lonaci : client, total Ã  encaisser et tableau de tous
-                les produits / cautions crÃ©Ã©s sur cette opÃ©ration.
+                <strong>Document unique</strong> pour la caisse et Lonaci : client, total à encaisser et tableau de tous
+                les produits / cautions créés sur cette opération.
               </p>
             </header>
 
             {provisionalSlips.length > 1 ? (
               <p className="mb-4 rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-sm text-sky-950 print:hidden">
-                <strong>{provisionalSlips.length} produits</strong> â€” une caution par ligne, prÃ©sentÃ©s sur cette mÃªme
+                <strong>{provisionalSlips.length} produits</strong> — une caution par ligne, présentés sur cette même
                 fiche.
               </p>
             ) : null}
@@ -1922,26 +1922,26 @@ export default function CautionsPanel() {
             <section className="mb-6 rounded-xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/90 to-white p-4 print:mb-3 print:border-slate-300 print:bg-white print:p-3">
               <h4 className="text-[11px] font-bold uppercase tracking-wide text-indigo-950">Client Lonaci</h4>
               <p className="mt-1 text-[11px] leading-relaxed text-indigo-900/90">
-                Personne ou structure enregistrÃ©e dans le rÃ©fÃ©rentiel <strong>Clients</strong> Lonaci.
+                Personne ou structure enregistrée dans le référentiel <strong>Clients</strong> Lonaci.
               </p>
               <p className="mt-2 text-xl font-semibold leading-snug text-slate-900">{provisionalSlips[0]!.clientLabel}</p>
               <dl className="mt-3 grid gap-2 text-sm text-slate-700">
                 <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
                   <dt className="text-slate-500">Code client</dt>
                   <dd className="break-all font-mono text-xs font-semibold text-slate-900">
-                    {provisionalSlips[0]!.clientCode || "â€”"}
+                    {provisionalSlips[0]!.clientCode || "—"}
                   </dd>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
                   <dt className="text-slate-500">Identifiant technique (Lonaci)</dt>
                   <dd className="break-all font-mono text-xs font-semibold text-slate-900">
-                    {provisionalSlips[0]!.lonaciClientId || "â€”"}
+                    {provisionalSlips[0]!.lonaciClientId || "—"}
                   </dd>
                 </div>
               </dl>
               <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div className="rounded-lg border-2 border-dashed border-slate-400 bg-white px-4 py-3 print:border-slate-500">
-                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Ã  encaisser</p>
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total à encaisser</p>
                   <p className="mt-1 text-2xl font-bold tabular-nums text-slate-900 sm:text-3xl print:text-xl">
                     {provisionalSlipsTotalFcfa.toLocaleString("fr-FR")}{" "}
                     <span className="text-base font-semibold text-slate-600">FCFA</span>
@@ -1960,13 +1960,13 @@ export default function CautionsPanel() {
                   {provisionalSlips.length > 1 ? (
                     <>
                       {" "}
-                      Mentionner sur le reÃ§u ou le borderau les <strong>rÃ©fÃ©rences FPC</strong> du tableau ci-dessous
+                      Mentionner sur le reçu ou le borderau les <strong>références FPC</strong> du tableau ci-dessous
                       (chaque ligne), avec les montants de ligne si utile pour la compta.
                     </>
                   ) : (
                     <>
                       {" "}
-                      Mentionner sur le reÃ§u ou le borderau la <strong>rÃ©fÃ©rence FPC</strong> figurant dans le tableau
+                      Mentionner sur le reçu ou le borderau la <strong>référence FPC</strong> figurant dans le tableau
                       ci-dessous.
                     </>
                   )}
@@ -1979,7 +1979,7 @@ export default function CautionsPanel() {
                 Produits et cautions (fiche unique)
               </h4>
               <p className="mt-1 text-xs text-slate-600">
-                Chaque ligne correspond Ã  une caution Lonaci ; rÃ©gularisez le paiement ligne par ligne aprÃ¨s
+                Chaque ligne correspond à une caution Lonaci ; régularisez le paiement ligne par ligne après
                 encaissement.
               </p>
               <div className="fiche-print-table-wrap mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white print:overflow-visible print:mt-2">
@@ -1990,7 +1990,7 @@ export default function CautionsPanel() {
                         #
                       </th>
                       <th scope="col" className="px-2 py-2">
-                        NÂ° FPC
+                        N° FPC
                       </th>
                       <th scope="col" className="px-2 py-2">
                         Produit
@@ -1999,13 +1999,13 @@ export default function CautionsPanel() {
                         Montant
                       </th>
                       <th scope="col" className="px-2 py-2 whitespace-nowrap">
-                        Ã‰chÃ©ance
+                        —0chéance
                       </th>
                       <th scope="col" className="px-2 py-2 font-mono text-[10px] font-bold normal-case tracking-normal">
                         ID dossier
                       </th>
                       <th scope="col" className="max-w-[8rem] px-2 py-2 font-mono text-[10px] font-bold normal-case tracking-normal">
-                        RÃ©f. interne
+                        Réf. interne
                       </th>
                       <th scope="col" className="print:hidden px-2 py-2 text-right">
                         Action
@@ -2039,7 +2039,7 @@ export default function CautionsPanel() {
                           })}
                         </td>
                         <td className="max-w-[7rem] truncate px-2 py-2 align-top font-mono text-[10px] text-slate-700" title={row.cautionId || undefined}>
-                          {row.cautionId || "â€”"}
+                          {row.cautionId || "—"}
                         </td>
                         <td className="max-w-[8rem] truncate px-2 py-2 align-top font-mono text-[10px] text-amber-950" title={row.referenceInterneLonaci}>
                           {row.referenceInterneLonaci}
@@ -2050,7 +2050,7 @@ export default function CautionsPanel() {
                             disabled={!/^[a-f\d]{24}$/i.test(row.cautionId)}
                             title={
                               /^[a-f\d]{24}$/i.test(row.cautionId)
-                                ? "RÃ©gulariser cette ligne"
+                                ? "Régulariser cette ligne"
                                 : "ID caution manquant"
                             }
                             onClick={() => {
@@ -2062,7 +2062,7 @@ export default function CautionsPanel() {
                             }}
                             className="rounded-md border border-indigo-400 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"
                           >
-                            RÃ©gulariser
+                            Régulariser
                           </button>
                         </td>
                       </tr>
@@ -2083,12 +2083,12 @@ export default function CautionsPanel() {
                 </table>
               </div>
               <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 text-xs leading-relaxed text-indigo-950 print:bg-white">
-                <p className="font-semibold text-indigo-950">AprÃ¨s paiement Ã  la caisse (Lonaci)</p>
+                <p className="font-semibold text-indigo-950">Après paiement à la caisse (Lonaci)</p>
                 <p className="mt-1 text-indigo-900/95">
-                  Liste <strong>Cautions</strong> â†’ pour <strong>chaque ligne</strong> du tableau :{" "}
-                  <strong>RÃ©gulariser paiement</strong> et saisir le mode ainsi que la rÃ©fÃ©rence figurant sur le reÃ§u
-                  caisse. Les rÃ©fÃ©rences <strong>FPC</strong> et <strong>ID dossier</strong> ci-dessus identifient chaque
-                  dossier ; la colonne Â« RÃ©f. interne Â» est une trace Lonaci, distincte de la rÃ©fÃ©rence bancaire.
+                  Liste <strong>Cautions</strong> — ' pour <strong>chaque ligne</strong> du tableau :{" "}
+                  <strong>Régulariser paiement</strong> et saisir le mode ainsi que la référence figurant sur le reçu
+                  caisse. Les références <strong>FPC</strong> et <strong>ID dossier</strong> ci-dessus identifient chaque
+                  dossier ; la colonne « Réf. interne » est une trace Lonaci, distincte de la référence bancaire.
                 </p>
               </div>
             </section>
@@ -2107,7 +2107,7 @@ export default function CautionsPanel() {
                   void navigator.clipboard
                     .writeText(provisionalBundleClipboardLines(provisionalSlips).join("\n"))
                     .then(
-                      () => setToast({ type: "success", message: "Fiche copiÃ©e dans le presse-papiers." }),
+                      () => setToast({ type: "success", message: "Fiche copiée dans le presse-papiers." }),
                       () => setToast({ type: "error", message: "Copie impossible (navigateur ou permissions)." }),
                     );
                 }}
@@ -2135,33 +2135,33 @@ export default function CautionsPanel() {
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Analytics cautions</h3>
           <p className="mt-0.5 text-xs text-slate-600">
-            Pipeline liste (onglets) et dernier mois du tableau Â« Ã‰tat mensuel par produit Â» â€” mÃªmes formules dâ€™affichage
-            que le tableau (Ã  encaisser affichÃ©, encaissÃ©es, Ã©cart cautions, non encaissÃ©es FCFA).
+            Pipeline liste (onglets) et dernier mois du tableau « État mensuel par produit » — mêmes formules d'affichage
+            que le tableau (à encaisser affiché, encaissées, écart cautions, non encaissées FCFA).
           </p>
         </div>
 
         <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-4">
           <div className={CAUTION_COLOR_TOKENS.risk.card}>
-            <div className={CAUTION_COLOR_TOKENS.risk.title}>RetardÃ©</div>
-            <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.risk.value}`}>{counters?.overdueJ10 ?? "â€”"}</div>
+            <div className={CAUTION_COLOR_TOKENS.risk.title}>Retardé</div>
+            <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.risk.value}`}>{counters?.overdueJ10 ?? "—"}</div>
             <div className="text-[11px] text-slate-600">{cautionAnalytics.riskRate}% du portefeuille caution</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.pending.card}>
             <div className={CAUTION_COLOR_TOKENS.pending.title}>En cours (liste)</div>
             <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.pending.value}`}>{cautionAnalytics.pending}</div>
-            <div className="text-[11px] text-slate-600">Onglets Â« Attendu caution Â» + retards J+10 â€” hors ref. dossiers du tableau</div>
+            <div className="text-[11px] text-slate-600">Onglets « Attendu caution » + retards J+10 — hors ref. dossiers du tableau</div>
           </div>
           <div className={CAUTION_COLOR_TOKENS.validated.card}>
-            <div className={CAUTION_COLOR_TOKENS.validated.title}>TerminÃ©es</div>
-            <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.validated.value}`}>{counters?.validatedThisMonth ?? "â€”"}</div>
-            <div className="text-[11px] text-slate-600">Taux finalisÃ© (mois): {cautionAnalytics.validationRate}%</div>
+            <div className={CAUTION_COLOR_TOKENS.validated.title}>Terminées</div>
+            <div className={`mt-1 text-2xl font-semibold ${CAUTION_COLOR_TOKENS.validated.value}`}>{counters?.validatedThisMonth ?? "—"}</div>
+            <div className="text-[11px] text-slate-600">Taux finalisé (mois): {cautionAnalytics.validationRate}%</div>
           </div>
           <div className="rounded-xl border border-cyan-100 bg-linear-to-br from-cyan-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-cyan-700">Ã‰cart pipeline (liste)</div>
+            <div className="text-[11px] uppercase tracking-wide text-cyan-700">—0cart pipeline (liste)</div>
             <div className="mt-1 text-2xl font-semibold text-slate-900">{cautionAnalytics.pipelineEcart}</div>
             <div className="text-[11px] text-slate-600">
-              (En cours + retards) âˆ’ TerminÃ©es ce mois Â· {cautionAnalytics.pipelineEcartRate}% du portefeuille liste â€” distinct
-              de la colonne Â« Ã‰cart Â» du tableau
+              (En cours + retards) ——' Terminées ce mois · {cautionAnalytics.pipelineEcartRate}% du portefeuille liste — distinct
+              de la colonne « —0cart » du tableau
             </div>
           </div>
         </div>
@@ -2169,20 +2169,20 @@ export default function CautionsPanel() {
         {etatTableauDernierMois ? (
           <div className="border-b border-slate-100 bg-amber-50/40 px-4 py-3">
             <p className="text-xs font-semibold text-amber-950">
-              Tableau par produit â€” {etatTableauDernierMois.moisLabel}{" "}
+              Tableau par produit — {etatTableauDernierMois.moisLabel}{" "}
               <span className="font-mono font-normal text-amber-900/80">({etatTableauDernierMois.yearMonth})</span>
             </p>
             <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1.5 text-[11px] tabular-nums text-slate-800">
               <span>
-                Ã€ encaisser affichÃ© :{" "}
+                ì encaisser affiché :{" "}
                 <strong className="text-slate-950">{etatTableauDernierMois.totals.nombreCautionsAEncaisser}</strong>{" "}
                 cautions
               </span>
               <span className="text-slate-300" aria-hidden>
-                Â·
+                ·
               </span>
               <span>
-                EncaissÃ©es :{" "}
+                Encaissées :{" "}
                 <strong className="text-slate-950">{etatTableauDernierMois.totals.nombreCautionsEncaissees}</strong> /{" "}
                 <strong className="text-slate-950">
                   {etatTableauDernierMois.totals.montantCautionsEncaissees.toLocaleString("fr-FR")}
@@ -2190,25 +2190,25 @@ export default function CautionsPanel() {
                 FCFA
               </span>
               <span className="text-slate-300" aria-hidden>
-                Â·
+                ·
               </span>
               <span>
-                Ã‰cart (cautions) :{" "}
+                —0cart (cautions) :{" "}
                 <strong className="text-slate-950">
                   {etatTableauDernierMois.totals.ecartNombreCautionsAffiche.toLocaleString("fr-FR")}
                 </strong>
               </span>
               <span className="text-slate-300" aria-hidden>
-                Â·
+                ·
               </span>
               <span>
-                Non encaissÃ©es (FCFA) :{" "}
+                Non encaissées (FCFA) :{" "}
                 <strong className="text-slate-950">
                   {etatTableauDernierMois.totals.montantCautionsNonEncaissees.toLocaleString("fr-FR")}
                 </strong>
               </span>
               <span className="text-slate-300" aria-hidden>
-                Â·
+                ·
               </span>
               <span>
                 Attendus (FCFA) :{" "}
@@ -2220,13 +2220,13 @@ export default function CautionsPanel() {
           </div>
         ) : (
           <div className="border-b border-slate-100 px-4 py-2.5 text-[11px] text-slate-500">
-            Ã‰tat mensuel par produit indisponible ou vide â€” les totaux du tableau ne peuvent pas Ãªtre affichÃ©s ici.
+            État mensuel par produit indisponible ou vide — les totaux du tableau ne peuvent pas être affichés ici.
           </div>
         )}
 
         <div className="grid gap-4 p-4 lg:grid-cols-12">
           <div className="rounded-xl border border-slate-200 p-3 lg:col-span-5">
-            <div className="text-xs font-semibold text-slate-900">RÃ©partition modes de rÃ¨glement</div>
+            <div className="text-xs font-semibold text-slate-900">Répartition modes de règlement</div>
             <div className="mt-2 space-y-2">
               {cautionAnalytics.modeEntries.length ? (
                 cautionAnalytics.modeEntries.map((entry) => {
@@ -2251,14 +2251,14 @@ export default function CautionsPanel() {
                   );
                 })
               ) : (
-                <p className="text-xs text-slate-500">Aucune donnÃ©e sur lâ€™onglet courant.</p>
+                <p className="text-xs text-slate-500">Aucune donnée sur l'onglet courant.</p>
               )}
             </div>
           </div>
 
           <div className="rounded-xl border border-slate-200 p-3 lg:col-span-4">
             <div className="text-xs font-semibold text-slate-900">Tendance des retards critiques</div>
-            <div className="mt-1 text-[11px] text-slate-600">Top alertes J+10 (Ã©volution jours de retard)</div>
+            <div className="mt-1 text-[11px] text-slate-600">Top alertes J+10 (évolution jours de retard)</div>
             <div className="mt-3 h-24 rounded-lg bg-slate-50 p-2">
               {cautionAnalytics.sparkline ? (
                 <svg viewBox="0 0 100 100" className="h-full w-full" preserveAspectRatio="none">
@@ -2272,7 +2272,7 @@ export default function CautionsPanel() {
                   />
                 </svg>
               ) : (
-                <p className="text-xs text-slate-500">Pas dâ€™alerte disponible.</p>
+                <p className="text-xs text-slate-500">Pas d'alerte disponible.</p>
               )}
             </div>
           </div>
@@ -2312,9 +2312,9 @@ export default function CautionsPanel() {
             tab === "J10_OVERDUE" ? "ring-2 ring-rose-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-rose-700">RetardÃ©</div>
+          <div className="text-xs font-medium text-rose-700">Retardé</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-rose-900">
-            {counters?.overdueJ10 ?? "â€”"}
+            {counters?.overdueJ10 ?? "—"}
           </div>
         </button>
 
@@ -2330,7 +2330,7 @@ export default function CautionsPanel() {
         >
           <div className="text-xs font-medium text-amber-700">Attendu caution</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-amber-900">
-            {counters?.enAttente ?? "â€”"}
+            {counters?.enAttente ?? "—"}
           </div>
         </button>
 
@@ -2344,9 +2344,9 @@ export default function CautionsPanel() {
             tab === "VALIDATED_THIS_MONTH" ? "ring-2 ring-emerald-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-emerald-700">TerminÃ©es</div>
+          <div className="text-xs font-medium text-emerald-700">Terminées</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-emerald-900">
-            {counters?.validatedThisMonth ?? "â€”"}
+            {counters?.validatedThisMonth ?? "—"}
           </div>
         </button>
       </div>
@@ -2377,8 +2377,8 @@ export default function CautionsPanel() {
             <table className="min-w-full table-fixed border-collapse text-left text-xs">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
-                <th className="px-2 py-2 font-medium" scope="col" title="Fiche provisoire : NÂ° FPC comme sur lâ€™imprimÃ© ; sinon rÃ©fÃ©rence dâ€™encaissement.">
-                  RÃ©f.
+                <th className="px-2 py-2 font-medium" scope="col" title="Fiche provisoire : N° FPC comme sur l'imprimé ; sinon référence d'encaissement.">
+                  Réf.
                 </th>
                 <th className="px-2 py-2 font-medium" scope="col">
                   Client
@@ -2426,8 +2426,8 @@ export default function CautionsPanel() {
                           ) : null}
                         </div>
                       </td>
-                      <td className="px-2 py-2 whitespace-nowrap">{row.concessionnaireNom || "â€”"}</td>
-                      <td className="px-2 py-2 font-mono whitespace-nowrap">{row.produitCode || "â€”"}</td>
+                      <td className="px-2 py-2 whitespace-nowrap">{row.concessionnaireNom || "—"}</td>
+                      <td className="px-2 py-2 font-mono whitespace-nowrap">{row.produitCode || "—"}</td>
                       <td className="px-2 py-2">{row.montant?.toLocaleString("fr-FR") ?? row.montant}</td>
                       <td className="px-2 py-2">{row.agenceLabel || "Sans agence"}</td>
                       <td className="px-2 py-2">
@@ -2448,7 +2448,7 @@ export default function CautionsPanel() {
                   0,
                 );
                 const uniqAgences = [...new Set(rows.map((r) => r.agenceLabel || "Sans agence"))];
-                const agenceCell = uniqAgences.length === 1 ? uniqAgences[0]! : uniqAgences.join(" Â· ");
+                const agenceCell = uniqAgences.length === 1 ? uniqAgences[0]! : uniqAgences.join(" · ");
 
                 return (
                   <tr
@@ -2471,18 +2471,18 @@ export default function CautionsPanel() {
                         ))}
                       </div>
                     </td>
-                    <td className="px-2 py-2 whitespace-nowrap">{primary.concessionnaireNom || "â€”"}</td>
+                    <td className="px-2 py-2 whitespace-nowrap">{primary.concessionnaireNom || "—"}</td>
                     <td className="px-2 py-2 font-mono">
                       <div className="flex flex-col gap-0.5 whitespace-nowrap">
                         {rows.map((r) => (
-                          <span key={r.id}>{r.produitCode || "â€”"}</span>
+                          <span key={r.id}>{r.produitCode || "—"}</span>
                         ))}
                       </div>
                     </td>
                     <td className="px-2 py-2">
                       <div className="font-semibold tabular-nums">{totalMontant.toLocaleString("fr-FR")}</div>
                       <div className="text-[10px] text-slate-500">
-                        {rows.length} ligne{rows.length > 1 ? "s" : ""} Â· total fiche
+                        {rows.length} ligne{rows.length > 1 ? "s" : ""} · total fiche
                       </div>
                     </td>
                     <td className="px-2 py-2">{agenceCell}</td>
@@ -2519,7 +2519,7 @@ export default function CautionsPanel() {
       <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-slate-800">Finaliser par ID (hors liste)</h3>
         <p className="mb-3 text-xs text-slate-600">
-          RÃ´le requis : chef(fe) de service. RÃ©gulariser toute fiche provisoire avant finalisation. Double confirmation avant envoi.
+          Rôle requis : chef(fe) de service. Régulariser toute fiche provisoire avant finalisation. Double confirmation avant envoi.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -2539,7 +2539,7 @@ export default function CautionsPanel() {
             }}
             className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-2 text-xs font-semibold text-white transition hover:border-emerald-700 hover:bg-emerald-700 disabled:opacity-50"
           >
-            Finaliser payÃ©e
+            Finaliser payée
           </button>
         </div>
       </div>
@@ -2562,7 +2562,7 @@ export default function CautionsPanel() {
             <div className="flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
               <div>
                 <h3 id="finalize-caution-title" className="text-base font-semibold text-slate-900">
-                  DÃ©cision finale
+                  Décision finale
                 </h3>
                 <p className="mt-0.5 text-[11px] text-slate-600">Approuver, rejeter ou retourner pour correction.</p>
               </div>
@@ -2573,7 +2573,7 @@ export default function CautionsPanel() {
                 className="rounded px-2.5 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                 aria-label="Fermer"
               >
-                Ã—
+                —
               </button>
             </div>
 
@@ -2583,7 +2583,7 @@ export default function CautionsPanel() {
             </div>
 
             <div className="mt-3 grid gap-1.5">
-              <p className="text-[11px] font-semibold text-slate-700">DÃ©cision</p>
+              <p className="text-[11px] font-semibold text-slate-700">Décision</p>
               <div className="flex flex-wrap gap-1.5">
                 <button
                   type="button"
@@ -2627,7 +2627,7 @@ export default function CautionsPanel() {
             {finalizeModal.mode === "row" ? (
               <dl className="mt-3 grid grid-cols-2 gap-1.5 text-[11px] text-slate-800">
                 <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
-                  <dt className="text-slate-500">RÃ©f.</dt>
+                  <dt className="text-slate-500">Réf.</dt>
                   <dd className="font-mono">{cautionReferenceListeOuFiche(finalizeModal.row)}</dd>
                 </div>
                 <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
@@ -2637,7 +2637,7 @@ export default function CautionsPanel() {
                   <dd className="font-mono">
                     {finalizeModal.row.contratId.trim()
                       ? finalizeModal.row.contratId
-                      : finalizeModal.row.lonaciClientId?.trim() || "â€”"}
+                      : finalizeModal.row.lonaciClientId?.trim() || "—"}
                   </dd>
                 </div>
                 <div className="rounded border border-slate-100 bg-slate-50 px-2 py-1">
@@ -2671,7 +2671,7 @@ export default function CautionsPanel() {
                 placeholder={
                   finalizeDecision === "APPROUVER"
                     ? "Optionnel"
-                    : "Ex: rÃ©fÃ©rence de paiement incorrecte, piÃ¨ce manquante, incohÃ©rence montantâ€¦"
+                    : "Ex: référence de paiement incorrecte, pièce manquante, incohérence montant…"
                 }
               />
             </div>
@@ -2685,7 +2685,7 @@ export default function CautionsPanel() {
                 className="mt-0.5 rounded border-slate-300"
               />
               <span>
-                Je confirme ma dÃ©cision.
+                Je confirme ma décision.
               </span>
             </label>
 
@@ -2708,7 +2708,7 @@ export default function CautionsPanel() {
                 onClick={() => void confirmFinalizeFromModal()}
                 className="rounded-md border border-emerald-700 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
               >
-                {finalizingId ? "Envoiâ€¦" : "Confirmer"}
+                {finalizingId ? "Envoi…" : "Confirmer"}
               </button>
             </div>
           </div>

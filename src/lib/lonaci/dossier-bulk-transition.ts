@@ -1,9 +1,4 @@
-import { finalizeContratFromDossier, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
-import {
-  archiveContratSigneForDossier,
-  ensureContratFinalizationReady,
-  prepareContratFromDechargeDefinitive,
-} from "@/lib/lonaci/contrat-document";
+import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import type { UserDocument } from "@/lib/lonaci/types";
 
@@ -86,45 +81,15 @@ export async function executeDossierBulkTransition(input: {
 
       const target = toTargetStatus(input.action);
       if (input.action === "FINALIZE" && before.type === "CONTRAT_ACTUALISATION") {
-        const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
-        const operationType = String(before.payload.operationType ?? "");
-        const dateEffetRaw = String(before.payload.dateEffet ?? "");
-        const dateEffet = new Date(dateEffetRaw);
-        if (!produitCode || !operationType || Number.isNaN(dateEffet.getTime())) {
-          results.push({ id, ok: false, message: "Payload dossier contrat invalide." });
-          continue;
-        }
-        if (operationType === "NOUVEAU") {
-          const hasActive = await hasActiveContractForProduct(before.concessionnaireId, produitCode);
-          if (hasActive) {
-            results.push({ id, ok: false, message: "Un contrat actif existe déjà." });
-            continue;
-          }
-        }
-        try {
-          await ensureContratFinalizationReady(id);
-        } catch {
-          results.push({ id, ok: false, message: "Décharge définitive requise (checklist + caution payée)." });
-          continue;
-        }
-        try {
-          await prepareContratFromDechargeDefinitive(id, input.actor);
-        } catch {
-          results.push({ id, ok: false, message: "Contrat non généré (décharge définitive requise)." });
-          continue;
-        }
-        if (before.status !== "FINALISE") {
-          await transitionDossier(id, target, input.actor, input.comment ?? null);
-        }
-        const contrat = await finalizeContratFromDossier({
+        const finalized = await finalizeDossierContratActualisation({
           dossierId: id,
-          concessionnaireId: before.concessionnaireId,
-          produitCode,
-          operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
-          dateEffet,
           actor: input.actor,
+          comment: input.comment ?? null,
         });
-        await archiveContratSigneForDossier(id, contrat.reference, input.actor);
+        if (!finalized.ok) {
+          results.push({ id, ok: false, message: finalized.message });
+          continue;
+        }
         succeeded += 1;
         results.push({ id, ok: true, message: "Finalisation effectuée." });
         continue;

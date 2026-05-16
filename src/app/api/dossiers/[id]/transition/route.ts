@@ -2,17 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import {
-  finalizeContratFromDossier,
-  findContratByDossierId,
-  hasActiveContractForProduct,
-} from "@/lib/lonaci/contracts";
-import {
-  archiveContratSigneForDossier,
-  ensureContratFinalizationReady,
-  parseContratGenerePayload,
-  prepareContratFromDechargeDefinitive,
-} from "@/lib/lonaci/contrat-document";
+import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -131,61 +121,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const target = toTargetStatus(parsed.data.action);
   try {
     if (parsed.data.action === "FINALIZE" && before.type === "CONTRAT_ACTUALISATION") {
-      const existingContrat = await findContratByDossierId(id);
-      if (existingContrat) {
-        return NextResponse.json({ dossier: before, contrat: existingContrat }, { status: 200 });
-      }
-
-      if (!parseContratGenerePayload(before.payload ?? {})) {
-        try {
-          await prepareContratFromDechargeDefinitive(id, auth.user);
-        } catch {
-          return NextResponse.json(
-            { message: "Contrat non genere : decharge definitive requise (checklist complete et caution payee)." },
-            { status: 409 },
-          );
-        }
-      }
-
-      try {
-        await ensureContratFinalizationReady(id);
-      } catch {
-        return NextResponse.json(
-          { message: "Finalisation impossible : checklist incomplete ou caution non payee." },
-          { status: 409 },
-        );
-      }
-
-      const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
-      const operationType = String(before.payload.operationType ?? "");
-      const dateEffetRaw = String(before.payload.dateEffet ?? "");
-      const dateEffet = new Date(dateEffetRaw);
-      if (!produitCode || !operationType || Number.isNaN(dateEffet.getTime())) {
-        return NextResponse.json({ message: "Payload dossier contrat invalide." }, { status: 400 });
-      }
-      if (operationType === "NOUVEAU") {
-        const hasActive = await hasActiveContractForProduct(before.concessionnaireId, produitCode);
-        if (hasActive) {
-          return NextResponse.json(
-            { message: "Un contrat actif existe deja pour ce produit et ce concessionnaire." },
-            { status: 409 },
-          );
-        }
-      }
-      if (before.status !== "FINALISE") {
-        await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);
-      }
-      const contrat = await finalizeContratFromDossier({
+      const finalized = await finalizeDossierContratActualisation({
         dossierId: id,
-        concessionnaireId: before.concessionnaireId,
-        produitCode,
-        operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
-        dateEffet,
         actor: auth.user,
+        comment: parsed.data.comment ?? null,
       });
-      await archiveContratSigneForDossier(id, contrat.reference, auth.user);
-      const dossier = await findDossierById(id);
-      return NextResponse.json({ dossier, contrat }, { status: 200 });
+      if (!finalized.ok) {
+        return NextResponse.json({ message: finalized.message }, { status: finalized.httpStatus });
+      }
+      return NextResponse.json(
+        { dossier: finalized.dossier, contrat: finalized.contrat },
+        { status: 200 },
+      );
     }
 
     const dossier = await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -67,15 +67,13 @@ function parsePositiveInt(raw: string | undefined, fallback: number): number {
 }
 
 function getBackupRoot() {
-  const cwd = /*turbopackIgnore: true*/ process.cwd();
-  const fallbackRoot = join(/*turbopackIgnore: true*/ cwd, "backups");
+  const fallbackRoot = resolve("backups");
   const configured = process.env.BACKUP_DIR?.trim();
 
   if (!configured || configured === "backups") return fallbackRoot;
   if (isAbsolute(configured)) return configured;
 
-  // Sous-dossier relatif strictement sous backups/ (évite un join dynamique sur cwd seul).
-  return join(/*turbopackIgnore: true*/ fallbackRoot, configured);
+  return resolve(fallbackRoot, configured);
 }
 
 function computeSha256(buffer: Buffer): string {
@@ -159,7 +157,7 @@ export async function createLocalBackup(): Promise<LocalBackupSummary> {
     });
   }
 
-  const uploadsSource = join(/*turbopackIgnore: true*/ process.cwd(), "uploads");
+  const uploadsSource = resolve("uploads");
   if (existsSync(uploadsSource)) {
     const uploadsTarget = join(backupDir, "uploads");
     cpSync(uploadsSource, uploadsTarget, { recursive: true });
@@ -311,7 +309,7 @@ export async function restoreLocalBackup(options: RestoreOptions): Promise<Local
   if (options.restoreUploads) {
     const uploadsBackupPath = join(backupDir, "uploads");
     if (existsSync(uploadsBackupPath)) {
-      const uploadsTargetPath = join(/*turbopackIgnore: true*/ process.cwd(), "uploads");
+      const uploadsTargetPath = resolve("uploads");
       rmSync(uploadsTargetPath, { recursive: true, force: true });
       cpSync(uploadsBackupPath, uploadsTargetPath, { recursive: true });
     }

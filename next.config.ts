@@ -71,6 +71,12 @@ const apiCorsHeaders = [
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["pdfkit"],
+  /** Évite que le trace NFT des routes sauvegarde n’embarque la racine du dépôt (next.config.ts). */
+  outputFileTracingExcludes: {
+    "/api/admin/backups": ["./next.config.ts"],
+    "/api/admin/backups/download": ["./next.config.ts"],
+    "/api/admin/backups/restore": ["./next.config.ts"],
+  },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },
