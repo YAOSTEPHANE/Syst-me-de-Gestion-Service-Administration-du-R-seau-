@@ -47,7 +47,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     dossierReference: dossier.reference,
     produitCode: produitCode || "—",
     produitLibelle: produit?.libelle ?? (produitCode || "—"),
-    concessionnaireLabel: concessionnaire.nomComplet || concessionnaire.codePdv,
+    concessionnaireLabel: concessionnaire.nomComplet || concessionnaire.codePdv || "—",
     checklist,
     generatedAt: new Date(),
   });

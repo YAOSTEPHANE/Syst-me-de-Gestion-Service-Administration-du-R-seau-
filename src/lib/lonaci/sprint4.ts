@@ -170,6 +170,8 @@ export async function createCaution(input: {
     const concessionnaire = await findConcessionnaireById(contrat.concessionnaireId);
     if (!concessionnaire || concessionnaire.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
     if (isStatutBloquant(concessionnaire.statut)) throw new Error("CONCESSIONNAIRE_BLOQUE");
+    const { assertConcessionnaireOperationnel } = await import("@/lib/lonaci/access");
+    assertConcessionnaireOperationnel(concessionnaire);
 
     doc = {
       contratId,

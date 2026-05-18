@@ -43,7 +43,7 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   const escapeCell = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((r) =>
     [
-      r.codePdv,
+      r.codePdv ?? "",
       r.codeTerminal ?? "",
       r.codeConcessionnaire ?? "",
       r.nomComplet || r.raisonSociale,

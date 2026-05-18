@@ -94,6 +94,12 @@ export async function POST(request: NextRequest) {
     if (code === "CONCESSIONNAIRE_BLOQUE") {
       return conflict("Concessionnaire bloque (resilie ou decede).", "CONCESSIONNAIRE_BLOQUE");
     }
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+      return conflict(
+        "Inscription non finalisee : validation N1 requise.",
+        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+      );
+    }
     if (code === "PRODUIT_INVALID") {
       return badRequest("Produit invalide.", "PRODUIT_INVALID");
     }

@@ -376,6 +376,12 @@ export async function POST(request: NextRequest) {
     if (code === "CONCESSIONNAIRE_BLOQUE") {
       return conflict("Concessionnaire bloque.", "CONCESSIONNAIRE_BLOQUE");
     }
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+      return conflict(
+        "Inscription non finalisee : validation N1 requise avant contrat.",
+        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+      );
+    }
     if (code === "AGENCE_FORBIDDEN") {
       return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
     }

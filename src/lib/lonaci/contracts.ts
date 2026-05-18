@@ -4,7 +4,7 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import { canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
+import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
 import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
 const REF_COUNTER_ID = "contrat_ref";
@@ -162,6 +162,7 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
   if (!concessionnaire || concessionnaire.deletedAt || isStatutFicheGelee(concessionnaire.statut)) {
     throw new Error("CONCESSIONNAIRE_BLOQUE");
   }
+  assertConcessionnaireOperationnel(concessionnaire);
 
   const produitCodeNormalized = input.produitCode.trim().toUpperCase();
 

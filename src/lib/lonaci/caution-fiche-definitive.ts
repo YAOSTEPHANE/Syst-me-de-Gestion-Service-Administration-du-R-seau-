@@ -9,7 +9,11 @@ import {
   CAUTION_FICHE_DEFINITIVE_TITLE,
   CAUTION_FICHE_PAYEE_MENTION,
 } from "@/lib/lonaci/caution-fiche-definitive-constants";
-import type { CautionEncaissementMode, CautionPaymentMode } from "@/lib/lonaci/constants";
+import {
+  type CautionEncaissementMode,
+  type CautionPaymentMode,
+  getCautionEncaissementModeLabel,
+} from "@/lib/lonaci/constants";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { listProduits } from "@/lib/lonaci/referentials";
@@ -65,23 +69,6 @@ export function isCautionPaymentRefAutoGenerateEnabled(): boolean {
 export function isCautionFpdQrEnabled(): boolean {
   const v = process.env.CAUTION_FPD_QR_ENABLED?.trim().toLowerCase();
   return v !== "0" && v !== "false" && v !== "no";
-}
-
-function labelModeReglement(mode: string): string {
-  switch (mode) {
-    case "ESPECES":
-      return "ESPÈCES";
-    case "VIREMENT":
-      return "VIREMENT";
-    case "MOBILE_MONEY":
-      return "MOBILE MONEY";
-    case "CHEQUE":
-      return "CHÈQUE";
-    case "PAIEMENT_DIFFERE":
-      return "Paiement différé";
-    default:
-      return mode;
-  }
 }
 
 export function buildCautionFicheVerificationPayload(view: Pick<
@@ -194,7 +181,7 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
     emiseLe: (caution.ficheDefinitiveEmiseLe ?? caution.updatedAt).toISOString(),
     montantFCFA: caution.montant,
     modeReglement: caution.modeReglement,
-    modeLibelle: labelModeReglement(caution.modeReglement),
+    modeLibelle: getCautionEncaissementModeLabel(caution.modeReglement),
     identiteLabel,
     identiteDetail,
     clientCode,

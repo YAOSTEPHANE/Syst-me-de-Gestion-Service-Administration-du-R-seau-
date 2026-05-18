@@ -629,6 +629,7 @@ export default function AttestationsDomiciliationPanel() {
                       if (picked) setProduitCode(picked);
                     }}
                     statutActifOnly
+                    inscriptionFinaliseeOnly
                     inputClassName={inputClass}
                     searchPlaceholder="Rechercher (code, nom…)"
                   />

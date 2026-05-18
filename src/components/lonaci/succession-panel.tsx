@@ -520,6 +520,7 @@ export default function SuccessionPanel() {
             selected={fFilterPdv}
             onSelectedChange={setFFilterPdv}
             statutActifOnly
+            inscriptionFinaliseeOnly
             inputClassName={subtleFieldClass}
             showClearLink
             searchPlaceholder="Filtrer par PDV…"
@@ -645,6 +646,7 @@ export default function SuccessionPanel() {
                       if (v) setManualConcIdOpen(false);
                     }}
                     statutActifOnly
+                    inscriptionFinaliseeOnly
                     inputClassName={fieldClass}
                     searchPlaceholder="Rechercher (code, nom…)"
                   />

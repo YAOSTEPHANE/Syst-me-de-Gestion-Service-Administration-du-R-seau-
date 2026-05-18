@@ -8,9 +8,11 @@ import { useSearchParams } from "next/navigation";
 import {
   BANCARISATION_STATUT_LABELS,
   BANCARISATION_STATUTS,
+  CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS,
   CONCESSIONNAIRE_STATUT_LABELS,
   CONCESSIONNAIRE_STATUTS,
   type BancarisationStatut,
+  type ConcessionnaireInscriptionStatut,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
@@ -98,15 +100,16 @@ function ConcessionnaireRowActionsMenu({
   codePdv,
   onOpenFicheModal,
 }: {
-  codePdv: string;
+  codePdv: string | null;
   onOpenFicheModal: (tab: FicheModalTab) => void;
 }) {
+  const label = codePdv ?? "fiche";
   return (
     <button
       type="button"
       onClick={() => onOpenFicheModal("fiche")}
       className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-800 shadow-sm transition hover:border-cyan-500 hover:bg-cyan-50/70"
-      aria-label={`Ouvrir la fiche de ${codePdv}`}
+      aria-label={`Ouvrir la fiche de ${label}`}
     >
       Ouvrir
     </button>
@@ -115,7 +118,10 @@ function ConcessionnaireRowActionsMenu({
 
 interface Item {
   id: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut?: ConcessionnaireInscriptionStatut;
+  nom?: string | null;
+  prenom?: string | null;
   codeTerminal?: string | null;
   codeConcessionnaire?: string | null;
   nomComplet: string;
@@ -384,7 +390,9 @@ export default function ConcessionnairesPanel() {
   const [agences, setAgences] = useState<AgenceRef[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
 
-  const [rs, setRs] = useState("");
+  const [nom, setNom] = useState("");
+  const [prenom, setPrenom] = useState("");
+  const [filterInscription, setFilterInscription] = useState("");
   const [codeTerminal, setCodeTerminal] = useState("");
   const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
@@ -394,7 +402,6 @@ export default function ConcessionnairesPanel() {
   const [lat, setLat] = useState("");
   const [lng, setLng] = useState("");
   const [produitsAutorises, setProduitsAutorises] = useState<string[]>([]);
-  const [createStatut, setCreateStatut] = useState<string>("ACTIF");
   const [bancarisation, setBancarisation] = useState<string>("NON_BANCARISE");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [observations, setObservations] = useState("");
@@ -449,6 +456,7 @@ export default function ConcessionnairesPanel() {
       const params = new URLSearchParams({ page: String(p), pageSize: String(pageSize) });
       if (qEff.trim()) params.set("q", qEff.trim());
       if (agenceEff) params.set("agenceId", agenceEff);
+      if (filterInscription) params.set("inscriptionStatut", filterInscription);
       const res = await fetch(`/api/concessionnaires?${params}`, {
         credentials: "include",
         cache: "no-store",
@@ -578,8 +586,8 @@ export default function ConcessionnairesPanel() {
     e.preventDefault();
     setCreating(true);
     try {
-      if (!rs.trim() || rs.trim().length < 2) {
-        throw new Error("Le nom complet est obligatoire (2 caractères minimum).");
+      if (nom.trim().length < 2 || prenom.trim().length < 2) {
+        throw new Error("Le nom et le prénom sont obligatoires (2 caractères minimum chacun).");
       }
       if (!agenceId.trim()) {
         throw new Error("L’agence de rattachement est obligatoire.");
@@ -603,7 +611,9 @@ export default function ConcessionnairesPanel() {
       }
 
       const body: Record<string, unknown> = {
-        nomComplet: rs.trim(),
+        nom: nom.trim(),
+        prenom: prenom.trim(),
+        nomComplet: `${prenom.trim()} ${nom.trim()}`.trim(),
         codeTerminal: ct || null,
         codeConcessionnaire: cc || null,
         cniNumero: cni || null,
@@ -613,7 +623,6 @@ export default function ConcessionnairesPanel() {
         ville: null,
         agenceId: agenceId.trim(),
         produitsAutorises,
-        statut: createStatut,
         statutBancarisation: bancarisation,
         compteBancaire: compteBancaire.trim() || null,
         observations: observations.trim() || null,
@@ -680,7 +689,8 @@ export default function ConcessionnairesPanel() {
         }
       }
 
-      setRs("");
+      setNom("");
+      setPrenom("");
       setCodeTerminal("");
       setCodeConcessionnaire("");
       setCniNumero("");
@@ -690,7 +700,6 @@ export default function ConcessionnairesPanel() {
       setLat("");
       setLng("");
       setProduitsAutorises([]);
-      setCreateStatut("ACTIF");
       setBancarisation("NON_BANCARISE");
       setCompteBancaire("");
       setObservations("");
@@ -703,7 +712,15 @@ export default function ConcessionnairesPanel() {
       if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
       await load(1);
       setCreateOpen(false);
-      setToast({ type: "success", message: "Concessionnaire créé." });
+      setToast({
+        type: "success",
+        message:
+          "Fiche créée en brouillon. Ouvrez-la pour joindre les pièces, compléter la checklist et soumettre à validation N1.",
+      });
+      if (newId) {
+        setFicheModalId(newId);
+        setFicheModalTab("pieces");
+      }
     } catch (e) {
       setToast({ type: "error", message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur") });
     } finally {
@@ -793,7 +810,15 @@ export default function ConcessionnairesPanel() {
         throw new Error("Format non supporté. Utilisez .xlsx, .xls ou .pdf.");
       }
 
-      if (draft.nomComplet) setRs(draft.nomComplet);
+      if (draft.nomComplet) {
+        const parts = draft.nomComplet.trim().split(/\s+/).filter(Boolean);
+        if (parts.length > 1) {
+          setNom(parts[parts.length - 1] ?? "");
+          setPrenom(parts.slice(0, -1).join(" "));
+        } else {
+          setPrenom(parts[0] ?? "");
+        }
+      }
       if (draft.codeTerminal) setCodeTerminal(draft.codeTerminal);
       if (draft.codeConcessionnaire) setCodeConcessionnaire(draft.codeConcessionnaire);
       if (draft.cniNumero) setCniNumero(draft.cniNumero);
@@ -833,11 +858,6 @@ export default function ConcessionnairesPanel() {
         if (selectedCodes.size > 0) setProduitsAutorises([...selectedCodes]);
       }
 
-      if (draft.statut) {
-        const s = normalizeToken(draft.statut);
-        const matched = CONCESSIONNAIRE_STATUTS.find((x) => normalizeToken(x) === s);
-        if (matched) setCreateStatut(matched);
-      }
       if (draft.statutBancarisation) {
         const s = normalizeToken(draft.statutBancarisation);
         const matched = BANCARISATION_STATUTS.find((x) => normalizeToken(x) === s);
@@ -1166,6 +1186,21 @@ export default function ConcessionnairesPanel() {
                 }
               }}
             />
+            <select
+              value={filterInscription}
+              onChange={(e) => setFilterInscription(e.target.value)}
+              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
+              aria-label="Filtrer par inscription"
+            >
+              <option value="">Toutes inscriptions</option>
+              {(Object.keys(CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS) as ConcessionnaireInscriptionStatut[]).map(
+                (s) => (
+                  <option key={s} value={s}>
+                    {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[s]}
+                  </option>
+                ),
+              )}
+            </select>
             <button
               type="button"
               onClick={() => void load(1)}
@@ -1202,7 +1237,7 @@ export default function ConcessionnairesPanel() {
                   Nouveau concessionnaire
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Code PDV généré automatiquement (format PDV-[code agence]-[séquence]). GPS obligatoire à la création.
+                  Parcours d&apos;inscription : brouillon → pièces & checklist → soumission → validation N1 → code PDV.
                 </p>
               </div>
               <button
@@ -1226,11 +1261,11 @@ export default function ConcessionnairesPanel() {
                   <section className="rounded-xl border border-cyan-200 bg-cyan-50/50 px-3 py-2 text-xs text-slate-700">
                     <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">Règle de génération PDV</p>
                     <p>
-                      <span className="font-medium text-slate-800">Code PDV</span> — attribué automatiquement à
-                      l’enregistrement. Format :{" "}
+                      Le <span className="font-medium text-slate-800">code PDV</span> (
                       <code className="rounded bg-white px-1 py-0.5 text-slate-900">
-                        PDV-[code agence]-[séquence 6 chiffres]
+                        PDV-[code agence]-[séquence]
                       </code>
+                      ) est attribué après validation N1 par le chef de section.
                     </p>
                     <p className="mt-1 text-slate-500">{pdvFormatHint}</p>
                     <div className="mt-2 rounded-lg border border-cyan-200 bg-white px-2.5 py-2">
@@ -1281,13 +1316,17 @@ export default function ConcessionnairesPanel() {
                   <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Identité</p>
                     <div className="grid gap-1.5 sm:grid-cols-2">
-                      <label className="grid gap-1 sm:col-span-2">
-                        <span className="text-xs font-medium text-slate-700">Nom complet *</span>
-                        <input required value={rs} onChange={(e) => setRs(e.target.value)} placeholder="Nom et prénom" className={inputClass} />
+                      <label className="grid gap-1">
+                        <span className="text-xs font-medium text-slate-700">Prénom *</span>
+                        <input required value={prenom} onChange={(e) => setPrenom(e.target.value)} className={inputClass} />
                       </label>
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
-                        <input value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} placeholder="Optionnel" className={inputClass} />
+                        <span className="text-xs font-medium text-slate-700">Nom *</span>
+                        <input required value={nom} onChange={(e) => setNom(e.target.value)} className={inputClass} />
+                      </label>
+                      <label className="grid gap-1 sm:col-span-2">
+                        <span className="text-xs font-medium text-slate-700">Numéro CNI *</span>
+                        <input required value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} className={inputClass} />
                       </label>
                       <label className="grid gap-1">
                         <span className="text-xs font-medium text-slate-700">Code terminal</span>
@@ -1490,16 +1529,9 @@ export default function ConcessionnairesPanel() {
                     <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Statuts & bancarisation</p>
                       <div className="grid gap-2">
-                        <label className="grid gap-1">
-                          <span className="text-xs font-medium text-slate-700">Statut</span>
-                          <select aria-label="Statut concessionnaire" value={createStatut} onChange={(e) => setCreateStatut(e.target.value)} className={inputClass}>
-                            {CONCESSIONNAIRE_STATUTS.map((s) => (
-                              <option key={s} value={s}>
-                                {CONCESSIONNAIRE_STATUT_LABELS[s]}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
+                        <p className="text-[11px] text-slate-600">
+                          Fiche créée en brouillon ; statut « Actif » et code PDV après validation N1.
+                        </p>
                         <label className="grid gap-1">
                           <span className="text-xs font-medium text-slate-700">Statut de bancarisation</span>
                           <select aria-label="Statut de bancarisation" value={bancarisation} onChange={(e) => setBancarisation(e.target.value)} className={inputClass}>
@@ -1654,8 +1686,8 @@ export default function ConcessionnairesPanel() {
                     return (
                     <tr key={row.id} className="border-t border-slate-100 bg-white hover:bg-slate-50">
                       <td className="px-2 py-1.5 font-mono text-[11px] leading-tight text-slate-600 whitespace-nowrap">
-                        <span className="block truncate" title={row.codePdv}>
-                          {row.codePdv}
+                        <span className="block truncate" title={row.codePdv ?? undefined}>
+                          {row.codePdv ?? "—"}
                         </span>
                       </td>
                       <td className="max-w-0 px-2 py-1.5 font-medium leading-tight text-slate-900">

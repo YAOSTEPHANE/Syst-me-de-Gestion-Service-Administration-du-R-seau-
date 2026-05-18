@@ -1,6 +1,7 @@
 import type {
   LonaciRole,
   BancarisationStatut,
+  ConcessionnaireInscriptionStatut,
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
@@ -17,6 +18,7 @@ import type {
 export type {
   LonaciRole,
   BancarisationStatut,
+  ConcessionnaireInscriptionStatut,
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
@@ -148,7 +150,10 @@ export interface GpsPoint {
 
 export interface ConcessionnaireDocument {
   _id?: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut: ConcessionnaireInscriptionStatut;
+  nom: string | null;
+  prenom: string | null;
   codeTerminal: string | null;
   codeConcessionnaire: string | null;
   nomComplet: string;
@@ -169,6 +174,10 @@ export interface ConcessionnaireDocument {
   compteBancaire: string | null;
   banqueEtablissement: string | null;
   gps: GpsPoint | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
+  inscriptionSoumisAt: Date | null;
+  inscriptionValideN1At: Date | null;
+  inscriptionRejetMotif: string | null;
   piecesJointes: PieceJointeDocument[];
   observations: string | null;
   notesInternes: string | null;

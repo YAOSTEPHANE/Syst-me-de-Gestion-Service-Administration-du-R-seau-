@@ -101,6 +101,8 @@ export type ConcessionnaireSearchPickerProps = {
   onSelectedChange: (row: ConcessionnairePickerRow | null) => void;
   /** Filtre liste : concessionnaires ACTIF uniquement. */
   statutActifOnly?: boolean;
+  /** Uniquement inscriptions finalisées (code PDV attribué). */
+  inscriptionFinaliseeOnly?: boolean;
   /** Paramètres additionnels pour la liste (ex. `agenceId`, `produitCode`). */
   listExtraParams?: Record<string, string>;
   inputClassName?: string;
@@ -117,6 +119,7 @@ export default function ConcessionnaireSearchPicker({
   selected,
   onSelectedChange,
   statutActifOnly = false,
+  inscriptionFinaliseeOnly = false,
   listExtraParams,
   inputClassName,
   disabled = false,
@@ -160,6 +163,7 @@ export default function ConcessionnaireSearchPicker({
         try {
           const params = new URLSearchParams({ page: "1", pageSize: "40", q });
           if (statutActifOnly) params.set("statut", "ACTIF");
+          if (inscriptionFinaliseeOnly) params.set("inscriptionFinaliseeOnly", "true");
           if (listExtraParams) {
             for (const [k, v] of Object.entries(listExtraParams)) {
               if (v.trim()) params.set(k, v.trim());
@@ -185,7 +189,7 @@ export default function ConcessionnaireSearchPicker({
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [query, selected, statutActifOnly, listExtraParams, minLen]);
+  }, [query, selected, statutActifOnly, inscriptionFinaliseeOnly, listExtraParams, minLen]);
 
   const selectedLabel = selected ? formatConcessionnairePickerLabel(selected) : "";
   const showPanel =

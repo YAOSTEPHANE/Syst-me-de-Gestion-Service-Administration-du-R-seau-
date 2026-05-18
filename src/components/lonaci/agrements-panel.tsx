@@ -674,6 +674,7 @@ export default function AgrementsPanel() {
                       if (pickedAg) setAgenceId(pickedAg);
                     }}
                     statutActifOnly
+                    inscriptionFinaliseeOnly
                     listExtraParams={{
                       ...(agenceId.trim() ? { agenceId: agenceId.trim() } : {}),
                       ...(produitCode.trim() ? { produitCode: produitCode.trim().toUpperCase() } : {}),

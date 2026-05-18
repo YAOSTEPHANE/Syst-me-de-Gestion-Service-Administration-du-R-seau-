@@ -1958,6 +1958,8 @@ export default function ContratsPanel() {
                         const picked = pickProduitCodeFromConcessionnaire(row, pool);
                         if (picked) setProduitCode(picked);
                       }}
+                      statutActifOnly
+                      inscriptionFinaliseeOnly
                       inputClassName={inputClass}
                     />
                   </section>

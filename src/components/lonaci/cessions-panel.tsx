@@ -730,6 +730,7 @@ export default function CessionsPanel() {
                         if (picked) setProduitCode(picked);
                       }}
                       statutActifOnly
+                      inscriptionFinaliseeOnly
                       inputClassName={inputClass}
                       disabled={refLoading}
                       searchPlaceholder="Rechercher (code, nom…)"
@@ -741,6 +742,7 @@ export default function CessionsPanel() {
                         selected={beneficiairePdv}
                         onSelectedChange={setBeneficiairePdv}
                         statutActifOnly
+                        inscriptionFinaliseeOnly
                         inputClassName={inputClass}
                         disabled={refLoading}
                         searchPlaceholder="Rechercher (code, nom…)"
@@ -777,6 +779,7 @@ export default function CessionsPanel() {
                         if (pickedAg) setOldAgenceId(pickedAg);
                       }}
                       statutActifOnly
+                      inscriptionFinaliseeOnly
                       inputClassName={inputClass}
                       disabled={refLoading}
                       searchPlaceholder="Rechercher (code, nom…)"

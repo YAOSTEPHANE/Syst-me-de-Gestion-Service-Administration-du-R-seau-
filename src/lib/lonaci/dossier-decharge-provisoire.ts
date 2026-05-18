@@ -224,7 +224,7 @@ export async function buildDossierDechargeProvisoireView(
     generatedAt: new Date(),
     identiteLabel: "Concessionnaire",
     identiteDetail: concessionnaire.raisonSociale?.trim() || concessionnaire.nomComplet || "—",
-    codePdv: concessionnaire.codePdv,
+    codePdv: concessionnaire.codePdv ?? "",
     cniNumero: concessionnaire.cniNumero,
     agenceLabel,
     produitCode: produitCode || "—",

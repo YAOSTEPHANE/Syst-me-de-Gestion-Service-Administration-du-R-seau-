@@ -7,6 +7,7 @@ import { canRole } from "@/lib/auth/rbac";
 import {
   CAUTION_ENCAISSEMENT_MODES,
   CAUTION_PAYMENT_MODES,
+  getCautionEncaissementModeLabel,
   LONACI_ROLES,
   type CautionEncaissementMode,
   type CautionStatus,
@@ -212,7 +213,7 @@ function buildCautionFicheModalData(
     produitLibelle: null,
     agenceLabel: row.agenceLabel,
     montantFCFA: row.montant,
-    modeLibelle: labelModeReglement(mode),
+    modeLibelle: getCautionEncaissementModeLabel(mode),
     paymentReference: fiche.paymentReference?.trim() || row.paymentReference,
     datePaiement: fiche.datePaiement ?? fiche.emiseLe,
     ancienneFicheProvisoire: row.numeroFicheProvisoire,
@@ -263,23 +264,6 @@ function buildCautionListDisplayRows(items: CautionListItem[], tab: CautionListT
     }
   }
   return out;
-}
-
-function labelModeReglement(m: CautionPaymentMode): string {
-  switch (m) {
-    case "ESPECES":
-      return "ESP——CES";
-    case "VIREMENT":
-      return "VIREMENT";
-    case "MOBILE_MONEY":
-      return "MOBILE MONEY";
-    case "CHEQUE":
-      return "CH——QUE";
-    case "PAIEMENT_DIFFERE":
-      return "Paiement différé (fiche de paiement caution)";
-    default:
-      return m;
-  }
 }
 
 function isoToDatetimeLocalValue(iso: string): string {
@@ -1307,7 +1291,7 @@ export default function CautionsPanel() {
     const totalKnown =
       (counters?.overdueJ10 ?? 0) + (counters?.enAttente ?? 0) + (counters?.validatedThisMonth ?? 0);
     const modeCounts = items.reduce<Record<string, number>>((acc, row) => {
-      const key = labelModeReglement(row.modeReglement);
+      const key = getCautionEncaissementModeLabel(row.modeReglement);
       acc[key] = (acc[key] ?? 0) + 1;
       return acc;
     }, {});
@@ -1705,7 +1689,7 @@ export default function CautionsPanel() {
                           >
                             {CAUTION_ENCAISSEMENT_MODES.map((m) => (
                               <option key={m} value={m}>
-                                {labelModeReglement(m)}
+                                {getCautionEncaissementModeLabel(m)}
                               </option>
                             ))}
                           </select>
@@ -1847,7 +1831,7 @@ export default function CautionsPanel() {
                   >
                     {CAUTION_ENCAISSEMENT_MODES.map((m) => (
                       <option key={m} value={m}>
-                        {labelModeReglement(m)}
+                        {getCautionEncaissementModeLabel(m)}
                       </option>
                     ))}
                   </select>

@@ -394,6 +394,7 @@ export default function ResiliationsPanel() {
           selected={fFilterPdv}
           onSelectedChange={setFFilterPdv}
           statutActifOnly
+          inscriptionFinaliseeOnly
           inputClassName={inputClass}
           showClearLink
           searchPlaceholder="Rechercher un PDV…"
@@ -524,6 +525,7 @@ export default function ResiliationsPanel() {
                     if (picked) setProduitCode(picked);
                   }}
                   statutActifOnly
+                  inscriptionFinaliseeOnly
                   inputClassName={inputClass}
                   disabled={refLoading}
                   searchPlaceholder="Rechercher (code, nom…)"

@@ -7,7 +7,11 @@ import {
   canCreateConcessionnaireForAgence,
   enforcedAgenceIdOnCreate,
 } from "@/lib/lonaci/access";
-import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
+import {
+  BANCARISATION_STATUTS,
+  CONCESSIONNAIRE_INSCRIPTION_STATUTS,
+  CONCESSIONNAIRE_STATUTS,
+} from "@/lib/lonaci/constants";
 import {
   concessionnaireListScopeAgenceId,
   createConcessionnaire,
@@ -36,8 +40,11 @@ function normalizeToken(value: string): string {
     .replace(/[\s/-]+/g, "_");
 }
 
-const createSchema = z.object({
-  nomComplet: z.string().min(2),
+const createSchema = z
+  .object({
+  nom: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
+  prenom: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
+  nomComplet: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
   codeTerminal: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   codeConcessionnaire: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   cniNumero: z.preprocess(emptyStringToNull, z.union([z.string().min(4).max(64), z.null()]).optional()),
@@ -66,13 +73,47 @@ const createSchema = z.object({
   }),
   observations: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
   notesInternes: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
-});
+})
+  .superRefine((data, ctx) => {
+    const nom = (data.nom ?? "").trim();
+    const prenom = (data.prenom ?? "").trim();
+    const complet = (data.nomComplet ?? "").trim();
+    const okNomPrenom = nom.length >= 2 && prenom.length >= 2;
+    const okComplet = complet.length >= 2;
+    if (!okNomPrenom && !okComplet) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Nom et prénom (ou nom complet) obligatoires.",
+        path: ["nom"],
+      });
+    }
+  });
+
+function resolveNomPrenom(data: {
+  nom?: string | null;
+  prenom?: string | null;
+  nomComplet?: string | null;
+}): { nom: string; prenom: string; nomComplet: string } {
+  let nom = (data.nom ?? "").trim();
+  let prenom = (data.prenom ?? "").trim();
+  const complet = (data.nomComplet ?? "").trim();
+  if ((!nom || !prenom) && complet) {
+    const parts = complet.split(/\s+/).filter(Boolean);
+    if (!nom && parts.length) nom = parts[parts.length - 1] ?? "";
+    if (!prenom && parts.length > 1) prenom = parts.slice(0, -1).join(" ");
+    if (!prenom && parts.length === 1) prenom = parts[0] ?? "";
+  }
+  const nomComplet = complet || `${prenom} ${nom}`.trim();
+  return { nom, prenom, nomComplet };
+}
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().optional(),
   statut: z.enum(CONCESSIONNAIRE_STATUTS).optional(),
+  inscriptionStatut: z.enum(CONCESSIONNAIRE_INSCRIPTION_STATUTS).optional(),
+  inscriptionFinaliseeOnly: z.enum(["true", "false"]).optional(),
   statutBancarisation: z.enum(BANCARISATION_STATUTS).optional(),
   agenceId: z.string().optional(),
   produitCode: z.string().optional(),
@@ -103,6 +144,8 @@ export async function GET(request: NextRequest) {
     pageSize: parsed.data.pageSize,
     q: parsed.data.q,
     statut: parsed.data.statut,
+    inscriptionStatut: parsed.data.inscriptionStatut,
+    inscriptionFinaliseeOnly: parsed.data.inscriptionFinaliseeOnly === "true",
     statutBancarisation: parsed.data.statutBancarisation,
     agenceId: parsed.data.agenceId,
     produitCode: parsed.data.produitCode,
@@ -189,8 +232,11 @@ export async function POST(request: NextRequest) {
 
   await ensureConcessionnaireIndexes();
 
+  const identity = resolveNomPrenom(parsed.data);
   const doc = await createConcessionnaire({
-    nomComplet: parsed.data.nomComplet,
+    nom: identity.nom,
+    prenom: identity.prenom,
+    nomComplet: identity.nomComplet,
     codeTerminal: parsed.data.codeTerminal ?? null,
     codeConcessionnaire: parsed.data.codeConcessionnaire ?? null,
     cniNumero: parsed.data.cniNumero ?? null,

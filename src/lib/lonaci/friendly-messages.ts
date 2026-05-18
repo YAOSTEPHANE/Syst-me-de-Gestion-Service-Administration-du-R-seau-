@@ -17,6 +17,17 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     CONTRAT_NOT_FOUND: "Contrat introuvable.",
     CONTRAT_NOT_ACTIF: "Contrat non actif (opération refusée).",
     CONCESSIONNAIRE_BLOQUE: "Opération interdite (concessionnaire non actif/résilié/décédé).",
+    CONCESSIONNAIRE_INSCRIPTION_PENDING:
+      "Inscription non finalisée : validez la fiche (N1) avant d'utiliser les modules opérationnels.",
+    FORBIDDEN_TRANSITION: "Transition d'inscription non autorisée pour votre profil ou l'état actuel.",
+    CHECKLIST_INCOMPLETE: "Toutes les pièces obligatoires doivent être marquées comme fournies.",
+    PHOTO_REQUIRED: "Une photo d'identité est obligatoire avant soumission.",
+    NOM_REQUIRED: "Le nom est obligatoire.",
+    PRENOM_REQUIRED: "Le prénom est obligatoire.",
+    CNI_REQUIRED: "Le numéro CNI est obligatoire pour soumettre l'inscription.",
+    TELEPHONE_REQUIRED: "Un numéro de contact principal est obligatoire.",
+    GPS_REQUIRED: "La localisation GPS est obligatoire.",
+    PRODUITS_REQUIRED: "Sélectionnez au moins un produit.",
     CONCESSIONNAIRE_NOT_FOUND_2: "Concessionnaire introuvable.",
   };
 

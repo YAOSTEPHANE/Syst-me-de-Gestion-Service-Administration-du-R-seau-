@@ -83,7 +83,7 @@ function snapshotConcessionnaire(
   return {
     nomComplet: conc.nomComplet,
     raisonSociale: conc.raisonSociale,
-    codePdv: conc.codePdv,
+    codePdv: conc.codePdv ?? "",
     codeTerminal: conc.codeTerminal,
     codeConcessionnaire: conc.codeConcessionnaire,
     cniNumero: conc.cniNumero,

@@ -96,8 +96,32 @@ export type ContratOperationType = (typeof CONTRAT_OPERATION_TYPES)[number];
 export const CONTRAT_STATUSES = ["ACTIF", "RESILIE", "CEDE"] as const;
 export type ContratStatus = (typeof CONTRAT_STATUSES)[number];
 
-export const CAUTION_ENCAISSEMENT_MODES = ["ESPECES", "MOBILE_MONEY", "VIREMENT", "CHEQUE"] as const;
+export const CAUTION_ENCAISSEMENT_MODES = [
+  "ESPECES",
+  "CHEQUE",
+  "VIREMENT",
+  "MOBILE_MONEY",
+  "AUTRE",
+] as const;
 export type CautionEncaissementMode = (typeof CAUTION_ENCAISSEMENT_MODES)[number];
+
+export const CAUTION_ENCAISSEMENT_MODE_LABELS: Record<CautionEncaissementMode, string> = {
+  ESPECES: "Espèces",
+  CHEQUE: "Chèque",
+  VIREMENT: "Virement",
+  MOBILE_MONEY: "Mobile money",
+  AUTRE: "Autre",
+};
+
+export function getCautionEncaissementModeLabel(mode: string): string {
+  if ((CAUTION_ENCAISSEMENT_MODES as readonly string[]).includes(mode)) {
+    return CAUTION_ENCAISSEMENT_MODE_LABELS[mode as CautionEncaissementMode];
+  }
+  if (mode === "PAIEMENT_DIFFERE") {
+    return "Paiement différé (fiche de paiement caution)";
+  }
+  return mode;
+}
 
 export const CAUTION_PAYMENT_MODES = [
   ...CAUTION_ENCAISSEMENT_MODES,
@@ -135,6 +159,26 @@ export const CONCESSIONNAIRE_STATUTS = [
 ] as const;
 
 export type ConcessionnaireStatut = (typeof CONCESSIONNAIRE_STATUTS)[number];
+
+/** Parcours d'inscription concessionnaire (avant accès opérationnel). */
+export const CONCESSIONNAIRE_INSCRIPTION_STATUTS = [
+  "BROUILLON",
+  "SOUMIS",
+  "VALIDE",
+  "REJETE",
+] as const;
+
+export type ConcessionnaireInscriptionStatut = (typeof CONCESSIONNAIRE_INSCRIPTION_STATUTS)[number];
+
+export const CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS: Record<
+  ConcessionnaireInscriptionStatut,
+  string
+> = {
+  BROUILLON: "Brouillon",
+  SOUMIS: "Soumis (attente N1)",
+  VALIDE: "Inscription validée",
+  REJETE: "Inscription rejetée",
+};
 
 /** Libellés UI fiche concessionnaire */
 export const CONCESSIONNAIRE_STATUT_LABELS: Record<ConcessionnaireStatut, string> = {

@@ -10,6 +10,11 @@ import {
 } from "@/lib/lonaci/access";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
 import {
+  isConcessionnaireInscriptionFinalisee,
+  patchDocumentChecklistStatuts,
+  refreshConcessionnaireDocumentChecklist,
+} from "@/lib/lonaci/concessionnaire-inscription";
+import {
   ensureConcessionnaireIndexes,
   findConcessionnaireById,
   sanitizeConcessionnairePublic,
@@ -31,9 +36,19 @@ function preprocessEmail(value: unknown): string | null | undefined {
   return z.string().email().safeParse(t).success ? t : null;
 }
 
+const checklistPatchSchema = z.array(
+  z.object({
+    itemId: z.string().min(1),
+    statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+  }),
+);
+
 const patchSchema = z
   .object({
+    nom: z.string().min(2).optional(),
+    prenom: z.string().min(2).optional(),
     nomComplet: z.string().min(2).optional(),
+    documentChecklist: checklistPatchSchema.optional(),
     codeTerminal: z.preprocess(
       (v) => {
         if (v === undefined) return undefined;
@@ -208,6 +223,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       );
     }
   }
+  if (
+    parsed.data.statut === "ACTIF" &&
+    !isConcessionnaireInscriptionFinalisee(existing)
+  ) {
+    return NextResponse.json(
+      { message: "Activation impossible : inscription non validée (N1)." },
+      { status: 400 },
+    );
+  }
 
   // Validation agence : on ne bloque que si l'utilisateur change l'agence.
   // Cas à ne pas empêcher : sauvegarde d'autres champs quand la fiche contient une agence
@@ -280,10 +304,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
   }
 
-  const patch = {
-    ...parsed.data,
+  const { documentChecklist: checklistPatch, ...restPatch } = parsed.data;
+  const patch: Parameters<typeof updateConcessionnaire>[1] = {
+    ...restPatch,
     produitsAutorises: parsed.data.produitsAutorises?.map((code) => code.trim().toUpperCase()),
   };
+
+  if (checklistPatch && existing.documentChecklist) {
+    patch.documentChecklist = patchDocumentChecklistStatuts(existing.documentChecklist, checklistPatch);
+  }
+
+  if (parsed.data.produitsAutorises) {
+    const codes = parsed.data.produitsAutorises.map((code) => code.trim().toUpperCase());
+    if (!isConcessionnaireInscriptionFinalisee(existing)) {
+      patch.documentChecklist = await refreshConcessionnaireDocumentChecklist(id, codes);
+    }
+  }
 
   const updated = await updateConcessionnaire(id, patch, auth.user);
   if (!updated) {

@@ -1,13 +1,18 @@
 "use client";
 
 import Link from "next/link";
+import ConcessionnaireInscriptionChecklistBlock from "@/components/lonaci/concessionnaire-inscription-checklist-block";
 import {
   LONACI_ROLES,
+  CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS,
   CONCESSIONNAIRE_STATUT_LABELS,
   CONCESSIONNAIRE_STATUTS,
+  type ConcessionnaireInscriptionStatut,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -41,7 +46,12 @@ interface PieceMeta {
 
 interface ConcessionnaireDetail {
   id: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut: ConcessionnaireInscriptionStatut;
+  nom: string | null;
+  prenom: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
+  inscriptionRejetMotif: string | null;
   codeTerminal: string | null;
   codeConcessionnaire: string | null;
   nomComplet: string;
@@ -197,7 +207,10 @@ export default function ConcessionnaireFicheModal({
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConcessionnaireDetail | null>(null);
 
+  const [nom, setNom] = useState("");
+  const [prenom, setPrenom] = useState("");
   const [nomComplet, setNomComplet] = useState("");
+  const [inscriptionBusy, setInscriptionBusy] = useState(false);
   const [codeTerminal, setCodeTerminal] = useState("");
   const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
@@ -294,6 +307,8 @@ export default function ConcessionnaireFicheModal({
       const data = (await res.json()) as { concessionnaire: ConcessionnaireDetail };
       const c = data.concessionnaire;
       setDetail(c);
+      setNom(c.nom ?? "");
+      setPrenom(c.prenom ?? "");
       setNomComplet(c.nomComplet ?? "");
       setCodeTerminal(c.codeTerminal ?? "");
       setCodeConcessionnaire(c.codeConcessionnaire ?? "");
@@ -424,6 +439,41 @@ export default function ConcessionnaireFicheModal({
     me != null && (LONACI_ROLES as readonly string[]).includes(me.role);
   const readOnlyFiche = Boolean((gelee && !canEditNotesWhenGelee) || !saisieReferentiel);
   const notesOnlyMode = Boolean(gelee && canEditNotesWhenGelee && saisieReferentiel);
+  const inscriptionStatut = detail?.inscriptionStatut ?? "VALIDE";
+  const inscriptionEditable =
+    saisieReferentiel &&
+    !readOnlyFiche &&
+    (inscriptionStatut === "BROUILLON" || inscriptionStatut === "REJETE");
+  const canSubmitInscription = inscriptionEditable;
+  const canValidateN1 =
+    (me?.role === "CHEF_SECTION" || me?.role === "CHEF_SERVICE") && inscriptionStatut === "SOUMIS";
+
+  async function runInscriptionTransition(
+    action: "SUBMIT" | "VALIDATE_N1" | "REJECT" | "RETURN_TO_DRAFT",
+    comment?: string,
+  ) {
+    if (!concessionnaireId) return;
+    setInscriptionBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/concessionnaires/${concessionnaireId}/inscription/transition`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, comment: comment ?? null }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(friendlyErrorMessage(body?.message ?? "Transition impossible"));
+      }
+      await loadDetail();
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Transition impossible");
+    } finally {
+      setInscriptionBusy(false);
+    }
+  }
 
   async function onSaveFiche(e: FormEvent) {
     e.preventDefault();
@@ -451,8 +501,8 @@ export default function ConcessionnaireFicheModal({
 
       if (readOnlyFiche) return;
 
-      if (!nomComplet.trim() || nomComplet.trim().length < 2) {
-        throw new Error("Le nom complet est obligatoire (2 caractères minimum).");
+      if (nom.trim().length < 2 || prenom.trim().length < 2) {
+        throw new Error("Le nom et le prénom sont obligatoires (2 caractères minimum chacun).");
       }
       const cni = cniNumero.trim();
       if (cni.length > 0 && cni.length < 4) {
@@ -475,7 +525,9 @@ export default function ConcessionnaireFicheModal({
       const telP = tel.trim();
       const telS = telSecondary.trim();
       const body: Record<string, unknown> = {
-        nomComplet: nomComplet.trim(),
+        nom: nom.trim(),
+        prenom: prenom.trim(),
+        nomComplet: `${prenom.trim()} ${nom.trim()}`.trim(),
         codeTerminal: ct.length ? ct : null,
         codeConcessionnaire: cc.length ? cc : null,
         cniNumero: cni.length ? cni : null,
@@ -648,9 +700,11 @@ export default function ConcessionnaireFicheModal({
               Fiche concessionnaire
             </h3>
             {detail ? (
-              <p className="mt-0.5 font-mono text-sm text-slate-600">
-                {detail.codePdv}
-                <span className="ml-2 font-sans text-slate-500">— code PDV non modifiable</span>
+              <p className="mt-0.5 text-sm text-slate-600">
+                <span className="font-mono">{detail.codePdv ?? "Code PDV après validation N1"}</span>
+                <span className="ml-2 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                  {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[detail.inscriptionStatut]}
+                </span>
               </p>
             ) : (
               <p className="mt-0.5 text-sm text-slate-500">Chargement…</p>
@@ -721,19 +775,87 @@ export default function ConcessionnaireFicheModal({
                 </p>
               ) : null}
 
+              {detail.inscriptionStatut !== "VALIDE" ? (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-3 text-sm text-indigo-950">
+                  <p className="font-semibold">Parcours d&apos;inscription</p>
+                  <p className="mt-1 text-xs text-indigo-900/90">
+                    Complétez la fiche, les pièces justificatives (onglet Pièces) et la checklist, puis soumettez pour
+                    validation N1. Le code PDV sera attribué après validation.
+                  </p>
+                  {detail.inscriptionRejetMotif ? (
+                    <p className="mt-2 text-xs text-rose-800">Motif de rejet : {detail.inscriptionRejetMotif}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {canSubmitInscription ? (
+                      <button
+                        type="button"
+                        disabled={inscriptionBusy || saving}
+                        onClick={() => void runInscriptionTransition("SUBMIT")}
+                        className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
+                      >
+                        Soumettre (N1)
+                      </button>
+                    ) : null}
+                    {inscriptionStatut === "REJETE" && saisieReferentiel ? (
+                      <button
+                        type="button"
+                        disabled={inscriptionBusy}
+                        onClick={() => void runInscriptionTransition("RETURN_TO_DRAFT")}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Reprendre en brouillon
+                      </button>
+                    ) : null}
+                    {canValidateN1 ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={inscriptionBusy}
+                          onClick={() => void runInscriptionTransition("VALIDATE_N1")}
+                          className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Valider N1
+                        </button>
+                        <button
+                          type="button"
+                          disabled={inscriptionBusy}
+                          onClick={() => {
+                            const motif = window.prompt("Motif de rejet (obligatoire) :");
+                            if (motif?.trim()) void runInscriptionTransition("REJECT", motif.trim());
+                          }}
+                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-900 hover:bg-rose-100 disabled:opacity-50"
+                        >
+                          Rejeter
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {concessionnaireId && detail.documentChecklist ? (
+                <ConcessionnaireInscriptionChecklistBlock
+                  concessionnaireId={concessionnaireId}
+                  checklist={detail.documentChecklist}
+                  editable={inscriptionEditable}
+                  onUpdated={(next) => setDetail((d) => (d ? { ...d, documentChecklist: next } : d))}
+                />
+              ) : null}
+
               {!notesOnlyMode && !readOnlyFiche ? (
                 <>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Prénom *</span>
+                      <input required value={prenom} onChange={(e) => setPrenom(e.target.value)} className={inputClass} />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Nom *</span>
+                      <input required value={nom} onChange={(e) => setNom(e.target.value)} className={inputClass} />
+                    </label>
+                  </div>
                   <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Nom complet *</span>
-                    <input
-                      required
-                      value={nomComplet}
-                      onChange={(e) => setNomComplet(e.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
+                    <span className="text-xs font-medium text-slate-700">Numéro CNI *</span>
                     <input value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} className={inputClass} />
                   </label>
                   <div className="grid gap-2 sm:grid-cols-2">

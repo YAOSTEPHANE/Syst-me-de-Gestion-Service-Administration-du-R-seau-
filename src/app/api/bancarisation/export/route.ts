@@ -18,7 +18,7 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   const esc = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const body = rows.map((r) =>
     [
-      r.codePdv,
+      r.codePdv ?? "",
       r.nomComplet || r.raisonSociale,
       r.statutBancarisation,
       r.compteBancaire ?? "",

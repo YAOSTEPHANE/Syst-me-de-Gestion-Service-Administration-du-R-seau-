@@ -3,6 +3,7 @@ import { ObjectId } from "mongodb";
 
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import { LONACI_ROLES, CONCESSIONNAIRE_STATUTS_BLOQUANTS } from "@/lib/lonaci/constants";
+import { canUseConcessionnaireOperationnel } from "@/lib/lonaci/concessionnaire-inscription";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { listAgences } from "@/lib/lonaci/referentials";
 import type { AgenceDocument, ConcessionnaireDocument, UserDocument } from "@/lib/lonaci/types";
@@ -293,6 +294,16 @@ export function isStatutBloquant(
   statut: ConcessionnaireDocument["statut"],
 ): boolean {
   return (CONCESSIONNAIRE_STATUTS_BLOQUANTS as readonly string[]).includes(statut);
+}
+
+/** Inscription non finalisée (pas de code PDV) : modules contrat / caution / etc. interdits. */
+export function assertConcessionnaireOperationnel(doc: ConcessionnaireDocument): void {
+  if (!canUseConcessionnaireOperationnel(doc)) {
+    if (doc.statut === "RESILIE" || doc.statut === "DECEDE") {
+      throw new Error("CONCESSIONNAIRE_BLOQUE");
+    }
+    throw new Error("CONCESSIONNAIRE_INSCRIPTION_PENDING");
+  }
 }
 
 /**

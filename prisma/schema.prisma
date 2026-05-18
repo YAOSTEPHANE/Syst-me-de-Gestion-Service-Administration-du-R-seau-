@@ -47,7 +47,12 @@ model Counter {
 
 model Concessionnaire {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  codePdv         String    @unique
+  /** Attribué après validation N1 de l'inscription ; null en brouillon / soumis. */
+  codePdv         String?   @unique
+  /** Parcours d'inscription : BROUILLON → SOUMIS → VALIDE (ou REJETE). Legacy : VALIDE. */
+  inscriptionStatut String  @default("VALIDE")
+  nom             String?
+  prenom          String?
   /** Code terminal métier (saisie libre, distinct du code PDV généré). */
   codeTerminal    String?
   /** Code concessionnaire métier (saisie libre). */
@@ -70,6 +75,11 @@ model Concessionnaire {
   compteBancaire  String?
   banqueEtablissement String?
   gps             Json?
+  /** Checklist pièces justificatives (modèle produit) pendant l'inscription. */
+  documentChecklist Json?
+  inscriptionSoumisAt DateTime?
+  inscriptionValideN1At DateTime?
+  inscriptionRejetMotif String?
   piecesJointes   Json      @default("[]")
   observations    String?
   notesInternes   String?
@@ -82,6 +92,7 @@ model Concessionnaire {
   @@map("concessionnaires")
   @@index([agenceId], map: "idx_agence")
   @@index([statut], map: "idx_statut")
+  @@index([inscriptionStatut], map: "idx_inscription_statut")
   @@index([statutBancarisation], map: "idx_statut_bancarisation")
   @@index([deletedAt], map: "idx_deleted")
   @@index([raisonSociale], map: "idx_raison")

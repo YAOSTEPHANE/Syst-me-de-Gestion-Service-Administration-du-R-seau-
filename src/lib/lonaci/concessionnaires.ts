@@ -9,12 +9,21 @@ import {
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import {
+  buildInscriptionChecklistForProducts,
+  formatNomComplet,
+  parseConcessionnaireDocumentChecklist,
+  resolveInscriptionStatut,
+} from "@/lib/lonaci/concessionnaire-inscription";
+import { listProduits } from "@/lib/lonaci/referentials";
 import type {
   ConcessionnaireDocument,
+  DossierDocumentChecklistPayload,
   GpsPoint,
   PieceJointeDocument,
   UserDocument,
 } from "@/lib/lonaci/types";
+import type { ConcessionnaireInscriptionStatut } from "@/lib/lonaci/constants";
 import {
   CONCESSIONNAIRES_MAP_POINTS_MAX,
   type ConcessionnaireMapPointDto,
@@ -30,7 +39,10 @@ function isObjectId(id: string) {
 
 function mapDoc(row: {
   id: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut?: string | null;
+  nom?: string | null;
+  prenom?: string | null;
   codeTerminal: string | null;
   codeConcessionnaire: string | null;
   nomComplet: string | null;
@@ -51,6 +63,10 @@ function mapDoc(row: {
   compteBancaire: string | null;
   banqueEtablissement: string | null;
   gps: Prisma.JsonValue | null;
+  documentChecklist?: Prisma.JsonValue | null;
+  inscriptionSoumisAt?: Date | null;
+  inscriptionValideN1At?: Date | null;
+  inscriptionRejetMotif?: string | null;
   piecesJointes: Prisma.JsonValue;
   observations: string | null;
   notesInternes: string | null;
@@ -63,15 +79,26 @@ function mapDoc(row: {
   const pieces = Array.isArray(row.piecesJointes)
     ? (row.piecesJointes as unknown as PieceJointeDocument[])
     : [];
+  const inscriptionStatut = resolveInscriptionStatut(row);
+  const codePdv = row.codePdv?.trim() ? row.codePdv.trim() : null;
+  const nom = row.nom?.trim() ? row.nom.trim() : null;
+  const prenom = row.prenom?.trim() ? row.prenom.trim() : null;
+  const nomComplet =
+    row.nomComplet?.trim() ||
+    (nom && prenom ? formatNomComplet(nom, prenom) : null) ||
+    row.raisonSociale?.trim() ||
+    codePdv ||
+    "Fiche en cours";
   return {
     _id: row.id,
-    codePdv: row.codePdv,
+    codePdv,
+    inscriptionStatut,
+    nom,
+    prenom,
     codeTerminal: row.codeTerminal ?? null,
     codeConcessionnaire: row.codeConcessionnaire ?? null,
-    // Historique de données: `nomComplet` peut exister en `null` en base.
-    // On normalise côté application vers une valeur string exploitable.
-    nomComplet: row.nomComplet ?? row.raisonSociale ?? row.codePdv,
-    raisonSociale: row.raisonSociale,
+    nomComplet,
+    raisonSociale: row.raisonSociale?.trim() ? row.raisonSociale : nomComplet,
     cniNumero: row.cniNumero,
     photoUrl: row.photoUrl,
     email: row.email,
@@ -88,6 +115,10 @@ function mapDoc(row: {
     compteBancaire: row.compteBancaire,
     banqueEtablissement: row.banqueEtablissement,
     gps: (row.gps as GpsPoint | null) ?? null,
+    documentChecklist: parseConcessionnaireDocumentChecklist(row.documentChecklist),
+    inscriptionSoumisAt: row.inscriptionSoumisAt ?? null,
+    inscriptionValideN1At: row.inscriptionValideN1At ?? null,
+    inscriptionRejetMotif: row.inscriptionRejetMotif?.trim() ? row.inscriptionRejetMotif.trim() : null,
     piecesJointes: pieces,
     observations: row.observations,
     notesInternes: row.notesInternes,
@@ -103,7 +134,7 @@ export async function ensureConcessionnaireIndexes() {
   return;
 }
 
-async function nextCodePdv(agenceCode: string): Promise<string> {
+export async function nextCodePdvForAgence(agenceCode: string): Promise<string> {
   const normalizedAgenceCode = agenceCode.trim().toUpperCase();
   const counterId = `${COUNTER_ID}_${normalizedAgenceCode}`;
   await prisma.counter.upsert({
@@ -117,7 +148,10 @@ async function nextCodePdv(agenceCode: string): Promise<string> {
 }
 
 export interface CreateConcessionnaireInput {
-  nomComplet: string;
+  nom: string;
+  prenom: string;
+  /** Rétrocompatibilité import / ancien formulaire. */
+  nomComplet?: string;
   codeTerminal: string | null;
   codeConcessionnaire: string | null;
   cniNumero: string | null;
@@ -131,6 +165,8 @@ export interface CreateConcessionnaireInput {
   agenceId: string | null;
   agenceCode: string;
   produitsAutorises: string[];
+  /** Import admin : inscription déjà validée avec code PDV. */
+  skipInscriptionWorkflow?: boolean;
   statut?: ConcessionnaireStatut;
   statutBancarisation: BancarisationStatut;
   compteBancaire: string | null;
@@ -142,11 +178,26 @@ export interface CreateConcessionnaireInput {
 }
 
 export async function createConcessionnaire(input: CreateConcessionnaireInput): Promise<ConcessionnaireDocument> {
-  const codePdv = await nextCodePdv(input.agenceCode);
-  const nomComplet = input.nomComplet.trim();
+  const nom = input.nom.trim() || (input.nomComplet?.trim().split(/\s+/).slice(-1)[0] ?? "");
+  const prenom =
+    input.prenom.trim() ||
+    (input.nomComplet?.trim().split(/\s+/).slice(0, -1).join(" ") ?? input.nomComplet?.trim() ?? "");
+  const nomComplet =
+    input.nomComplet?.trim() || formatNomComplet(nom, prenom) || nom || prenom;
+  const skipInscription = input.skipInscriptionWorkflow === true;
+  const codePdv = skipInscription ? await nextCodePdvForAgence(input.agenceCode) : null;
+  const produits = await listProduits();
+  const checklist = buildInscriptionChecklistForProducts(
+    input.produitsAutorises,
+    produits,
+    null,
+  );
   const created = await prisma.concessionnaire.create({
     data: {
       codePdv,
+      inscriptionStatut: skipInscription ? "VALIDE" : "BROUILLON",
+      nom: nom || null,
+      prenom: prenom || null,
       codeTerminal: input.codeTerminal,
       codeConcessionnaire: input.codeConcessionnaire,
       nomComplet,
@@ -162,11 +213,13 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
       codePostal: input.codePostal,
       agenceId: input.agenceId,
       produitsAutorises: input.produitsAutorises,
-      statut: input.statut ?? "ACTIF",
+      statut: skipInscription ? (input.statut ?? "ACTIF") : "INACTIF",
       statutBancarisation: input.statutBancarisation,
       compteBancaire: input.compteBancaire,
       banqueEtablissement: input.banqueEtablissement,
       gps: (input.gps ?? null) as unknown as Prisma.InputJsonValue,
+      documentChecklist: checklist as unknown as Prisma.InputJsonValue,
+      inscriptionValideN1At: skipInscription ? new Date() : null,
       piecesJointes: [],
       observations: input.observations,
       notesInternes: input.notesInternes,
@@ -201,6 +254,8 @@ export interface SearchConcessionnairesParams {
   pageSize: number;
   q?: string;
   statut?: ConcessionnaireStatut;
+  inscriptionStatut?: ConcessionnaireInscriptionStatut;
+  inscriptionFinaliseeOnly?: boolean;
   statutBancarisation?: BancarisationStatut;
   agenceId?: string;
   produitCode?: string;
@@ -224,7 +279,15 @@ export function concessionnaireListScopeAgenceId(user: {
 
 export type ConcessionnaireListFilterParams = Pick<
   SearchConcessionnairesParams,
-  "q" | "statut" | "statutBancarisation" | "agenceId" | "produitCode" | "scopeAgenceId" | "includeDeleted"
+  | "q"
+  | "statut"
+  | "inscriptionStatut"
+  | "inscriptionFinaliseeOnly"
+  | "statutBancarisation"
+  | "agenceId"
+  | "produitCode"
+  | "scopeAgenceId"
+  | "includeDeleted"
 >;
 
 export function buildConcessionnaireListWhere(
@@ -244,6 +307,13 @@ export function buildConcessionnaireListWhere(
 
   if (params.statut) {
     filter.statut = params.statut;
+  }
+  if (params.inscriptionStatut) {
+    filter.inscriptionStatut = params.inscriptionStatut;
+  }
+  if (params.inscriptionFinaliseeOnly) {
+    filter.inscriptionStatut = "VALIDE";
+    filter.codePdv = { not: null };
   }
   if (params.statutBancarisation) {
     filter.statutBancarisation = params.statutBancarisation;
@@ -391,7 +461,7 @@ export async function getConcessionnairesPanelStats(
 
 function rowToMapPoint(row: {
   id: string;
-  codePdv: string;
+  codePdv: string | null;
   nomComplet: string | null;
   raisonSociale: string;
   gps: Prisma.JsonValue | null;
@@ -401,10 +471,10 @@ function rowToMapPoint(row: {
   const o = g as { lat?: unknown; lng?: unknown };
   if (typeof o.lat !== "number" || typeof o.lng !== "number") return null;
   if (!Number.isFinite(o.lat) || !Number.isFinite(o.lng)) return null;
-  const label = (row.nomComplet || row.raisonSociale || row.codePdv).trim();
+  const label = (row.nomComplet || row.raisonSociale || row.codePdv || "PDV").trim();
   return {
     id: row.id,
-    codePdv: row.codePdv,
+    codePdv: row.codePdv ?? "",
     label,
     lat: o.lat,
     lng: o.lng,
@@ -507,7 +577,10 @@ export async function searchConcessionnaires(params: SearchConcessionnairesParam
 }
 
 export interface UpdateConcessionnaireInput {
+  nom?: string;
+  prenom?: string;
   nomComplet?: string;
+  documentChecklist?: DossierDocumentChecklistPayload;
   codeTerminal?: string | null;
   codeConcessionnaire?: string | null;
   cniNumero?: string | null;
@@ -551,6 +624,12 @@ export async function updateConcessionnaire(
       const trimmed = v.trim();
       data.nomComplet = trimmed;
       data.raisonSociale = trimmed;
+    } else if (key === "nom" && typeof v === "string") {
+      data.nom = v.trim();
+    } else if (key === "prenom" && typeof v === "string") {
+      data.prenom = v.trim();
+    } else if (key === "documentChecklist") {
+      data.documentChecklist = (v ?? null) as Prisma.InputJsonValue;
     } else if (key === "telephonePrincipal") {
       const tel = (v as string | null) ?? null;
       data.telephonePrincipal = tel;
@@ -575,7 +654,21 @@ export async function updateConcessionnaire(
     return null;
   }
 
-  const mapped = mapDoc(updated);
+  if (patch.nom !== undefined || patch.prenom !== undefined) {
+    const row = await prisma.concessionnaire.findUnique({ where: { id } });
+    if (row) {
+      const full = formatNomComplet(row.nom ?? "", row.prenom ?? "");
+      if (full) {
+        await prisma.concessionnaire.update({
+          where: { id },
+          data: { nomComplet: full, raisonSociale: full },
+        });
+      }
+    }
+  }
+
+  const refreshed = await prisma.concessionnaire.findUnique({ where: { id } });
+  const mapped = mapDoc(refreshed ?? updated);
   await appendAuditLog({
     entityType: "CONCESSIONNAIRE",
     entityId: id,
@@ -619,6 +712,9 @@ export function sanitizeConcessionnairePublic(doc: ConcessionnaireDocument) {
   return {
     id: doc._id ?? "",
     codePdv: doc.codePdv,
+    inscriptionStatut: doc.inscriptionStatut,
+    nom: doc.nom,
+    prenom: doc.prenom,
     codeTerminal: doc.codeTerminal,
     codeConcessionnaire: doc.codeConcessionnaire,
     raisonSociale: doc.raisonSociale,
@@ -639,6 +735,10 @@ export function sanitizeConcessionnairePublic(doc: ConcessionnaireDocument) {
     compteBancaire: doc.compteBancaire,
     banqueEtablissement: doc.banqueEtablissement,
     gps: doc.gps,
+    documentChecklist: doc.documentChecklist,
+    inscriptionSoumisAt: doc.inscriptionSoumisAt?.toISOString() ?? null,
+    inscriptionValideN1At: doc.inscriptionValideN1At?.toISOString() ?? null,
+    inscriptionRejetMotif: doc.inscriptionRejetMotif,
     piecesJointes: doc.piecesJointes.map((p) => ({
       id: p.id,
       kind: p.kind,
@@ -662,6 +762,9 @@ export function sanitizeConcessionnaireListItem(doc: ConcessionnaireDocument) {
   return {
     id: doc._id ?? "",
     codePdv: doc.codePdv,
+    inscriptionStatut: doc.inscriptionStatut,
+    nom: doc.nom,
+    prenom: doc.prenom,
     codeTerminal: doc.codeTerminal,
     codeConcessionnaire: doc.codeConcessionnaire,
     nomComplet: doc.nomComplet,

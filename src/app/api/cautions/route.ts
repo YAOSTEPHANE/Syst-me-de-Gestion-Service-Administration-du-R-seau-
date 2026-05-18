@@ -144,6 +144,12 @@ export async function POST(request: NextRequest) {
         "CONCESSIONNAIRE_BLOQUE",
       );
     }
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+      return conflict(
+        "Inscription non finalisee : validation N1 requise.",
+        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+      );
+    }
     if (code === "CLIENT_NOT_FOUND") {
       return notFound("Client Lonaci introuvable.", "CLIENT_NOT_FOUND");
     }

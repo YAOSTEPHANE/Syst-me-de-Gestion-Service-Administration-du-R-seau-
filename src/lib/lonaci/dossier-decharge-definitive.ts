@@ -151,7 +151,7 @@ export async function buildDossierDechargeDefinitiveView(
     mention: DECHARGE_DEFINITIVE_MENTION,
     nomComplet: concessionnaire.nomComplet,
     raisonSociale: concessionnaire.raisonSociale,
-    codePdv: concessionnaire.codePdv,
+    codePdv: concessionnaire.codePdv ?? "",
     codeTerminal: concessionnaire.codeTerminal,
     codeConcessionnaire: concessionnaire.codeConcessionnaire,
     cniNumero: concessionnaire.cniNumero,

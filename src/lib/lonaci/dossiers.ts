@@ -12,7 +12,11 @@ import type {
 import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
-import { canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
+import {
+  assertConcessionnaireOperationnel,
+  canReadConcessionnaire,
+  isStatutFicheGelee,
+} from "@/lib/lonaci/access";
 import { findContratById, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
@@ -86,10 +90,10 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
   if (!canReadConcessionnaire(input.actor, concessionnaire)) {
     throw new Error("AGENCE_FORBIDDEN");
   }
-  // Règles métier : résilié / décédé interdits ; INACTIF autorisé (activation à la finalisation contrat).
   if (isStatutFicheGelee(concessionnaire.statut)) {
     throw new Error("CONCESSIONNAIRE_BLOQUE");
   }
+  assertConcessionnaireOperationnel(concessionnaire);
 
   if (input.type === "CONTRAT_ACTUALISATION") {
     const produitCode = String(input.payload.produitCode ?? "").trim().toUpperCase();
