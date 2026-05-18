@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
+import { badRequest, conflict, notFound, serverError } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   addResiliationAttachment,
   createResiliation,
@@ -34,7 +36,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureResiliationIndexes();
@@ -65,11 +67,11 @@ export async function POST(request: NextRequest) {
   const motif = String(form.get("motif") ?? "").trim();
   const commentaire = String(form.get("commentaire") ?? "").trim();
   if (!concessionnaireId || !produitCode || !dateReceptionRaw || !motif) {
-    return NextResponse.json({ message: "Champs obligatoires manquants." }, { status: 400 });
+    return badRequest("Champs obligatoires manquants.", "MISSING_REQUIRED_FIELDS");
   }
   const dateReception = new Date(dateReceptionRaw);
   if (Number.isNaN(dateReception.getTime())) {
-    return NextResponse.json({ message: "Date de réception invalide." }, { status: 400 });
+    return badRequest("Date de réception invalide.", "INVALID_DATE_RECEPTION");
   }
 
   await ensureResiliationIndexes();
@@ -86,10 +88,10 @@ export async function POST(request: NextRequest) {
     const docs = form.getAll("documents").filter((d): d is File => d instanceof File);
     for (const doc of docs) {
       if (!RESILIATION_ALLOWED_MIME[doc.type]) {
-        return NextResponse.json({ message: `Type de fichier non autorisé: ${doc.type}` }, { status: 400 });
+        return badRequest(`Type de fichier non autorisé: ${doc.type}`, "INVALID_MIME_TYPE");
       }
       if (doc.size > MAX_RESILIATION_FILE_BYTES) {
-        return NextResponse.json({ message: "Document trop volumineux." }, { status: 400 });
+        return badRequest("Document trop volumineux.", "FILE_TOO_LARGE");
       }
       const attachmentId = randomUUID();
       const buffer = Buffer.from(await doc.arrayBuffer());
@@ -107,14 +109,17 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_NOT_FOUND") {
-      return NextResponse.json({ message: "Concessionnaire introuvable." }, { status: 404 });
+      return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
     }
     if (code === "CONCESSIONNAIRE_ALREADY_RESILIE") {
-      return NextResponse.json({ message: "Concessionnaire deja resilie." }, { status: 409 });
+      return conflict("Concessionnaire deja resilie.", "CONCESSIONNAIRE_ALREADY_RESILIE");
     }
     if (code === "ACTIVE_CONTRAT_REQUIRED") {
-      return NextResponse.json({ message: "Résiliation impossible: contrat ACTIF requis pour ce produit." }, { status: 400 });
+      return badRequest(
+        "Résiliation impossible: contrat ACTIF requis pour ce produit.",
+        "ACTIVE_CONTRAT_REQUIRED",
+      );
     }
-    return NextResponse.json({ message: "Résiliation impossible." }, { status: 500 });
+    return serverError("Résiliation impossible.", "RESILIATION_CREATE_FAILED");
   }
 }

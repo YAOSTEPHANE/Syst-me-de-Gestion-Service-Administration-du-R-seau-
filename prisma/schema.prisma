@@ -25,6 +25,10 @@ model User {
   lastActivityAt   DateTime?
   resetPasswordTokenHash String?
   resetPasswordExpiresAt DateTime?
+  /** Dernier changement de mot de passe (politique de rotation mensuelle). */
+  passwordChangedAt DateTime?
+  /** Dernier mois (UTC, format YYYY-MM) pour lequel l’e-mail automatique de fin de mois avec lien de réinitialisation a été envoyé. */
+  passwordResetReminderSentForMonth String?
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
   deletedAt        DateTime?
@@ -43,7 +47,16 @@ model Counter {
 
 model Concessionnaire {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  codePdv         String    @unique
+  /** Attribué après validation N1 de l'inscription ; null en brouillon / soumis. */
+  codePdv         String?   @unique
+  /** Parcours d'inscription : BROUILLON → SOUMIS → VALIDE (ou REJETE). Legacy : VALIDE. */
+  inscriptionStatut String  @default("VALIDE")
+  nom             String?
+  prenom          String?
+  /** Code terminal métier (saisie libre, distinct du code PDV généré). */
+  codeTerminal    String?
+  /** Code concessionnaire métier (saisie libre). */
+  codeConcessionnaire String?
   nomComplet      String?
   raisonSociale   String
   cniNumero       String?
@@ -62,6 +75,11 @@ model Concessionnaire {
   compteBancaire  String?
   banqueEtablissement String?
   gps             Json?
+  /** Checklist pièces justificatives (modèle produit) pendant l'inscription. */
+  documentChecklist Json?
+  inscriptionSoumisAt DateTime?
+  inscriptionValideN1At DateTime?
+  inscriptionRejetMotif String?
   piecesJointes   Json      @default("[]")
   observations    String?
   notesInternes   String?
@@ -74,6 +92,7 @@ model Concessionnaire {
   @@map("concessionnaires")
   @@index([agenceId], map: "idx_agence")
   @@index([statut], map: "idx_statut")
+  @@index([inscriptionStatut], map: "idx_inscription_statut")
   @@index([statutBancarisation], map: "idx_statut_bancarisation")
   @@index([deletedAt], map: "idx_deleted")
   @@index([raisonSociale], map: "idx_raison")
@@ -124,4 +143,35 @@ model Contrat {
 
   @@map("contrats")
   @@index([concessionnaireId, produitCode, status, deletedAt], map: "idx_unique_active_check")
+}
+
+/** Comptes clients / tiers (distinct des concessionnaires PDV). */
+model LonaciClient {
+  id              String    @id @default(auto()) @map("_id") @db.ObjectId
+  code            String    @unique
+  raisonSociale   String
+  /** Nom et prénom(s) du client (identité principale). */
+  nomComplet      String?
+  cniNumero       String?
+  nomContact      String?
+  email           String?
+  telephone       String?
+  adresse         String?
+  ville           String?
+  codePostal      String?
+  agenceId        String?
+  statut          String
+  notes           String?
+  createdByUserId String
+  updatedByUserId String
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  @@map("clients")
+  @@index([agenceId], map: "idx_client_agence")
+  @@index([statut], map: "idx_client_statut")
+  @@index([deletedAt], map: "idx_client_deleted")
+  @@index([raisonSociale], map: "idx_client_raison")
+  @@index([nomComplet], map: "idx_client_nom_complet")
 }

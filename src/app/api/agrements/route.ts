@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   attachAgrementDocument,
   createAgrement,
@@ -25,7 +27,7 @@ export async function GET(request: NextRequest) {
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureAgrementsIndexes();
   const result = await listAgrements({
@@ -53,20 +55,20 @@ export async function POST(request: NextRequest) {
   const file = form.get("document");
 
   if (!produitCode || !dateReceptionRaw || !referenceOfficielle) {
-    return NextResponse.json({ message: "Champs obligatoires manquants." }, { status: 400 });
+    return badRequest("Champs obligatoires manquants.", "MISSING_REQUIRED_FIELDS");
   }
   const dateReception = new Date(dateReceptionRaw);
   if (Number.isNaN(dateReception.getTime())) {
-    return NextResponse.json({ message: "Date de reception invalide." }, { status: 400 });
+    return badRequest("Date de reception invalide.", "INVALID_DATE_RECEPTION");
   }
   if (!(file instanceof File)) {
-    return NextResponse.json({ message: "Document PDF obligatoire." }, { status: 400 });
+    return badRequest("Document PDF obligatoire.", "MISSING_DOCUMENT");
   }
   if (file.type !== AGREMENT_ALLOWED_MIME) {
-    return NextResponse.json({ message: "Seul le PDF est autorise." }, { status: 400 });
+    return badRequest("Seul le PDF est autorise.", "INVALID_MIME_TYPE");
   }
   if (file.size > MAX_AGREMENT_FILE_BYTES) {
-    return NextResponse.json({ message: "Document trop volumineux." }, { status: 400 });
+    return badRequest("Document trop volumineux.", "FILE_TOO_LARGE");
   }
 
   await ensureAgrementsIndexes();

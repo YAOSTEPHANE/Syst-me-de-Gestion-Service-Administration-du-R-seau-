@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { ensureAgrementsIndexes, listAgrements } from "@/lib/lonaci/agrements";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { LONACI_ROLES } from "@/lib/lonaci/constants";
 
 const schema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -19,7 +20,10 @@ function escapeCell(v: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, {
+    roles: [...LONACI_ROLES],
+    rbac: { resource: "AGREMENTS", action: "READ" },
+  });
   if ("error" in auth) return auth.error;
   const parsed = schema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {

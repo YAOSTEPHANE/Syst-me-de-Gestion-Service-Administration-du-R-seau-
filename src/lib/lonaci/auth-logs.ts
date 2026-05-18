@@ -2,6 +2,7 @@ import { ObjectId } from "mongodb";
 
 import type { AuthLogDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
+import { logger } from "@/lib/observability/logger";
 
 const AUTH_LOGS_COLLECTION = "auth_logs";
 
@@ -48,7 +49,12 @@ export async function logAuthAttempt(log: AuthLogDocument) {
     const db = await getDatabase();
     await db.collection<AuthLogDocument>(AUTH_LOGS_COLLECTION).insertOne(log);
   } catch (error) {
-    console.error("[auth-logs] insert failed", error);
+    logger.error("Auth log insert failed", {
+      event: "AUTH_LOG_INSERT_FAILED",
+      error: error instanceof Error ? error.message : "UNKNOWN",
+      email: log.email,
+      status: log.status,
+    });
   }
 }
 

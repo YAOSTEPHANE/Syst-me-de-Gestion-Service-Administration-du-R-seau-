@@ -2,23 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { z } from "zod";
 
+import { serverError, unauthorized } from "@/lib/api/error-responses";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { createSessionCookie } from "@/lib/auth/session";
 import { verifyPassword } from "@/lib/auth/password";
-import { findUserByIdentifier, updateLastLogin, sanitizeUser } from "@/lib/lonaci/users";
+import { findUserByIdentifier, sanitizeUser, updateLastLogin } from "@/lib/lonaci/users";
 import { logAuthAttempt } from "@/lib/lonaci/auth-logs";
+import { getClientIp } from "@/lib/security/client-ip";
 
 const bodySchema = z.object({
   identifier: z.string().min(1),
   password: z.string().min(8),
 });
-
-function getIpAddress(request: NextRequest): string | null {
-  const xForwardedFor = request.headers.get("x-forwarded-for");
-  if (xForwardedFor) {
-    return xForwardedFor.split(",")[0]?.trim() ?? null;
-  }
-  return null;
-}
 
 async function safeLogAuthAttempt(payload: Parameters<typeof logAuthAttempt>[0]) {
   try {
@@ -37,21 +32,30 @@ export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
 
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "login",
+    max: 30,
+    windowMs: 10 * 60 * 1000,
+    message: "Trop de tentatives. Réessayez plus tard.",
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const { identifier, password } = parsed.data;
+  const ip = getClientIp(request);
   let user: Awaited<ReturnType<typeof findUserByIdentifier>>;
   try {
     user = await findUserByIdentifier(identifier);
   } catch (error) {
     console.error("[auth/login] user lookup failed", error);
-    return NextResponse.json(
-      { message: "Base de donnees indisponible. Verifiez MongoDB puis reessayez." },
-      { status: 503 },
+    return serverError(
+      "Base de donnees indisponible. Verifiez MongoDB puis reessayez.",
+      "DATABASE_UNAVAILABLE",
     );
   }
-  const ipAddress = getIpAddress(request);
+  const ipAddress = ip === "unknown" ? null : ip;
   const userAgent = request.headers.get("user-agent");
 
   if (!user || !user.actif) {
@@ -64,10 +68,16 @@ export async function POST(request: NextRequest) {
       attemptedAt: new Date(),
       reason: "USER_NOT_FOUND_OR_DISABLED",
     });
-    return NextResponse.json({ message: "Identifiants invalides" }, { status: 401 });
+    return unauthorized("Identifiants invalides", "INVALID_CREDENTIALS");
   }
 
-  const passwordIsValid = await verifyPassword(password, user.passwordHash);
+  let passwordIsValid: boolean;
+  try {
+    passwordIsValid = await verifyPassword(password, user.passwordHash);
+  } catch (error) {
+    console.error("[auth/login] verifyPassword failed", error);
+    return serverError("Erreur serveur (mot de passe).", "PASSWORD_CHECK_ERROR");
+  }
   if (!passwordIsValid) {
     queueAuthLog({
       email: user.email,
@@ -78,21 +88,44 @@ export async function POST(request: NextRequest) {
       attemptedAt: new Date(),
       reason: "INVALID_PASSWORD",
     });
-    return NextResponse.json({ message: "Identifiants invalides" }, { status: 401 });
+    return unauthorized("Identifiants invalides", "INVALID_CREDENTIALS");
   }
 
   /* Une seule session « valide » en base ; une nouvelle connexion remplace l’ancienne
    * (cookie effacé, autre appareil, etc.). L’ancien JWT cessera de matcher currentSessionId. */
 
   const sessionId = randomUUID();
-  await createSessionCookie({
-    sub: user._id ?? "",
-    email: user.email,
-    role: user.role,
-    sessionId,
-  });
+  try {
+    await updateLastLogin(user._id ?? "", sessionId);
+  } catch (error) {
+    console.error("[auth/login] updateLastLogin failed", error);
+    return serverError(
+      "Base de donnees indisponible. Verifiez MongoDB puis reessayez.",
+      "DATABASE_UNAVAILABLE",
+    );
+  }
 
-  await updateLastLogin(user._id ?? "", sessionId);
+  try {
+    await createSessionCookie({
+      sub: user._id ?? "",
+      email: user.email,
+      role: user.role,
+      sessionId,
+    });
+  } catch (error) {
+    console.error("[auth/login] createSessionCookie failed", error);
+    const msg = error instanceof Error ? error.message : "";
+    const jwtMisconfigured =
+      msg.includes("JWT_SECRET") ||
+      msg.includes("Variable d'environnement manquante: JWT_SECRET");
+    return serverError(
+      jwtMisconfigured
+        ? "Configuration serveur : definissez JWT_SECRET sur Vercel (au moins 32 caracteres, valeur aleatoire)."
+        : "Erreur serveur (session). Consultez les logs de l hebergeur.",
+      jwtMisconfigured ? "JWT_MISCONFIGURED" : "SESSION_CREATE_ERROR",
+    );
+  }
+
   queueAuthLog({
     email: user.email,
     userId: user._id ?? null,

@@ -1,0 +1,309 @@
+"use client";
+
+import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import {
+  DOSSIER_CHECKLIST_STATUTS,
+  DOSSIER_CHECKLIST_STATUT_LABELS,
+  parseDocumentChecklistPayload,
+} from "@/lib/lonaci/produit-document-checklist";
+import { DECHARGE_PROVISOIRE_DISCLAIMER, DECHARGE_DEFINITIVE_MENTION } from "@/lib/lonaci/dossier-decharge-constants";
+import type { DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+
+type ChecklistDossierPatch = {
+  payload: Record<string, unknown>;
+  status?: string;
+  updatedAt?: string;
+};
+
+type Props = {
+  dossierId: string;
+  payload: Record<string, unknown>;
+  editable: boolean;
+  onUpdated: (patch: ChecklistDossierPatch) => void;
+};
+
+async function triggerPdfDownload(url: string, filename: string, setError: (msg: string) => void) {
+  try {
+    await downloadLonaciPdf(url, filename);
+  } catch (err) {
+    setError(friendlyErrorMessage(err instanceof Error ? err.message : "Téléchargement impossible."));
+  }
+}
+
+function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
+  switch (statut) {
+    case "FOURNI":
+      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+    case "MANQUANT":
+      return "bg-rose-100 text-rose-800 border-rose-200";
+    case "EN_ATTENTE":
+      return "bg-amber-100 text-amber-900 border-amber-200";
+  }
+}
+
+export default function DossierDocumentChecklistBlock({ dossierId, payload, editable, onUpdated }: Props) {
+  const checklist = useMemo(() => parseDocumentChecklistPayload(payload), [payload]);
+  const [localStatuts, setLocalStatuts] = useState<Record<string, DossierDocumentChecklistStatut>>({});
+  const [saving, setSaving] = useState(false);
+  const [generatingContrat, setGeneratingContrat] = useState(false);
+  const [contratMessage, setContratMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const hasContratGenere = Boolean(
+    payload?.contratGenere && typeof payload.contratGenere === "object",
+  );
+
+  useEffect(() => {
+    if (!checklist) {
+      setLocalStatuts({});
+      return;
+    }
+    const map: Record<string, DossierDocumentChecklistStatut> = {};
+    for (const e of checklist.entries) {
+      map[e.itemId] = e.statut;
+    }
+    setLocalStatuts(map);
+  }, [checklist]);
+
+  const complet = useMemo(() => {
+    if (!checklist) return true;
+    return checklist.entries.every((e) => !e.obligatoire || localStatuts[e.itemId] === "FOURNI");
+  }, [checklist, localStatuts]);
+
+  const saveStatuts = useCallback(
+    async (nextMap: Record<string, DossierDocumentChecklistStatut>) => {
+      if (!checklist?.entries.length) return;
+      setSaving(true);
+      setError(null);
+      try {
+        const res = await lonaciFetch(`/api/dossiers/${dossierId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            documentChecklist: checklist.entries.map((e) => ({
+              itemId: e.itemId,
+              statut: nextMap[e.itemId] ?? e.statut,
+            })),
+          }),
+        });
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+          dossier?: { payload: Record<string, unknown> };
+        } | null;
+        if (!res.ok || !body?.dossier) {
+          setError(friendlyErrorMessage(body?.message ?? "Enregistrement checklist impossible."));
+          return;
+        }
+        onUpdated({ payload: body.dossier.payload });
+      } catch {
+        setError("Erreur réseau ou serveur.");
+      } finally {
+        setSaving(false);
+      }
+    },
+    [checklist, dossierId, onUpdated],
+  );
+
+  function onStatutChange(itemId: string, statut: DossierDocumentChecklistStatut) {
+    const nextMap = { ...localStatuts, [itemId]: statut };
+    setLocalStatuts(nextMap);
+    if (editable) {
+      void saveStatuts(nextMap);
+    }
+  }
+
+  async function onGenererContrat() {
+    setGeneratingContrat(true);
+    setContratMessage(null);
+    setError(null);
+    try {
+      const res = await lonaciFetch(`/api/dossiers/${dossierId}/generer-contrat`, { method: "POST" });
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+        dossier?: { payload: Record<string, unknown>; status?: string; updatedAt?: string };
+        submitted?: boolean;
+      } | null;
+      if (!res.ok || !body?.dossier) {
+        setError(friendlyErrorMessage(body?.message ?? "Génération du contrat impossible."));
+        return;
+      }
+      onUpdated({
+        payload: body.dossier.payload,
+        status: body.dossier.status,
+        updatedAt: body.dossier.updatedAt,
+      });
+      setContratMessage(
+        body.submitted
+          ? "Contrat généré et dossier soumis au circuit de validation (4 niveaux)."
+          : "Contrat déjà généré — téléchargeable ci-dessous.",
+      );
+    } catch {
+      setError("Erreur réseau ou serveur.");
+    } finally {
+      setGeneratingContrat(false);
+    }
+  }
+
+  if (!checklist || !checklist.entries.length) {
+    return (
+      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-3">
+        <p className="text-xs text-slate-600">
+          Aucune checklist de documents configurée pour ce produit. Configurez-la dans Paramètres → Produits.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Checklist documents</p>
+          <p className="text-[11px] text-slate-500">Suivi obligatoire lors de la constitution du dossier.</p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
+              complet ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"
+            }`}
+          >
+            Dossier {complet ? "Complet" : "Incomplet"}
+          </span>
+          <button
+            type="button"
+            onClick={() =>
+              void triggerPdfDownload(
+                `/api/dossiers/${dossierId}/checklist/pdf`,
+                `checklist-${dossierId}.pdf`,
+                setError,
+              )
+            }
+            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+          >
+            PDF checklist
+          </button>
+          {!complet ? (
+            <button
+              type="button"
+              onClick={() =>
+                void triggerPdfDownload(
+                  `/api/dossiers/${dossierId}/decharge-provisoire/pdf`,
+                  `decharge-provisoire-${dossierId}.pdf`,
+                  setError,
+                )
+              }
+              className="rounded-lg border border-amber-400 bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-950 hover:bg-amber-100"
+              title={DECHARGE_PROVISOIRE_DISCLAIMER}
+            >
+              Décharge provisoire (PDF)
+            </button>
+          ) : (
+            <>
+              <button
+                type="button"
+                onClick={() =>
+                  void triggerPdfDownload(
+                    `/api/dossiers/${dossierId}/decharge-definitive/pdf`,
+                    `decharge-definitive-${dossierId}.pdf`,
+                    setError,
+                  )
+                }
+                className="rounded-lg border border-emerald-500 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 hover:bg-emerald-100"
+                title={`${DECHARGE_DEFINITIVE_MENTION} — caution payée requise`}
+              >
+                Décharge définitive (PDF)
+              </button>
+              {editable ? (
+                <button
+                  type="button"
+                  disabled={generatingContrat}
+                  onClick={() => void onGenererContrat()}
+                  className="rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
+                >
+                  {generatingContrat ? "Génération…" : "Générer le contrat"}
+                </button>
+              ) : null}
+              {hasContratGenere ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void triggerPdfDownload(
+                      `/api/contrats/${dossierId}/contrat/pdf`,
+                      `contrat-${dossierId}.pdf`,
+                      setError,
+                    )
+                  }
+                  className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-slate-900"
+                >
+                  Contrat (PDF)
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      </div>
+
+      {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
+      {saving ? <p className="mb-2 text-xs text-slate-500">Enregistrement…</p> : null}
+      {!complet ? (
+        <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950">
+          {DECHARGE_PROVISOIRE_DISCLAIMER}
+        </p>
+      ) : (
+        <p className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-900">
+          Checklist complète : générez la décharge définitive puis le contrat (caution payée requise). Le dossier suit
+          le circuit de validation à 4 niveaux ; à la finalisation, le concessionnaire devient actif.
+        </p>
+      )}
+      {contratMessage ? (
+        <p className="mb-2 rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1.5 text-[11px] text-cyan-900">
+          {contratMessage}
+        </p>
+      ) : null}
+
+      <ul className="space-y-2">
+        {checklist.entries.map((entry) => {
+          const statut = localStatuts[entry.itemId] ?? entry.statut;
+          return (
+            <li
+              key={entry.itemId}
+              className="flex flex-col gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div>
+                <p className="text-sm font-medium text-slate-900">{entry.libelle}</p>
+                {entry.obligatoire ? (
+                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Obligatoire</p>
+                ) : (
+                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Facultatif</p>
+                )}
+              </div>
+              {editable ? (
+                <div className="flex flex-wrap gap-1">
+                  {DOSSIER_CHECKLIST_STATUTS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      disabled={saving}
+                      onClick={() => onStatutChange(entry.itemId, s)}
+                      className={`rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+                        statut === s ? statutBadgeClass(s) : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                      }`}
+                    >
+                      {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <span className={`rounded-md border px-2 py-1 text-[11px] font-medium ${statutBadgeClass(statut)}`}>
+                  {DOSSIER_CHECKLIST_STATUT_LABELS[statut]}
+                </span>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}

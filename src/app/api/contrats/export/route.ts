@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth/guards";
+import { LONACI_ROLES } from "@/lib/lonaci/constants";
 import { prisma } from "@/lib/prisma";
 
 const querySchema = z.object({
@@ -22,7 +23,8 @@ function escapeCell(v: string) {
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...LONACI_ROLES],
+    rbac: { resource: "CONTRATS", action: "READ" },
   });
   if ("error" in auth) return auth.error;
 

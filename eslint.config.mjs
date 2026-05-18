@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Playwright (dossiers parfois absents après nettoyage ; évite ENOENT au scan)
+    "test-results/**",
+    "playwright-report/**",
   ]),
 ]);
 

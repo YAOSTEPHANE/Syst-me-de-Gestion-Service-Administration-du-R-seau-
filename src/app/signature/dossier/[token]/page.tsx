@@ -137,7 +137,7 @@ export default function DossierSignaturePage({ params }: { params: { token: stri
 
             {isExpired ? (
               <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">
-                Ce lien a expiré. Veuillez contacter votre gestionnaire LONACI pour demander un nouveau lien.
+                Ce lien a expiré. Veuillez contacter votre gestionnaire Infinitecore Systeme pour demander un nouveau lien.
               </p>
             ) : null}
 

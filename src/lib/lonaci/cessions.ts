@@ -5,7 +5,7 @@ import { appendAuditLog } from "@/lib/lonaci/audit";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import { hasActiveContractForProduct, markActiveContratAsCedeForProduct } from "@/lib/lonaci/contracts";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
-import type { UserDocument } from "@/lib/lonaci/types";
+import { type UserDocument, userDisplayName } from "@/lib/lonaci/types";
 import { sendSmtpEmail } from "@/lib/email/smtp";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -13,7 +13,12 @@ const COLLECTION = "cessions";
 const COUNTERS_COLLECTION = "counters";
 const REF_COUNTER_ID = "cession_ref";
 
-export type CessionStatus = "SAISIE_AGENT" | "CONTROLE_CHEF_SECTION" | "VALIDEE_CHEF_SERVICE" | "REJETEE";
+export type CessionStatus =
+  | "SAISIE_AGENT"
+  | "CONTROLE_CHEF_SECTION"
+  | "VALIDATION_N2"
+  | "VALIDEE_CHEF_SERVICE"
+  | "REJETEE";
 export type CessionKind = "CESSION" | "DELOCALISATION";
 
 interface CessionAttachment {
@@ -150,6 +155,7 @@ export interface CreateCessionInput {
 
 export async function createCession(input: CreateCessionInput): Promise<CessionListItem> {
   if (!input.actor._id) throw new Error("ACTOR_REQUIRED");
+  const actionBy = userDisplayName(input.actor);
   let cedant = null;
   let beneficiaire = null;
   let concessionnaire = null;
@@ -225,7 +231,7 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
   await notifyRoleTargets(
     "CHEF_SECTION",
     input.kind === "CESSION" ? "Nouvelle demande de cession" : "Nouvelle demande de délocalisation",
-    `${reference} en attente de contrôle (AGENT → CHEF_SECTION).`,
+    `Opération ${input.kind.toLowerCase()} | référence ${reference} | action contrôle N1 attendu | acteur ${actionBy}.`,
     { cessionId: r.insertedId.toHexString(), reference },
   );
 
@@ -299,17 +305,37 @@ export async function getCessionAttachment(input: { id: string; attachmentId: st
   return attachment;
 }
 
+/** Même lecture que getCessionAttachment, avec les identifiants nécessaires au contrôle d’accès agence / PDV. */
+export async function getCessionAttachmentWithScope(input: { id: string; attachmentId: string }) {
+  if (!ObjectId.isValid(input.id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  if (!row) return null;
+  const attachment = row.attachments.find((a) => a.id === input.attachmentId);
+  if (!attachment) return null;
+  return {
+    attachment,
+    concessionnaireId: row.concessionnaireId,
+    cedantId: row.cedantId,
+    beneficiaireId: row.beneficiaireId,
+  };
+}
+
 function ensureTransitionAllowed(role: string, from: CessionStatus, target: CessionStatus) {
   if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
-    if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
-  if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDEE_CHEF_SERVICE") {
-    if (!["CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+  if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDATION_N2") {
+    if (role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    return;
+  }
+  if (from === "VALIDATION_N2" && target === "VALIDEE_CHEF_SERVICE") {
+    if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (target === "REJETEE") {
-    if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   throw new Error("INVALID_TRANSITION");
@@ -322,6 +348,7 @@ export async function transitionCession(input: {
   actor: UserDocument;
 }) {
   if (!input.actor._id) throw new Error("ACTOR_REQUIRED");
+  const actionBy = userDisplayName(input.actor);
   if (!ObjectId.isValid(input.id)) throw new Error("CESSION_NOT_FOUND");
 
   const db = await getDatabase();
@@ -341,9 +368,17 @@ export async function transitionCession(input: {
     $set.controlledAt = now;
     $set.controlledByUserId = input.actor._id;
     await notifyRoleTargets(
+      "ASSIST_CDS",
+      "Cession / délocalisation : validation N2 attendue",
+      `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+      { cessionId: input.id, reference: row.reference },
+    );
+  }
+  if (input.target === "VALIDATION_N2") {
+    await notifyRoleTargets(
       "CHEF_SERVICE",
-      "Cession contrôlée, en attente de validation",
-      `${row.reference} est prête pour validation CHEF_SERVICE.`,
+      "Cession / délocalisation : validation finale attendue",
+      `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation finale (chef de service) attendue | acteur ${actionBy}.`,
       { cessionId: input.id, reference: row.reference },
     );
   }
@@ -381,10 +416,11 @@ export async function transitionCession(input: {
         .filter((v): v is string => Boolean(v && v.trim()))
         .map((v) => v.trim());
       if (emails.length) {
+        const recipients = Array.from(new Set(emails)).join(", ");
         await sendSmtpEmail(
           emails,
           `Cession validée ${row.reference}`,
-          `La cession ${row.reference} a été validée par CHEF_SERVICE. Les fiches concessionnaires ont été mises à jour.`,
+          `Opération cession | référence ${row.reference} | action cession validée et fiches mises à jour | acteur ${actionBy} | destinataires ${recipients}.`,
         );
       }
     } else if (row.concessionnaireId) {
@@ -405,7 +441,7 @@ export async function transitionCession(input: {
         await sendSmtpEmail(
           [email],
           `Délocalisation validée ${row.reference}`,
-          `La délocalisation ${row.reference} a été validée. Votre agence/adresse/GPS ont été mis à jour.`,
+          `Opération délocalisation | référence ${row.reference} | action délocalisation validée et fiche mise à jour | acteur ${actionBy}.`,
         );
       }
     }

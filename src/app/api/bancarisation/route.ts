@@ -2,10 +2,13 @@ import { randomUUID } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest, forbidden, notFound } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { type BancarisationStatut, BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
 import {
   bancarisationCountersByAgenceProduit,
+  countBancarisationRequestsByStatus,
   createBancarisationRequest,
   listBancarisationRequests,
   sanitizeBancarisationRequestPublic,
@@ -24,7 +27,7 @@ import {
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  status: z.enum(["SOUMIS", "VALIDE", "REJETE"]).optional(),
+  status: z.enum(["SOUMIS", "VALIDE_N1", "VALIDE_N2", "VALIDE", "REJETE"]).optional(),
   statut: z.enum(BANCARISATION_STATUTS).optional(),
   agenceId: z.string().optional(),
 });
@@ -37,11 +40,11 @@ export async function GET(request: NextRequest) {
 
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
-  const [requests, counters, agences] = await Promise.all([
+  const [requests, counters, agences, allStatusCounts] = await Promise.all([
     listBancarisationRequests({
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,
@@ -52,6 +55,7 @@ export async function GET(request: NextRequest) {
     }),
     bancarisationCountersByAgenceProduit(scopeAgenceId),
     listAgences(),
+    countBancarisationRequestsByStatus(scopeAgenceId),
   ]);
   const agenceLabelById = Object.fromEntries(agences.map((a) => [a._id ?? "", `${a.code} - ${a.libelle}`]));
 
@@ -62,6 +66,7 @@ export async function GET(request: NextRequest) {
       ...c,
       agenceLabel: c.agenceId ? (agenceLabelById[c.agenceId] ?? c.agenceId) : "Sans agence",
     })),
+    allStatusCounts,
   });
 }
 
@@ -83,35 +88,38 @@ export async function POST(request: NextRequest) {
   const file = form.get("file");
 
   if (!concessionnaireId) {
-    return NextResponse.json({ message: "Concessionnaire requis." }, { status: 400 });
+    return badRequest("Concessionnaire requis.", "CONCESSIONNAIRE_REQUIRED");
   }
   if (!statutValues.has(nouveauStatut)) {
-    return NextResponse.json({ message: "Nouveau statut invalide." }, { status: 400 });
+    return badRequest("Nouveau statut invalide.", "INVALID_NEW_STATUS");
   }
   if (nouveauStatut === "BANCARISE" && !compteBancaireRaw) {
-    return NextResponse.json({ message: "Le numero de compte est obligatoire pour BANCARISE." }, { status: 400 });
+    return badRequest(
+      "Le numero de compte est obligatoire pour BANCARISE.",
+      "BANK_ACCOUNT_REQUIRED",
+    );
   }
   const dateEffet = new Date(dateEffetRaw);
   if (Number.isNaN(dateEffet.getTime())) {
-    return NextResponse.json({ message: "Date d'effet invalide." }, { status: 400 });
+    return badRequest("Date d'effet invalide.", "INVALID_DATE_EFFET");
   }
   if (!(file instanceof File)) {
-    return NextResponse.json({ message: "Document justificatif requis (champ file)." }, { status: 400 });
+    return badRequest("Document justificatif requis (champ file).", "MISSING_FILE");
   }
   if (file.size > MAX_PIECE_BYTES) {
-    return NextResponse.json({ message: `Fichier trop volumineux (max ${MAX_PIECE_BYTES} octets)` }, { status: 400 });
+    return badRequest(`Fichier trop volumineux (max ${MAX_PIECE_BYTES} octets)`, "FILE_TOO_LARGE");
   }
   const mimeType = file.type || "application/octet-stream";
   if (!ALLOWED_PIECE_MIME[mimeType]) {
-    return NextResponse.json({ message: "Type MIME non autorise" }, { status: 400 });
+    return badRequest("Type MIME non autorise", "INVALID_MIME_TYPE");
   }
 
   const concessionnaire = await findConcessionnaireById(concessionnaireId);
   if (!concessionnaire || concessionnaire.deletedAt) {
-    return NextResponse.json({ message: "Concessionnaire introuvable." }, { status: 404 });
+    return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
   }
   if (!canReadConcessionnaire(auth.user, concessionnaire)) {
-    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
+    return forbidden("Acces refuse.", "ACCESS_DENIED");
   }
 
   const pieceId = randomUUID();

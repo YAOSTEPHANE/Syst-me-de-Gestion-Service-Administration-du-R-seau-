@@ -1,8 +1,12 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
+import { canRole } from "@/lib/auth/rbac";
+import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -127,12 +131,12 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    if (!firstSheet) throw new Error("Fichier Excel vide.");
-    const rows = XLSX.utils.sheet_to_json(firstSheet, { defval: null });
+    assertExcelImportAllowed("PDV_INTEGRATIONS");
+    const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+      "@/lib/spreadsheet/safe-xlsx-read",
+    );
+    const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
     const normalizedRows = rows.map((row) => {
       const rec = row as Record<string, unknown>;
       const gpsLat = rec["gps.lat"];
@@ -179,6 +183,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
 }
 
 export default function PdvIntegrationsPanel() {
+  const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
@@ -213,9 +218,26 @@ export default function PdvIntegrationsPanel() {
   const [finalizingId, setFinalizingId] = useState<string | null>(null);
   const [finalizeModal, setFinalizeModal] = useState<PdvItem | null>(null);
   const [finalizeAck, setFinalizeAck] = useState(false);
+  const [meRole, setMeRole] = useState<string | null>(null);
 
-  const inputClass =
-    "w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
+  useEffect(() => {
+    const agenceId = searchParams.get("agenceId")?.trim() ?? "";
+    const produitCode = searchParams.get("produitCode")?.trim() ?? "";
+    const statusRaw = searchParams.get("status")?.trim() ?? "";
+    const status = (
+      statusRaw === "DEMANDE_RECUE" ||
+      statusRaw === "EN_TRAITEMENT" ||
+      statusRaw === "INTEGRE_GPR" ||
+      statusRaw === "FINALISE"
+    )
+      ? statusRaw
+      : "";
+    if (agenceId) setFilterAgenceId(agenceId);
+    if (produitCode) setFilterProduit(produitCode);
+    if (status) setFilterStatus(status);
+    // Intentionnellement au montage uniquement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function load(nextPage = page) {
     setLoading(true);
@@ -247,6 +269,23 @@ export default function PdvIntegrationsPanel() {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filterAgenceId, filterProduit, filterStatus, filterDateFrom, filterDateTo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+        if (!res.ok) throw new Error("Profil indisponible");
+        const data = (await res.json()) as { user?: { role?: string } };
+        if (!cancelled) setMeRole(data.user?.role ?? null);
+      } catch {
+        if (!cancelled) setMeRole(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const onDataImported = () => {
@@ -319,7 +358,7 @@ export default function PdvIntegrationsPanel() {
       setObservations("");
       setCreateOpen(false);
       await load(1);
-      setToast({ type: "success", message: "Intégration PDV créée." });
+      setToast({ type: "success", message: "Demande PDV créée." });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
@@ -401,7 +440,7 @@ export default function PdvIntegrationsPanel() {
       }
       await load(page);
       closeFinalizeModal();
-      setToast({ type: "success", message: "Intégration PDV finalisée." });
+      setToast({ type: "success", message: "Demande PDV finalisée." });
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
@@ -442,6 +481,31 @@ export default function PdvIntegrationsPanel() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const meRbacRole = useMemo<LonaciRole | null>(
+    () => (meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null),
+    [meRole],
+  );
+  const canCreatePdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    const roleAllowed = ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(meRbacRole);
+    return roleAllowed && canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "CREATE" }).allowed;
+  }, [meRbacRole]);
+  const canTransitionPdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    const roleAllowed = ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(meRbacRole);
+    return roleAllowed && canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "UPDATE" }).allowed;
+  }, [meRbacRole]);
+  const canFinalizePdv = useMemo(() => {
+    if (!meRbacRole) return false;
+    return (
+      meRbacRole === "CHEF_SERVICE" &&
+      canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "FINALIZE" }).allowed
+    );
+  }, [meRbacRole]);
+  const canExportPdv = useMemo(
+    () => !!meRbacRole,
+    [meRbacRole],
+  );
   const analytics = useMemo(() => {
     const status = { demandeRecue: 0, enTraitement: 0, integreGpr: 0, finalise: 0 };
     const byAgence = new Map<string, number>();
@@ -518,9 +582,9 @@ export default function PdvIntegrationsPanel() {
             <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-100">
               Référentiel
             </p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Intégrations PDV</h2>
+            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Géolocalisation PDV</h2>
             <p className="mt-1 text-sm text-violet-100/90">
-              Pilotage des demandes d’intégration et progression du workflow opérationnel.
+              Géolocalisation des points de vente et suivi du workflow jusqu’à la finalisation.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -531,25 +595,31 @@ export default function PdvIntegrationsPanel() {
           >
             Actualiser
           </button>
-          <button
-            type="button"
-            onClick={openCreate}
-            className="rounded-xl border border-violet-300 bg-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-violet-200 hover:bg-violet-400"
-          >
-            Créer Intégration PDV
-          </button>
-          <a
-            href={`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-            className="rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
-          >
-            Export Excel
-          </a>
-          <a
-            href={`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-            className="rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
-          >
-            Export PDF
-          </a>
+          {canCreatePdv ? (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="rounded-xl border border-violet-300 bg-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-violet-200 hover:bg-violet-400"
+            >
+              Créer demande PDV
+            </button>
+          ) : null}
+          {canExportPdv ? (
+            <a
+              href={`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
+              className="rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
+            >
+              Export Excel
+            </a>
+          ) : null}
+          {canExportPdv ? (
+            <a
+              href={`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
+              className="rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
+            >
+              Export PDF
+            </a>
+          ) : null}
         </div>
         </div>
       </header>
@@ -731,13 +801,13 @@ export default function PdvIntegrationsPanel() {
               <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-200/40 blur-2xl" />
               <div>
                 <p className="mb-1 inline-flex rounded-full border border-violet-300 bg-violet-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-900">
-                  Intégration PDV
+                  Géolocalisation PDV
                 </p>
                 <h3 id="create-pdv-title" className="text-lg font-semibold text-slate-900">
-                  Créer Intégration PDV
+                  Créer demande PDV
                 </h3>
                 <p className="mt-1 text-xs leading-4 text-slate-600">
-                  Renseignez les informations minimales pour initier l’intégration du point de vente.
+                  Renseignez les informations minimales pour initier la géolocalisation du point de vente.
                 </p>
               </div>
               <button
@@ -875,7 +945,8 @@ export default function PdvIntegrationsPanel() {
                   <input
                     ref={importFileInputRef}
                     type="file"
-                    accept=".json,.csv,.xlsx,.xls,.pdf"
+                    accept={getImportAcceptAttribute("PDV_INTEGRATIONS")}
+                    aria-label="Importer des dossiers géolocalisation PDV"
                     className="sr-only"
                     onChange={(e) => void onImportFileChange(e)}
                   />
@@ -908,7 +979,7 @@ export default function PdvIntegrationsPanel() {
                       disabled={creating}
                       className="rounded-lg border border-violet-700 bg-violet-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-60"
                     >
-                      {creating ? "Création..." : "Créer intégration PDV"}
+                      {creating ? "Création..." : "Créer la demande PDV"}
                     </button>
                   </div>
                 </div>
@@ -992,7 +1063,19 @@ export default function PdvIntegrationsPanel() {
                     <td className="px-2 py-2 font-mono text-xs">{row.concessionnaireId ?? "—"}</td>
                     <td className="px-2 py-2 text-xs">{new Date(row.createdAt).toLocaleString()}</td>
                     <td className="px-2 py-2">
-                      {row.status === "DEMANDE_RECUE" ? (
+                      {(() => {
+                        const actionAlreadyValidated =
+                          row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv);
+                        if (actionAlreadyValidated) {
+                          return (
+                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
+                              Validée
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                      {row.status === "DEMANDE_RECUE" && canTransitionPdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1001,7 +1084,7 @@ export default function PdvIntegrationsPanel() {
                         >
                           {finalizingId === row.id ? "…" : "Passer en traitement"}
                         </button>
-                      ) : row.status === "EN_TRAITEMENT" ? (
+                      ) : row.status === "EN_TRAITEMENT" && canTransitionPdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1010,7 +1093,7 @@ export default function PdvIntegrationsPanel() {
                         >
                           {finalizingId === row.id ? "…" : "Marquer intégré GPR"}
                         </button>
-                      ) : row.status === "INTEGRE_GPR" ? (
+                      ) : row.status === "INTEGRE_GPR" && canFinalizePdv ? (
                         <button
                           type="button"
                           disabled={finalizingId === row.id}
@@ -1020,7 +1103,11 @@ export default function PdvIntegrationsPanel() {
                           {finalizingId === row.id ? "…" : "Finaliser"}
                         </button>
                       ) : (
-                        <span className="text-xs text-slate-500">—</span>
+                        <span className="text-xs text-slate-500">
+                          {row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv)
+                            ? ""
+                            : "—"}
+                        </span>
                       )}
                     </td>
                   </tr>
@@ -1028,7 +1115,7 @@ export default function PdvIntegrationsPanel() {
                 {!items.length ? (
                   <tr>
                     <td className="px-2 py-4 text-slate-500" colSpan={9}>
-                      Aucune intégration PDV.
+                      Aucun dossier géolocalisation PDV.
                     </td>
                   </tr>
                 ) : null}
@@ -1058,10 +1145,10 @@ export default function PdvIntegrationsPanel() {
               <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-200/40 blur-2xl" />
               <div>
                 <h3 id="finalize-pdv-title" className="text-lg font-semibold text-slate-900">
-                  Validation finale intégration PDV
+                  Validation finale — géolocalisation PDV
                 </h3>
                 <p className="mt-1 text-xs text-slate-600">
-                  Cette action finalise l’intégration et peut créer/lier automatiquement un concessionnaire.
+                  Cette action finalise le dossier et peut créer/lier automatiquement un concessionnaire.
                 </p>
               </div>
               <button

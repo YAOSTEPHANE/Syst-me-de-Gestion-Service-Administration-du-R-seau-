@@ -1,28 +1,38 @@
 "use client";
 
+import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import ConcessionnaireSearchPicker, {
+  pickAgenceIdFromConcessionnaire,
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
+import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type OperationType = "NOUVEAU" | "ACTUALISATION";
 
-interface ConcessionnaireOption {
-  id: string;
-  codePdv: string;
-  nomComplet: string;
-  raisonSociale: string;
-  agenceId: string | null;
-  produitsAutorises: string[];
-}
+type ConcessionnaireOption = ConcessionnairePickerRow;
 
 interface AgenceRef {
   id: string;
   code: string;
   libelle: string;
   actif: boolean;
+  /** Présent si l’API référentiel expose la zone (Abidjan / intérieur). */
+  zoneGeographique?: "ABIDJAN" | "INTERIEUR";
+}
+
+function agenceOptionLabel(a: AgenceRef): string {
+  const base = `${a.code} — ${a.libelle}`;
+  if (a.zoneGeographique === "ABIDJAN") return `${base} · Abidjan`;
+  if (a.zoneGeographique === "INTERIEUR") return `${base} · Intérieur`;
+  return base;
 }
 
 interface ProduitRef {
@@ -143,12 +153,12 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    if (!firstSheet) throw new Error("Fichier Excel vide.");
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    assertExcelImportAllowed("CONTRATS");
+    const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+      "@/lib/spreadsheet/safe-xlsx-read",
+    );
+    const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
     const json = JSON.stringify(rows.map((r) => sanitize(r)));
     return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
   }
@@ -272,16 +282,28 @@ function workflowPrimaryAction(etape: string): {
   }
 }
 
+/** Au moins une action de la modale « Décision dossier » est autorisée pour ce rôle à cette étape. */
+function userCanOpenDossierDecisionModal(role: string | null, etape: string): boolean {
+  const primary = workflowPrimaryAction(etape);
+  if (primary && userMayPerformDossierTransition(role, primary.action)) return true;
+  const intermediate = etape === "SOUMIS" || etape === "VALIDE_N1" || etape === "VALIDE_N2";
+  if (intermediate) {
+    if (userMayPerformDossierTransition(role, "REJECT")) return true;
+    if (userMayPerformDossierTransition(role, "RETURN_PREVIOUS")) return true;
+  }
+  return false;
+}
+
 const inputClass =
   "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-
-function labelPdv(c: ConcessionnaireOption) {
-  return `${c.codePdv} — ${c.nomComplet || c.raisonSociale}`;
-}
 
 export default function ContratsPanel() {
   const searchParams = useSearchParams();
   const prefillConcessionnaireId = searchParams.get("concessionnaireId") ?? "";
+  const urlProduitCode = searchParams.get("produitCode")?.trim().toUpperCase() ?? "";
+  const urlAgenceId = searchParams.get("agenceId")?.trim() ?? "";
+  const urlStatus = searchParams.get("status")?.trim() ?? "";
+  const urlDossierStatus = searchParams.get("dossierStatus")?.trim() ?? "";
 
   const [agences, setAgences] = useState<AgenceRef[]>([]);
   const [refLoading, setRefLoading] = useState(true);
@@ -296,10 +318,6 @@ export default function ContratsPanel() {
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  /** Recherche référentiel PDV */
-  const [pdvQuery, setPdvQuery] = useState("");
-  const [searchResults, setSearchResults] = useState<ConcessionnaireOption[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
   const [selectedPdv, setSelectedPdv] = useState<ConcessionnaireOption | null>(null);
 
   const [formAgenceId, setFormAgenceId] = useState("");
@@ -311,6 +329,8 @@ export default function ContratsPanel() {
 
   const [parentsActifs, setParentsActifs] = useState<ContratActif[]>([]);
   const [parentsLoading, setParentsLoading] = useState(false);
+  /** Permet de relancer le chargement des contrats actifs sans changer le produit (le select ne refire pas si la valeur est identique). */
+  const [parentsFetchTick, setParentsFetchTick] = useState(0);
 
   const [listPage, setListPage] = useState(1);
   const [listPageSize] = useState(100);
@@ -335,6 +355,34 @@ export default function ContratsPanel() {
 
   const [dossierActionBusyId, setDossierActionBusyId] = useState<string | null>(null);
   const [signatureLinkBusyId, setSignatureLinkBusyId] = useState<string | null>(null);
+  const [editContratOpen, setEditContratOpen] = useState(false);
+  const [editContratId, setEditContratId] = useState<string | null>(null);
+  const [editDateEffet, setEditDateEffet] = useState("");
+  const [editStatus, setEditStatus] = useState<"ACTIF" | "RESILIE" | "CEDE">("ACTIF");
+  const [editOperationType, setEditOperationType] = useState<"NOUVEAU" | "ACTUALISATION">("NOUVEAU");
+  const [editSaving, setEditSaving] = useState(false);
+  const [viewContratOpen, setViewContratOpen] = useState(false);
+  const [viewContrat, setViewContrat] = useState<ContratListeItem | null>(null);
+
+  useEffect(() => {
+    if (urlProduitCode) setListProduit(urlProduitCode);
+    if (urlAgenceId) setListAgenceId(urlAgenceId);
+    if (urlStatus === "ACTIF" || urlStatus === "RESILIE") {
+      setListStatus(urlStatus);
+    }
+    if (
+      urlDossierStatus === "BROUILLON" ||
+      urlDossierStatus === "SOUMIS" ||
+      urlDossierStatus === "VALIDE_N1" ||
+      urlDossierStatus === "VALIDE_N2" ||
+      urlDossierStatus === "FINALISE" ||
+      urlDossierStatus === "REJETE"
+    ) {
+      setListWorkflowStatus(urlDossierStatus);
+    }
+    // Intentionnellement au montage uniquement.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   type ContratsChartsRow = { produitCode: string; weekly: number; monthly: number };
   type PendingByLevelDto = { n1: number; n2: number; final: number };
@@ -369,6 +417,34 @@ export default function ContratsPanel() {
     setListPage(1);
   }, [listRefDebounced]);
 
+  const buildContratsListFiltersParams = useCallback(() => {
+    const params = new URLSearchParams();
+    if (listStatus) params.set("status", listStatus);
+    if (listProduit.trim()) params.set("produitCode", listProduit.trim().toUpperCase());
+    if (listRefDebounced) params.set("q", listRefDebounced);
+    if (listAgenceId.trim()) params.set("agenceId", listAgenceId.trim());
+    if (listMonthCurrent) params.set("monthCurrent", "true");
+    else {
+      if (listDateFrom.trim()) {
+        params.set("dateFrom", new Date(`${listDateFrom.trim()}T00:00:00`).toISOString());
+      }
+      if (listDateTo.trim()) {
+        params.set("dateTo", new Date(`${listDateTo.trim()}T23:59:59.999`).toISOString());
+      }
+    }
+    if (listWorkflowStatus) params.set("dossierStatus", listWorkflowStatus);
+    return params;
+  }, [
+    listStatus,
+    listProduit,
+    listRefDebounced,
+    listAgenceId,
+    listMonthCurrent,
+    listDateFrom,
+    listDateTo,
+    listWorkflowStatus,
+  ]);
+
   useEffect(() => {
     void (async () => {
       try {
@@ -386,24 +462,9 @@ export default function ContratsPanel() {
     setListLoading(true);
     setListError(null);
     try {
-      const params = new URLSearchParams({
-        page: String(listPage),
-        pageSize: String(listPageSize),
-      });
-      if (listStatus) params.set("status", listStatus);
-      if (listProduit.trim()) params.set("produitCode", listProduit.trim().toUpperCase());
-      if (listRefDebounced) params.set("q", listRefDebounced);
-      if (listAgenceId.trim()) params.set("agenceId", listAgenceId.trim());
-      if (listMonthCurrent) params.set("monthCurrent", "true");
-      else {
-        if (listDateFrom.trim()) {
-          params.set("dateFrom", new Date(`${listDateFrom.trim()}T00:00:00`).toISOString());
-        }
-        if (listDateTo.trim()) {
-          params.set("dateTo", new Date(`${listDateTo.trim()}T23:59:59.999`).toISOString());
-        }
-      }
-      if (listWorkflowStatus) params.set("dossierStatus", listWorkflowStatus);
+      const params = buildContratsListFiltersParams();
+      params.set("page", String(listPage));
+      params.set("pageSize", String(listPageSize));
       const res = await fetch(`/api/contrats?${params}`, { credentials: "include", cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -437,6 +498,7 @@ export default function ContratsPanel() {
     listDateTo,
     listWorkflowStatus,
     listRefDebounced,
+    buildContratsListFiltersParams,
   ]);
 
   useEffect(() => {
@@ -552,11 +614,9 @@ export default function ContratsPanel() {
     setOperationType("NOUVEAU");
     setParentContratId("");
     setProduitCode("");
-    setSearchResults([]);
     if (!prefillConcessionnaireId) {
       setSelectedPdv(null);
       setFormAgenceId("");
-      setPdvQuery("");
     }
   }, [createOpen, prefillConcessionnaireId]);
 
@@ -570,52 +630,17 @@ export default function ContratsPanel() {
         });
         if (!res.ok) return;
         const data = (await res.json()) as { concessionnaire: ConcessionnaireOption };
-        const c = data.concessionnaire;
+        const c = data.concessionnaire as ConcessionnaireOption;
         setSelectedPdv(c);
-        setFormAgenceId(c.agenceId ?? "");
-        setPdvQuery(labelPdv(c));
+        const agIds = agencesTriees.map((a) => a.id);
+        setFormAgenceId(
+          pickAgenceIdFromConcessionnaire(c, agIds) || (typeof c.agenceId === "string" ? c.agenceId.trim() : "") || "",
+        );
       } catch {
         /* ignore */
       }
     })();
-  }, [createOpen, prefillConcessionnaireId]);
-
-  useEffect(() => {
-    if (selectedPdv && labelPdv(selectedPdv) === pdvQuery.trim()) {
-      setSearchResults([]);
-      return;
-    }
-    const q = pdvQuery.trim();
-    if (q.length < 2) {
-      setSearchResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        setSearchLoading(true);
-        try {
-          const params = new URLSearchParams({ page: "1", pageSize: "40", q });
-          const res = await fetch(`/api/concessionnaires?${params}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (cancelled || !res.ok) {
-            if (!cancelled) setSearchResults([]);
-            return;
-          }
-          const data = (await res.json()) as { items: ConcessionnaireOption[] };
-          if (!cancelled) setSearchResults(data.items);
-        } finally {
-          if (!cancelled) setSearchLoading(false);
-        }
-      })();
-    }, 320);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [pdvQuery, selectedPdv]);
+  }, [createOpen, prefillConcessionnaireId, agencesTriees]);
 
   useEffect(() => {
     if (operationType !== "ACTUALISATION" || !concessionnaireId || !produitCode.trim()) {
@@ -624,6 +649,7 @@ export default function ContratsPanel() {
     }
     void (async () => {
       setParentsLoading(true);
+      setParentsActifs([]);
       try {
         const params = new URLSearchParams({
           page: "1",
@@ -642,15 +668,19 @@ export default function ContratsPanel() {
         setParentsLoading(false);
       }
     })();
-  }, [operationType, concessionnaireId, produitCode]);
+  }, [operationType, concessionnaireId, produitCode, parentsFetchTick]);
 
   useEffect(() => {
-    if (operationType === "NOUVEAU") setParentContratId("");
-  }, [operationType]);
-
-  useEffect(() => {
-    if (operationType !== "ACTUALISATION" || parentsActifs.length !== 1) return;
-    setParentContratId(parentsActifs[0].id);
+    if (operationType === "NOUVEAU") {
+      setParentContratId("");
+      return;
+    }
+    setParentContratId((prev) => {
+      if (parentsActifs.length === 0) return "";
+      if (prev && parentsActifs.some((c) => c.id === prev)) return prev;
+      if (parentsActifs.length === 1) return parentsActifs[0].id;
+      return "";
+    });
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
@@ -658,28 +688,6 @@ export default function ContratsPanel() {
     const allowed = selectedPdv.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
   }, [selectedPdv, produitCode]);
-
-  function onPdvQueryChange(v: string) {
-    setPdvQuery(v);
-    if (selectedPdv && v.trim() !== labelPdv(selectedPdv)) {
-      setSelectedPdv(null);
-      setFormAgenceId("");
-    }
-  }
-
-  function pickPdv(c: ConcessionnaireOption) {
-    setSelectedPdv(c);
-    setFormAgenceId(c.agenceId ?? "");
-    setPdvQuery(labelPdv(c));
-    setSearchResults([]);
-  }
-
-  function clearPdv() {
-    setSelectedPdv(null);
-    setFormAgenceId("");
-    setPdvQuery("");
-    setSearchResults([]);
-  }
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -752,7 +760,7 @@ export default function ContratsPanel() {
       setCreateFormError(null);
       setCreateOpen(false);
       setToast({ type: "success", message: "Contrat créé avec succès." });
-      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
@@ -780,7 +788,6 @@ export default function ContratsPanel() {
         | null;
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
 
-      setListReloadTick((n) => n + 1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
@@ -828,7 +835,7 @@ export default function ContratsPanel() {
       }
 
       setToast({ type: "success", message: payload.successMessage });
-      setListReloadTick((n) => n + 1);
+      window.dispatchEvent(new Event("lonaci:data-imported"));
       closeDecision();
       return true;
     } catch (err) {
@@ -937,8 +944,87 @@ export default function ContratsPanel() {
     if (!ok) return;
   }
 
-  const showSearchPanel = pdvQuery.trim().length >= 2 && (!selectedPdv || labelPdv(selectedPdv) !== pdvQuery.trim());
+  function openEditContrat(contrat: ContratListeItem) {
+    const isoDay = (() => {
+      const d = new Date(contrat.dateEffet);
+      if (Number.isNaN(d.getTime())) return "";
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    })();
+    setEditContratId(contrat.id);
+    setEditDateEffet(isoDay);
+    setEditStatus((contrat.status as "ACTIF" | "RESILIE" | "CEDE") ?? "ACTIF");
+    setEditOperationType((contrat.operationType as "NOUVEAU" | "ACTUALISATION") ?? "NOUVEAU");
+    setEditContratOpen(true);
+  }
+
+  function closeEditContrat() {
+    if (editSaving) return;
+    setEditContratOpen(false);
+    setEditContratId(null);
+    setEditDateEffet("");
+    setEditStatus("ACTIF");
+    setEditOperationType("NOUVEAU");
+  }
+
+  function openViewContrat(contrat: ContratListeItem) {
+    setViewContrat(contrat);
+    setViewContratOpen(true);
+  }
+
+  function closeViewContrat() {
+    setViewContratOpen(false);
+    setViewContrat(null);
+  }
+
+  async function saveEditContrat() {
+    if (!editContratId) return;
+    const raw = editDateEffet.trim();
+    if (!raw) {
+      setToast({ type: "error", message: "La date d'effet est obligatoire." });
+      return;
+    }
+    const date = new Date(`${raw}T12:00:00`);
+    if (Number.isNaN(date.getTime())) {
+      setToast({ type: "error", message: "Date d'effet invalide." });
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/contrats/${encodeURIComponent(editContratId)}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          dateEffet: date.toISOString(),
+          status: editStatus,
+          operationType: editOperationType,
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Modification contrat impossible.");
+      }
+      setToast({ type: "success", message: "Contrat modifié avec succès." });
+      window.dispatchEvent(new Event("lonaci:data-imported"));
+      closeEditContrat();
+    } catch (err) {
+      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
+  const decisionIntermediateStep =
+    decisionEtape === "SOUMIS" || decisionEtape === "VALIDE_N1" || decisionEtape === "VALIDE_N2";
+  const hideN1N2ForAdmin =
+    meRole === "CHEF_SERVICE" &&
+    (decisionPrimary?.action === "VALIDATE_N1" || decisionPrimary?.action === "VALIDATE_N2");
+  const mayApprouverDossier =
+    decisionPrimary !== null && !hideN1N2ForAdmin && userMayPerformDossierTransition(meRole, decisionPrimary.action);
+  const mayRejectDossier = userMayPerformDossierTransition(meRole, "REJECT");
+  const mayReturnDossier = userMayPerformDossierTransition(meRole, "RETURN_PREVIOUS");
 
   const contractsKpis = useMemo(() => {
     if (!chartsData) {
@@ -978,19 +1064,6 @@ export default function ContratsPanel() {
   const resileCount = chartsData?.statusCounts.resile ?? 0;
   const activeRatio = portfolioTotal > 0 ? Math.round((activeCount / portfolioTotal) * 100) : 0;
   const resileRatio = portfolioTotal > 0 ? Math.round((resileCount / portfolioTotal) * 100) : 0;
-  const topProduits = useMemo(() => {
-    if (!chartsData) return [];
-    return [...(chartsData.totalsByProduct ?? [])]
-      .sort((a, b) => (b.monthly ?? 0) - (a.monthly ?? 0))
-      .slice(0, 5)
-      .map((row) => ({
-        produitCode: row.produitCode,
-        produitLabel: produitLabelByCode.get(row.produitCode) ?? row.produitCode,
-        weekly: row.weekly ?? 0,
-        monthly: row.monthly ?? 0,
-      }));
-  }, [chartsData, produitLabelByCode]);
-
   return (
     <div className="min-w-0 space-y-5">
       <section className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-r from-slate-900 via-slate-800 to-cyan-900 p-5 shadow-sm">
@@ -1007,12 +1080,13 @@ export default function ContratsPanel() {
             </p>
           </div>
           <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <a
-              href="/api/contrats/export?format=excel"
+            <button
+              type="button"
+              onClick={() => window.location.assign("/api/contrats/export?format=excel")}
               className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
             >
               Excel
-            </a>
+            </button>
             <button
               type="button"
               onClick={() => setCreateOpen(true)}
@@ -1029,7 +1103,7 @@ export default function ContratsPanel() {
       {toast ? (
         toast.type === "success" ? (
           <div
-            className="fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 shadow-lg"
+            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 shadow-lg"
             role="status"
           >
             <div className="flex items-start justify-between gap-3">
@@ -1059,7 +1133,7 @@ export default function ContratsPanel() {
           </div>
         ) : (
           <div
-            className="fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 shadow-lg"
+            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 shadow-lg"
             role="alert"
           >
             <div className="flex items-start justify-between gap-3">
@@ -1192,42 +1266,7 @@ export default function ContratsPanel() {
         </div>
 
         <div className="border-t border-slate-100 p-4 sm:p-5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-700">Top produits (30 jours)</h4>
-          {chartsLoading ? (
-            <p className="mt-3 text-sm text-slate-500">Chargement des produits…</p>
-          ) : topProduits.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">Pas de données sur la période.</p>
-          ) : (
-            <div className="mt-3 overflow-hidden rounded-xl border border-slate-200">
-              <table className="w-full border-collapse text-left text-xs">
-                <thead className="bg-slate-50 text-slate-600">
-                  <tr>
-                    <th className="px-3 py-2 font-semibold">Produit</th>
-                    <th className="px-3 py-2 font-semibold">7 jours</th>
-                    <th className="px-3 py-2 font-semibold">30 jours</th>
-                    <th className="px-3 py-2 font-semibold">Intensité</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {topProduits.map((row) => {
-                    const intensity = row.monthly > 0 ? Math.min(100, Math.round((row.weekly / row.monthly) * 100)) : 0;
-                    return (
-                      <tr key={row.produitCode} className="border-t border-slate-100">
-                        <td className="px-3 py-2 text-slate-800">{row.produitLabel}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-900">{row.weekly}</td>
-                        <td className="px-3 py-2 font-semibold text-slate-900">{row.monthly}</td>
-                        <td className="px-3 py-2">
-                          <div className="h-1.5 w-full rounded-full bg-slate-100">
-                            <div className="h-1.5 rounded-full bg-cyan-500" style={{ width: `${intensity}%` }} />
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <ContratEtatMensuelProduitAgenceMatrix domIdPrefix="contrats-etat-matrix" months={12} />
         </div>
       </section>
 
@@ -1367,7 +1406,7 @@ export default function ContratsPanel() {
               <option value="">Toutes</option>
               {agencesTriees.map((a) => (
                 <option key={a.id} value={a.id}>
-                  {a.code} — {a.libelle}
+                  {agenceOptionLabel(a)}
                 </option>
               ))}
             </select>
@@ -1444,7 +1483,7 @@ export default function ContratsPanel() {
           </label>
           <button
             type="button"
-            onClick={() => setListReloadTick((n) => n + 1)}
+            onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
             className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700"
           >
             Actualiser
@@ -1490,7 +1529,8 @@ export default function ContratsPanel() {
                     const etape = c.dossierEtape ?? "FINALISE";
                     const etatSuivi = contratSuiviEtat(etape, c.dateDepot ?? c.createdAt);
                     const etatBadge = contratSuiviBadge(etatSuivi);
-                    const actionLabel = "Valider";
+                    const workflowPrimary = workflowPrimaryAction(etape);
+                    const canDecideDossier = userCanOpenDossierDecisionModal(meRole, etape);
                     return (
                       <tr key={c.id} className="border-b border-slate-100 align-top transition-colors duration-150 hover:bg-cyan-50/60">
                         <td className="px-3 py-2.5 font-mono text-xs text-slate-900 sm:px-4" title={c.reference}>
@@ -1516,14 +1556,35 @@ export default function ContratsPanel() {
                           </span>
                         </td>
                         <td className="px-3 py-2.5 text-right sm:px-4">
-                          <button
-                            type="button"
-                            disabled={dossierActionBusyId === c.dossierId}
-                            onClick={() => openDecision(c.dossierId, etape)}
-                            className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
-                          >
-                            {dossierActionBusyId === c.dossierId ? "..." : actionLabel}
-                          </button>
+                          <div className="inline-flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openViewContrat(c)}
+                              className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                            >
+                              Voir
+                            </button>
+                            {canDecideDossier ? (
+                              <button
+                                type="button"
+                                disabled={dossierActionBusyId === c.dossierId}
+                                title={workflowPrimary?.label ?? "Workflow dossier"}
+                                onClick={() => openDecision(c.dossierId, etape)}
+                                className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
+                              >
+                                {dossierActionBusyId === c.dossierId ? "..." : "Valider"}
+                              </button>
+                            ) : null}
+                            {meRole === "CHEF_SERVICE" ? (
+                              <button
+                                type="button"
+                                onClick={() => openEditContrat(c)}
+                                className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                              >
+                                Modifier
+                              </button>
+                            ) : null}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -1545,6 +1606,166 @@ export default function ContratsPanel() {
           </div>
         ) : null}
       </section>
+
+      {editContratOpen && editContratId ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="edit-contrat-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
+            aria-label="Fermer"
+            disabled={editSaving}
+            onClick={closeEditContrat}
+          />
+          <div className="relative z-10 w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="border-b border-slate-200 px-4 py-3">
+              <h3 id="edit-contrat-title" className="text-base font-semibold text-slate-900">
+                Modifier le contrat
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600">Mise à jour de la date d&apos;effet.</p>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Date d&apos;effet</span>
+                <input
+                  type="date"
+                  value={editDateEffet}
+                  onChange={(e) => setEditDateEffet(e.target.value)}
+                  className={inputClass}
+                  disabled={editSaving}
+                />
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Statut</span>
+                <select
+                  value={editStatus}
+                  onChange={(e) => setEditStatus(e.target.value as "ACTIF" | "RESILIE" | "CEDE")}
+                  className={inputClass}
+                  disabled={editSaving}
+                >
+                  <option value="ACTIF">Actif</option>
+                  <option value="RESILIE">Résilié</option>
+                  <option value="CEDE">Cédé</option>
+                </select>
+              </label>
+              <label className="grid gap-1">
+                <span className="text-xs font-medium text-slate-700">Type d&apos;opération</span>
+                <select
+                  value={editOperationType}
+                  onChange={(e) => setEditOperationType(e.target.value as "NOUVEAU" | "ACTUALISATION")}
+                  className={inputClass}
+                  disabled={editSaving}
+                >
+                  <option value="NOUVEAU">Nouveau</option>
+                  <option value="ACTUALISATION">Actualisation</option>
+                </select>
+              </label>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={closeEditContrat}
+                disabled={editSaving}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Annuler
+              </button>
+              <button
+                type="button"
+                onClick={() => void saveEditContrat()}
+                disabled={editSaving}
+                className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-60"
+              >
+                {editSaving ? "Enregistrement..." : "Enregistrer"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {viewContratOpen && viewContrat ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="view-contrat-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
+            aria-label="Fermer"
+            onClick={closeViewContrat}
+          />
+          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+            <div className="border-b border-slate-200 px-4 py-3">
+              <h3 id="view-contrat-title" className="text-base font-semibold text-slate-900">
+                Détails du contrat
+              </h3>
+              <p className="mt-0.5 text-xs text-slate-600">Consultation du contrat créé.</p>
+            </div>
+            <div className="grid gap-3 px-4 py-4 sm:grid-cols-2">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Référence</p>
+                <p className="font-mono text-xs text-slate-900">{viewContrat.reference}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Concessionnaire</p>
+                <p className="text-sm text-slate-900">{viewContrat.nomPdv || "—"}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Produit</p>
+                <p className="text-sm text-slate-900">{viewContrat.produitCode}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Type</p>
+                <p className="text-sm text-slate-900">{labelOperationType(viewContrat.operationType)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Statut</p>
+                <p className="text-sm text-slate-900">{viewContrat.status}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date d&apos;effet</p>
+                <p className="text-sm text-slate-900">{formatShortDate(viewContrat.dateEffet)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date de dépôt</p>
+                <p className="text-sm text-slate-900">{formatShortDate(viewContrat.dateDepot ?? viewContrat.createdAt)}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Étape dossier</p>
+                <p className="text-sm text-slate-900">{labelDossierEtape(viewContrat.dossierEtape ?? "FINALISE")}</p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <button
+                type="button"
+                onClick={() =>
+                  window.open(
+                    `/api/contrats/${encodeURIComponent(viewContrat.dossierId)}/export`,
+                    "_blank",
+                    "noopener,noreferrer",
+                  )
+                }
+                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+              >
+                Ouvrir le PDF
+              </button>
+              <button
+                type="button"
+                onClick={closeViewContrat}
+                className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {decisionOpen && decisionDossierId ? (
         <div
@@ -1612,7 +1833,11 @@ export default function ContratsPanel() {
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId || decisionPrimary === null}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        decisionPrimary === null ||
+                        !mayApprouverDossier
+                      }
                       onClick={() => void decideApprouver()}
                       className="rounded-lg border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-sky-700 hover:bg-sky-700 disabled:opacity-60"
                     >
@@ -1620,7 +1845,11 @@ export default function ContratsPanel() {
                     </button>
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        !mayRejectDossier ||
+                        !decisionIntermediateStep
+                      }
                       onClick={() => void decideRejeter()}
                       className="rounded-lg border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-rose-700 hover:bg-rose-700 disabled:opacity-60"
                     >
@@ -1628,7 +1857,11 @@ export default function ContratsPanel() {
                     </button>
                     <button
                       type="button"
-                      disabled={dossierActionBusyId === decisionDossierId}
+                      disabled={
+                        dossierActionBusyId === decisionDossierId ||
+                        !mayReturnDossier ||
+                        !decisionIntermediateStep
+                      }
                       onClick={() => void decideRetourner()}
                       className="rounded-lg border border-amber-600 bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-amber-700 hover:bg-amber-700 disabled:opacity-60"
                     >
@@ -1706,54 +1939,29 @@ export default function ContratsPanel() {
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
                       Point de vente
                     </p>
-                    <div className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">
-                        Sélection du concessionnaire (recherche dans le référentiel) *
-                      </span>
-                      <div className="relative">
-                        <input
-                          type="search"
-                          value={pdvQuery}
-                          onChange={(e) => onPdvQueryChange(e.target.value)}
-                          placeholder="Code PDV, nom, téléphone… (min. 2 caractères)"
-                          autoComplete="off"
-                          className={inputClass}
-                          aria-label="Rechercher un point de vente"
-                        />
-                        {selectedPdv ? (
-                          <button
-                            type="button"
-                            onClick={clearPdv}
-                            className="mt-1 text-[11px] font-medium text-cyan-700 underline hover:text-cyan-900"
-                          >
-                            Effacer la sélection
-                          </button>
-                        ) : null}
-                      </div>
-                      {searchLoading ? <p className="text-[11px] text-slate-500">Recherche…</p> : null}
-                      {showSearchPanel && searchResults.length > 0 ? (
-                        <div
-                          className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm"
-                          role="group"
-                          aria-label="Résultats de recherche concessionnaires"
-                        >
-                          {searchResults.map((c) => (
-                            <button
-                              key={c.id}
-                              type="button"
-                              onClick={() => pickPdv(c)}
-                              className="flex w-full flex-wrap items-baseline gap-x-2 border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-800 transition-colors hover:bg-cyan-50 last:border-b-0"
-                            >
-                              <span className="font-mono text-xs text-slate-600">{c.codePdv}</span>
-                              <span>{c.nomComplet || c.raisonSociale}</span>
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                      {showSearchPanel && !searchLoading && pdvQuery.trim().length >= 2 && searchResults.length === 0 ? (
-                        <p className="text-[11px] text-slate-500">Aucun résultat.</p>
-                      ) : null}
-                    </div>
+                    <ConcessionnaireSearchPicker
+                      key={`contrat-create-${createOpen}-${prefillConcessionnaireId || "none"}`}
+                      label="Sélection du concessionnaire (recherche dans le référentiel) *"
+                      selected={selectedPdv}
+                      onSelectedChange={(row) => {
+                        setSelectedPdv(row);
+                        const agIds = agencesTriees.map((a) => a.id);
+                        const pickedAg = pickAgenceIdFromConcessionnaire(row, agIds);
+                        setFormAgenceId(pickedAg || (row ? "" : ""));
+                        const allCodes = produitsTries.map((p) => p.code);
+                        const pool =
+                          row && (row.produitsAutorises ?? []).length > 0
+                            ? allCodes.filter((code) =>
+                                produitAutorisePourConcessionnaire(row.produitsAutorises ?? [], code),
+                              )
+                            : allCodes;
+                        const picked = pickProduitCodeFromConcessionnaire(row, pool);
+                        if (picked) setProduitCode(picked);
+                      }}
+                      statutActifOnly
+                      inscriptionFinaliseeOnly
+                      inputClassName={inputClass}
+                    />
                   </section>
 
                   <section className="rounded-xl border border-indigo-200/80 bg-white p-2.5 shadow-sm">
@@ -1808,7 +2016,7 @@ export default function ContratsPanel() {
                           <option value="">— Choisir une agence —</option>
                           {agencesTriees.map((a) => (
                             <option key={a.id} value={a.id}>
-                              {a.code} — {a.libelle}
+                              {agenceOptionLabel(a)}
                             </option>
                           ))}
                         </select>
@@ -1871,6 +2079,16 @@ export default function ContratsPanel() {
                             </option>
                           ))}
                         </select>
+                        {concessionnaireId && produitCode.trim() ? (
+                          <button
+                            type="button"
+                            onClick={() => setParentsFetchTick((n) => n + 1)}
+                            disabled={parentsLoading}
+                            className="justify-self-start text-[11px] font-medium text-violet-800 underline decoration-violet-400/80 hover:text-violet-950 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Recharger la liste (même produit)
+                          </button>
+                        ) : null}
                       </label>
                     </section>
                   ) : null}
@@ -1902,7 +2120,8 @@ export default function ContratsPanel() {
                 <input
                   ref={importFileInputRef}
                   type="file"
-                  accept=".json,.csv,.xlsx,.xls,.pdf"
+                  accept={getImportAcceptAttribute("CONTRATS")}
+                  aria-label="Importer des contrats"
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}
                 />

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
 
-import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
+import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
 import { ensureConcessionnaireIndexes, searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -26,6 +26,8 @@ function listScopeAgenceId(user: { agenceId: string | null; role: string }): str
 function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]) {
   const header = [
     "Code PDV",
+    "Code terminal",
+    "Code concessionnaire",
     "Nom complet",
     "CNI",
     "Telephone principal",
@@ -41,7 +43,9 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   const escapeCell = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((r) =>
     [
-      r.codePdv,
+      r.codePdv ?? "",
+      r.codeTerminal ?? "",
+      r.codeConcessionnaire ?? "",
       r.nomComplet || r.raisonSociale,
       r.cniNumero ?? "",
       r.telephonePrincipal ?? "",
@@ -74,7 +78,11 @@ function toPdfBuffer(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["i
     doc.moveDown(1);
 
     rows.forEach((r, idx) => {
-      const line = `${idx + 1}. ${r.codePdv} - ${r.nomComplet || r.raisonSociale} | CNI: ${
+      const codes =
+        [r.codeTerminal && `Term.: ${r.codeTerminal}`, r.codeConcessionnaire && `Cons.: ${r.codeConcessionnaire}`]
+          .filter(Boolean)
+          .join(" · ") || "—";
+      const line = `${idx + 1}. ${r.codePdv} - ${r.nomComplet || r.raisonSociale} | ${codes} | CNI: ${
         r.cniNumero ?? "—"
       } | Tel: ${r.telephonePrincipal ?? "—"} | Statut: ${r.statut} | Agence: ${r.agenceId ?? "—"}`;
       doc.fontSize(8.5).text(line);
@@ -88,7 +96,8 @@ function toPdfBuffer(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["i
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...LONACI_ROLES],
+    rbac: { resource: "CONCESSIONNAIRES", action: "READ" },
   });
   if ("error" in auth) return auth.error;
 

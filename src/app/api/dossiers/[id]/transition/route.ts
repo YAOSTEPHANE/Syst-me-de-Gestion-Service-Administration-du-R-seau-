@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { finalizeContratFromDossier, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -20,6 +21,24 @@ const transitionSchema = z.object({
 
 interface RouteContext {
   params: Promise<{ id: string }>;
+}
+
+function toRbacAction(action: z.infer<typeof transitionSchema>["action"]) {
+  switch (action) {
+    case "VALIDATE_N1":
+      return "VALIDATE_N1" as const;
+    case "VALIDATE_N2":
+      return "VALIDATE_N2" as const;
+    case "FINALIZE":
+      return "FINALIZE" as const;
+    case "REJECT":
+      return "REJECT" as const;
+    case "RETURN_PREVIOUS":
+    case "REJECT_TO_DRAFT":
+      return "RETURN_FOR_CORRECTION" as const;
+    default:
+      return "UPDATE" as const;
+  }
 }
 
 function toTargetStatus(action: z.infer<typeof transitionSchema>["action"]) {
@@ -43,17 +62,19 @@ function toTargetStatus(action: z.infer<typeof transitionSchema>["action"]) {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const parsed = transitionSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return zodBadRequest(parsed.error);
+  }
+
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    rbac: { resource: "DOSSIERS", action: toRbacAction(parsed.data.action) },
   });
   if ("error" in auth) {
     return auth.error;
   }
   const { id } = await context.params;
-  const parsed = transitionSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
-  }
 
   await ensureDossierIndexes();
   const before = await findDossierById(id);
@@ -100,33 +121,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const target = toTargetStatus(parsed.data.action);
   try {
     if (parsed.data.action === "FINALIZE" && before.type === "CONTRAT_ACTUALISATION") {
-      const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
-      const operationType = String(before.payload.operationType ?? "");
-      const dateEffetRaw = String(before.payload.dateEffet ?? "");
-      const dateEffet = new Date(dateEffetRaw);
-      if (!produitCode || !operationType || Number.isNaN(dateEffet.getTime())) {
-        return NextResponse.json({ message: "Payload dossier contrat invalide." }, { status: 400 });
-      }
-      if (operationType === "NOUVEAU") {
-        const hasActive = await hasActiveContractForProduct(before.concessionnaireId, produitCode);
-        if (hasActive) {
-          return NextResponse.json(
-            { message: "Un contrat actif existe deja pour ce produit et ce concessionnaire." },
-            { status: 409 },
-          );
-        }
-      }
-      await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);
-      const contrat = await finalizeContratFromDossier({
+      const finalized = await finalizeDossierContratActualisation({
         dossierId: id,
-        concessionnaireId: before.concessionnaireId,
-        produitCode,
-        operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
-        dateEffet,
         actor: auth.user,
+        comment: parsed.data.comment ?? null,
       });
-      const dossier = await findDossierById(id);
-      return NextResponse.json({ dossier, contrat }, { status: 200 });
+      if (!finalized.ok) {
+        return NextResponse.json({ message: finalized.message }, { status: finalized.httpStatus });
+      }
+      return NextResponse.json(
+        { dossier: finalized.dossier, contrat: finalized.contrat },
+        { status: 200 },
+      );
     }
 
     const dossier = await transitionDossier(id, target, auth.user, parsed.data.comment ?? null);

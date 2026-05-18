@@ -88,7 +88,7 @@ export async function transitionDemandeAttestationDomiciliation(input: {
   };
 
   if (row.statut === "DEMANDE_RECUE" && input.target === "TRANSMIS") {
-    if (!["ASSIST_CDS", "CHEF_SERVICE"].includes(input.role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (input.role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
     $set.transmittedAt = now;
     $set.transmittedByUserId = input.actorId;
   } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {

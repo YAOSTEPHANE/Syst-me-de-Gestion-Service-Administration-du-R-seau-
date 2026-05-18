@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
   createProduit,
@@ -11,6 +12,8 @@ import {
 const createProduitSchema = z.object({
   code: z.string().min(2),
   libelle: z.string().min(2),
+  /** Prix caution en FCFA (entier ≥ 0). */
+  prix: z.coerce.number().int().min(0).max(999_999_999_999),
 });
 
 export async function GET(request: NextRequest) {
@@ -32,7 +35,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createProduitSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   await ensureReferentialsIndexes();

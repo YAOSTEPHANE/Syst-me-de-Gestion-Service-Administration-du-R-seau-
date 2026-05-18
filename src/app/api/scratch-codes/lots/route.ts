@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { createScratchLot, ensureGprGrattageIndexes, listScratchLots } from "@/lib/lonaci/gpr-grattage";
 
@@ -21,7 +22,7 @@ export async function GET(request: NextRequest) {
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureGprGrattageIndexes();
   const data = await listScratchLots(parsed.data);
@@ -33,7 +34,7 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
   await ensureGprGrattageIndexes();
   const created = await createScratchLot({

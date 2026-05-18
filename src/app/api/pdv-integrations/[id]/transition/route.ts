@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureSprint4Indexes, transitionPdvIntegration } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -13,13 +14,19 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    rbac: {
+      resource: "PDV_INTEGRATIONS",
+      action: parsed.data.targetStatus === "FINALISE" ? "FINALIZE" : "UPDATE",
+    },
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
   await ensureSprint4Indexes();
   try {
     await transitionPdvIntegration({

@@ -1,9 +1,11 @@
 import type {
   LonaciRole,
   BancarisationStatut,
+  ConcessionnaireInscriptionStatut,
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
+  CautionEncaissementMode,
   CautionPaymentMode,
   CautionStatus,
   DossierStatus,
@@ -16,9 +18,11 @@ import type {
 export type {
   LonaciRole,
   BancarisationStatut,
+  ConcessionnaireInscriptionStatut,
   ConcessionnaireStatut,
   ContratOperationType,
   ContratStatus,
+  CautionEncaissementMode,
   CautionPaymentMode,
   CautionStatus,
   DossierStatus,
@@ -48,24 +52,69 @@ export interface UserDocument {
   lastActivityAt: Date | null;
   resetPasswordTokenHash: string | null;
   resetPasswordExpiresAt: Date | null;
+  /** Dernier enregistrement d’un nouveau mot de passe (rotation mensuelle). */
+  passwordChangedAt: Date | null;
+  /** Dernier `YYYY-MM` UTC pour lequel un e-mail automatique fin de mois (lien reset) a été envoyé. */
+  passwordResetReminderSentForMonth: string | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
 }
 
+/** Libellé acteur pour messages / audits (pas de `nomComplet` en base utilisateur). */
+export function userDisplayName(user: Pick<UserDocument, "prenom" | "nom" | "email" | "matricule">): string {
+  const full = `${user.prenom} ${user.nom}`.trim();
+  if (full) return full;
+  const email = user.email.trim();
+  if (email) return email;
+  const m = user.matricule?.trim();
+  if (m) return m;
+  return "un utilisateur";
+}
+
+/** Rattachement géographique pour ventilation (matrices contrats, etc.). */
+export type AgenceZoneGeographique = "ABIDJAN" | "INTERIEUR";
+
 export interface AgenceDocument {
   _id?: string;
   code: string;
   libelle: string;
+  /** Toujours défini après lecture (`listAgences` / `findAgenceById`) via `coalesceZoneGeographique`. */
+  zoneGeographique: AgenceZoneGeographique;
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ProduitDocumentChecklistItem {
+  id: string;
+  libelle: string;
+  /** Défaut : obligatoire. */
+  obligatoire?: boolean;
+}
+
+export type DossierDocumentChecklistStatut = "FOURNI" | "MANQUANT" | "EN_ATTENTE";
+
+export interface DossierDocumentChecklistEntry {
+  itemId: string;
+  libelle: string;
+  obligatoire: boolean;
+  statut: DossierDocumentChecklistStatut;
+}
+
+export interface DossierDocumentChecklistPayload {
+  entries: DossierDocumentChecklistEntry[];
+  complet: boolean;
 }
 
 export interface ProduitDocument {
   _id?: string;
   code: string;
   libelle: string;
+  /** Prix caution référentiel (FCFA), entier. */
+  prix?: number;
+  /** Documents obligatoires configurés pour la constitution de dossier. */
+  documentsChecklist?: ProduitDocumentChecklistItem[];
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -101,7 +150,12 @@ export interface GpsPoint {
 
 export interface ConcessionnaireDocument {
   _id?: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut: ConcessionnaireInscriptionStatut;
+  nom: string | null;
+  prenom: string | null;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   nomComplet: string;
   raisonSociale: string;
   cniNumero: string | null;
@@ -120,6 +174,10 @@ export interface ConcessionnaireDocument {
   compteBancaire: string | null;
   banqueEtablissement: string | null;
   gps: GpsPoint | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
+  inscriptionSoumisAt: Date | null;
+  inscriptionValideN1At: Date | null;
+  inscriptionRejetMotif: string | null;
   piecesJointes: PieceJointeDocument[];
   observations: string | null;
   notesInternes: string | null;
@@ -130,7 +188,8 @@ export interface ConcessionnaireDocument {
   deletedAt: Date | null;
 }
 
-export type BancarisationRequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
+/** Demande : SOUMIS → VALIDE_N1 → VALIDE_N2 → VALIDE (application) | REJETE */
+export type BancarisationRequestStatus = "SOUMIS" | "VALIDE_N1" | "VALIDE_N2" | "VALIDE" | "REJETE";
 
 export interface BancarisationRequestDocument {
   _id?: string;
@@ -212,7 +271,14 @@ export interface NotificationDocument {
 
 export interface CautionDocument {
   _id?: string;
-  contratId: string;
+  /**
+   * Contrat PDV (historique) — absent pour une caution rattachée uniquement à un client Lonaci (module Clients).
+   */
+  contratId?: string;
+  /** Client Lonaci (`clients`) lorsque la caution est constituée sans contrat. */
+  lonaciClientId?: string | null;
+  /** Code produit référentiel (obligatoire si `lonaciClientId`). */
+  produitCode?: string | null;
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
@@ -224,6 +290,14 @@ export interface CautionDocument {
   dueDate: Date;
   /** Zone observations libre (optionnel). */
   observations: string | null;
+  /** True tant que le paiement réel n’a pas été régularisé (fiche provisoire). */
+  ficheProvisoire?: boolean;
+  /** Numéro document fiche provisoire (ex. FPC-2026-000001), conservé après régularisation. */
+  numeroFicheProvisoire?: string | null;
+  /** Numéro fiche définitive (ex. FPD-2026-000001), émis à la validation du paiement. */
+  numeroFicheDefinitive?: string | null;
+  /** Date d’émission de la fiche définitive. */
+  ficheDefinitiveEmiseLe?: Date | null;
   paidAt: Date | null;
   immutableAfterFinal: boolean;
   createdByUserId: string;
@@ -297,6 +371,11 @@ export interface SuccessionCaseDocument {
     autoDossierContratId?: string;
     autoDossierContratReference?: string;
   } | null;
+  /** Contrôles N1 / N2 obligatoires avant l’étape « Décision ». */
+  validationN1At: Date | null;
+  validationN1ByUserId: string | null;
+  validationN2At: Date | null;
+  validationN2ByUserId: string | null;
   stepHistory: SuccessionStepCompletion[];
   createdByUserId: string;
   updatedByUserId: string;
@@ -305,7 +384,7 @@ export interface SuccessionCaseDocument {
   deletedAt: Date | null;
 }
 
-export type AuditEntityType = "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";
+export type AuditEntityType = "CLIENT" | "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";
 
 export interface AuditLogDocument {
   entityType: AuditEntityType;

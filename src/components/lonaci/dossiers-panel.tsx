@@ -1,8 +1,12 @@
 "use client";
 
+import DossierContratActualisationForm from "@/components/lonaci/dossier-contrat-actualisation-form";
+import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
+import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DossierStatus =
@@ -20,6 +24,34 @@ type TransitionAction =
   | "FINALIZE"
   | "REJECT"
   | "RETURN_PREVIOUS";
+
+interface BulkTransitionResponse {
+  total: number;
+  succeeded: number;
+  failed: number;
+  results: Array<{ id: string; ok: boolean; message: string }>;
+}
+
+interface BulkTransitionLogItem {
+  id: string;
+  actorUserId: string;
+  action: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  comment: string | null;
+  resultSample: Array<{ id: string; ok: boolean; message: string }>;
+  createdAt: string;
+}
+
+interface BulkTransitionLogsResponse {
+  items: BulkTransitionLogItem[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+type ReplayMode = "FAILED_ONLY" | "ALL_SAMPLE";
 
 interface DossierItem {
   id: string;
@@ -53,15 +85,28 @@ interface DossierDetailItem {
 type SortField = "updatedAt" | "reference" | "status";
 type SortOrder = "asc" | "desc";
 
-async function fetchDossiers(status?: DossierStatus): Promise<DossierListResponse> {
-  const search = new URLSearchParams({ page: "1", pageSize: "50" });
+async function fetchDossiers(
+  page: number,
+  pageSize: number,
+  status?: DossierStatus,
+  q?: string,
+  concessionnaireId?: string,
+  sortField: SortField = "updatedAt",
+  sortOrder: SortOrder = "desc",
+): Promise<DossierListResponse> {
+  const search = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
   if (status) {
     search.set("status", status);
   }
-  const response = await fetch(`/api/dossiers?${search.toString()}`, {
-    credentials: "include",
-    cache: "no-store",
-  });
+  if (q?.trim()) {
+    search.set("q", q.trim());
+  }
+  if (concessionnaireId?.trim()) {
+    search.set("concessionnaireId", concessionnaireId.trim());
+  }
+  search.set("sortField", sortField);
+  search.set("sortOrder", sortOrder);
+  const response = await lonaciFetch(`/api/dossiers?${search.toString()}`);
   if (!response.ok) {
     throw new Error("Impossible de charger les dossiers");
   }
@@ -101,6 +146,29 @@ function actionLabel(action: TransitionAction): string {
     case "RETURN_PREVIOUS":
       return "Retourner pour correction";
   }
+}
+
+function hideN1N2ForAdmin(role: string | null, action: TransitionAction): boolean {
+  return role === "CHEF_SERVICE" && (action === "VALIDATE_N1" || action === "VALIDATE_N2");
+}
+
+function actionLabelFromRaw(action: string): string {
+  if (
+    action === "SUBMIT" ||
+    action === "VALIDATE_N1" ||
+    action === "VALIDATE_N2" ||
+    action === "FINALIZE" ||
+    action === "REJECT" ||
+    action === "RETURN_PREVIOUS"
+  ) {
+    return actionLabel(action);
+  }
+  if (action === "REJECT_TO_DRAFT") return "Rejeter (brouillon)";
+  return action;
+}
+
+function isSensitiveReplayAction(action: string): boolean {
+  return action === "REJECT" || action === "RETURN_PREVIOUS" || action === "REJECT_TO_DRAFT";
 }
 
 function statusLabel(status: DossierStatus): string {
@@ -146,6 +214,7 @@ function confirmMessage(action: TransitionAction): string | null {
 
 export default function DossiersPanel() {
   const searchParams = useSearchParams();
+  const statusFromUrl = searchParams.get("status")?.trim() ?? "";
   const [statusFilter, setStatusFilter] = useState<DossierStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -160,8 +229,30 @@ export default function DossiersPanel() {
   const [sortField, setSortField] = useState<SortField>("updatedAt");
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [highlightedDossierId, setHighlightedDossierId] = useState<string | null>(null);
+  const [meRole, setMeRole] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkAction, setBulkAction] = useState<TransitionAction>("SUBMIT");
+  const [bulkComment, setBulkComment] = useState("");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkLogs, setBulkLogs] = useState<BulkTransitionLogItem[]>([]);
+  const [bulkLogsLoading, setBulkLogsLoading] = useState(false);
+  const [bulkLogsPage, setBulkLogsPage] = useState(1);
+  const [bulkLogsPageSize, setBulkLogsPageSize] = useState(8);
+  const [bulkLogsTotal, setBulkLogsTotal] = useState(0);
+  const [bulkLogsActionFilter, setBulkLogsActionFilter] = useState<string>("ALL");
+  const [bulkLogsFailedOnly, setBulkLogsFailedOnly] = useState(false);
+  const [bulkLogsReplayBusyId, setBulkLogsReplayBusyId] = useState<string | null>(null);
+  const [selectedBulkLogIds, setSelectedBulkLogIds] = useState<string[]>([]);
+  const [bulkReplaySelectionBusy, setBulkReplaySelectionBusy] = useState(false);
+  const [bulkReplayMode, setBulkReplayMode] = useState<ReplayMode>("FAILED_ONLY");
+  const [bulkReplayCommentOverride, setBulkReplayCommentOverride] = useState("");
+  const [meReplayKey, setMeReplayKey] = useState<string | null>(null);
   const fieldClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
+  const concessionnaireFilter = searchParams.get("concessionnaireId") ?? "";
 
   async function load() {
     if (loadInFlightRef.current) return;
@@ -169,8 +260,18 @@ export default function DossiersPanel() {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchDossiers(statusFilter === "ALL" ? undefined : statusFilter);
+      const data = await fetchDossiers(
+        page,
+        pageSize,
+        statusFilter === "ALL" ? undefined : statusFilter,
+        search,
+        concessionnaireFilter,
+        sortField,
+        sortOrder,
+      );
       setItems(data.items);
+      setServerTotal(data.total);
+      if (data.page !== page) setPage(data.page);
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de chargement");
       setError(message);
@@ -195,9 +296,8 @@ export default function DossiersPanel() {
       const body: { action: TransitionAction; comment?: string | null } = { action };
       if (comment !== undefined) body.comment = comment;
 
-      const response = await fetch(`/api/dossiers/${id}/transition`, {
+      const response = await lonaciFetch(`/api/dossiers/${id}/transition`, {
         method: "POST",
-        credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
@@ -233,10 +333,7 @@ export default function DossiersPanel() {
     setDetailLoading(true);
     setDetailItem(null);
     try {
-      const res = await fetch(`/api/dossiers/${encodeURIComponent(id)}`, {
-        credentials: "include",
-        cache: "no-store",
-      });
+      const res = await lonaciFetch(`/api/dossiers/${encodeURIComponent(id)}`);
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Détail dossier indisponible");
@@ -282,21 +379,94 @@ export default function DossiersPanel() {
     if (ok) closeDecision();
   }
 
+  const loadBulkLogs = useCallback(async () => {
+    setBulkLogsLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(bulkLogsPage),
+        pageSize: String(bulkLogsPageSize),
+        failedOnly: bulkLogsFailedOnly ? "1" : "0",
+      });
+      if (bulkLogsActionFilter !== "ALL") {
+        params.set("action", bulkLogsActionFilter);
+      }
+      const response = await lonaciFetch(`/api/dossiers/bulk-transition/logs?${params.toString()}`);
+      if (!response.ok) {
+        setBulkLogs([]);
+        setBulkLogsTotal(0);
+        return;
+      }
+      const body = (await response.json()) as BulkTransitionLogsResponse;
+      setBulkLogs(body.items ?? []);
+      setBulkLogsTotal(body.total ?? 0);
+    } catch {
+      setBulkLogs([]);
+      setBulkLogsTotal(0);
+    } finally {
+      setBulkLogsLoading(false);
+    }
+  }, [bulkLogsActionFilter, bulkLogsFailedOnly, bulkLogsPage, bulkLogsPageSize]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await lonaciFetch("/api/auth/me");
+        if (!r.ok) return;
+        const d = (await r.json()) as {
+          user?: { role?: string; _id?: string; id?: string; email?: string };
+        };
+        setMeRole(d.user?.role ?? null);
+        const rawKey = d.user?._id ?? d.user?.id ?? d.user?.email ?? d.user?.role ?? "anonymous";
+        setMeReplayKey(String(rawKey));
+      } catch {
+        setMeRole(null);
+        setMeReplayKey("anonymous");
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (!meReplayKey) return;
+    if (typeof window === "undefined") return;
+    try {
+      const saved = window.sessionStorage.getItem(`lonaci:bulk-replay-comment:${meReplayKey}`);
+      if (saved !== null) {
+        setBulkReplayCommentOverride(saved);
+      }
+    } catch {
+      // Ignore sessionStorage errors.
+    }
+  }, [meReplayKey]);
+
+  useEffect(() => {
+    if (!meReplayKey) return;
+    if (typeof window === "undefined") return;
+    try {
+      window.sessionStorage.setItem(`lonaci:bulk-replay-comment:${meReplayKey}`, bulkReplayCommentOverride);
+    } catch {
+      // Ignore sessionStorage errors.
+    }
+  }, [bulkReplayCommentOverride, meReplayKey]);
+
+  useEffect(() => {
+    if (hideN1N2ForAdmin(meRole, bulkAction)) {
+      setBulkAction("SUBMIT");
+    }
+    if (bulkLogsActionFilter === "VALIDATE_N1" || bulkLogsActionFilter === "VALIDATE_N2") {
+      if (meRole === "CHEF_SERVICE") {
+        setBulkLogsActionFilter("ALL");
+      }
+    }
+  }, [bulkAction, bulkLogsActionFilter, meRole]);
+
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+  }, [statusFilter, page, pageSize, search, concessionnaireFilter, sortField, sortOrder]);
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
-      if (document.visibilityState === "visible" && !loadInFlightRef.current) {
-        void load();
-      }
-    }, 10000);
-
-    return () => window.clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [statusFilter]);
+    setPage(1);
+  }, [statusFilter, pageSize, search, concessionnaireFilter, sortField, sortOrder]);
 
   useEffect(() => {
     if (referenceFilter) {
@@ -304,36 +474,236 @@ export default function DossiersPanel() {
     }
   }, [referenceFilter]);
 
-  const concessionnaireFilter = searchParams.get("concessionnaireId") ?? "";
+  useEffect(() => {
+    if (
+      statusFromUrl === "BROUILLON" ||
+      statusFromUrl === "SOUMIS" ||
+      statusFromUrl === "VALIDE_N1" ||
+      statusFromUrl === "VALIDE_N2" ||
+      statusFromUrl === "FINALISE" ||
+      statusFromUrl === "REJETE"
+    ) {
+      setStatusFilter(statusFromUrl);
+    }
+  }, [statusFromUrl]);
 
-  const filteredItems = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    const byConcessionnaire = concessionnaireFilter
-      ? items.filter((item) => item.concessionnaireId === concessionnaireFilter)
-      : items;
-    const bySearch = query
-      ? byConcessionnaire.filter(
-          (item) =>
-            item.reference.toLowerCase().includes(query) ||
-            item.status.toLowerCase().includes(query) ||
-            item.type.toLowerCase().includes(query) ||
-            item.concessionnaireId.toLowerCase().includes(query),
-        )
-      : byConcessionnaire;
-    return [...bySearch].sort((a, b) => {
-      let compare = 0;
-      if (sortField === "updatedAt") {
-        compare = new Date(a.updatedAt).getTime() - new Date(b.updatedAt).getTime();
-      } else if (sortField === "reference") {
-        compare = a.reference.localeCompare(b.reference);
-      } else {
-        compare = a.status.localeCompare(b.status);
-      }
-      return sortOrder === "asc" ? compare : -compare;
+  useEffect(() => {
+    setSelectedIds((prev) => prev.filter((id) => items.some((row) => row.id === id)));
+  }, [items]);
+
+  useEffect(() => {
+    void loadBulkLogs();
+  }, [loadBulkLogs]);
+
+  useEffect(() => {
+    setSelectedBulkLogIds((prev) => prev.filter((id) => bulkLogs.some((row) => row.id === id)));
+  }, [bulkLogs]);
+
+  useEffect(() => {
+    const replayComment = bulkReplayCommentOverride.trim();
+    if (bulkReplayMode !== "ALL_SAMPLE" || replayComment) return;
+    const selectedLogs = bulkLogs.filter((log) => selectedBulkLogIds.includes(log.id));
+    if (!selectedLogs.some((log) => isSensitiveReplayAction(log.action))) return;
+    setBulkReplayMode("FAILED_ONLY");
+    setToast({
+      type: "error",
+      message: "Retour automatique en mode échecs seuls: commentaire explicite manquant.",
     });
-  }, [concessionnaireFilter, items, search, sortField, sortOrder]);
+  }, [bulkReplayCommentOverride, bulkReplayMode, bulkLogs, selectedBulkLogIds]);
 
-  const total = useMemo(() => filteredItems.length, [filteredItems]);
+  const filteredItems = useMemo(() => items, [items]);
+
+  const totalVisible = useMemo(() => filteredItems.length, [filteredItems]);
+  const totalPages = Math.max(1, Math.ceil(serverTotal / pageSize));
+  const replayCommentProvided = bulkReplayCommentOverride.trim().length > 0;
+  const selectedBulkLogs = useMemo(
+    () => bulkLogs.filter((log) => selectedBulkLogIds.includes(log.id)),
+    [bulkLogs, selectedBulkLogIds],
+  );
+  const hasSensitiveSelectedBulkLogs = useMemo(
+    () => selectedBulkLogs.some((log) => isSensitiveReplayAction(log.action)),
+    [selectedBulkLogs],
+  );
+  const allSampleBlockedForSelection = hasSensitiveSelectedBulkLogs && !replayCommentProvided;
+
+  async function runBulkTransition() {
+    if (!selectedIds.length || bulkBusy) return;
+    if ((bulkAction === "REJECT" || bulkAction === "RETURN_PREVIOUS") && !bulkComment.trim()) {
+      setToast({ type: "error", message: "Commentaire obligatoire pour cette action en lot." });
+      return;
+    }
+
+    setBulkBusy(true);
+    try {
+      const response = await lonaciFetch("/api/dossiers/bulk-transition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ids: selectedIds,
+          action: bulkAction,
+          comment: bulkComment.trim() ? bulkComment.trim() : null,
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | BulkTransitionResponse
+        | { message?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error((body as { message?: string } | null)?.message ?? "Transition bulk impossible");
+      }
+
+      const report = body as BulkTransitionResponse;
+      const firstFailures = report.results
+        .filter((row) => !row.ok)
+        .slice(0, 3)
+        .map((row) => `${row.id}: ${row.message}`);
+      setToast({
+        type: report.failed === 0 ? "success" : "error",
+        message:
+          report.failed === 0
+            ? `${report.succeeded}/${report.total} dossier(s) mis à jour.`
+            : `${report.succeeded}/${report.total} réussi(s), ${report.failed} échec(s). ${firstFailures.join(" | ")}`,
+      });
+      setSelectedIds([]);
+      await load();
+      await loadBulkLogs();
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur transition bulk"),
+      });
+    } finally {
+      setBulkBusy(false);
+    }
+  }
+
+  function exportBulkLogsCsv() {
+    const params = new URLSearchParams({
+      page: "1",
+      pageSize: "100",
+      failedOnly: bulkLogsFailedOnly ? "1" : "0",
+      format: "csv",
+    });
+    if (bulkLogsActionFilter !== "ALL") {
+      params.set("action", bulkLogsActionFilter);
+    }
+    window.open(`/api/dossiers/bulk-transition/logs?${params.toString()}`, "_blank", "noopener,noreferrer");
+  }
+
+  async function replayBulkFailures(logId: string) {
+    const replayComment = bulkReplayCommentOverride.trim();
+    const log = bulkLogs.find((row) => row.id === logId);
+    if (bulkReplayMode === "ALL_SAMPLE" && !replayComment && log && isSensitiveReplayAction(log.action)) {
+      setToast({
+        type: "error",
+        message: "Mode échantillon complet bloqué: ajoutez un commentaire explicite de rejeu.",
+      });
+      return;
+    }
+    setBulkLogsReplayBusyId(logId);
+    try {
+      const response = await lonaciFetch("/api/dossiers/bulk-transition/replay", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ logId, mode: bulkReplayMode, commentOverride: replayComment || null }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | BulkTransitionResponse
+        | { message?: string }
+        | null;
+      if (!response.ok) {
+        throw new Error((body as { message?: string } | null)?.message ?? "Rejeu impossible");
+      }
+      const report = body as BulkTransitionResponse;
+      setToast({
+        type: report.failed === 0 ? "success" : "error",
+        message:
+          report.failed === 0
+            ? `Rejeu réussi: ${report.succeeded}/${report.total}.`
+            : `Rejeu partiel: ${report.succeeded}/${report.total}, ${report.failed} échec(s).`,
+      });
+      await load();
+      await loadBulkLogs();
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu"),
+      });
+    } finally {
+      setBulkLogsReplayBusyId(null);
+    }
+  }
+
+  async function replaySelectedBulkFailures() {
+    if (!selectedBulkLogIds.length || bulkReplaySelectionBusy) return;
+    const replayComment = bulkReplayCommentOverride.trim();
+    const selectedLogs = bulkLogs.filter((log) => selectedBulkLogIds.includes(log.id));
+    const hasSensitiveSelected = selectedLogs.some((log) => isSensitiveReplayAction(log.action));
+    if (bulkReplayMode === "ALL_SAMPLE" && hasSensitiveSelected && !replayComment) {
+      setToast({
+        type: "error",
+        message: "Mode échantillon complet bloqué: commentaire explicite requis pour les actions sensibles.",
+      });
+      return;
+    }
+    if (
+      !window.confirm(
+        `Confirmer le rejeu (${bulkReplayMode === "FAILED_ONLY" ? "échecs seuls" : "échantillon complet"}) pour ${selectedBulkLogIds.length} journal(aux) sélectionné(s) ?`,
+      )
+    ) {
+      return;
+    }
+    setBulkReplaySelectionBusy(true);
+    try {
+      let totalSucceeded = 0;
+      let totalTotal = 0;
+      let totalFailed = 0;
+      let failedLogs = 0;
+      for (const logId of selectedBulkLogIds) {
+        const response = await lonaciFetch("/api/dossiers/bulk-transition/replay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ logId, mode: bulkReplayMode, commentOverride: replayComment || null }),
+        });
+        const body = (await response.json().catch(() => null)) as
+          | BulkTransitionResponse
+          | { message?: string }
+          | null;
+        if (!response.ok) {
+          failedLogs += 1;
+          continue;
+        }
+        const report = body as BulkTransitionResponse;
+        totalSucceeded += report.succeeded;
+        totalTotal += report.total;
+        totalFailed += report.failed;
+      }
+      setSelectedBulkLogIds([]);
+      await load();
+      await loadBulkLogs();
+      if (failedLogs > 0) {
+        setToast({
+          type: "error",
+          message: `Rejeu terminé avec incidents: ${failedLogs} journal(aux) non rejoué(s), ${totalSucceeded}/${totalTotal} dossier(s) réussi(s).`,
+        });
+      } else {
+        setToast({
+          type: totalFailed === 0 ? "success" : "error",
+          message:
+            totalFailed === 0
+              ? `Rejeu groupé réussi: ${totalSucceeded}/${totalTotal}.`
+              : `Rejeu groupé partiel: ${totalSucceeded}/${totalTotal}, ${totalFailed} échec(s).`,
+        });
+      }
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu groupé"),
+      });
+    } finally {
+      setBulkReplaySelectionBusy(false);
+    }
+  }
 
   useEffect(() => {
     if (!referenceFilter || loading || filteredItems.length === 0) return;
@@ -351,7 +721,7 @@ export default function DossiersPanel() {
     <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">LONACI</p>
+          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
           <h2 className="mt-1 text-2xl font-semibold text-slate-900">Dossiers workflow</h2>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
@@ -400,10 +770,292 @@ export default function DossiersPanel() {
           >
             Actualiser
           </button>
+          <select
+            value={pageSize}
+            onChange={(e) => setPageSize(Number(e.target.value))}
+            aria-label="Nombre de dossiers par page"
+            className={fieldClass}
+          >
+            <option value={20}>20 / page</option>
+            <option value={50}>50 / page</option>
+            <option value={100}>100 / page</option>
+          </select>
         </div>
       </div>
 
-      <p className="mb-4 text-xs text-slate-500">{total} dossier(s) affiché(s)</p>
+      <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+        <span>{totalVisible} dossier(s) affiché(s)</span>
+        <span>•</span>
+        <span>Total: {serverTotal}</span>
+        <span>•</span>
+        <span>Page {page}/{totalPages}</span>
+      </div>
+      <div className="mb-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 lg:grid-cols-4">
+        <select
+          value={bulkAction}
+          onChange={(e) => setBulkAction(e.target.value as TransitionAction)}
+          aria-label="Action en lot"
+          className={fieldClass}
+        >
+          {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
+            .filter((action) => !hideN1N2ForAdmin(meRole, action))
+            .map((action) => (
+              <option key={action} value={action}>
+                {actionLabel(action)}
+              </option>
+            ))}
+        </select>
+        <input
+          value={bulkComment}
+          onChange={(e) => setBulkComment(e.target.value)}
+          placeholder="Commentaire lot (obligatoire pour rejet/retour)"
+          className={`lg:col-span-2 ${fieldClass}`}
+        />
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            disabled={!selectedIds.length || bulkBusy}
+            onClick={() => void runBulkTransition()}
+            className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-60"
+          >
+            {bulkBusy ? "Traitement..." : `Appliquer en lot (${selectedIds.length})`}
+          </button>
+          <button
+            type="button"
+            disabled={!selectedIds.length || bulkBusy}
+            onClick={() => setSelectedIds([])}
+            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+          >
+            Effacer
+          </button>
+        </div>
+      </div>
+      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Dernières exécutions bulk</p>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={
+                !selectedBulkLogIds.length ||
+                bulkReplaySelectionBusy ||
+                (bulkReplayMode === "ALL_SAMPLE" && allSampleBlockedForSelection)
+              }
+              onClick={() => void replaySelectedBulkFailures()}
+              className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+            >
+              {bulkReplaySelectionBusy
+                ? "Rejeu sélection..."
+                : `Rejouer sélection (${selectedBulkLogIds.length})`}
+            </button>
+            <button
+              type="button"
+              onClick={exportBulkLogsCsv}
+              className="rounded border border-cyan-300 bg-cyan-50 px-2 py-1 text-xs text-cyan-800 hover:bg-cyan-100"
+            >
+              Export CSV
+            </button>
+            <button
+              type="button"
+              onClick={() => void loadBulkLogs()}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50"
+            >
+              Rafraîchir
+            </button>
+          </div>
+        </div>
+        <div className="mb-2 grid gap-2 md:grid-cols-3">
+          <select
+            value={bulkLogsActionFilter}
+            onChange={(e) => {
+              setBulkLogsPage(1);
+              setBulkLogsActionFilter(e.target.value);
+            }}
+            className={fieldClass}
+            aria-label="Filtrer l'historique bulk par action"
+          >
+            <option value="ALL">Toutes les actions</option>
+            {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
+              .filter((action) => !hideN1N2ForAdmin(meRole, action))
+              .map((action) => (
+                <option key={action} value={action}>
+                  {actionLabel(action)}
+                </option>
+              ))}
+            <option value="REJECT_TO_DRAFT">Rejeter (brouillon)</option>
+          </select>
+          <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+            <input
+              type="checkbox"
+              checked={bulkLogsFailedOnly}
+              onChange={(e) => {
+                setBulkLogsPage(1);
+                setBulkLogsFailedOnly(e.target.checked);
+              }}
+            />
+            Échecs uniquement
+          </label>
+          <select
+            value={bulkLogsPageSize}
+            onChange={(e) => {
+              setBulkLogsPage(1);
+              setBulkLogsPageSize(Number(e.target.value));
+            }}
+            className={fieldClass}
+            aria-label="Nombre de journaux bulk par page"
+          >
+            <option value={8}>8 / page</option>
+            <option value={20}>20 / page</option>
+            <option value={50}>50 / page</option>
+          </select>
+        </div>
+        <div className="mb-2 flex flex-wrap items-center gap-2">
+          <label className="text-xs text-slate-700">Mode rejeu:</label>
+          <select
+            value={bulkReplayMode}
+            onChange={(e) => setBulkReplayMode(e.target.value as ReplayMode)}
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
+            aria-label="Mode de rejeu de l'historique bulk"
+          >
+            <option value="FAILED_ONLY">Échecs seuls</option>
+            <option value="ALL_SAMPLE" disabled={allSampleBlockedForSelection}>
+              Échantillon complet
+            </option>
+          </select>
+          <input
+            value={bulkReplayCommentOverride}
+            onChange={(e) => setBulkReplayCommentOverride(e.target.value)}
+            placeholder="Commentaire explicite de rejeu (requis pour actions sensibles)"
+            className="w-full max-w-xl rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
+          />
+          <button
+            type="button"
+            disabled={!bulkReplayCommentOverride.trim()}
+            onClick={() => setBulkReplayCommentOverride("")}
+            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+          >
+            Effacer le commentaire
+          </button>
+        </div>
+        {allSampleBlockedForSelection ? (
+          <p className="mb-2 text-xs text-amber-700">
+            Le mode échantillon complet est bloqué pour la sélection actuelle: ajoutez un commentaire explicite.
+          </p>
+        ) : null}
+        {bulkLogsLoading ? <p className="text-xs text-slate-500">Chargement...</p> : null}
+        {!bulkLogsLoading && bulkLogs.length === 0 ? (
+          <p className="text-xs text-slate-500">Aucun journal bulk disponible.</p>
+        ) : null}
+        {!bulkLogsLoading && bulkLogs.length > 0 ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-600">
+                <tr>
+                  <th className="px-2 py-1.5">
+                    <input
+                      type="checkbox"
+                      aria-label="Sélectionner tous les journaux bulk visibles"
+                      disabled={!bulkLogs.some((log) => log.failed > 0) || bulkReplaySelectionBusy}
+                      checked={
+                        bulkLogs.some((log) => log.failed > 0) &&
+                        bulkLogs.every((log) => (log.failed > 0 ? selectedBulkLogIds.includes(log.id) : true))
+                      }
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const ids = bulkLogs.filter((log) => log.failed > 0).map((log) => log.id);
+                          setSelectedBulkLogIds((prev) => [...new Set([...prev, ...ids])]);
+                        } else {
+                          const visible = new Set(bulkLogs.map((log) => log.id));
+                          setSelectedBulkLogIds((prev) => prev.filter((id) => !visible.has(id)));
+                        }
+                      }}
+                    />
+                  </th>
+                  <th className="px-2 py-1.5">Date</th>
+                  <th className="px-2 py-1.5">Action</th>
+                  <th className="px-2 py-1.5">Acteur</th>
+                  <th className="px-2 py-1.5 text-right">Résultat</th>
+                  <th className="px-2 py-1.5">Commentaire</th>
+                  <th className="px-2 py-1.5 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bulkLogs.map((log) => (
+                  <tr key={log.id} className="border-t border-slate-100 text-slate-700">
+                    <td className="px-2 py-1.5">
+                      <input
+                        type="checkbox"
+                        aria-label={`Sélectionner le journal ${log.id}`}
+                        disabled={log.failed === 0 || bulkReplaySelectionBusy}
+                        checked={selectedBulkLogIds.includes(log.id)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedBulkLogIds((prev) => [...new Set([...prev, log.id])]);
+                          } else {
+                            setSelectedBulkLogIds((prev) => prev.filter((id) => id !== log.id));
+                          }
+                        }}
+                      />
+                    </td>
+                    <td className="px-2 py-1.5">{new Date(log.createdAt).toLocaleString("fr-FR")}</td>
+                    <td className="px-2 py-1.5">{actionLabelFromRaw(log.action)}</td>
+                    <td className="px-2 py-1.5">{log.actorUserId}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      <span className={log.failed === 0 ? "text-emerald-700" : "text-rose-700"}>
+                        {log.succeeded}/{log.total}
+                      </span>
+                    </td>
+                    <td className="px-2 py-1.5">{log.comment ?? "—"}</td>
+                    <td className="px-2 py-1.5 text-right">
+                      <button
+                        type="button"
+                        disabled={
+                          log.failed === 0 ||
+                          bulkLogsReplayBusyId === log.id ||
+                          bulkReplaySelectionBusy ||
+                          (bulkReplayMode === "ALL_SAMPLE" &&
+                            isSensitiveReplayAction(log.action) &&
+                            !replayCommentProvided)
+                        }
+                        onClick={() => void replayBulkFailures(log.id)}
+                        className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-[11px] text-amber-900 hover:bg-amber-100 disabled:opacity-50"
+                      >
+                        {bulkLogsReplayBusyId === log.id ? "Rejeu..." : "Rejouer"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+        <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+          <span>
+            {bulkLogsTotal} journal(aux) • page {bulkLogsPage}/
+            {Math.max(1, Math.ceil(bulkLogsTotal / bulkLogsPageSize))}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              disabled={bulkLogsPage <= 1 || bulkLogsLoading}
+              onClick={() => setBulkLogsPage((p) => Math.max(1, p - 1))}
+              className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Précédent
+            </button>
+            <button
+              type="button"
+              disabled={bulkLogsPage >= Math.max(1, Math.ceil(bulkLogsTotal / bulkLogsPageSize)) || bulkLogsLoading}
+              onClick={() =>
+                setBulkLogsPage((p) => Math.min(Math.max(1, Math.ceil(bulkLogsTotal / bulkLogsPageSize)), p + 1))
+              }
+              className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Suivant
+            </button>
+          </div>
+        </div>
+      </div>
       {concessionnaireFilter ? (
         <p className="mb-4 text-xs text-emerald-700">
           Filtre concessionnaire actif: {concessionnaireFilter}
@@ -441,6 +1093,21 @@ export default function DossiersPanel() {
           <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
+                <th className="px-3 py-2.5">
+                  <input
+                    type="checkbox"
+                    aria-label="Sélectionner tous les dossiers visibles"
+                    checked={filteredItems.length > 0 && filteredItems.every((row) => selectedIds.includes(row.id))}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedIds((prev) => [...new Set([...prev, ...filteredItems.map((row) => row.id)])]);
+                      } else {
+                        const hidden = selectedIds.filter((id) => !filteredItems.some((row) => row.id === id));
+                        setSelectedIds(hidden);
+                      }
+                    }}
+                  />
+                </th>
                 <th className="px-3 py-2.5">Référence</th>
                 <th className="px-3 py-2.5">Statut</th>
                 <th className="px-3 py-2.5">Type</th>
@@ -457,6 +1124,18 @@ export default function DossiersPanel() {
                     highlightedDossierId === item.id ? "bg-emerald-50" : ""
                   }`}
                 >
+                  <td className="px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      aria-label={`Sélectionner ${item.reference}`}
+                      checked={selectedIds.includes(item.id)}
+                      onChange={(e) => {
+                        setSelectedIds((prev) =>
+                          e.target.checked ? [...new Set([...prev, item.id])] : prev.filter((id) => id !== item.id),
+                        );
+                      }}
+                    />
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs" id={`dossier-${item.id}`}>
                     {item.reference}
                   </td>
@@ -477,24 +1156,29 @@ export default function DossiersPanel() {
                   <td className="px-3 py-2.5">{new Date(item.updatedAt).toLocaleString()}</td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-2">
-                      {actionsForStatus(item.status).map((action) => (
-                        <button
-                          key={action}
-                          type="button"
-                          disabled={actionBusyId === item.id}
-                          onClick={() => {
-                            if (action === "REJECT" || action === "RETURN_PREVIOUS") {
-                              openDecision(item.id, action);
-                              return;
-                            }
-                            void transition(item.id, action);
-                          }}
-                          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
-                        >
-                          {actionLabel(action)}
-                        </button>
-                      ))}
-                      {actionsForStatus(item.status).length === 0 ? (
+                      {actionsForStatus(item.status)
+                        .filter((action) => userMayPerformDossierTransition(meRole, action))
+                        .filter((action) => !hideN1N2ForAdmin(meRole, action))
+                        .map((action) => (
+                          <button
+                            key={action}
+                            type="button"
+                            disabled={actionBusyId === item.id}
+                            onClick={() => {
+                              if (action === "REJECT" || action === "RETURN_PREVIOUS") {
+                                openDecision(item.id, action);
+                                return;
+                              }
+                              void transition(item.id, action);
+                            }}
+                            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
+                          >
+                            {actionLabel(action)}
+                          </button>
+                        ))}
+                      {actionsForStatus(item.status)
+                        .filter((a) => userMayPerformDossierTransition(meRole, a))
+                        .filter((a) => !hideN1N2ForAdmin(meRole, a)).length === 0 ? (
                         <span className="text-xs text-slate-400">Aucune action</span>
                       ) : null}
                       <button
@@ -504,27 +1188,50 @@ export default function DossiersPanel() {
                       >
                         Détail
                       </button>
-                      <a
-                        href={`/api/contrats/${encodeURIComponent(item.id)}/export`}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          window.open(
+                            `/api/contrats/${encodeURIComponent(item.id)}/export`,
+                            "_blank",
+                            "noopener,noreferrer",
+                          )
+                        }
                         className="rounded-lg border border-emerald-600 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50"
-                        target="_blank"
-                        rel="noopener noreferrer"
                       >
                         PDF récap.
-                      </a>
+                      </button>
                     </div>
                   </td>
                 </tr>
               ))}
               {!filteredItems.length ? (
                 <tr>
-                  <td className="px-3 py-6 text-slate-500" colSpan={6}>
+                  <td className="px-3 py-6 text-slate-500" colSpan={7}>
                     Aucun dossier trouvé.
                   </td>
                 </tr>
               ) : null}
             </tbody>
           </table>
+          <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2">
+            <button
+              type="button"
+              disabled={page <= 1}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Précédent
+            </button>
+            <button
+              type="button"
+              disabled={page >= totalPages}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+            >
+              Suivant
+            </button>
+          </div>
         </div>
       ) : null}
 
@@ -641,12 +1348,56 @@ export default function DossiersPanel() {
                     <p className="text-xs text-slate-700"><span className="font-semibold">Créé le:</span> {new Date(detailItem.createdAt).toLocaleString("fr-FR")}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Mis à jour:</span> {new Date(detailItem.updatedAt).toLocaleString("fr-FR")}</p>
                   </div>
+                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
+                  detailItem.status !== "BROUILLON" &&
+                  detailItem.status !== "REJETE" ? (
+                    <DossierDocumentChecklistBlock
+                      dossierId={detailItem.id}
+                      payload={(detailItem.payload ?? {}) as Record<string, unknown>}
+                      editable={false}
+                      onUpdated={(patch) =>
+                        setDetailItem((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                payload: patch.payload,
+                                status: (patch.status as DossierStatus) ?? prev.status,
+                                updatedAt: patch.updatedAt ?? prev.updatedAt,
+                              }
+                            : prev,
+                        )
+                      }
+                    />
+                  ) : null}
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Payload</p>
                     <pre className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
                       {JSON.stringify(detailItem.payload ?? {}, null, 2)}
                     </pre>
                   </div>
+                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
+                  (detailItem.status === "BROUILLON" || detailItem.status === "REJETE") ? (
+                    <DossierContratActualisationForm
+                      dossier={detailItem}
+                      meRole={meRole}
+                      onUpdated={(d) => {
+                        setDetailItem({
+                          id: d.id,
+                          reference: d.reference,
+                          status: d.status as DossierStatus,
+                          type: d.type,
+                          concessionnaireId: d.concessionnaireId,
+                          agenceId: d.agenceId,
+                          payload: d.payload,
+                          history: d.history as DossierDetailItem["history"],
+                          createdAt: d.createdAt,
+                          updatedAt: d.updatedAt,
+                        });
+                        setToast({ type: "success", message: "Dossier actualisé." });
+                        void load();
+                      }}
+                    />
+                  ) : null}
                   <div className="rounded-xl border border-slate-200 bg-white p-3">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Historique</p>
                     {detailItem.history.length ? (

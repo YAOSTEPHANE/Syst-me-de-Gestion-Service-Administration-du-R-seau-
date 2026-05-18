@@ -1,16 +1,24 @@
 "use client";
 
 import Link from "next/link";
+import ConcessionnaireInscriptionChecklistBlock from "@/components/lonaci/concessionnaire-inscription-checklist-block";
 import {
   LONACI_ROLES,
+  CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS,
   CONCESSIONNAIRE_STATUT_LABELS,
   CONCESSIONNAIRE_STATUTS,
+  type ConcessionnaireInscriptionStatut,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import type { FormEvent } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type TabId = "fiche" | "contrats" | "historique" | "pieces";
+const OTHER_PRODUCT_CODE = "AUTRES";
+const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
 
 interface AgenceRef {
   id: string;
@@ -38,7 +46,14 @@ interface PieceMeta {
 
 interface ConcessionnaireDetail {
   id: string;
-  codePdv: string;
+  codePdv: string | null;
+  inscriptionStatut: ConcessionnaireInscriptionStatut;
+  nom: string | null;
+  prenom: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
+  inscriptionRejetMotif: string | null;
+  codeTerminal: string | null;
+  codeConcessionnaire: string | null;
   nomComplet: string;
   raisonSociale: string;
   cniNumero: string | null;
@@ -169,7 +184,7 @@ export interface ConcessionnaireFicheModalProps {
   onClose: () => void;
   agences: AgenceRef[];
   produits: ProduitRef[];
-  me: { agenceId: string | null; role: string } | null;
+  me: { agenceId: string | null; role: string; modulesAutorises?: string[] } | null;
   isAgenceProfileFixed: boolean;
   onSaved: () => void;
 }
@@ -192,7 +207,12 @@ export default function ConcessionnaireFicheModal({
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConcessionnaireDetail | null>(null);
 
+  const [nom, setNom] = useState("");
+  const [prenom, setPrenom] = useState("");
   const [nomComplet, setNomComplet] = useState("");
+  const [inscriptionBusy, setInscriptionBusy] = useState(false);
+  const [codeTerminal, setCodeTerminal] = useState("");
+  const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
   const [email, setEmail] = useState("");
   const [tel, setTel] = useState("");
@@ -209,6 +229,8 @@ export default function ConcessionnaireFicheModal({
   const [compteBancaire, setCompteBancaire] = useState("");
   const [observations, setObservations] = useState("");
   const [notesInternes, setNotesInternes] = useState("");
+  const [otherFiles, setOtherFiles] = useState<File[]>([]);
+  const otherFilesInputRef = useRef<HTMLInputElement>(null);
 
   const [auditItems, setAuditItems] = useState<AuditItem[]>([]);
   const [auditPage, setAuditPage] = useState(1);
@@ -225,9 +247,18 @@ export default function ConcessionnaireFicheModal({
   const [contratsLoading, setContratsLoading] = useState(false);
   const [contratsError, setContratsError] = useState<string | null>(null);
 
-  const canDeactivate = me?.role === "ASSIST_CDS" || me?.role === "CHEF_SERVICE";
-  const canChangeAgence = me?.role === "CHEF_SERVICE";
+  const saisieReferentiel = userHasConcessionnairesSaisieModule(me?.modulesAutorises ?? []);
+
+  const canDeactivate =
+    saisieReferentiel && (me?.role === "ASSIST_CDS" || me?.role === "CHEF_SERVICE");
+  const canChangeAgence = saisieReferentiel && me?.role === "CHEF_SERVICE";
   const chefService = me?.role === "CHEF_SERVICE";
+
+  useEffect(() => {
+    if (produitsAutorises.includes(OTHER_PRODUCT_CODE)) return;
+    setOtherFiles([]);
+    if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
+  }, [produitsAutorises]);
 
   /** Actives pour les nouveaux choix ; inclut toujours l’agence actuelle si elle est inactive (sinon la liste déroulante ne peut pas afficher la valeur). */
   const agencesPourSelect = useMemo(() => {
@@ -276,7 +307,11 @@ export default function ConcessionnaireFicheModal({
       const data = (await res.json()) as { concessionnaire: ConcessionnaireDetail };
       const c = data.concessionnaire;
       setDetail(c);
+      setNom(c.nom ?? "");
+      setPrenom(c.prenom ?? "");
       setNomComplet(c.nomComplet ?? "");
+      setCodeTerminal(c.codeTerminal ?? "");
+      setCodeConcessionnaire(c.codeConcessionnaire ?? "");
       setCniNumero(c.cniNumero ?? "");
       setEmail(c.email ?? "");
       setTel(c.telephonePrincipal ?? "");
@@ -293,6 +328,8 @@ export default function ConcessionnaireFicheModal({
       setCompteBancaire(c.compteBancaire ?? "");
       setObservations(c.observations ?? "");
       setNotesInternes(c.notesInternes ?? "");
+      setOtherFiles([]);
+      if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
       setDetail(null);
@@ -400,12 +437,48 @@ export default function ConcessionnaireFicheModal({
   const gelee = detail ? isFicheGelee(detail.statut) : false;
   const canEditNotesWhenGelee =
     me != null && (LONACI_ROLES as readonly string[]).includes(me.role);
-  const readOnlyFiche = Boolean(gelee && !canEditNotesWhenGelee);
-  const notesOnlyMode = Boolean(gelee && canEditNotesWhenGelee);
+  const readOnlyFiche = Boolean((gelee && !canEditNotesWhenGelee) || !saisieReferentiel);
+  const notesOnlyMode = Boolean(gelee && canEditNotesWhenGelee && saisieReferentiel);
+  const inscriptionStatut = detail?.inscriptionStatut ?? "VALIDE";
+  const inscriptionEditable =
+    saisieReferentiel &&
+    !readOnlyFiche &&
+    (inscriptionStatut === "BROUILLON" || inscriptionStatut === "REJETE");
+  const canSubmitInscription = inscriptionEditable;
+  const canValidateN1 =
+    (me?.role === "CHEF_SECTION" || me?.role === "CHEF_SERVICE") && inscriptionStatut === "SOUMIS";
+
+  async function runInscriptionTransition(
+    action: "SUBMIT" | "VALIDATE_N1" | "REJECT" | "RETURN_TO_DRAFT",
+    comment?: string,
+  ) {
+    if (!concessionnaireId) return;
+    setInscriptionBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/concessionnaires/${concessionnaireId}/inscription/transition`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action, comment: comment ?? null }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(friendlyErrorMessage(body?.message ?? "Transition impossible"));
+      }
+      await loadDetail();
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Transition impossible");
+    } finally {
+      setInscriptionBusy(false);
+    }
+  }
 
   async function onSaveFiche(e: FormEvent) {
     e.preventDefault();
     if (!concessionnaireId || !detail) return;
+    if (!saisieReferentiel) return;
     setSaving(true);
     setError(null);
     try {
@@ -428,12 +501,17 @@ export default function ConcessionnaireFicheModal({
 
       if (readOnlyFiche) return;
 
-      if (!nomComplet.trim() || nomComplet.trim().length < 2) {
-        throw new Error("Le nom complet est obligatoire (2 caractères minimum).");
+      if (nom.trim().length < 2 || prenom.trim().length < 2) {
+        throw new Error("Le nom et le prénom sont obligatoires (2 caractères minimum chacun).");
       }
       const cni = cniNumero.trim();
       if (cni.length > 0 && cni.length < 4) {
         throw new Error("Numéro CNI : au moins 4 caractères si renseigné.");
+      }
+      const ct = codeTerminal.trim();
+      const cc = codeConcessionnaire.trim();
+      if (ct.length > 64 || cc.length > 64) {
+        throw new Error("Code terminal et code concessionnaire : 64 caractères maximum.");
       }
       const la = Number(lat.replace(",", "."));
       const lo = Number(lng.replace(",", "."));
@@ -447,7 +525,11 @@ export default function ConcessionnaireFicheModal({
       const telP = tel.trim();
       const telS = telSecondary.trim();
       const body: Record<string, unknown> = {
-        nomComplet: nomComplet.trim(),
+        nom: nom.trim(),
+        prenom: prenom.trim(),
+        nomComplet: `${prenom.trim()} ${nom.trim()}`.trim(),
+        codeTerminal: ct.length ? ct : null,
+        codeConcessionnaire: cc.length ? cc : null,
         cniNumero: cni.length ? cni : null,
         email: email.trim() ? email.trim() : null,
         telephonePrincipal: telP.length >= 8 ? telP : telP.length === 0 ? null : undefined,
@@ -483,6 +565,28 @@ export default function ConcessionnaireFicheModal({
         throw new Error(b?.message ?? "Enregistrement impossible");
       }
       await res.json();
+      const selectedOtherFiles = produitsAutorises.includes(OTHER_PRODUCT_CODE) ? otherFiles : [];
+      if (selectedOtherFiles.length > 0) {
+        const failedNames: string[] = [];
+        for (const file of selectedOtherFiles) {
+          const fd = new FormData();
+          fd.append("file", file);
+          fd.append("kind", "DOCUMENT");
+          const up = await fetch(`/api/concessionnaires/${concessionnaireId}/pieces`, {
+            method: "POST",
+            body: fd,
+            credentials: "include",
+          });
+          if (!up.ok) failedNames.push(file.name);
+        }
+        if (failedNames.length > 0) {
+          throw new Error(
+            `Fiche enregistrée, mais certains fichiers AUTRES n'ont pas été envoyés: ${failedNames.join(", ")}.`,
+          );
+        }
+        setOtherFiles([]);
+        if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
+      }
       onClose();
       queueMicrotask(() => onSaved());
     } catch (err) {
@@ -493,7 +597,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onDeactivate() {
-    if (!concessionnaireId || !detail) return;
+    if (!concessionnaireId || !detail || !saisieReferentiel) return;
     const ok = window.confirm(
       "Désactiver cette fiche ? Le statut passera à « Inactif ». Aucune suppression définitive : la fiche et l’historique restent consultables.",
     );
@@ -519,7 +623,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onUploadPiece(file: File | null) {
-    if (!concessionnaireId || !file || !detail) return;
+    if (!concessionnaireId || !file || !detail || !saisieReferentiel) return;
     setPieceUploading(true);
     setError(null);
     try {
@@ -546,7 +650,7 @@ export default function ConcessionnaireFicheModal({
   }
 
   async function onRemovePiece(pieceId: string) {
-    if (!concessionnaireId) return;
+    if (!concessionnaireId || !saisieReferentiel) return;
     const ok = window.confirm(
       "Retirer cette pièce du dossier ? Le fichier sera supprimé du stockage (la fiche concessionnaire n’est jamais supprimée).",
     );
@@ -596,9 +700,11 @@ export default function ConcessionnaireFicheModal({
               Fiche concessionnaire
             </h3>
             {detail ? (
-              <p className="mt-0.5 font-mono text-sm text-slate-600">
-                {detail.codePdv}
-                <span className="ml-2 font-sans text-slate-500">— code PDV non modifiable</span>
+              <p className="mt-0.5 text-sm text-slate-600">
+                <span className="font-mono">{detail.codePdv ?? "Code PDV après validation N1"}</span>
+                <span className="ml-2 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                  {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[detail.inscriptionStatut]}
+                </span>
               </p>
             ) : (
               <p className="mt-0.5 text-sm text-slate-500">Chargement…</p>
@@ -618,7 +724,7 @@ export default function ConcessionnaireFicheModal({
         <div className="flex shrink-0 gap-1 border-b border-slate-200 px-4 pt-2">
           {(
             [
-              ["fiche", "Fiche & modification"],
+              ["fiche", saisieReferentiel ? "Fiche & modification" : "Fiche (lecture seule)"],
               ["contrats", "Contrats"],
               ["historique", "Historique"],
               ["pieces", "Pièces jointes"],
@@ -650,7 +756,13 @@ export default function ConcessionnaireFicheModal({
 
           {!loading && detail && tab === "fiche" ? (
             <form onSubmit={onSaveFiche} className="grid gap-4">
-              {readOnlyFiche ? (
+              {!saisieReferentiel ? (
+                <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                  <span className="font-semibold">Suivi / lecture seule</span> sur le référentiel concessionnaires : la
+                  fiche est consultable ; aucune modification n’est autorisée avec votre profil modules.
+                </p>
+              ) : null}
+              {readOnlyFiche && saisieReferentiel ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   Fiche en statut résilié ou décédé : les champs de la fiche sont en lecture seule. La modification des
                   notes internes est réservée aux comptes (agent, chef de section, assistant CDS, chef de
@@ -663,21 +775,111 @@ export default function ConcessionnaireFicheModal({
                 </p>
               ) : null}
 
+              {detail.inscriptionStatut !== "VALIDE" ? (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-3 text-sm text-indigo-950">
+                  <p className="font-semibold">Parcours d&apos;inscription</p>
+                  <p className="mt-1 text-xs text-indigo-900/90">
+                    Complétez la fiche, les pièces justificatives (onglet Pièces) et la checklist, puis soumettez pour
+                    validation N1. Le code PDV sera attribué après validation.
+                  </p>
+                  {detail.inscriptionRejetMotif ? (
+                    <p className="mt-2 text-xs text-rose-800">Motif de rejet : {detail.inscriptionRejetMotif}</p>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {canSubmitInscription ? (
+                      <button
+                        type="button"
+                        disabled={inscriptionBusy || saving}
+                        onClick={() => void runInscriptionTransition("SUBMIT")}
+                        className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
+                      >
+                        Soumettre (N1)
+                      </button>
+                    ) : null}
+                    {inscriptionStatut === "REJETE" && saisieReferentiel ? (
+                      <button
+                        type="button"
+                        disabled={inscriptionBusy}
+                        onClick={() => void runInscriptionTransition("RETURN_TO_DRAFT")}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        Reprendre en brouillon
+                      </button>
+                    ) : null}
+                    {canValidateN1 ? (
+                      <>
+                        <button
+                          type="button"
+                          disabled={inscriptionBusy}
+                          onClick={() => void runInscriptionTransition("VALIDATE_N1")}
+                          className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          Valider N1
+                        </button>
+                        <button
+                          type="button"
+                          disabled={inscriptionBusy}
+                          onClick={() => {
+                            const motif = window.prompt("Motif de rejet (obligatoire) :");
+                            if (motif?.trim()) void runInscriptionTransition("REJECT", motif.trim());
+                          }}
+                          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-900 hover:bg-rose-100 disabled:opacity-50"
+                        >
+                          Rejeter
+                        </button>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {concessionnaireId && detail.documentChecklist ? (
+                <ConcessionnaireInscriptionChecklistBlock
+                  concessionnaireId={concessionnaireId}
+                  checklist={detail.documentChecklist}
+                  editable={inscriptionEditable}
+                  onUpdated={(next) => setDetail((d) => (d ? { ...d, documentChecklist: next } : d))}
+                />
+              ) : null}
+
               {!notesOnlyMode && !readOnlyFiche ? (
                 <>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Prénom *</span>
+                      <input required value={prenom} onChange={(e) => setPrenom(e.target.value)} className={inputClass} />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Nom *</span>
+                      <input required value={nom} onChange={(e) => setNom(e.target.value)} className={inputClass} />
+                    </label>
+                  </div>
                   <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Nom complet *</span>
-                    <input
-                      required
-                      value={nomComplet}
-                      onChange={(e) => setNomComplet(e.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-                  <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
+                    <span className="text-xs font-medium text-slate-700">Numéro CNI *</span>
                     <input value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} className={inputClass} />
                   </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Code terminal</span>
+                      <input
+                        value={codeTerminal}
+                        onChange={(e) => setCodeTerminal(e.target.value)}
+                        maxLength={64}
+                        placeholder="Optionnel"
+                        className={inputClass}
+                      />
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="text-xs font-medium text-slate-700">Code concessionnaire</span>
+                      <input
+                        value={codeConcessionnaire}
+                        onChange={(e) => setCodeConcessionnaire(e.target.value)}
+                        maxLength={64}
+                        placeholder="Optionnel"
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
                   <label className="grid gap-1">
                     <span className="text-xs font-medium text-slate-700">E-mail</span>
                     <input
@@ -775,7 +977,54 @@ export default function ConcessionnaireFicheModal({
                           </span>
                         </label>
                       ))}
+                      <label className="flex items-center gap-2 text-xs text-slate-800">
+                        <input
+                          type="checkbox"
+                          checked={produitsAutorises.includes(OTHER_PRODUCT_CODE)}
+                          onChange={(e) =>
+                            setProduitsAutorises((curr) =>
+                              e.target.checked
+                                ? [...curr, OTHER_PRODUCT_CODE]
+                                : curr.filter((code) => code !== OTHER_PRODUCT_CODE),
+                            )
+                          }
+                        />
+                        <span>{OTHER_PRODUCT_CODE}</span>
+                      </label>
                     </div>
+                    {produitsAutorises.includes(OTHER_PRODUCT_CODE) ? (
+                      <div className="mt-2 rounded-md border border-indigo-200 bg-indigo-50/50 p-2">
+                        <p className="text-[11px] font-semibold text-indigo-900">
+                          Pièces justificatives (AUTRES)
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-indigo-800/90">
+                          Ajoutez un ou plusieurs fichiers (PDF, JPG, PNG, WebP). Ils seront joints
+                          lors de l&apos;enregistrement.
+                        </p>
+                        <input
+                          ref={otherFilesInputRef}
+                          type="file"
+                          multiple
+                          accept={OTHER_FILES_ACCEPT}
+                          aria-label="Fichiers AUTRES"
+                          onChange={(e) => setOtherFiles(Array.from(e.currentTarget.files ?? []))}
+                          className="mt-2 block w-full text-[11px] text-slate-700 file:mr-2 file:rounded-md file:border file:border-indigo-300 file:bg-white file:px-2 file:py-1 file:text-[11px] file:font-semibold file:text-indigo-800"
+                        />
+                        {otherFiles.length > 0 ? (
+                          <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] text-slate-700">
+                            {otherFiles.map((file) => (
+                              <li
+                                key={`${file.name}-${file.size}-${file.lastModified}`}
+                                className="truncate"
+                                title={file.name}
+                              >
+                                {file.name}
+                              </li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <label className="grid gap-1">
@@ -1099,7 +1348,7 @@ export default function ConcessionnaireFicheModal({
                 Documents PDF ou images (contrats, CNI, photos PDV…). Téléchargement authentifié via les liens
                 ci-dessous.
               </p>
-              {!gelee ? (
+              {!gelee && saisieReferentiel ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50 p-4">
                   <div className="mb-3 flex flex-wrap items-end gap-3">
                     <label className="grid gap-1">
@@ -1130,10 +1379,16 @@ export default function ConcessionnaireFicheModal({
                   </div>
                   {pieceUploading ? <p className="text-xs text-slate-500">Téléversement…</p> : null}
                 </div>
-              ) : (
+              ) : gelee ? (
                 <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
                   Statut résilié ou décédé : plus d’ajout ni de retrait de pièces. Téléchargement des fichiers existants
                   toujours possible.
+                </p>
+              ) : (
+                <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-sm text-sky-950">
+                  Profil suivi : vous pouvez télécharger les pièces existantes ; l’ajout et le retrait sont réservés aux
+                  comptes avec saisie sur le référentiel (<code className="rounded bg-white px-1">CONCESSIONNAIRES</code>
+                  ).
                 </p>
               )}
               <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200">
@@ -1158,7 +1413,7 @@ export default function ConcessionnaireFicheModal({
                         >
                           Ouvrir / télécharger
                         </a>
-                        {!gelee ? (
+                        {!gelee && saisieReferentiel ? (
                           <button
                             type="button"
                             disabled={removingPieceId === p.id}

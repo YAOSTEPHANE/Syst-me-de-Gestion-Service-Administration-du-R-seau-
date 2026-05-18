@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { requireApiAuth } from "@/lib/auth/guards";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
 import { ensureGprGrattageIndexes, SCRATCH_CODE_STATUSES, transitionScratchLot } from "@/lib/lonaci/gpr-grattage";
 
 const schema = z.object({
@@ -13,13 +14,22 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await checkPermission(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    resource: "DOSSIERS",
+    action: resolveRbacAction(parsed.data.targetStatus, {
+      GENERE: "CONFIGURE",
+      ATTRIBUE: "UPDATE",
+      ACTIF: "FINALIZE",
+      EPUISE: "EXPORT",
+    }),
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
   await ensureGprGrattageIndexes();
   try {
     await transitionScratchLot({ lotId: id, targetStatus: parsed.data.targetStatus, actor: auth.user });

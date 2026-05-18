@@ -28,20 +28,21 @@ export interface LonaciRoleProfile {
 export const LONACI_ROLE_PROFILES: Record<LonaciRole, LonaciRoleProfile> = {
   AGENT: {
     designation: "Agent opérationnel",
-    responsabilite: "Saisie des dossiers. Accès limité à son agence et ses modules assignés.",
+    responsabilite:
+      "Action et saisie sur l’ensemble des modules métier (contrats, cautions, PDV, agréments, cessions, résiliations, attestations, décès, bancarisation, GPR, référentiel, notifications, etc.), dans la limite de son agence et des modules assignés au compte. Hors périmètre : production des rapports (lecture / suivi seulement selon les écrans) et gestion des comptes utilisateurs.",
   },
   CHEF_SECTION: {
-    designation: "Chef(fe) de Section",
+    designation: "Chef(fe) de section",
     responsabilite:
-      "Contrôle N1. Valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
+      "Contrôle N1 — valide ou rejette les dossiers soumis par les agents. Produit les rapports hebdomadaires.",
   },
   ASSIST_CDS: {
-    designation: "Assistant(e) Chef(fe) de Service",
+    designation: "Assistant(e) chef(fe) de service",
     responsabilite:
       "Contrôle N2. Synthèse des états. Produit les rapports mensuels, semestriels et annuels.",
   },
   CHEF_SERVICE: {
-    designation: "Chef(fe) de Service",
+    designation: "Chef(fe) de service",
     responsabilite:
       "Validation finale. Accès complet à tous les modules. Finalise tous les dossiers. Paramètre le système.",
   },
@@ -95,10 +96,42 @@ export type ContratOperationType = (typeof CONTRAT_OPERATION_TYPES)[number];
 export const CONTRAT_STATUSES = ["ACTIF", "RESILIE", "CEDE"] as const;
 export type ContratStatus = (typeof CONTRAT_STATUSES)[number];
 
-export const CAUTION_PAYMENT_MODES = ["ESPECES", "MOBILE_MONEY", "VIREMENT", "CHEQUE"] as const;
+export const CAUTION_ENCAISSEMENT_MODES = [
+  "ESPECES",
+  "CHEQUE",
+  "VIREMENT",
+  "MOBILE_MONEY",
+  "AUTRE",
+] as const;
+export type CautionEncaissementMode = (typeof CAUTION_ENCAISSEMENT_MODES)[number];
+
+export const CAUTION_ENCAISSEMENT_MODE_LABELS: Record<CautionEncaissementMode, string> = {
+  ESPECES: "Espèces",
+  CHEQUE: "Chèque",
+  VIREMENT: "Virement",
+  MOBILE_MONEY: "Mobile money",
+  AUTRE: "Autre",
+};
+
+export function getCautionEncaissementModeLabel(mode: string): string {
+  if ((CAUTION_ENCAISSEMENT_MODES as readonly string[]).includes(mode)) {
+    return CAUTION_ENCAISSEMENT_MODE_LABELS[mode as CautionEncaissementMode];
+  }
+  if (mode === "PAIEMENT_DIFFERE") {
+    return "Paiement différé (fiche de paiement caution)";
+  }
+  return mode;
+}
+
+export const CAUTION_PAYMENT_MODES = [
+  ...CAUTION_ENCAISSEMENT_MODES,
+  /** Fiche provisoire : encaissement saisi ultérieurement (régularisation). */
+  "PAIEMENT_DIFFERE",
+] as const;
 export type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
-export const CAUTION_STATUSES = ["EN_ATTENTE", "A_CORRIGER", "PAYEE", "ANNULEE"] as const;
+/** Après saisie : pas de circuit N1/N2 ; finalisation paiement / rejet par le chef de service (hors fiche provisoire). */
+export const CAUTION_STATUSES = ["EN_ATTENTE", "VALIDE_N1", "VALIDE_N2", "A_CORRIGER", "PAYEE", "ANNULEE"] as const;
 export type CautionStatus = (typeof CAUTION_STATUSES)[number];
 
 export const PDV_INTEGRATION_STATUSES = [
@@ -127,6 +160,26 @@ export const CONCESSIONNAIRE_STATUTS = [
 
 export type ConcessionnaireStatut = (typeof CONCESSIONNAIRE_STATUTS)[number];
 
+/** Parcours d'inscription concessionnaire (avant accès opérationnel). */
+export const CONCESSIONNAIRE_INSCRIPTION_STATUTS = [
+  "BROUILLON",
+  "SOUMIS",
+  "VALIDE",
+  "REJETE",
+] as const;
+
+export type ConcessionnaireInscriptionStatut = (typeof CONCESSIONNAIRE_INSCRIPTION_STATUTS)[number];
+
+export const CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS: Record<
+  ConcessionnaireInscriptionStatut,
+  string
+> = {
+  BROUILLON: "Brouillon",
+  SOUMIS: "Soumis (attente N1)",
+  VALIDE: "Inscription validée",
+  REJETE: "Inscription rejetée",
+};
+
 /** Libellés UI fiche concessionnaire */
 export const CONCESSIONNAIRE_STATUT_LABELS: Record<ConcessionnaireStatut, string> = {
   ACTIF: "Actif",
@@ -154,7 +207,7 @@ export const BANCARISATION_STATUT_LABELS: Record<BancarisationStatut, string> = 
 /** Opérations interdites sauf lecture / notes service (règles MVP) */
 export const CONCESSIONNAIRE_STATUTS_BLOQUANTS = ["INACTIF", "RESILIE", "DECEDE"] as const;
 
-/** Décès & succession — 5 étapes séquentielles (Sprint 5) */
+/** Décès et ayants droit — 5 étapes séquentielles (Sprint 5) */
 export const SUCCESSION_STEPS = [
   "DECLARATION_DECES",
   "IDENTIFICATION_AYANT_DROIT",

@@ -1,17 +1,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAppSettingsIndexes, getAppSettings, updateAppSettings } from "@/lib/lonaci/app-settings";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const patchSchema = z
   .object({
     criticalWorkflowEmailEnabled: z.boolean().optional(),
+    supervisionExportCronEnabled: z.boolean().optional(),
+    supervisionExportFormat: z.enum(["pdf", "csv", "xlsx"]).optional(),
+    supervisionExportCronHourUtc: z.number().int().min(0).max(23).optional(),
     alertCautionMaxDays: z.number().int().min(1).max(365).optional(),
     alertDossierIdleHours: z.number().int().min(1).max(168).optional(),
     alertPdvIntegrationMaxDays: z.number().int().min(1).max(90).optional(),
     alertAgrementStaleDays: z.number().int().min(1).max(90).optional(),
     alertSuccessionStaleDays: z.number().int().min(1).max(365).optional(),
+    dashboardContractsMonthlyTarget: z.number().int().min(1).max(10000).optional(),
   })
   .refine((o) => Object.keys(o).length > 0, { message: "Aucune modification" });
 
@@ -24,11 +29,17 @@ export async function GET(request: NextRequest) {
   return NextResponse.json(
     {
       criticalWorkflowEmailEnabled: settings.criticalWorkflowEmailEnabled,
+      supervisionExportCronEnabled: settings.supervisionExportCronEnabled,
+      supervisionExportFormat: settings.supervisionExportFormat,
+      supervisionExportCronHourUtc: settings.supervisionExportCronHourUtc,
       alertCautionMaxDays: settings.alertCautionMaxDays,
       alertDossierIdleHours: settings.alertDossierIdleHours,
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
+      dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
+      supervisionExportLastRunAt: settings.supervisionExportLastRunAt?.toISOString() ?? null,
+      supervisionExportLastStatus: settings.supervisionExportLastStatus,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },
@@ -42,7 +53,7 @@ export async function PATCH(request: NextRequest) {
 
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   await ensureAppSettingsIndexes();
@@ -50,11 +61,17 @@ export async function PATCH(request: NextRequest) {
   return NextResponse.json(
     {
       criticalWorkflowEmailEnabled: settings.criticalWorkflowEmailEnabled,
+      supervisionExportCronEnabled: settings.supervisionExportCronEnabled,
+      supervisionExportFormat: settings.supervisionExportFormat,
+      supervisionExportCronHourUtc: settings.supervisionExportCronHourUtc,
       alertCautionMaxDays: settings.alertCautionMaxDays,
       alertDossierIdleHours: settings.alertDossierIdleHours,
       alertPdvIntegrationMaxDays: settings.alertPdvIntegrationMaxDays,
       alertAgrementStaleDays: settings.alertAgrementStaleDays,
       alertSuccessionStaleDays: settings.alertSuccessionStaleDays,
+      dashboardContractsMonthlyTarget: settings.dashboardContractsMonthlyTarget,
+      supervisionExportLastRunAt: settings.supervisionExportLastRunAt?.toISOString() ?? null,
+      supervisionExportLastStatus: settings.supervisionExportLastStatus,
       updatedAt: settings.updatedAt.toISOString(),
       updatedByUserId: settings.updatedByUserId,
     },

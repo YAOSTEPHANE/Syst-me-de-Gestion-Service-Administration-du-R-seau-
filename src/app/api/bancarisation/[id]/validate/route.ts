@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   findBancarisationRequestById,
@@ -19,14 +20,15 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
 
   const reqDoc = await findBancarisationRequestById(id);
   if (!reqDoc) {
@@ -53,6 +55,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (code === "REQUEST_NOT_PENDING") {
       return NextResponse.json({ message: "Cette demande a deja ete traitee." }, { status: 409 });
+    }
+    if (code === "FORBIDDEN_TRANSITION") {
+      return NextResponse.json({ message: "Action non autorisee pour votre role ou le statut de la demande." }, { status: 403 });
     }
     return NextResponse.json({ message: "Validation impossible." }, { status: 500 });
   }

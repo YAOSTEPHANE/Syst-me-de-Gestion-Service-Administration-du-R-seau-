@@ -2,20 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 
+import { apiError, badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
-import { isStatutBloquant } from "@/lib/lonaci/access";
+import { isStatutFicheGelee } from "@/lib/lonaci/access";
 import {
-  finalizeContratFromDossier,
   findContratById,
   hasActiveContractForProduct,
   listContrats,
+  listScopeAgenceIdForContratsList,
 } from "@/lib/lonaci/contracts";
-import { createDossier, ensureDossierIndexes } from "@/lib/lonaci/dossiers";
+import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
-
 const createSchema = z.object({
   concessionnaireId: z.string().min(1),
   agenceId: z.string().min(1),
@@ -45,15 +46,6 @@ const listSchema = z.object({
   dateTo: z.string().optional(),
 });
 
-/** Aligné sur l’export CSV contrats : vue nationale vs agence fixée. */
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
-
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -64,10 +56,10 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listSchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
-  const scopeAgenceId = listScopeAgenceId(auth.user);
+  const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
   let allowedConcessionnaireIds: string[] | null = null;
   if (scopeAgenceId) {
     const scoped = await prisma.concessionnaire.findMany({
@@ -316,7 +308,7 @@ export async function POST(request: NextRequest) {
   }
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   if (parsed.data.operationType === "NOUVEAU") {
@@ -325,46 +317,44 @@ export async function POST(request: NextRequest) {
       parsed.data.produitCode.trim().toUpperCase(),
     );
     if (hasActive) {
-      return NextResponse.json(
-        { message: "Un contrat actif existe deja pour ce produit et ce concessionnaire." },
-        { status: 409 },
+      return conflict(
+        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "ACTIVE_CONTRACT_EXISTS",
       );
     }
   }
   if (parsed.data.operationType === "ACTUALISATION") {
     if (!parsed.data.parentContratId) {
-      return NextResponse.json(
-        { message: "Le contrat d'origine est obligatoire pour une actualisation." },
-        { status: 400 },
+      return badRequest(
+        "Le contrat d'origine est obligatoire pour une actualisation.",
+        "PARENT_CONTRAT_REQUIRED",
       );
     }
     const parent = await findContratById(parsed.data.parentContratId);
     if (!parent || parent.status !== "ACTIF") {
-      return NextResponse.json({ message: "Contrat d'origine introuvable ou inactif." }, { status: 404 });
+      return notFound("Contrat d'origine introuvable ou inactif.", "PARENT_CONTRAT_NOT_FOUND");
     }
   }
   const concessionnaire = await findConcessionnaireById(parsed.data.concessionnaireId);
   if (!concessionnaire || concessionnaire.deletedAt) {
-    return NextResponse.json({ message: "Concessionnaire introuvable." }, { status: 404 });
+    return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
   }
-  if (isStatutBloquant(concessionnaire.statut)) {
-    return NextResponse.json(
-      { message: "Operation interdite: concessionnaire résilié / inactif / décédé." },
-      { status: 409 },
+  if (isStatutFicheGelee(concessionnaire.statut)) {
+    return conflict(
+      "Operation interdite: concessionnaire résilié ou décédé.",
+      "CONCESSIONNAIRE_BLOQUE",
     );
   }
   if (!concessionnaire.agenceId || concessionnaire.agenceId !== parsed.data.agenceId) {
-    return NextResponse.json({ message: "Agence invalide pour ce concessionnaire." }, { status: 400 });
+    return badRequest("Agence invalide pour ce concessionnaire.", "AGENCE_INVALID");
   }
   const p = parsed.data.produitCode.trim().toUpperCase();
   if (!produitAutorisePourConcessionnaire(concessionnaire.produitsAutorises ?? [], p)) {
-    return NextResponse.json({ message: "Produit non autorise pour ce concessionnaire." }, { status: 400 });
+    return badRequest("Produit non autorise pour ce concessionnaire.", "PRODUIT_NOT_ALLOWED");
   }
 
   await ensureDossierIndexes();
   try {
-    const autoValidate = auth.user.role === "CHEF_SERVICE";
-    const now = new Date();
     const dossier = await createDossier({
       type: "CONTRAT_ACTUALISATION",
       concessionnaireId: parsed.data.concessionnaireId,
@@ -378,52 +368,32 @@ export async function POST(request: NextRequest) {
         observations: parsed.data.observations ?? null,
       },
       actor: auth.user,
-      initialStatus: autoValidate ? "FINALISE" : undefined,
-      initialHistory: autoValidate
-        ? [
-            {
-              status: "FINALISE",
-              actedByUserId: auth.user._id ?? "",
-              actedAt: now,
-              comment: "Auto-validé (création Chef(fe) de service)",
-            },
-          ]
-        : undefined,
     });
-
-    if (autoValidate) {
-      const produitCode = parsed.data.produitCode.trim().toUpperCase();
-      const operationType = parsed.data.operationType;
-      const dateEffet = new Date(parsed.data.dateOperation);
-      const contrat = await finalizeContratFromDossier({
-        dossierId: dossier._id ?? "",
-        concessionnaireId: parsed.data.concessionnaireId,
-        produitCode,
-        operationType,
-        dateEffet,
-        actor: auth.user,
-      });
-      return NextResponse.json({ dossier, contrat }, { status: 201 });
-    }
-
-    return NextResponse.json({ dossier }, { status: 201 });
+    const submitted = await transitionDossier(dossier._id ?? "", "SOUMIS", auth.user, "Soumis automatiquement à la création.");
+    return NextResponse.json({ dossier: submitted }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_BLOQUE") {
-      return NextResponse.json({ message: "Concessionnaire bloque." }, { status: 409 });
+      return conflict("Concessionnaire bloque.", "CONCESSIONNAIRE_BLOQUE");
     }
-    if (code === "AGENCE_FORBIDDEN") {
-      return NextResponse.json({ message: "Acces refuse pour cette agence." }, { status: 403 });
-    }
-    if (code === "PRODUIT_INVALID") {
-      return NextResponse.json({ message: "Produit invalide." }, { status: 400 });
-    }
-    if (code === "ACTIVE_CONTRACT_EXISTS") {
-      return NextResponse.json(
-        { message: "Un contrat actif existe deja pour ce produit et ce concessionnaire." },
-        { status: 409 },
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+      return conflict(
+        "Inscription non finalisee : validation N1 requise avant contrat.",
+        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
       );
     }
-    return NextResponse.json({ message: "Creation dossier contrat impossible." }, { status: 500 });
+    if (code === "AGENCE_FORBIDDEN") {
+      return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+    }
+    if (code === "PRODUIT_INVALID") {
+      return badRequest("Produit invalide.", "PRODUIT_INVALID");
+    }
+    if (code === "ACTIVE_CONTRACT_EXISTS") {
+      return conflict(
+        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "ACTIVE_CONTRACT_EXISTS",
+      );
+    }
+    return apiError(500, "Creation dossier contrat impossible.", "CONTRAT_CREATE_FAILED");
   }
 }

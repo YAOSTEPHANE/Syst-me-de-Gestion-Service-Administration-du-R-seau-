@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { UserDocument } from "@/lib/lonaci/types";
+import { userRequiresPasswordRotation } from "@/lib/auth/password-policy";
 
 /** Throttle + retry : plusieurs routes en parallèle mettaient à jour le même user (P2034). */
 const lastSessionTouchAt = new Map<string, number>();
@@ -83,6 +84,8 @@ function mapStoredUser(user: NonNullable<PrismaUser>): UserDocument {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     deletedAt: user.deletedAt,
+    passwordChangedAt: user.passwordChangedAt,
+    passwordResetReminderSentForMonth: user.passwordResetReminderSentForMonth ?? null,
   };
 }
 
@@ -163,6 +166,8 @@ export async function createUser(input: CreateUserInput): Promise<UserDocument> 
     lastActivityAt: null,
     resetPasswordTokenHash: null,
     resetPasswordExpiresAt: null,
+    passwordChangedAt: new Date(),
+    passwordResetReminderSentForMonth: null,
     deletedAt: null,
     },
   });
@@ -234,6 +239,36 @@ export async function clearCurrentSession(userId: string): Promise<void> {
   );
 }
 
+export async function clearCurrentSessions(userIds: string[]): Promise<number> {
+  const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return 0;
+  const result = await prisma.user.updateMany({
+    where: { id: { in: ids }, deletedAt: null },
+    data: {
+      currentSessionId: null,
+      updatedAt: new Date(),
+    },
+  });
+  return result.count;
+}
+
+export async function setUsersActiveState(userIds: string[], actif: boolean): Promise<number> {
+  const ids = [...new Set(userIds.map((id) => id.trim()).filter(Boolean))];
+  if (!ids.length) return 0;
+  const data: { actif: boolean; currentSessionId?: null; updatedAt: Date } = {
+    actif,
+    updatedAt: new Date(),
+  };
+  if (!actif) {
+    data.currentSessionId = null;
+  }
+  const result = await prisma.user.updateMany({
+    where: { id: { in: ids }, deletedAt: null },
+    data,
+  });
+  return result.count;
+}
+
 export async function updateUserAdmin(userId: string, input: UpdateUserAdminInput): Promise<UserDocument | null> {
   const data: Record<string, unknown> = { updatedAt: new Date() };
   if (input.email !== undefined) data.email = input.email.trim().toLowerCase();
@@ -257,15 +292,33 @@ export async function updateUserAdmin(userId: string, input: UpdateUserAdminInpu
   return findUserById(userId);
 }
 
+export async function softDeleteUserAdmin(userId: string): Promise<boolean> {
+  const now = new Date();
+  const result = await prisma.user.updateMany({
+    where: { id: userId, deletedAt: null },
+    data: {
+      actif: false,
+      currentSessionId: null,
+      resetPasswordTokenHash: null,
+      resetPasswordExpiresAt: null,
+      deletedAt: now,
+      updatedAt: now,
+    },
+  });
+  return result.count > 0;
+}
+
 export async function updateUserPassword(userId: string, passwordHash: string): Promise<void> {
+  const now = new Date();
   await prisma.user.updateMany({
     where: { id: userId, deletedAt: null },
     data: {
       passwordHash,
+      passwordChangedAt: now,
       currentSessionId: null,
       resetPasswordTokenHash: null,
       resetPasswordExpiresAt: null,
-      updatedAt: new Date(),
+      updatedAt: now,
     },
   });
 }
@@ -276,6 +329,40 @@ export async function setResetPasswordToken(userId: string, tokenHash: string, e
     data: {
       resetPasswordTokenHash: tokenHash,
       resetPasswordExpiresAt: expiresAt,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+export async function clearResetPasswordToken(userId: string): Promise<void> {
+  await prisma.user.updateMany({
+    where: { id: userId, deletedAt: null },
+    data: {
+      resetPasswordTokenHash: null,
+      resetPasswordExpiresAt: null,
+      updatedAt: new Date(),
+    },
+  });
+}
+
+/** Chefs de service actifs n’ayant pas encore reçu l’e-mail de fin de mois pour le mois UTC `endingMonthKey` (YYYY-MM). */
+export async function listUsersNeedingMonthlyPasswordResetReminder(endingMonthKey: string): Promise<UserDocument[]> {
+  const rows = await prisma.user.findMany({
+    where: {
+      deletedAt: null,
+      actif: true,
+      role: "CHEF_SERVICE",
+      OR: [{ passwordResetReminderSentForMonth: null }, { passwordResetReminderSentForMonth: { not: endingMonthKey } }],
+    },
+  });
+  return rows.map(mapStoredUser);
+}
+
+export async function markPasswordResetReminderSentForMonth(userId: string, yearMonth: string): Promise<void> {
+  await prisma.user.updateMany({
+    where: { id: userId, deletedAt: null },
+    data: {
+      passwordResetReminderSentForMonth: yearMonth,
       updatedAt: new Date(),
     },
   });
@@ -307,5 +394,6 @@ export function sanitizeUser(user: UserDocument) {
     produitsAutorises: user.produitsAutorises,
     actif: user.actif,
     derniereConnexion: user.derniereConnexion,
+    needsPasswordChange: userRequiresPasswordRotation(user),
   };
 }

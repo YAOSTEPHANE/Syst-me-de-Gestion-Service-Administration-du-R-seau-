@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { buildReportSummary, type ReportPeriod } from "@/lib/lonaci/reports";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const schema = z.object({
   period: z.enum(["daily", "weekly", "monthly"]).default("daily"),
+  agenceId: z.string().optional(),
+  compareAgences: z.enum(["0", "1"]).optional().default("0"),
+  topAgences: z.coerce.number().int().min(1).max(50).optional().default(8),
 });
 
 export async function GET(request: NextRequest) {
@@ -16,9 +20,13 @@ export async function GET(request: NextRequest) {
 
   const parsed = schema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
-  const summary = await buildReportSummary(parsed.data.period as ReportPeriod);
+  const summary = await buildReportSummary(
+    parsed.data.period as ReportPeriod,
+    parsed.data.agenceId,
+    parsed.data.compareAgences === "1" ? parsed.data.topAgences : 0,
+  );
   return NextResponse.json(summary, { status: 200 });
 }

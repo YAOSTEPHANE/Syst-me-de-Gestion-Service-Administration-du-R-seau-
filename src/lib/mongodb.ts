@@ -5,19 +5,26 @@ declare global {
   var __mongoClientPromise: Promise<MongoClient> | undefined;
 }
 
-const client = new MongoClient(env.mongodbUri, {
-  serverApi: {
-    version: ServerApiVersion.v1,
-    strict: true,
-    deprecationErrors: true,
-  },
-  /** Configurable via MONGODB_* (voir `src/lib/env.ts`). Défaut 30s pour Atlas / scripts seed. */
-  serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
-  connectTimeoutMS: env.mongodbConnectTimeoutMs,
-});
+let clientSingleton: MongoClient | null = null;
+
+function getMongoClientInstance(): MongoClient {
+  if (!clientSingleton) {
+    clientSingleton = new MongoClient(env.mongodbUri, {
+      serverApi: {
+        version: ServerApiVersion.v1,
+        strict: true,
+        deprecationErrors: true,
+      },
+      /** Configurable via MONGODB_* (voir `src/lib/env.ts`). Défaut 30s pour Atlas / scripts seed. */
+      serverSelectionTimeoutMS: env.mongodbServerSelectionTimeoutMs,
+      connectTimeoutMS: env.mongodbConnectTimeoutMs,
+    });
+  }
+  return clientSingleton;
+}
 
 function connectClient() {
-  const promise = client.connect().catch((error) => {
+  const promise = getMongoClientInstance().connect().catch((error) => {
     // Evite les unhandled rejections et permet un nouvel essai au prochain appel.
     if (process.env.NODE_ENV !== "production") {
       global.__mongoClientPromise = undefined;

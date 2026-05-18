@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { createRegistry, ensureRegistryIndexes, listRegistries } from "@/lib/lonaci/lonaci-registries";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listSchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureRegistryIndexes();
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   await ensureRegistryIndexes();

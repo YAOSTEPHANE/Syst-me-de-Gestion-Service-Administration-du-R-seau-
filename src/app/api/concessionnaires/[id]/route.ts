@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   canMutateConcessionnaireCore,
   canEditNotesInternesWhenBlocked,
@@ -9,14 +10,21 @@ import {
 } from "@/lib/lonaci/access";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
 import {
+  isConcessionnaireInscriptionFinalisee,
+  patchDocumentChecklistStatuts,
+  refreshConcessionnaireDocumentChecklist,
+} from "@/lib/lonaci/concessionnaire-inscription";
+import {
   ensureConcessionnaireIndexes,
   findConcessionnaireById,
   sanitizeConcessionnairePublic,
   softDeleteConcessionnaire,
   updateConcessionnaire,
 } from "@/lib/lonaci/concessionnaires";
-import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
+import { ensureReferentialsIndexes, findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
+
+const OTHER_PRODUCT_CODE = "AUTRES";
 
 /** E-mail vide ou invalide en base → null (évite 400 Zod sur enregistrement sans toucher au champ). */
 function preprocessEmail(value: unknown): string | null | undefined {
@@ -28,9 +36,39 @@ function preprocessEmail(value: unknown): string | null | undefined {
   return z.string().email().safeParse(t).success ? t : null;
 }
 
+const checklistPatchSchema = z.array(
+  z.object({
+    itemId: z.string().min(1),
+    statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+  }),
+);
+
 const patchSchema = z
   .object({
+    nom: z.string().min(2).optional(),
+    prenom: z.string().min(2).optional(),
     nomComplet: z.string().min(2).optional(),
+    documentChecklist: checklistPatchSchema.optional(),
+    codeTerminal: z.preprocess(
+      (v) => {
+        if (v === undefined) return undefined;
+        if (v === null) return null;
+        if (typeof v !== "string") return undefined;
+        const t = v.trim();
+        return t === "" ? null : t;
+      },
+      z.union([z.string().min(1).max(64), z.null()]).optional(),
+    ),
+    codeConcessionnaire: z.preprocess(
+      (v) => {
+        if (v === undefined) return undefined;
+        if (v === null) return null;
+        if (typeof v !== "string") return undefined;
+        const t = v.trim();
+        return t === "" ? null : t;
+      },
+      z.union([z.string().min(1).max(64), z.null()]).optional(),
+    ),
     cniNumero: z.preprocess(
       (v) => {
         if (v === undefined) return undefined;
@@ -91,7 +129,24 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Acces refuse" }, { status: 403 });
   }
 
-  return NextResponse.json({ concessionnaire: sanitizeConcessionnairePublic(doc) }, { status: 200 });
+  await ensureReferentialsIndexes();
+  const produits = await listProduits();
+  const produitLibelles: Record<string, string> = {};
+  const produitPrixCaution: Record<string, number> = {};
+  for (const p of produits) {
+    const code = (p.code ?? "").trim().toUpperCase();
+    if (!code) continue;
+    const lib = (p.libelle ?? "").trim();
+    produitLibelles[code] = lib || code;
+    const rawPrix = p.prix;
+    const n = typeof rawPrix === "number" && Number.isFinite(rawPrix) ? Math.max(0, Math.round(rawPrix)) : 0;
+    produitPrixCaution[code] = n;
+  }
+
+  return NextResponse.json(
+    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles, produitPrixCaution },
+    { status: 200 },
+  );
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
@@ -115,10 +170,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       detail,
       issues: parsed.error.issues,
     });
-    return NextResponse.json(
-      { message: `Donnees invalides (${detail})`, issues: parsed.error.issues },
-      { status: 400 },
-    );
+    return zodBadRequest(parsed.error, `Donnees invalides (${detail})`);
   }
 
   await ensureConcessionnaireIndexes();
@@ -171,6 +223,15 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       );
     }
   }
+  if (
+    parsed.data.statut === "ACTIF" &&
+    !isConcessionnaireInscriptionFinalisee(existing)
+  ) {
+    return NextResponse.json(
+      { message: "Activation impossible : inscription non validée (N1)." },
+      { status: 400 },
+    );
+  }
 
   // Validation agence : on ne bloque que si l'utilisateur change l'agence.
   // Cas à ne pas empêcher : sauvegarde d'autres champs quand la fiche contient une agence
@@ -213,6 +274,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
      */
     const invalidProduits = parsed.data.produitsAutorises.filter((code) => {
       const u = code.trim().toUpperCase();
+      if (u === OTHER_PRODUCT_CODE) return false;
       if (codesActifs.has(u)) return false;
       if (codesDejaSurFiche.has(u)) return false;
       return true;
@@ -242,10 +304,22 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
   }
 
-  const patch = {
-    ...parsed.data,
+  const { documentChecklist: checklistPatch, ...restPatch } = parsed.data;
+  const patch: Parameters<typeof updateConcessionnaire>[1] = {
+    ...restPatch,
     produitsAutorises: parsed.data.produitsAutorises?.map((code) => code.trim().toUpperCase()),
   };
+
+  if (checklistPatch && existing.documentChecklist) {
+    patch.documentChecklist = patchDocumentChecklistStatuts(existing.documentChecklist, checklistPatch);
+  }
+
+  if (parsed.data.produitsAutorises) {
+    const codes = parsed.data.produitsAutorises.map((code) => code.trim().toUpperCase());
+    if (!isConcessionnaireInscriptionFinalisee(existing)) {
+      patch.documentChecklist = await refreshConcessionnaireDocumentChecklist(id, codes);
+    }
+  }
 
   const updated = await updateConcessionnaire(id, patch, auth.user);
   if (!updated) {

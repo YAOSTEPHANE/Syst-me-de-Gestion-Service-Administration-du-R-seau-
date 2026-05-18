@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MongoBulkWriteError } from "mongodb";
+import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -160,12 +163,10 @@ function validateAndNormalizeImportRow(
     if (!kind) return { row: null, error: "kind invalide (CESSION|DELOCALISATION)" };
     normalized.kind = kind;
 
-    const statut = normalizeEnum(
-      normalized.statut ?? "SAISIE_AGENT",
-      ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE", "REJETEE"] as const,
-    );
-    if (!statut) return { row: null, error: "statut invalide pour cession" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une cession démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "SAISIE_AGENT", ["SAISIE_AGENT"] as const);
+    if (!statut) return { row: null, error: "statut invalide pour cession (autorisé: SAISIE_AGENT uniquement à la création)" };
+    normalized.statut = "SAISIE_AGENT";
 
     if (kind === "CESSION") {
       if (!isObjectIdLike(normalized.cedantId)) return { row: null, error: "cedantId requis (ObjectId)" };
@@ -193,9 +194,11 @@ function validateAndNormalizeImportRow(
     if (!isNonEmptyString(normalized.produitCode)) return { row: null, error: "produitCode requis" };
     normalized.produitCode = normalized.produitCode.trim().toUpperCase();
     if (!isNonEmptyString(normalized.motif)) return { row: null, error: "motif requis" };
-    const statut = normalizeEnum(normalized.statut ?? "DOSSIER_RECU", ["DOSSIER_RECU", "RESILIE"] as const);
-    if (!statut) return { row: null, error: "statut invalide pour résiliation" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une résiliation démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "DOSSIER_RECU", ["DOSSIER_RECU"] as const);
+    if (!statut)
+      return { row: null, error: "statut invalide pour résiliation (autorisé: DOSSIER_RECU uniquement à la création)" };
+    normalized.statut = "DOSSIER_RECU";
     return { row: normalized };
   }
 
@@ -210,9 +213,21 @@ function validateAndNormalizeImportRow(
       return { row: null, error: "concessionnaireId invalide (ObjectId)" };
     }
     if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
-    const statut = normalizeEnum(normalized.statut ?? "DEMANDE_RECUE", ["DEMANDE_RECUE", "TRANSMIS", "FINALISE"] as const);
-    if (!statut) return { row: null, error: "statut invalide pour attestation/domiciliation" };
-    normalized.statut = statut;
+    // Règle métier: à la création/import, une demande démarre obligatoirement avant validation N1.
+    const statut = normalizeEnum(normalized.statut ?? "DEMANDE_RECUE", ["DEMANDE_RECUE"] as const);
+    if (!statut)
+      return { row: null, error: "statut invalide pour attestation/domiciliation (autorisé: DEMANDE_RECUE uniquement à la création)" };
+    normalized.statut = "DEMANDE_RECUE";
+    return { row: normalized };
+  }
+
+  if (collection === "dossiers") {
+    // Règle métier: création/import dossier strictement avant validation N1.
+    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["BROUILLON", "SOUMIS"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour dossier (autorisés: BROUILLON ou SOUMIS à la création)" };
+    }
+    normalized.status = status;
     return { row: normalized };
   }
 
@@ -225,9 +240,9 @@ function validateAndNormalizeImportRow(
     if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
     const statutActuel = normalizeEnum(normalized.statutActuel ?? "NON_BANCARISE", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
     const nouveauStatut = normalizeEnum(normalized.nouveauStatut ?? "EN_COURS", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
-    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS", "VALIDE", "REJETE"] as const);
+    const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS"] as const);
     if (!statutActuel || !nouveauStatut || !status) {
-      return { row: null, error: "statuts bancarisation invalides" };
+      return { row: null, error: "statuts bancarisation invalides (creation: SOUMIS uniquement)" };
     }
     normalized.statutActuel = statutActuel;
     normalized.nouveauStatut = nouveauStatut;
@@ -238,12 +253,78 @@ function validateAndNormalizeImportRow(
     return { row: normalized };
   }
 
+  if (collection === "cautions") {
+    // Règle métier: à la création/import, une caution ne peut pas être validée directement.
+    const status = normalizeEnum(normalized.status ?? "EN_ATTENTE", ["EN_ATTENTE"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour caution (autorisé: EN_ATTENTE uniquement à la création)" };
+    }
+    normalized.status = "EN_ATTENTE";
+    normalized.paidAt = null;
+    normalized.immutableAfterFinal = false;
+    return { row: normalized };
+  }
+
+  if (collection === "pdv_integrations") {
+    // Règle métier: à la création/import, une intégration PDV démarre avant validation N1.
+    const status = normalizeEnum(normalized.status ?? "DEMANDE_RECUE", ["DEMANDE_RECUE"] as const);
+    if (!status) {
+      return { row: null, error: "status invalide pour intégration PDV (autorisé: DEMANDE_RECUE uniquement à la création)" };
+    }
+    normalized.status = "DEMANDE_RECUE";
+    normalized.finalizedAt = null;
+    return { row: normalized };
+  }
+
+  if (collection === "agences") {
+    const codeRaw = normalized.code;
+    const codeStr =
+      typeof codeRaw === "number" && Number.isFinite(codeRaw)
+        ? String(codeRaw)
+        : typeof codeRaw === "string"
+          ? codeRaw.trim()
+          : "";
+    if (!codeStr) {
+      return { row: null, error: "code requis (non vide, index unique Mongo)" };
+    }
+    normalized.code = codeStr;
+    return { row: normalized };
+  }
+
   return { row: normalized };
 }
 
+const importMetaSchema = z
+  .object({
+    collection: z
+      .string()
+      .trim()
+      .min(1, "Collection manquante")
+      .regex(/^[a-zA-Z0-9_-]+$/, "Nom de collection invalide"),
+    mode: z.enum(["insert", "upsert"]).default("insert"),
+    upsertBy: z.string().trim().optional(),
+    agenceId: z.string().trim().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (data.mode === "upsert" && !data.upsertBy) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["upsertBy"],
+        message: "Champ upsert requis en mode upsert",
+      });
+    }
+  });
+
 export async function POST(request: NextRequest) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "admin-import-data",
+    max: 20,
+    windowMs: 10 * 60 * 1000,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["CHEF_SERVICE"],
   });
   if ("error" in auth) {
     return auth.error;
@@ -251,30 +332,27 @@ export async function POST(request: NextRequest) {
 
   const formData = await request.formData().catch(() => null);
   if (!formData) {
-    return NextResponse.json({ message: "Requête invalide" }, { status: 400 });
+    return badRequest("Requête invalide", "INVALID_REQUEST");
   }
 
   const file = formData.get("file");
-  const collection = String(formData.get("collection") ?? "").trim();
-  const modeRaw = String(formData.get("mode") ?? "insert").trim().toLowerCase();
-  const upsertByRaw = String(formData.get("upsertBy") ?? "").trim();
-  const agenceIdRaw = String(formData.get("agenceId") ?? "").trim();
+  const metaParsed = importMetaSchema.safeParse({
+    collection: formData.get("collection"),
+    mode: String(formData.get("mode") ?? "insert").trim().toLowerCase(),
+    upsertBy: formData.get("upsertBy"),
+    agenceId: formData.get("agenceId"),
+  });
 
   if (!(file instanceof File)) {
-    return NextResponse.json({ message: "Fichier manquant" }, { status: 400 });
+    return badRequest("Fichier manquant", "MISSING_FILE");
   }
-  if (!collection) {
-    return NextResponse.json({ message: "Collection manquante" }, { status: 400 });
+  if (!metaParsed.success) {
+    return zodBadRequest(metaParsed.error, "Parametres invalides");
   }
-  if (!/^[a-zA-Z0-9_-]+$/.test(collection)) {
-    return NextResponse.json({ message: "Nom de collection invalide" }, { status: 400 });
-  }
-  if (modeRaw !== "insert" && modeRaw !== "upsert") {
-    return NextResponse.json({ message: "Mode invalide (insert ou upsert)" }, { status: 400 });
-  }
-  if (modeRaw === "upsert" && !upsertByRaw) {
-    return NextResponse.json({ message: "Champ upsert requis en mode upsert" }, { status: 400 });
-  }
+  const { collection } = metaParsed.data;
+  const modeRaw = metaParsed.data.mode;
+  const upsertByRaw = metaParsed.data.upsertBy ?? "";
+  const agenceIdRaw = metaParsed.data.agenceId ?? "";
 
   const text = await file.text();
   let rows: Record<string, unknown>[] = [];
@@ -282,7 +360,7 @@ export async function POST(request: NextRequest) {
     rows = parseFromFile(file.name, text);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Fichier invalide";
-    return NextResponse.json({ message }, { status: 400 });
+    return badRequest(message, "INVALID_FILE");
   }
 
   if (rows.length === 0) {
@@ -306,19 +384,15 @@ export async function POST(request: NextRequest) {
   });
   rows = validRows;
   if (rows.length === 0) {
-    return NextResponse.json(
-      {
-        message: "Aucune ligne valide à importer",
-        mode: modeRaw,
-        collection,
-        inserted: 0,
-        upserted: 0,
-        modified: 0,
-        skippedInvalidRows: invalidRows.length,
-        invalidRows: invalidRows.slice(0, 25),
-      },
-      { status: 400 },
-    );
+    return badRequest("Aucune ligne valide à importer", "NO_VALID_ROWS", {
+      mode: modeRaw,
+      collection,
+      inserted: 0,
+      upserted: 0,
+      modified: 0,
+      skippedInvalidRows: invalidRows.length,
+      invalidRows: invalidRows.slice(0, 25),
+    });
   }
 
   const db = await getDatabase();
@@ -459,10 +533,7 @@ export async function POST(request: NextRequest) {
   for (const row of rows) {
     const keyValue = row[upsertKey];
     if (keyValue === undefined || keyValue === null || keyValue === "") {
-      return NextResponse.json(
-        { message: `Champ "${upsertKey}" manquant sur une ligne` },
-        { status: 400 },
-      );
+      return badRequest(`Champ "${upsertKey}" manquant sur une ligne`, "UPSERT_KEY_MISSING");
     }
     const updateData: Record<string, unknown> = { ...row, ...agencePatch, updatedAt: now };
     const res = await db.collection(collection).updateOne(

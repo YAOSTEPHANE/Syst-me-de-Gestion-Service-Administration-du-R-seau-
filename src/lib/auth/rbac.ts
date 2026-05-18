@@ -2,11 +2,13 @@ import type { LonaciRole } from "@/lib/lonaci/constants";
 
 export const RBAC_RESOURCES = [
   "CONCESSIONNAIRES",
+  "CLIENTS",
   "CONTRATS",
   "DOSSIERS",
   "CAUTIONS",
   "PDV_INTEGRATIONS",
   "AGREMENTS",
+  "CESSIONS",
   "REPORTS",
   "ALERTS",
   "NOTIFICATIONS",
@@ -55,6 +57,11 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: false },
 
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: false },
+
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -84,6 +91,12 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: false },
     { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
 
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: false },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
+
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "CONFIGURE", allowed: false },
@@ -101,12 +114,18 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: false },
 
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: false },
+
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "FINALIZE", allowed: false },
 
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "DOSSIERS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N2", allowed: false },
     { resource: "DOSSIERS", action: "FINALIZE", allowed: false },
@@ -115,6 +134,10 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "CAUTIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CAUTIONS", action: "RETURN_FOR_CORRECTION", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "FINALIZE", allowed: false },
 
     { resource: "PDV_INTEGRATIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -127,6 +150,13 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: false },
     { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
+
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: false },
+    { resource: "CESSIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
 
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -144,12 +174,18 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CONCESSIONNAIRES", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONCESSIONNAIRES", action: "DEACTIVATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
+    { resource: "CLIENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "DEACTIVATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "FINALIZE", allowed: false },
 
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "DOSSIERS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "VALIDATE_N1", allowed: false },
     { resource: "DOSSIERS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "FINALIZE", allowed: false },
@@ -158,6 +194,10 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "CAUTIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "VALIDATE_N1", allowed: false },
+    { resource: "CAUTIONS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "RETURN_FOR_CORRECTION", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CAUTIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "FINALIZE", allowed: false },
 
     { resource: "PDV_INTEGRATIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -167,9 +207,16 @@ export const RBAC_MATRIX: RoleMatrix = {
 
     { resource: "AGREMENTS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: false },
     { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
-    { resource: "AGREMENTS", action: "FINALIZE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
+
+    { resource: "CESSIONS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "VALIDATE_N1", allowed: false },
+    { resource: "CESSIONS", action: "VALIDATE_N2", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "FINALIZE", allowed: false },
 
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -183,11 +230,13 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   SUPERVISEUR_REGIONAL: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -198,11 +247,13 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   AUDITEUR: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "REPORTS", action: "EXPORT", allowed: true, scope: "GLOBAL" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "GLOBAL" },
@@ -213,11 +264,13 @@ export const RBAC_MATRIX: RoleMatrix = {
 
   LECTURE_SEULE: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "DOSSIERS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CAUTIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "PDV_INTEGRATIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CESSIONS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "REPORTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "ALERTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "NOTIFICATIONS", action: "READ", allowed: true, scope: "OWN_OR_ASSIGNED" },
@@ -242,7 +295,13 @@ export const RBAC_MATRIX: RoleMatrix = {
     return actions.map((action) => ({
       resource,
       action,
-      allowed: true,
+      allowed: !(
+        (action === "VALIDATE_N1" || action === "VALIDATE_N2") &&
+        (resource === "DOSSIERS" ||
+          resource === "AGREMENTS" ||
+          resource === "CESSIONS" ||
+          resource === "CAUTIONS")
+      ),
       scope: "GLOBAL" as const,
     }));
   }),
@@ -284,6 +343,9 @@ export function isGlobalRole(role: LonaciRole): boolean {
  * NOTE:
  * Cette matrice complète la RBAC technique ci-dessus.
  * La RBAC technique reste la source d'autorisation API actuelle.
+ *
+ * Agent : Action/Saisie (A) sur tous les modules métier listés, sauf les lignes
+ * « Rapports * » (suivi/lecture ou sans accès) et « Gestion des comptes utilisateurs ».
  */
 export type CoreLonaciRole = "AGENT" | "CHEF_SECTION" | "ASSIST_CDS" | "CHEF_SERVICE";
 
@@ -299,7 +361,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     module: "Contrats & Actualisations",
     permissions: {
       AGENT: "A",
-      CHEF_SECTION: "C, S, R",
+      CHEF_SECTION: "Contrôle, Suivi/Lecture, Rapport",
       ASSIST_CDS: "C, S, Synthèse",
       CHEF_SERVICE: "C, S, V",
     },
@@ -308,13 +370,13 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     module: "Cautions",
     permissions: {
       AGENT: "A",
-      CHEF_SECTION: "C, S, R",
+      CHEF_SECTION: "Contrôle, Suivi/Lecture, Rapport",
       ASSIST_CDS: "C, S, Synthèse",
       CHEF_SERVICE: "C, S, V",
     },
   },
   {
-    module: "Intégrations PDV",
+    module: "Géolocalisation PDV",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "A, C, S",
@@ -359,7 +421,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "Décès & Ayant Droit",
+    module: "Décès et ayants droit",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "C, S",
@@ -377,7 +439,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "GPR & Codes Grattage",
+    module: "Création de code grattage",
     permissions: {
       AGENT: "A",
       CHEF_SECTION: "C N1",
@@ -388,7 +450,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
   {
     module: "Rapports journaliers",
     permissions: {
-      AGENT: "A (saisie)",
+      AGENT: "S",
       CHEF_SECTION: "C, S",
       ASSIST_CDS: "C, V",
       CHEF_SERVICE: "Finalisation",
@@ -415,7 +477,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
   {
     module: "Notifications",
     permissions: {
-      AGENT: "S",
+      AGENT: "A",
       CHEF_SECTION: "S",
       ASSIST_CDS: "S",
       CHEF_SERVICE: "S, Config",

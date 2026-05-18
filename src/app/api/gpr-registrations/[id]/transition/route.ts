@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureGprGrattageIndexes, GPR_REGISTRATION_STATUSES, transitionGprRegistration } from "@/lib/lonaci/gpr-grattage";
 
@@ -14,13 +15,26 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, { roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
-  if ("error" in auth) return auth.error;
-  const { id } = await context.params;
   const parsed = schema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
+  const rbacAction =
+    parsed.data.targetStatus === "VALIDE_N1"
+      ? "VALIDATE_N1"
+      : parsed.data.targetStatus === "VALIDE_N2"
+        ? "VALIDATE_N2"
+        : parsed.data.targetStatus === "SUIVI_CHEF_SERVICE"
+          ? "FINALIZE"
+          : parsed.data.targetStatus === "REJETE"
+            ? "REJECT"
+            : "UPDATE";
+  const auth = await requireApiAuth(request, {
+    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    rbac: { resource: "DOSSIERS", action: rbacAction },
+  });
+  if ("error" in auth) return auth.error;
+  const { id } = await context.params;
   await ensureGprGrattageIndexes();
   try {
     await transitionGprRegistration({

@@ -23,6 +23,16 @@ function loadEnvFile(filePath: string, override = false) {
 }
 
 const DEMO_PREFIX = "PDV-DEMO-";
+const DEFAULT_DEMO_COUNT = 30;
+const MAX_DEMO_COUNT = 500;
+
+function parseDemoCount(): number {
+  const raw = process.env.SEED_DEMO_COUNT;
+  if (!raw) return DEFAULT_DEMO_COUNT;
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed < 5) return DEFAULT_DEMO_COUNT;
+  return Math.min(parsed, MAX_DEMO_COUNT);
+}
 
 async function resetDemoCollections(
   prisma: typeof import("../src/lib/prisma").prisma,
@@ -67,9 +77,12 @@ async function ensureAgence(
   const existing = await db.collection<{ _id: ObjectId }>("agences").findOne({ code: c });
   if (existing) return existing._id.toHexString();
   const now = new Date();
+  const { coalesceZoneGeographique } = await import("../src/lib/lonaci/zones-abidjan");
+  const zoneGeographique = coalesceZoneGeographique(undefined, c, libelle.trim());
   const r = await db.collection("agences").insertOne({
     code: c,
     libelle: libelle.trim(),
+    zoneGeographique,
     actif: true,
     createdAt: now,
     updatedAt: now,
@@ -81,6 +94,7 @@ async function ensureProduit(
   getDb: typeof import("../src/lib/mongodb").getDatabase,
   code: string,
   libelle: string,
+  prix = 0,
 ): Promise<void> {
   const c = code.trim().toUpperCase();
   const db = await getDb();
@@ -90,6 +104,7 @@ async function ensureProduit(
   await db.collection("produits").insertOne({
     code: c,
     libelle: libelle.trim(),
+    prix: Math.max(0, Math.round(prix)),
     actif: true,
     createdAt: now,
     updatedAt: now,
@@ -111,6 +126,8 @@ function prismaUserToActor(row: {
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+  passwordChangedAt: Date | null;
+  passwordResetReminderSentForMonth?: string | null;
 }): UserDocument {
   return {
     _id: row.id,
@@ -133,6 +150,8 @@ function prismaUserToActor(row: {
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     deletedAt: row.deletedAt,
+    passwordChangedAt: row.passwordChangedAt,
+    passwordResetReminderSentForMonth: row.passwordResetReminderSentForMonth ?? null,
   };
 }
 
@@ -208,6 +227,8 @@ async function main() {
       createdAt: fromDb.createdAt,
       updatedAt: fromDb.updatedAt,
       deletedAt: fromDb.deletedAt,
+      passwordChangedAt: fromDb.passwordChangedAt ?? null,
+      passwordResetReminderSentForMonth: fromDb.passwordResetReminderSentForMonth ?? null,
     };
   }
 
@@ -221,8 +242,19 @@ async function main() {
 
   const abjId = await ensureAgence(getDatabase, "ABJ", "Agence Abidjan Plateau");
   const yamId = await ensureAgence(getDatabase, "YAM", "Agence Yamoussoukro");
-  await ensureProduit(getDatabase, "LOTO", "Lonaci Loto");
-  await ensureProduit(getDatabase, "PMU", "Paris mutuels urbains");
+  /** Villes / communes du district pour ventiler les contrats zone Abidjan dans l’UI. */
+  const VILLES_SEED_ZONE_ABIDJAN = [
+    "Cocody",
+    "Plateau",
+    "Marcory",
+    "Yopougon",
+    "Koumassi",
+    "Treichville",
+    "Port-Bouët",
+    "Adjamé",
+  ] as const;
+  await ensureProduit(getDatabase, "LOTO", "Lonaci Loto", 250_000);
+  await ensureProduit(getDatabase, "PMU", "Paris mutuels urbains", 180_000);
 
   const db = await getDatabase();
   const now = new Date();
@@ -287,9 +319,35 @@ async function main() {
     },
   ];
 
+  const targetCount = parseDemoCount();
+  for (let i = plan.length + 1; i <= targetCount; i += 1) {
+    const agenceId = i % 2 === 0 ? abjId : yamId;
+    const isActive = i % 5 !== 0;
+    const status: ConcSeed["statut"] = isActive ? "ACTIF" : "SUSPENDU";
+    const banca: ConcSeed["banca"] = i % 3 === 0 ? "BANCARISE" : i % 3 === 1 ? "EN_COURS" : "NON_BANCARISE";
+    const produits = i % 2 === 0 ? ["LOTO"] : ["PMU"];
+    plan.push({
+      codePdv: `${DEMO_PREFIX}${String(i).padStart(6, "0")}`,
+      nom: `Concessionnaire Demo ${String(i).padStart(3, "0")}`,
+      statut: status,
+      banca,
+      agenceId,
+      produits,
+      gps: {
+        lat: agenceId === abjId ? 5.3 + (i % 20) * 0.005 : 6.8 + (i % 20) * 0.003,
+        lng: agenceId === abjId ? -4.05 + (i % 20) * 0.004 : -5.35 + (i % 20) * 0.003,
+      },
+    });
+  }
+
   const createdIds: string[] = [];
 
+  let abjVilleIdx = 0;
   for (const p of plan) {
+    const ville =
+      p.agenceId === abjId
+        ? VILLES_SEED_ZONE_ABIDJAN[abjVilleIdx++ % VILLES_SEED_ZONE_ABIDJAN.length]!
+        : "Yamoussoukro";
     const row = await prisma.concessionnaire.create({
       data: {
         codePdv: p.codePdv,
@@ -302,7 +360,7 @@ async function main() {
         telephoneSecondaire: null,
         telephone: "+225 07 00 12 34 56",
         adresse: "Boulevard de la République",
-        ville: p.agenceId === abjId ? "Abidjan" : "Yamoussoukro",
+        ville,
         codePostal: null,
         agenceId: p.agenceId,
         produitsAutorises: p.produits,

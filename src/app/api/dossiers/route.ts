@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest, conflict, forbidden, serverError } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { userHasNationalScope } from "@/lib/lonaci/access";
 import { CONTRAT_OPERATION_TYPES, DOSSIER_STATUSES, DOSSIER_TYPES } from "@/lib/lonaci/constants";
 import { createDossier, ensureDossierIndexes, listDossiers } from "@/lib/lonaci/dossiers";
@@ -22,6 +24,10 @@ const listSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(DOSSIER_STATUSES).optional(),
   type: z.enum(DOSSIER_TYPES).optional(),
+  q: z.string().trim().max(120).optional(),
+  concessionnaireId: z.string().trim().max(120).optional(),
+  sortField: z.enum(["updatedAt", "reference", "status"]).optional().default("updatedAt"),
+  sortOrder: z.enum(["asc", "desc"]).optional().default("desc"),
 });
 
 export async function GET(request: NextRequest) {
@@ -34,7 +40,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listSchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureDossierIndexes();
   const scopeAgenceId = userHasNationalScope(auth.user) ? undefined : auth.user.agenceId;
@@ -44,6 +50,10 @@ export async function GET(request: NextRequest) {
     parsed.data.status,
     parsed.data.type,
     scopeAgenceId,
+    parsed.data.q,
+    parsed.data.concessionnaireId,
+    parsed.data.sortField,
+    parsed.data.sortOrder,
   );
   return NextResponse.json(result, { status: 200 });
 }
@@ -57,7 +67,7 @@ export async function POST(request: NextRequest) {
   }
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
   await ensureDossierIndexes();
   try {
@@ -76,20 +86,26 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "ACTIVE_CONTRACT_EXISTS") {
-      return NextResponse.json(
-        { message: "Un contrat actif existe deja pour ce produit et ce concessionnaire." },
-        { status: 409 },
+      return conflict(
+        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "ACTIVE_CONTRACT_EXISTS",
       );
     }
     if (code === "CONCESSIONNAIRE_BLOQUE") {
-      return NextResponse.json({ message: "Concessionnaire bloque (resilie ou decede)." }, { status: 409 });
+      return conflict("Concessionnaire bloque (resilie ou decede).", "CONCESSIONNAIRE_BLOQUE");
+    }
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+      return conflict(
+        "Inscription non finalisee : validation N1 requise.",
+        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+      );
     }
     if (code === "PRODUIT_INVALID") {
-      return NextResponse.json({ message: "Produit invalide." }, { status: 400 });
+      return badRequest("Produit invalide.", "PRODUIT_INVALID");
     }
     if (code === "AGENCE_FORBIDDEN") {
-      return NextResponse.json({ message: "Acces refuse pour cette agence." }, { status: 403 });
+      return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
     }
-    return NextResponse.json({ message: "Creation du dossier impossible." }, { status: 500 });
+    return serverError("Creation du dossier impossible.", "DOSSIER_CREATE_FAILED");
   }
 }

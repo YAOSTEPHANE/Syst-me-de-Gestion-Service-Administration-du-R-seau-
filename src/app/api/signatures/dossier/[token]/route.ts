@@ -1,12 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { conflict, gone, notFound, serverError } from "@/lib/api/error-responses";
+import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   getDossierSignatureByToken,
   signDossierByToken,
 } from "@/lib/lonaci/dossier-signatures";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { getClientIp } from "@/lib/security/client-ip";
 
 interface RouteContext {
   params: Promise<{ token: string }>;
@@ -18,21 +21,27 @@ const signSchema = z.object({
 });
 
 function getIpAddress(request: NextRequest): string | null {
-  const xForwardedFor = request.headers.get("x-forwarded-for");
-  if (xForwardedFor) return xForwardedFor.split(",")[0]?.trim() ?? null;
-  return null;
+  const ip = getClientIp(request);
+  return ip === "unknown" ? null : ip;
 }
 
-export async function GET(_request: NextRequest, context: RouteContext) {
+export async function GET(request: NextRequest, context: RouteContext) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "signatures-dossier-get",
+    max: 120,
+    windowMs: 15 * 60 * 1000,
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const { token } = await context.params;
   const signature = await getDossierSignatureByToken(token);
   if (!signature) {
-    return NextResponse.json({ message: "Lien invalide." }, { status: 404 });
+    return notFound("Lien invalide.", "SIGN_TOKEN_INVALID");
   }
 
   const dossier = await findDossierById(signature.dossierId);
   if (!dossier || dossier.deletedAt) {
-    return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+    return notFound("Dossier introuvable.", "DOSSIER_NOT_FOUND");
   }
   const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
 
@@ -64,10 +73,18 @@ export async function GET(_request: NextRequest, context: RouteContext) {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
+  const rateLimitResponse = await enforceRateLimit(request, {
+    namespace: "signatures-dossier-post",
+    max: 40,
+    windowMs: 60 * 60 * 1000,
+    message: "Trop de tentatives. Réessayez plus tard.",
+  });
+  if (rateLimitResponse) return rateLimitResponse;
+
   const { token } = await context.params;
   const parsed = signSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Données invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Données invalides");
   }
 
   try {
@@ -92,17 +109,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "SIGN_TOKEN_INVALID") {
-      return NextResponse.json({ message: "Lien invalide." }, { status: 404 });
+      return notFound("Lien invalide.", "SIGN_TOKEN_INVALID");
     }
     if (code === "SIGN_ALREADY_DONE") {
-      return NextResponse.json({ message: "Ce dossier est déjà signé." }, { status: 409 });
+      return conflict("Ce dossier est déjà signé.", "SIGN_ALREADY_DONE");
     }
     if (code === "SIGN_TOKEN_EXPIRED") {
-      return NextResponse.json({ message: "Le lien de signature a expiré." }, { status: 410 });
+      return gone("Le lien de signature a expiré.", "SIGN_TOKEN_EXPIRED");
     }
     if (code === "DOSSIER_NOT_FOUND") {
-      return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+      return notFound("Dossier introuvable.", "DOSSIER_NOT_FOUND");
     }
-    return NextResponse.json({ message: "Impossible d'enregistrer la signature." }, { status: 500 });
+    return serverError("Impossible d'enregistrer la signature.", "SIGNATURE_SAVE_FAILED");
   }
 }

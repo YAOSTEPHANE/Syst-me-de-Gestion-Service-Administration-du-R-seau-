@@ -1,9 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { findUserByEmail, findUserById, findUserByMatricule, sanitizeUser, updateUserAdmin } from "@/lib/lonaci/users";
+import {
+  findUserByEmail,
+  findUserById,
+  findUserByMatricule,
+  listActiveUsersByRole,
+  sanitizeUser,
+  softDeleteUserAdmin,
+  updateUserAdmin,
+} from "@/lib/lonaci/users";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -36,7 +45,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   if (parsed.data.email && parsed.data.email.trim().toLowerCase() !== current.email) {
@@ -64,4 +73,38 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   return NextResponse.json({ user: sanitizeUser(updated) }, { status: 200 });
+}
+
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  const auth = await requireApiAuth(request, { roles: ["CHEF_SERVICE"] });
+  if ("error" in auth) {
+    return auth.error;
+  }
+
+  const { id } = await context.params;
+  const current = await findUserById(id);
+  if (!current) {
+    return NextResponse.json({ message: "Compte introuvable" }, { status: 404 });
+  }
+
+  if ((auth.user._id ?? "") === id) {
+    return NextResponse.json({ message: "Suppression de votre propre compte interdite" }, { status: 400 });
+  }
+
+  if (current.role === "CHEF_SERVICE" && current.actif) {
+    const activeChefs = await listActiveUsersByRole("CHEF_SERVICE");
+    if (activeChefs.length <= 1) {
+      return NextResponse.json(
+        { message: "Au moins un compte CHEF_SERVICE actif est requis" },
+        { status: 409 },
+      );
+    }
+  }
+
+  const deleted = await softDeleteUserAdmin(id);
+  if (!deleted) {
+    return NextResponse.json({ message: "Compte introuvable" }, { status: 404 });
+  }
+
+  return NextResponse.json({ message: "Utilisateur supprimé." }, { status: 200 });
 }

@@ -1,11 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest, forbidden } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   canCreateConcessionnaireForAgence,
   enforcedAgenceIdOnCreate,
 } from "@/lib/lonaci/access";
-import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
+import {
+  BANCARISATION_STATUTS,
+  CONCESSIONNAIRE_INSCRIPTION_STATUTS,
+  CONCESSIONNAIRE_STATUTS,
+} from "@/lib/lonaci/constants";
 import {
   concessionnaireListScopeAgenceId,
   createConcessionnaire,
@@ -17,35 +23,97 @@ import {
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
 
-const createSchema = z.object({
-  nomComplet: z.string().min(2),
-  cniNumero: z.union([z.string().min(4).max(64), z.null()]).optional(),
-  photoUrl: z.union([z.string().max(2000), z.null()]).optional(),
-  email: z.union([z.string().email(), z.null()]).optional(),
-  telephonePrincipal: z.union([z.string().min(8).max(32), z.null()]).optional(),
-  telephoneSecondaire: z.union([z.string().min(8).max(32), z.null()]).optional(),
-  adresse: z.union([z.string().max(500), z.null()]).optional(),
-  ville: z.union([z.string().max(120), z.null()]).optional(),
-  codePostal: z.union([z.string().max(12), z.null()]).optional(),
-  agenceId: z.union([z.string().min(1), z.null()]).optional(),
+const OTHER_PRODUCT_CODE = "AUTRES";
+
+function emptyStringToNull(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  return trimmed === "" ? null : trimmed;
+}
+
+function normalizeToken(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[\s/-]+/g, "_");
+}
+
+const createSchema = z
+  .object({
+  nom: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
+  prenom: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
+  nomComplet: z.preprocess(emptyStringToNull, z.union([z.string().min(2), z.null()]).optional()),
+  codeTerminal: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
+  codeConcessionnaire: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
+  cniNumero: z.preprocess(emptyStringToNull, z.union([z.string().min(4).max(64), z.null()]).optional()),
+  photoUrl: z.preprocess(emptyStringToNull, z.union([z.string().max(2000), z.null()]).optional()),
+  email: z.preprocess(emptyStringToNull, z.union([z.string().email(), z.null()]).optional()),
+  telephonePrincipal: z.preprocess(
+    emptyStringToNull,
+    z.union([z.string().min(8).max(32), z.null()]).optional(),
+  ),
+  telephoneSecondaire: z.preprocess(
+    emptyStringToNull,
+    z.union([z.string().min(8).max(32), z.null()]).optional(),
+  ),
+  adresse: z.preprocess(emptyStringToNull, z.union([z.string().max(500), z.null()]).optional()),
+  ville: z.preprocess(emptyStringToNull, z.union([z.string().max(120), z.null()]).optional()),
+  codePostal: z.preprocess(emptyStringToNull, z.union([z.string().max(12), z.null()]).optional()),
+  agenceId: z.preprocess(emptyStringToNull, z.union([z.string().min(1), z.null()]).optional()),
   produitsAutorises: z.array(z.string().min(1)).default([]),
   statut: z.enum(CONCESSIONNAIRE_STATUTS).optional(),
   statutBancarisation: z.enum(BANCARISATION_STATUTS).default("NON_BANCARISE"),
-  compteBancaire: z.union([z.string().max(128), z.null()]).optional(),
-  banqueEtablissement: z.union([z.string().max(200), z.null()]).optional(),
+  compteBancaire: z.preprocess(emptyStringToNull, z.union([z.string().max(128), z.null()]).optional()),
+  banqueEtablissement: z.preprocess(emptyStringToNull, z.union([z.string().max(200), z.null()]).optional()),
   gps: z.object({
-    lat: z.number().gte(-90).lte(90),
-    lng: z.number().gte(-180).lte(180),
+    lat: z.coerce.number().gte(-90).lte(90),
+    lng: z.coerce.number().gte(-180).lte(180),
   }),
-  observations: z.union([z.string().max(10000), z.null()]).optional(),
-  notesInternes: z.union([z.string().max(10000), z.null()]).optional(),
-});
+  observations: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
+  notesInternes: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
+})
+  .superRefine((data, ctx) => {
+    const nom = (data.nom ?? "").trim();
+    const prenom = (data.prenom ?? "").trim();
+    const complet = (data.nomComplet ?? "").trim();
+    const okNomPrenom = nom.length >= 2 && prenom.length >= 2;
+    const okComplet = complet.length >= 2;
+    if (!okNomPrenom && !okComplet) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Nom et prénom (ou nom complet) obligatoires.",
+        path: ["nom"],
+      });
+    }
+  });
+
+function resolveNomPrenom(data: {
+  nom?: string | null;
+  prenom?: string | null;
+  nomComplet?: string | null;
+}): { nom: string; prenom: string; nomComplet: string } {
+  let nom = (data.nom ?? "").trim();
+  let prenom = (data.prenom ?? "").trim();
+  const complet = (data.nomComplet ?? "").trim();
+  if ((!nom || !prenom) && complet) {
+    const parts = complet.split(/\s+/).filter(Boolean);
+    if (!nom && parts.length) nom = parts[parts.length - 1] ?? "";
+    if (!prenom && parts.length > 1) prenom = parts.slice(0, -1).join(" ");
+    if (!prenom && parts.length === 1) prenom = parts[0] ?? "";
+  }
+  const nomComplet = complet || `${prenom} ${nom}`.trim();
+  return { nom, prenom, nomComplet };
+}
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().optional(),
   statut: z.enum(CONCESSIONNAIRE_STATUTS).optional(),
+  inscriptionStatut: z.enum(CONCESSIONNAIRE_INSCRIPTION_STATUTS).optional(),
+  inscriptionFinaliseeOnly: z.enum(["true", "false"]).optional(),
   statutBancarisation: z.enum(BANCARISATION_STATUTS).optional(),
   agenceId: z.string().optional(),
   produitCode: z.string().optional(),
@@ -63,7 +131,7 @@ export async function GET(request: NextRequest) {
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listQuerySchema.safeParse(raw);
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   const includeDeleted =
@@ -76,6 +144,8 @@ export async function GET(request: NextRequest) {
     pageSize: parsed.data.pageSize,
     q: parsed.data.q,
     statut: parsed.data.statut,
+    inscriptionStatut: parsed.data.inscriptionStatut,
+    inscriptionFinaliseeOnly: parsed.data.inscriptionFinaliseeOnly === "true",
     statutBancarisation: parsed.data.statutBancarisation,
     agenceId: parsed.data.agenceId,
     produitCode: parsed.data.produitCode,
@@ -99,7 +169,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
   }
 
   const requestedAgenceId =
@@ -107,42 +177,68 @@ export async function POST(request: NextRequest) {
   const agenceId = enforcedAgenceIdOnCreate(auth.user, requestedAgenceId);
 
   if (!agenceId) {
-    return NextResponse.json(
-      { message: "Agence de rattachement obligatoire pour attribuer le code PDV." },
-      { status: 400 },
+    if (
+      (auth.user.role === "AGENT" || auth.user.role === "CHEF_SECTION") &&
+      auth.user.agencesAutorisees.length > 1
+    ) {
+      return badRequest(
+        "Selectionnez une agence de rattachement autorisee avant creation du concessionnaire.",
+        "AGENCE_SELECTION_REQUIRED",
+      );
+    }
+    return badRequest(
+      "Agence de rattachement obligatoire pour attribuer le code PDV.",
+      "AGENCE_REQUIRED",
     );
-  }
-
-  if (!canCreateConcessionnaireForAgence(auth.user, agenceId)) {
-    return NextResponse.json({ message: "Acces refuse pour cette agence" }, { status: 403 });
   }
 
   const agence = await findAgenceById(agenceId);
   if (!agence || !agence.actif || !agence.code) {
-    return NextResponse.json({ message: "Agence invalide ou inactive" }, { status: 400 });
+    return badRequest("Agence invalide ou inactive", "AGENCE_INVALID");
   }
-  const agenceCode = agence.code;
+  const agenceCode = agence.code.trim().toUpperCase();
+
+  if (!canCreateConcessionnaireForAgence(auth.user, agenceId)) {
+    // Compat legacy: agencesAutorisees peut contenir id, code agence ou libellé.
+    const agenceTokenSet = new Set<string>([
+      normalizeToken(agenceId),
+      normalizeToken(agenceCode),
+      normalizeToken(agence.libelle),
+    ]);
+    const authorizedByLegacyValue = auth.user.agencesAutorisees.some((value) =>
+      agenceTokenSet.has(normalizeToken(value)),
+    );
+    if (!authorizedByLegacyValue) {
+      return forbidden("Acces refuse pour cette agence", "AGENCE_FORBIDDEN");
+    }
+  }
 
   const produits = await listProduits();
   const produitCodes = new Set(produits.filter((p) => p.actif).map((p) => p.code));
-  const invalidProduits = parsed.data.produitsAutorises.filter((code) => !produitCodes.has(code.trim().toUpperCase()));
+  const invalidProduits = parsed.data.produitsAutorises.filter((code) => {
+    const normalized = code.trim().toUpperCase();
+    if (normalized === OTHER_PRODUCT_CODE) return false;
+    return !produitCodes.has(normalized);
+  });
   if (invalidProduits.length > 0) {
-    return NextResponse.json(
-      { message: `Produits invalides: ${invalidProduits.join(", ")}` },
-      { status: 400 },
-    );
+    return badRequest(`Produits invalides: ${invalidProduits.join(", ")}`, "INVALID_PRODUCTS");
   }
   if (parsed.data.statutBancarisation === "BANCARISE" && !parsed.data.compteBancaire) {
-    return NextResponse.json(
-      { message: "Le numero de compte bancaire est requis pour le statut BANCARISE." },
-      { status: 400 },
+    return badRequest(
+      "Le numero de compte bancaire est requis pour le statut BANCARISE.",
+      "BANK_ACCOUNT_REQUIRED",
     );
   }
 
   await ensureConcessionnaireIndexes();
 
+  const identity = resolveNomPrenom(parsed.data);
   const doc = await createConcessionnaire({
-    nomComplet: parsed.data.nomComplet,
+    nom: identity.nom,
+    prenom: identity.prenom,
+    nomComplet: identity.nomComplet,
+    codeTerminal: parsed.data.codeTerminal ?? null,
+    codeConcessionnaire: parsed.data.codeConcessionnaire ?? null,
     cniNumero: parsed.data.cniNumero ?? null,
     photoUrl: parsed.data.photoUrl ?? null,
     email: parsed.data.email ?? null,

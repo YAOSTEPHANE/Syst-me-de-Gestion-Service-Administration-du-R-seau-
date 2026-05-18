@@ -27,6 +27,7 @@ export interface LonaciKpiDossierDelays30j {
 
 export interface LonaciKpiProduitVolume30j {
   produitCode: string;
+  produitLibelle?: string;
   current30d: number;
   previous30d: number;
   trendPct: number;
@@ -43,6 +44,7 @@ export interface LonaciKpiAlertThresholds {
 
 export interface LonaciKpiPayload {
   alertThresholds?: LonaciKpiAlertThresholds;
+  contractsMonthlyTarget?: number;
   weekly: { contrats: { createdInWindow: number } };
   monthly: { contrats: { createdInWindow: number } };
   daily: {
@@ -54,7 +56,7 @@ export interface LonaciKpiPayload {
   successionStale: number;
   successionStaleItems: { reference: string; daysInactive: number }[];
   activity7d: { label: string; contracts: number; cautions: number; integrations: number }[];
-  produitSlices: { code: string; count: number }[];
+  produitSlices: { code: string; libelle?: string; count: number }[];
   dossierValidation: {
     contratSoumis: number;
     contratSoumisRetard48h: number;

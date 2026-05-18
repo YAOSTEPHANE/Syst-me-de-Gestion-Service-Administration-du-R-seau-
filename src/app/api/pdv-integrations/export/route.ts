@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
-import { PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
+import { LONACI_ROLES, PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
 
 const querySchema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -20,7 +20,10 @@ function escapeCell(v: string) {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, {
+    roles: [...LONACI_ROLES],
+    rbac: { resource: "PDV_INTEGRATIONS", action: "READ" },
+  });
   if ("error" in auth) return auth.error;
   const parsed = querySchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {

@@ -3,6 +3,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+
 interface NotificationItem {
   id: string;
   title: string;
@@ -17,11 +19,16 @@ interface NotificationApiResponse {
   total: number;
 }
 
+function isForcedPasswordChangeRoute() {
+  if (typeof window === "undefined") return false;
+  const isParametres = window.location.pathname.startsWith("/parametres");
+  if (!isParametres) return false;
+  const search = new URLSearchParams(window.location.search);
+  return search.get("motDePasse") === "obligatoire";
+}
+
 async function fetchNotifications(): Promise<NotificationApiResponse> {
-  const response = await fetch("/api/notifications?page=1&pageSize=20", {
-    credentials: "include",
-    cache: "no-store",
-  });
+  const response = await lonaciFetch("/api/notifications?page=1&pageSize=20");
   if (!response.ok) {
     throw new Error("Impossible de charger les notifications");
   }
@@ -43,6 +50,12 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
   const [items, setItems] = useState<NotificationItem[]>([]);
 
   async function load() {
+    if (isForcedPasswordChangeRoute()) {
+      setItems([]);
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -58,9 +71,8 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
 
   async function markRead(id: string) {
     setMarkReadError(null);
-    const response = await fetch(`/api/notifications/${id}/read`, {
+    const response = await lonaciFetch(`/api/notifications/${id}/read`, {
       method: "POST",
-      credentials: "include",
     });
     if (!response.ok) {
       setMarkReadError("Impossible de marquer comme lu. Réessayez.");

@@ -4,6 +4,8 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
+import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
 const REF_COUNTER_ID = "contrat_ref";
 
@@ -157,9 +159,10 @@ export interface FinalizeContratInput {
 
 export async function finalizeContratFromDossier(input: FinalizeContratInput): Promise<ContratDocument> {
   const concessionnaire = await findConcessionnaireById(input.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || concessionnaire.statut !== "ACTIF") {
+  if (!concessionnaire || concessionnaire.deletedAt || isStatutFicheGelee(concessionnaire.statut)) {
     throw new Error("CONCESSIONNAIRE_BLOQUE");
   }
+  assertConcessionnaireOperationnel(concessionnaire);
 
   const produitCodeNormalized = input.produitCode.trim().toUpperCase();
 
@@ -238,6 +241,21 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
     },
   });
 
+  if (concessionnaire.statut !== "ACTIF") {
+    await updateConcessionnaire(
+      input.concessionnaireId,
+      { statut: "ACTIF" },
+      input.actor,
+    );
+    await appendAuditLog({
+      entityType: "CONCESSIONNAIRE",
+      entityId: input.concessionnaireId,
+      action: "ACTIVATE_FROM_CONTRAT_FINALIZE",
+      userId: input.actor._id ?? "",
+      details: { dossierId: input.dossierId, contratId: created.id },
+    });
+  }
+
   return mapContrat(created);
 }
 
@@ -246,6 +264,121 @@ export async function findContratById(id: string): Promise<ContratDocument | nul
     where: { id, deletedAt: null },
   });
   return row ? mapContrat(row) : null;
+}
+
+export async function findContratByDossierId(dossierId: string): Promise<ContratDocument | null> {
+  const row = await prisma.contrat.findFirst({
+    where: { dossierId, deletedAt: null },
+  });
+  return row ? mapContrat(row) : null;
+}
+
+export async function updateContratDateEffet(input: {
+  contratId: string;
+  dateEffet: Date;
+  actor: UserDocument;
+}): Promise<ContratDocument> {
+  const current = await prisma.contrat.findFirst({
+    where: { id: input.contratId, deletedAt: null },
+  });
+  if (!current) {
+    throw new Error("CONTRAT_NOT_FOUND");
+  }
+
+  const concessionnaire = await findConcessionnaireById(current.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(input.actor, concessionnaire)) {
+    throw new Error("AGENCE_FORBIDDEN");
+  }
+
+  const updated = await prisma.contrat.update({
+    where: { id: input.contratId },
+    data: {
+      dateEffet: input.dateEffet,
+      updatedByUserId: input.actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONTRAT",
+    entityId: updated.id,
+    action: "UPDATE_DATE_EFFET",
+    userId: input.actor._id ?? "",
+    details: {
+      previousDateEffet: current.dateEffet.toISOString(),
+      nextDateEffet: updated.dateEffet.toISOString(),
+    },
+  });
+
+  return mapContrat(updated);
+}
+
+export async function updateContratById(input: {
+  contratId: string;
+  actor: UserDocument;
+  dateEffet?: Date;
+  status?: "ACTIF" | "RESILIE" | "CEDE";
+  operationType?: ContratOperationType;
+}): Promise<ContratDocument> {
+  const current = await prisma.contrat.findFirst({
+    where: { id: input.contratId, deletedAt: null },
+  });
+  if (!current) {
+    throw new Error("CONTRAT_NOT_FOUND");
+  }
+
+  const concessionnaire = await findConcessionnaireById(current.concessionnaireId);
+  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(input.actor, concessionnaire)) {
+    throw new Error("AGENCE_FORBIDDEN");
+  }
+
+  const nextStatus = input.status ?? (current.status as "ACTIF" | "RESILIE" | "CEDE");
+  if (nextStatus === "ACTIF") {
+    const activeCount = await prisma.contrat.count({
+      where: {
+        concessionnaireId: current.concessionnaireId,
+        produitCode: current.produitCode,
+        status: "ACTIF",
+        deletedAt: null,
+        id: { not: current.id },
+      },
+    });
+    if (activeCount > 0) {
+      throw new Error("ACTIVE_CONTRACT_EXISTS");
+    }
+  }
+
+  const updated = await prisma.contrat.update({
+    where: { id: input.contratId },
+    data: {
+      dateEffet: input.dateEffet ?? current.dateEffet,
+      status: nextStatus,
+      operationType: input.operationType ?? (current.operationType as ContratOperationType),
+      updatedByUserId: input.actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONTRAT",
+    entityId: updated.id,
+    action: "UPDATE_CONTRAT",
+    userId: input.actor._id ?? "",
+    details: {
+      previous: {
+        dateEffet: current.dateEffet.toISOString(),
+        status: current.status,
+        operationType: current.operationType,
+      },
+      next: {
+        dateEffet: updated.dateEffet.toISOString(),
+        status: updated.status,
+        operationType: updated.operationType,
+      },
+    },
+  });
+
+  return mapContrat(updated);
 }
 
 export type ContratListRow = {
@@ -260,6 +393,15 @@ export type ContratListRow = {
   createdAt: string;
   updatedAt: string;
 };
+
+/** Vue nationale (chef de service sans agence) vs périmètre agence fixé — aligné export CSV contrats. */
+export function listScopeAgenceIdForContratsList(user: { agenceId: string | null; role: string }): string | undefined {
+  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
+    return undefined;
+  }
+  if (user.agenceId) return user.agenceId;
+  return undefined;
+}
 
 export type ListContratsParams = {
   page: number;
@@ -406,4 +548,22 @@ export async function listContrats(params: ListContratsParams) {
     page,
     pageSize,
   };
+}
+
+export const CONTRATS_ATTENDUS_CAUTIONS_MAX = 4000;
+
+/** Tous les contrats correspondant aux filtres (pagination interne), plafonnés pour les synthèses lourdes. */
+export async function listContratsAllMatching(
+  base: Omit<ListContratsParams, "page" | "pageSize">,
+): Promise<ContratListRow[]> {
+  const out: ContratListRow[] = [];
+  let page = 1;
+  const pageSize = 500;
+  for (;;) {
+    const { items, total } = await listContrats({ ...base, page, pageSize });
+    out.push(...items);
+    if (items.length < pageSize || out.length >= total || out.length >= CONTRATS_ATTENDUS_CAUTIONS_MAX) break;
+    page += 1;
+  }
+  return out.slice(0, CONTRATS_ATTENDUS_CAUTIONS_MAX);
 }

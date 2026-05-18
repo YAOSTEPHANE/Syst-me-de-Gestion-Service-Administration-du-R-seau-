@@ -2,8 +2,11 @@ import { randomBytes, createHash } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { badRequest } from "@/lib/api/error-responses";
+import { hashPassword } from "@/lib/auth/password";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { findUserById, setResetPasswordToken } from "@/lib/lonaci/users";
+import { findUserById, setResetPasswordToken, updateUserPassword } from "@/lib/lonaci/users";
 import { sendSmtpEmail } from "@/lib/email/smtp";
 
 interface RouteContext {
@@ -11,7 +14,8 @@ interface RouteContext {
 }
 
 const bodySchema = z.object({
-  newPassword: z.string().min(8).optional(),
+  /** Si renseigné (≥ 8 caractères), le mot de passe est défini immédiatement ; sinon, envoi d’un lien par e-mail. */
+  newPassword: z.string().max(128).optional(),
 });
 
 export async function POST(request: NextRequest, context: RouteContext) {
@@ -28,7 +32,17 @@ export async function POST(request: NextRequest, context: RouteContext) {
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => ({})));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides" }, { status: 400 });
+    return zodBadRequest(parsed.error);
+  }
+
+  const directPassword = parsed.data.newPassword?.trim() ?? "";
+  if (directPassword.length > 0) {
+    if (directPassword.length < 8) {
+      return badRequest("Le mot de passe doit contenir au moins 8 caracteres.", "PASSWORD_TOO_SHORT");
+    }
+    const passwordHash = await hashPassword(directPassword);
+    await updateUserPassword(target._id ?? "", passwordHash);
+    return NextResponse.json({ ok: true, mode: "direct" as const }, { status: 200 });
   }
 
   // Génère un lien de reset temporaire (usage email) ; le Chef(fe) de service peut le transmettre au user.
@@ -48,6 +62,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   return NextResponse.json(
     {
       ok: true,
+      mode: "email_link" as const,
       sentByEmail: emailResult.sent,
       message: emailResult.sent
         ? "Lien de réinitialisation envoyé."

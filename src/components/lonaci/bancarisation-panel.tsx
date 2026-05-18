@@ -1,13 +1,59 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 
 type Banc = "NON_BANCARISE" | "EN_COURS" | "BANCARISE";
-type RequestStatus = "SOUMIS" | "VALIDE" | "REJETE";
+type RequestStatus = "SOUMIS" | "VALIDE_N1" | "VALIDE_N2" | "VALIDE" | "REJETE";
+
+const REQUEST_TABS: RequestStatus[] = ["SOUMIS", "VALIDE_N1", "VALIDE_N2", "VALIDE", "REJETE"];
+
+function emptyRequestStatusCounts(): Record<RequestStatus, number> {
+  return { SOUMIS: 0, VALIDE_N1: 0, VALIDE_N2: 0, VALIDE: 0, REJETE: 0 };
+}
+
+function requestStatusLabel(s: RequestStatus): string {
+  switch (s) {
+    case "SOUMIS":
+      return "Soumis";
+    case "VALIDE_N1":
+      return "Validé N1";
+    case "VALIDE_N2":
+      return "Validé N2";
+    case "VALIDE":
+      return "Validé (appliqué)";
+    case "REJETE":
+      return "Rejeté";
+    default:
+      return s;
+  }
+}
+
+function tabShortLabel(s: RequestStatus): string {
+  switch (s) {
+    case "SOUMIS":
+      return "Soumis";
+    case "VALIDE_N1":
+      return "N1";
+    case "VALIDE_N2":
+      return "N2";
+    case "VALIDE":
+      return "OK";
+    case "REJETE":
+      return "Rejet";
+    default:
+      return s;
+  }
+}
 
 interface ConcRow {
   id: string;
@@ -42,6 +88,20 @@ interface ReqRow {
   justificatif: { url: string; filename: string };
   createdAt: string;
 }
+
+function canValidateBancarisationRequest(r: ReqRow, role: string): boolean {
+  if (r.status === "SOUMIS") return role === "CHEF_SECTION";
+  if (r.status === "VALIDE_N1") return role === "ASSIST_CDS";
+  if (r.status === "VALIDE_N2") return role === "CHEF_SERVICE";
+  return false;
+}
+
+function canRejectBancarisationRequest(r: ReqRow, role: string): boolean {
+  return (
+    ["SOUMIS", "VALIDE_N1", "VALIDE_N2"].includes(r.status) &&
+    ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)
+  );
+}
 interface CounterRow {
   agenceId: string | null;
   agenceLabel: string;
@@ -71,11 +131,13 @@ const STATUS_TOKENS = {
   },
 } as const;
 
-const REQUEST_STATUS_TOKENS = {
+const REQUEST_STATUS_TOKENS: Record<RequestStatus, string> = {
   SOUMIS: "bg-indigo-100 text-indigo-950 ring-1 ring-indigo-400",
+  VALIDE_N1: "bg-sky-100 text-sky-950 ring-1 ring-sky-400",
+  VALIDE_N2: "bg-violet-100 text-violet-950 ring-1 ring-violet-400",
   VALIDE: "bg-emerald-100 text-emerald-950 ring-1 ring-emerald-400",
   REJETE: "bg-rose-100 text-rose-950 ring-1 ring-rose-400",
-} as const;
+};
 
 async function downloadBancarisationExcelTemplate() {
   const XLSX = await import("xlsx");
@@ -126,12 +188,12 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    if (!firstSheet) throw new Error("Fichier Excel vide.");
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    assertExcelImportAllowed("BANCARISATION");
+    const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+      "@/lib/spreadsheet/safe-xlsx-read",
+    );
+    const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
     const json = JSON.stringify(rows.map((r) => sanitize(r)));
     return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
   }
@@ -169,8 +231,11 @@ export default function BancarisationPanel() {
   const [refsAgences, setRefsAgences] = useState<RefAgence[]>([]);
   const [refsProduits, setRefsProduits] = useState<RefProduit[]>([]);
   const [requests, setRequests] = useState<ReqRow[]>([]);
+  const [allStatusCounts, setAllStatusCounts] = useState<Record<RequestStatus, number> | null>(null);
   const [counters, setCounters] = useState<CounterRow[]>([]);
   const [userRole, setUserRole] = useState<string>("");
+  /** null = chargement initial ; false = pas de module CONCESSIONNAIRES (pas d’API bancarisation). */
+  const [saisieBancarisation, setSaisieBancarisation] = useState<boolean | null>(null);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -185,7 +250,7 @@ export default function BancarisationPanel() {
   const [decisionComment, setDecisionComment] = useState("");
   const [decisionAck, setDecisionAck] = useState(false);
 
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [nouveauStatut, setNouveauStatut] = useState<Banc>("EN_COURS");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [banqueEtablissement, setBanqueEtablissement] = useState("");
@@ -208,9 +273,11 @@ export default function BancarisationPanel() {
     return acc;
   }, [counters]);
 
-  const requestCounters = useMemo(() => {
-    const c = { SOUMIS: 0, VALIDE: 0, REJETE: 0 };
-    for (const r of requests) c[r.status] += 1;
+  const requestCountersPage = useMemo(() => {
+    const c = emptyRequestStatusCounts();
+    for (const r of requests) {
+      if (r.status in c) c[r.status] += 1;
+    }
     return c;
   }, [requests]);
 
@@ -224,38 +291,55 @@ export default function BancarisationPanel() {
     setLoading(true);
     setError(null);
     try {
+      const meRes = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
+      if (!meRes.ok) throw new Error();
+      const meData = (await meRes.json()) as { user: { role: string; modulesAutorises?: string[] } };
+      const saisie = userHasConcessionnairesSaisieModule(meData.user.modulesAutorises ?? []);
+      setUserRole(meData.user.role);
+      setSaisieBancarisation(saisie);
+
       const params = new URLSearchParams({
         page: String(page),
         pageSize: String(pageSize),
       });
       if (filter) params.set("statutBancarisation", filter);
-      const [listRes, refsRes, reqRes, meRes] = await Promise.all([
+      const [listRes, refsRes] = await Promise.all([
         fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" }),
         fetch("/api/referentials", { credentials: "include", cache: "no-store" }),
-        fetch(`/api/bancarisation?page=1&pageSize=50&status=${requestTab}`, {
-          credentials: "include",
-          cache: "no-store",
-        }),
-        fetch("/api/auth/me", { credentials: "include", cache: "no-store" }),
       ]);
-      if (!listRes.ok || !refsRes.ok || !reqRes.ok || !meRes.ok) throw new Error();
+      if (!listRes.ok || !refsRes.ok) throw new Error();
       const listData = (await listRes.json()) as { items: ConcRow[]; total: number };
       const refsData = (await refsRes.json()) as { agences: RefAgence[]; produits: RefProduit[] };
-      const reqData = (await reqRes.json()) as {
-        items: ReqRow[];
-        counters: CounterRow[];
-        allStatusCounts?: { SOUMIS: number; VALIDE: number; REJETE: number };
-      };
-      const meData = (await meRes.json()) as { user: { role: string } };
       setItems(listData.items);
       setTotal(listData.total);
       setRefsAgences(refsData.agences);
       setRefsProduits(refsData.produits);
-      setRequests(reqData.items);
-      setCounters(reqData.counters);
-      setUserRole(meData.user.role);
+
+      if (saisie) {
+        const reqRes = await fetch(`/api/bancarisation?page=1&pageSize=50&status=${requestTab}`, {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!reqRes.ok) throw new Error();
+        const reqData = (await reqRes.json()) as {
+          items: ReqRow[];
+          counters: CounterRow[];
+          allStatusCounts?: Partial<Record<RequestStatus, number>>;
+        };
+        setRequests(reqData.items);
+        setCounters(reqData.counters);
+        if (reqData.allStatusCounts) {
+          setAllStatusCounts({ ...emptyRequestStatusCounts(), ...reqData.allStatusCounts });
+        } else {
+          setAllStatusCounts(null);
+        }
+      } else {
+        setRequests([]);
+        setCounters([]);
+        setAllStatusCounts(null);
+      }
     } catch {
-      setError("Impossible de charger les concessionnaires.");
+      setError("Impossible de charger les données.");
     } finally {
       setLoading(false);
     }
@@ -265,18 +349,26 @@ export default function BancarisationPanel() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!decisionTarget) return;
+    if (decision === "VALIDER" && !canValidateBancarisationRequest(decisionTarget, userRole)) {
+      setDecision("REJETER");
+    }
+  }, [decisionTarget, userRole, decision]);
+
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     setToast(null);
     try {
+      if (!createPdv?.id) throw new Error("Sélectionnez un concessionnaire.");
       if (!file) throw new Error("Document justificatif obligatoire.");
       if (nouveauStatut === "BANCARISE" && !compteBancaire.trim()) {
         throw new Error("Le numero de compte bancaire est obligatoire pour BANCARISE.");
       }
       const form = new FormData();
-      form.set("concessionnaireId", concessionnaireId);
+      form.set("concessionnaireId", createPdv.id);
       form.set("nouveauStatut", nouveauStatut);
       form.set("compteBancaire", compteBancaire.trim());
       form.set("banqueEtablissement", banqueEtablissement.trim());
@@ -292,9 +384,12 @@ export default function BancarisationPanel() {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Creation impossible");
       }
-      setToast({ type: "success", message: "Demande soumise pour validation Chef(fe) de service." });
+      setToast({
+        type: "success",
+        message: "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service.",
+      });
       setCreateOpen(false);
-      setConcessionnaireId("");
+      setCreatePdv(null);
       setCompteBancaire("");
       setBanqueEtablissement("");
       setDateEffet("");
@@ -328,7 +423,10 @@ export default function BancarisationPanel() {
       }
       setToast({
         type: "success",
-        message: action === "VALIDER" ? "Demande validée." : "Demande rejetée.",
+        message:
+          action === "VALIDER"
+            ? "Décision enregistrée (étape suivante ou application sur la fiche PDV)."
+            : "Demande rejetée.",
       });
       setDecisionTarget(null);
       setDecisionComment("");
@@ -392,91 +490,104 @@ export default function BancarisationPanel() {
             <p className="mt-0.5 text-xs text-slate-600">
               Pilotage opérationnel, validation et export des statuts bancaires.
             </p>
+            {saisieBancarisation === false ? (
+              <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
+                <span className="font-semibold">Action / saisie uniquement</span> : demandes, validations, exports et
+                compteurs détaillés bancarisation exigent le module{" "}
+                <code className="rounded bg-white px-1 py-0.5 text-[11px]">CONCESSIONNAIRES</code> (le profil{" "}
+                <code className="rounded bg-white px-1 py-0.5 text-[11px]">CONCESSIONNAIRES_LECTURE</code> ne suffit pas).
+                Vous pouvez consulter les PDV ci-dessous selon vos droits sur le référentiel.
+              </p>
+            ) : null}
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-110"
-            >
-              Nouvelle demande
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void window.open(
-                  `/api/bancarisation/export?format=excel${
-                    filter ? `&statutBancarisation=${filter}` : ""
-                  }`,
-                  "_blank",
-                );
-              }}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
-            >
-              Export Excel
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void window.open(
-                  `/api/bancarisation/export?format=pdf${
-                    filter ? `&statutBancarisation=${filter}` : ""
-                  }`,
-                  "_blank",
-                );
-              }}
-              className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
-            >
-              Export PDF
-            </button>
-            <button
-              type="button"
-              onClick={() => void downloadBancarisationExcelTemplate()}
-              className="rounded-xl border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
-            >
-              Modèle Excel
-            </button>
-            <input
-              ref={importFileInputRef}
-              type="file"
-              accept=".json,.csv,.xlsx,.xls,.pdf"
-              className="hidden"
-              onChange={(e) => void onImportFileChange(e)}
-            />
-            <button
-              type="button"
-              onClick={() => importFileInputRef.current?.click()}
-              disabled={importingFile}
-              className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:opacity-60"
-            >
-              {importingFile ? "Import..." : "Importer fichier vers le tableau"}
-            </button>
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.NON_BANCARISE.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Non bancarisés</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.NON_BANCARISE.value}`}>{b.NON_BANCARISE}</p>
-          </div>
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.EN_COURS.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">En cours</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.EN_COURS.value}`}>{b.EN_COURS}</p>
-          </div>
-          <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.BANCARISE.card}`}>
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Bancarisés</p>
-            <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.BANCARISE.value}`}>{b.BANCARISE}</p>
-          </div>
-          <div className="rounded-2xl border border-slate-200 bg-white p-3">
-            <p className="text-[11px] uppercase tracking-wide text-slate-500">Taux</p>
-            <p className="mt-1 text-2xl font-semibold text-slate-900">{tauxBancarisation}%</p>
-            <div className="mt-2 h-2 rounded-full bg-slate-200">
-              <div
-                className="h-2 rounded-full bg-linear-to-r from-cyan-400 to-emerald-400"
-                style={{ width: `${Math.min(100, Math.max(0, tauxBancarisation))}%` }}
+          {saisieBancarisation ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setCreateOpen(true)}
+                className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:brightness-110"
+              >
+                Nouvelle demande
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void window.open(
+                    `/api/bancarisation/export?format=excel${
+                      filter ? `&statutBancarisation=${filter}` : ""
+                    }`,
+                    "_blank",
+                  );
+                }}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
+              >
+                Export Excel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  void window.open(
+                    `/api/bancarisation/export?format=pdf${
+                      filter ? `&statutBancarisation=${filter}` : ""
+                    }`,
+                    "_blank",
+                  );
+                }}
+                className="rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50"
+              >
+                Export PDF
+              </button>
+              <button
+                type="button"
+                onClick={() => void downloadBancarisationExcelTemplate()}
+                className="rounded-xl border border-emerald-600 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-50"
+              >
+                Modèle Excel
+              </button>
+              <input
+                ref={importFileInputRef}
+                type="file"
+                accept={getImportAcceptAttribute("BANCARISATION")}
+                className="hidden"
+                onChange={(e) => void onImportFileChange(e)}
               />
+              <button
+                type="button"
+                onClick={() => importFileInputRef.current?.click()}
+                disabled={importingFile}
+                className="rounded-xl border border-cyan-600 bg-cyan-50 px-3 py-1.5 text-xs font-semibold text-cyan-800 transition hover:bg-cyan-100 disabled:opacity-60"
+              >
+                {importingFile ? "Import..." : "Importer fichier vers le tableau"}
+              </button>
+            </div>
+          ) : null}
+        </div>
+        {saisieBancarisation ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.NON_BANCARISE.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Non bancarisés</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.NON_BANCARISE.value}`}>{b.NON_BANCARISE}</p>
+            </div>
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.EN_COURS.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">En cours</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.EN_COURS.value}`}>{b.EN_COURS}</p>
+            </div>
+            <div className={`rounded-2xl border p-3 ${STATUS_TOKENS.BANCARISE.card}`}>
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Bancarisés</p>
+              <p className={`mt-1 text-2xl font-semibold ${STATUS_TOKENS.BANCARISE.value}`}>{b.BANCARISE}</p>
+            </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-3">
+              <p className="text-[11px] uppercase tracking-wide text-slate-500">Taux</p>
+              <p className="mt-1 text-2xl font-semibold text-slate-900">{tauxBancarisation}%</p>
+              <div className="mt-2 h-2 rounded-full bg-slate-200">
+                <div
+                  className="h-2 rounded-full bg-linear-to-r from-cyan-400 to-emerald-400"
+                  style={{ width: `${Math.min(100, Math.max(0, tauxBancarisation))}%` }}
+                />
+              </div>
             </div>
           </div>
-        </div>
+        ) : null}
       </section>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -518,6 +629,7 @@ export default function BancarisationPanel() {
       ) : null}
       {error ? <p className="text-sm text-rose-600">{error}</p> : null}
 
+      {saisieBancarisation ? (
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Compteurs par agence et produit</h3>
         <div className="overflow-x-auto">
@@ -548,25 +660,30 @@ export default function BancarisationPanel() {
           </table>
         </div>
       </section>
+      ) : null}
 
+      {saisieBancarisation ? (
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-          <h3 className="text-sm font-semibold text-slate-900">Validation et transfert (Chef(fe) de service)</h3>
+          <h3 className="text-sm font-semibold text-slate-900">Circuit de validation (N1 → N2 → chef de service)</h3>
           <div className="flex flex-wrap gap-2">
-            {(["SOUMIS", "VALIDE", "REJETE"] as const).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setRequestTab(s)}
-                className={`rounded-xl border px-2.5 py-1 text-xs transition ${
-                  requestTab === s
-                    ? "border-amber-300 bg-amber-50 text-amber-700"
-                    : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {s} ({requestCounters[s]})
-              </button>
-            ))}
+            {REQUEST_TABS.map((s) => {
+              const tabCounts = allStatusCounts ?? requestCountersPage;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={() => setRequestTab(s)}
+                  className={`rounded-xl border px-2.5 py-1 text-xs transition ${
+                    requestTab === s
+                      ? "border-amber-300 bg-amber-50 text-amber-700"
+                      : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                  }`}
+                >
+                  {tabShortLabel(s)} ({tabCounts[s]})
+                </button>
+              );
+            })}
           </div>
         </div>
         <div className="overflow-x-auto">
@@ -606,36 +723,45 @@ export default function BancarisationPanel() {
                   </td>
                   <td className="py-1.5 pr-3 text-slate-400">{r.validationComment || "—"}</td>
                   <td className="py-1.5">
-                    {userRole === "CHEF_SERVICE" && r.status === "SOUMIS" ? (
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecision("VALIDER");
-                            setDecisionComment("");
-                            setDecisionAck(false);
-                            setDecisionTarget(r);
-                          }}
-                          className="rounded-xl bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500"
-                        >
-                          Valider
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDecision("REJETER");
-                            setDecisionComment("");
-                            setDecisionAck(false);
-                            setDecisionTarget(r);
-                          }}
-                          className="rounded-xl bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-500"
-                        >
-                          Rejeter
-                        </button>
+                    {saisieBancarisation &&
+                    (canValidateBancarisationRequest(r, userRole) || canRejectBancarisationRequest(r, userRole)) ? (
+                      <div className="flex flex-wrap gap-2">
+                        {canValidateBancarisationRequest(r, userRole) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDecision("VALIDER");
+                              setDecisionComment("");
+                              setDecisionAck(false);
+                              setDecisionTarget(r);
+                            }}
+                            className="rounded-xl bg-emerald-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-emerald-500"
+                          >
+                            {r.status === "SOUMIS"
+                              ? "Valider N1"
+                              : r.status === "VALIDE_N1"
+                                ? "Valider N2"
+                                : "Valider (appliquer)"}
+                          </button>
+                        ) : null}
+                        {canRejectBancarisationRequest(r, userRole) ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDecision("REJETER");
+                              setDecisionComment("");
+                              setDecisionAck(false);
+                              setDecisionTarget(r);
+                            }}
+                            className="rounded-xl bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white transition hover:bg-rose-500"
+                          >
+                            Rejeter
+                          </button>
+                        ) : null}
                       </div>
                     ) : (
                       <span className={`rounded-full px-2 py-0.5 text-[10px] ${requestStatusBadge(r.status)}`}>
-                        {r.status === "SOUMIS" ? "Réservé Chef(fe) de service" : r.status}
+                        {requestStatusLabel(r.status)}
                       </span>
                     )}
                   </td>
@@ -652,6 +778,7 @@ export default function BancarisationPanel() {
           </table>
         </div>
       </section>
+      ) : null}
 
       <section className="rounded-3xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -717,7 +844,7 @@ export default function BancarisationPanel() {
       </section>
 
       <p className="text-xs text-slate-600">
-        La mise à jour de la fiche concessionnaire est automatique après validation Chef(fe) de service. Vous pouvez aussi ouvrir la fiche depuis{" "}
+        La fiche concessionnaire est mise à jour automatiquement après la validation finale (chef de service), une fois les étapes N1 et N2 effectuées. Vous pouvez aussi ouvrir la fiche depuis{" "}
         <Link href="/concessionnaires" className="text-sky-600 hover:underline">
           Concessionnaires
         </Link>
@@ -742,21 +869,20 @@ export default function BancarisationPanel() {
               </button>
             </div>
             <div className="grid gap-3 md:grid-cols-2">
-              <div>
-                <label className="mb-1 block text-xs text-slate-600">Concessionnaire</label>
-                <select
-                  value={concessionnaireId}
-                  onChange={(e) => setConcessionnaireId(e.target.value)}
-                  required
-                  className="w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
-                >
-                  <option value="">Choisir…</option>
-                  {items.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.codePdv} - {c.nomComplet}
-                    </option>
-                  ))}
-                </select>
+              <div className="md:col-span-2">
+                <ConcessionnaireSearchPicker
+                  key={`banc-create-${createOpen}`}
+                  label={<span className="text-xs text-slate-600">Concessionnaire</span>}
+                  selected={createPdv}
+                  onSelectedChange={(r) => {
+                    setCreatePdv(r);
+                    const codes = refsProduits.filter((p) => p.actif).map((p) => p.code);
+                    const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                    if (picked) setProduitCode(picked);
+                  }}
+                  inputClassName="w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
+                  searchPlaceholder="Rechercher un PDV…"
+                />
               </div>
               <div>
                 <label className="mb-1 block text-xs text-slate-600">Nouveau statut</label>
@@ -851,31 +977,36 @@ export default function BancarisationPanel() {
           <div className="relative z-10 w-full max-w-lg rounded-3xl border border-slate-200 bg-white p-5 shadow-xl">
             <h3 className="text-sm font-semibold text-slate-900">Confirmation de décision</h3>
             <p className="mt-1 text-xs text-slate-600">
-              Demande: {decisionTarget.statutActuel} → {decisionTarget.nouveauStatut}
+              Demande: {decisionTarget.statutActuel} → {decisionTarget.nouveauStatut} · statut workflow :{" "}
+              {requestStatusLabel(decisionTarget.status)}
             </p>
             <div className="mt-3 flex gap-2">
-              <button
-                type="button"
-                onClick={() => setDecision("VALIDER")}
-                className={`rounded-xl px-3 py-1 text-xs transition ${
-                  decision === "VALIDER"
-                    ? "bg-emerald-700 text-white"
-                    : "border border-emerald-700 text-emerald-400"
-                }`}
-              >
-                Valider
-              </button>
-              <button
-                type="button"
-                onClick={() => setDecision("REJETER")}
-                className={`rounded-xl px-3 py-1 text-xs transition ${
-                  decision === "REJETER"
-                    ? "bg-rose-700 text-white"
-                    : "border border-rose-700 text-rose-400"
-                }`}
-              >
-                Rejeter
-              </button>
+              {canValidateBancarisationRequest(decisionTarget, userRole) ? (
+                <button
+                  type="button"
+                  onClick={() => setDecision("VALIDER")}
+                  className={`rounded-xl px-3 py-1 text-xs transition ${
+                    decision === "VALIDER"
+                      ? "bg-emerald-700 text-white"
+                      : "border border-emerald-700 text-emerald-400"
+                  }`}
+                >
+                  Valider
+                </button>
+              ) : null}
+              {canRejectBancarisationRequest(decisionTarget, userRole) ? (
+                <button
+                  type="button"
+                  onClick={() => setDecision("REJETER")}
+                  className={`rounded-xl px-3 py-1 text-xs transition ${
+                    decision === "REJETER"
+                      ? "bg-rose-700 text-white"
+                      : "border border-rose-700 text-rose-400"
+                  }`}
+                >
+                  Rejeter
+                </button>
+              ) : null}
             </div>
             <label className="mt-3 block text-xs text-slate-600">Commentaire (optionnel)</label>
             <textarea
@@ -904,7 +1035,12 @@ export default function BancarisationPanel() {
               </button>
               <button
                 type="button"
-                disabled={!decisionAck || validating}
+                disabled={
+                  !decisionAck ||
+                  validating ||
+                  (decision === "VALIDER" && !canValidateBancarisationRequest(decisionTarget, userRole)) ||
+                  (decision === "REJETER" && !canRejectBancarisationRequest(decisionTarget, userRole))
+                }
                 onClick={() => void decideRequest(decisionTarget.id, decision)}
                 className="rounded-xl bg-linear-to-r from-amber-600 to-amber-500 px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-60"
               >

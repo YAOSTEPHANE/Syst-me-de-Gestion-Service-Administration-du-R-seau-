@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { badRequest } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { createPdvIntegration, ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
 import { PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -33,7 +35,7 @@ export async function GET(request: NextRequest) {
 
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await ensureSprint4Indexes();
@@ -55,7 +57,10 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Donnees invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error);
+  }
+  if (Number.isNaN(new Date(parsed.data.dateDemande).getTime())) {
+    return badRequest("Date de demande invalide.", "INVALID_DATE_DEMANDE");
   }
 
   await ensureSprint4Indexes();

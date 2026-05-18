@@ -8,22 +8,26 @@ export type LonaciNavItem = {
 
 export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/dashboard", label: "Tableau de bord", section: "Principal" },
+  { href: "/import", label: "Import" },
   { href: "/concessionnaires", label: "Concessionnaires" },
-  { href: "/contrats", label: "Contrats", badge: "contracts" },
-  { href: "/cautions", label: "Cautions", badge: "cautions" },
-  { href: "/pdv-integrations", label: "Intégrations PDV", badge: "pdv" },
+  { href: "/clients", label: "Clients" },
   { href: "/agrements", label: "Agréments", badge: "agrements" },
+  { href: "/cautions", label: "Cautions", badge: "cautions" },
+  { href: "/contrats", label: "Contrats", badge: "contracts" },
+  { href: "/dossiers", label: "Dossiers" },
+  { href: "/pdv-integrations", label: "Géolocalisation PDV", badge: "pdv" },
   { href: "/attestations-domiciliation", label: "Attestations & domiciliation" },
   { href: "/cessions", label: "Cessions & Déloc.", section: "Opérations" },
   { href: "/resiliations", label: "Résiliations" },
-  { href: "/succession", label: "Décès & Succession", badge: "succession" },
+  { href: "/succession", label: "Décès et ayants droit", badge: "succession" },
   { href: "/bancarisation", label: "Bancarisation", badge: "bancarisation" },
-  { href: "/gpr", label: "GPR & Grattage" },
+  { href: "/gpr", label: "Création de code grattage" },
   { href: "/registres", label: "Registres" },
   { href: "/rapports", label: "Rapports", section: "Analyse" },
   { href: "/alertes", label: "Toutes les alertes" },
   { href: "/parametres", label: "Paramètres" },
   { href: "/carte-pdv", label: "Carte PDV" },
+  { href: "/assistant-operations", label: "Assistant opérations" },
 ];
 
 export const LONACI_AGENCES = [
@@ -55,6 +59,14 @@ export function LonaciNavIcon({ label }: { label: string }) {
       </svg>
     );
   }
+  if (label === "Assistant opérations") {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M4 5a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" />
+        <path d="M14 3v5h5M8 12h8M8 16h6M8 8h2" />
+      </svg>
+    );
+  }
   if (label === "Concessionnaires") {
     return (
       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
@@ -64,11 +76,29 @@ export function LonaciNavIcon({ label }: { label: string }) {
       </svg>
     );
   }
+  if (label === "Clients") {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M16 21v-2a4 4 0 00-4-4H6a4 4 0 00-4 4v2" />
+        <circle cx="9" cy="7" r="4" />
+        <path d="M22 21v-2a4 4 0 00-3-3.87" />
+        <path d="M16 3.13a4 4 0 010 7.75" />
+      </svg>
+    );
+  }
   if (label.includes("Import")) {
     return (
       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
         <path d="M12 3v12m0 0l-4-4m4 4l4-4" />
         <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" />
+      </svg>
+    );
+  }
+  if (label === "Dossiers") {
+    return (
+      <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
+        <path d="M4 5a2 2 0 012-2h4l2 2h6a2 2 0 012 2v12a2 2 0 01-2 2H6a2 2 0 01-2-2V5z" />
+        <path d="M8 11h8M8 15h5" />
       </svg>
     );
   }
@@ -116,7 +146,7 @@ export function LonaciNavIcon({ label }: { label: string }) {
       </svg>
     );
   }
-  if (label.includes("Succession")) {
+  if (label.includes("Succession") || (label.includes("Décès") && label.includes("droit"))) {
     return (
       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
         <path d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
@@ -131,7 +161,7 @@ export function LonaciNavIcon({ label }: { label: string }) {
       </svg>
     );
   }
-  if (label.startsWith("GPR")) {
+  if (label.startsWith("GPR") || label.toLowerCase().includes("code grattage")) {
     return (
       <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.6} viewBox="0 0 24 24">
         <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />

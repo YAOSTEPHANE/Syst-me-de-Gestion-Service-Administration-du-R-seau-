@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { LONACI_AGENCES } from "@/components/lonaci/lonaci-nav";
+import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 
 type Mode = "insert" | "upsert";
 type ImportModuleKey =
@@ -51,14 +52,14 @@ const IMPORT_MODULES: Array<{
   },
   {
     key: "PDV_INTEGRATIONS",
-    label: "Intégrations PDV",
-    // Intégration PDV: contrainte d’unicité Mongo sur `reference`.
+    label: "Géolocalisation PDV",
+    // Géolocalisation PDV: contrainte d’unicité Mongo sur `reference`.
     collections: [{ value: "pdv_integrations", label: "PDV Integrations", defaultUpsertBy: "reference" }],
   },
   {
     key: "REGISTRES",
     label: "Registres",
-    collections: [{ value: "lonaci_registries", label: "Registres LONACI", defaultUpsertBy: "_id" }],
+    collections: [{ value: "lonaci_registries", label: "Registres Infinitecore Systeme", defaultUpsertBy: "_id" }],
   },
 ];
 
@@ -221,7 +222,7 @@ export default function DashboardDataImportCard() {
         fd.set("upsertBy", upsertBy.trim());
       }
 
-      const res = await fetch("/api/import-data", {
+      const res = await lonaciFetch("/api/import-data", {
         method: "POST",
         body: fd,
       });

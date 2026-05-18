@@ -1,5 +1,10 @@
 "use client";
 
+import ConcessionnaireSearchPicker, {
+  pickAgenceIdFromConcessionnaire,
+  pickProduitCodeFromConcessionnaire,
+  type ConcessionnairePickerRow,
+} from "@/components/lonaci/concessionnaire-search-picker";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -72,12 +77,11 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   const lower = file.name.toLowerCase();
   if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
-    const XLSX = await import("xlsx");
-    const buffer = await file.arrayBuffer();
-    const wb = XLSX.read(buffer, { type: "array" });
-    const firstSheet = wb.Sheets[wb.SheetNames[0]];
-    if (!firstSheet) throw new Error("Fichier Excel vide.");
-    const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(firstSheet, { defval: null });
+    const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
+      "@/lib/spreadsheet/safe-xlsx-read",
+    );
+    const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
     const json = JSON.stringify(rows.map((r) => sanitize(r)));
     return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
   }
@@ -135,16 +139,10 @@ export default function AgrementsPanel() {
   const [dateReception, setDateReception] = useState("");
   const [referenceOfficielle, setReferenceOfficielle] = useState("");
   const [agenceId, setAgenceId] = useState("");
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
   const [observations, setObservations] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
-
-  const [concessionnaires, setConcessionnaires] = useState<Array<{ id: string; codePdv: string; label: string }>>(
-    [],
-  );
-  const [concessionnairesLoading, setConcessionnairesLoading] = useState(false);
-  const [concessionnairesError, setConcessionnairesError] = useState<string | null>(null);
 
   async function load(nextPage = page) {
     setLoading(true);
@@ -203,7 +201,7 @@ export default function AgrementsPanel() {
       form.set("dateReception", new Date(dateReception).toISOString());
       form.set("referenceOfficielle", referenceOfficielle.trim());
       form.set("agenceId", agenceId.trim());
-      form.set("concessionnaireId", concessionnaireId.trim());
+      form.set("concessionnaireId", createPdv?.id?.trim() ?? "");
       form.set("observations", observations.trim());
       form.set("document", pdfFile);
       const res = await fetch("/api/agrements", { method: "POST", credentials: "include", body: form });
@@ -215,7 +213,7 @@ export default function AgrementsPanel() {
       setDateReception("");
       setReferenceOfficielle("");
       setAgenceId("");
-      setConcessionnaireId("");
+      setCreatePdv(null);
       setObservations("");
       setPdfFile(null);
       setCreateOpen(false);
@@ -299,7 +297,7 @@ export default function AgrementsPanel() {
   }, [filterAgence, filterProduit, filterStatut, filterDateFrom, filterDateTo]);
 
   const inputClass =
-    "w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
+    "w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
   const inputClassXs =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
 
@@ -308,7 +306,7 @@ export default function AgrementsPanel() {
     setDateReception("");
     setReferenceOfficielle("");
     setAgenceId("");
-    setConcessionnaireId("");
+    setCreatePdv(null);
     setObservations("");
     setPdfFile(null);
   }
@@ -371,48 +369,9 @@ export default function AgrementsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createOpen]);
 
-  useEffect(() => {
-    if (!createOpen) return;
-
-    let cancelled = false;
-    setConcessionnairesLoading(true);
-    setConcessionnairesError(null);
-
-    void (async () => {
-      try {
-        // /api/concessionnaires limite pageSize à 100 (validation Zod)
-        const params = new URLSearchParams({ page: "1", pageSize: "100", statut: "ACTIF" });
-        if (agenceId.trim()) params.set("agenceId", agenceId.trim());
-        if (produitCode.trim()) params.set("produitCode", produitCode.trim().toUpperCase());
-
-        const res = await fetch(`/api/concessionnaires?${params}`, { credentials: "include", cache: "no-store" });
-        if (!res.ok) throw new Error("Concessionnaires indisponibles");
-        const data = (await res.json()) as {
-          items?: Array<{ id: string; codePdv?: string; nomComplet?: string; raisonSociale?: string }>;
-        };
-        const items = (data.items ?? [])
-          .map((c) => {
-            const label = (c.nomComplet || c.raisonSociale || c.codePdv || "").trim();
-            return { id: c.id, codePdv: c.codePdv ?? "", label };
-          })
-          .filter((c) => c.id && c.label);
-        items.sort((a, b) => a.label.localeCompare(b.label, "fr"));
-        if (!cancelled) setConcessionnaires(items);
-      } catch (e) {
-        if (!cancelled) setConcessionnairesError(e instanceof Error ? e.message : "Erreur");
-      } finally {
-        if (!cancelled) setConcessionnairesLoading(false);
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [createOpen, agenceId, produitCode]);
-
   return (
     <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <header className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 shadow-sm">
+      <header className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-linear-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 shadow-sm">
         <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-indigo-300/20 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl" />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
@@ -449,7 +408,7 @@ export default function AgrementsPanel() {
         </div>
       </header>
 
-      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-indigo-50/40 p-3 sm:grid-cols-5">
+      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-linear-to-r from-slate-50 to-indigo-50/40 p-3 sm:grid-cols-5">
         <input aria-label="Filtre agence" value={filterAgence} onChange={(e) => setFilterAgence(e.target.value)} placeholder="Agence" className={inputClassXs} />
         <input aria-label="Filtre produit" value={filterProduit} onChange={(e) => setFilterProduit(e.target.value)} placeholder="Produit" className={inputClassXs} />
         <select aria-label="Filtre statut" value={filterStatut} onChange={(e) => setFilterStatut(e.target.value as "" | AgrementStatus)} className={inputClassXs}>
@@ -479,7 +438,7 @@ export default function AgrementsPanel() {
 
       {toast ? (
         <div
-          className={`fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
+          className={`fixed left-1/2 top-4 z-100 w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
             toast.type === "success"
               ? "border-emerald-200 bg-emerald-50 text-emerald-900"
               : "border-rose-200 bg-rose-50 text-rose-900"
@@ -601,7 +560,7 @@ export default function AgrementsPanel() {
             disabled={creating}
           />
           <div className="relative z-10 flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-5 py-4">
+            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-indigo-50 via-white to-cyan-50 px-5 py-4">
               <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-indigo-200/40 blur-2xl" />
               <div>
                 <p className="mb-1 inline-flex rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-900">
@@ -624,7 +583,7 @@ export default function AgrementsPanel() {
             </div>
 
             <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-5 py-4">
+              <div className="min-h-0 flex-1 overflow-y-auto bg-linear-to-b from-slate-50/80 via-white to-white px-5 py-4">
                 {createError ? (
                   <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">
                     {createError}
@@ -636,8 +595,8 @@ export default function AgrementsPanel() {
                     <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
                       Paramètres de l’agrément
                     </p>
-                    <div className="grid gap-3 md:grid-cols-2">
-                  <label className="grid gap-1 md:col-span-3 xl:col-span-4">
+                    <div className="grid gap-3 lg:grid-cols-2">
+                  <label className="grid min-w-0 gap-1 lg:col-span-2">
                     <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
                     <select
                       required
@@ -660,7 +619,7 @@ export default function AgrementsPanel() {
                     {referentialsError ? <span className="text-[11px] leading-4 text-rose-700">{referentialsError}</span> : null}
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Date de réception *</span>
                     <input
                       required
@@ -671,7 +630,7 @@ export default function AgrementsPanel() {
                     />
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Référence officielle *</span>
                     <input
                       required
@@ -682,7 +641,7 @@ export default function AgrementsPanel() {
                     />
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Agence concernée</span>
                     <select
                       value={agenceId}
@@ -701,27 +660,28 @@ export default function AgrementsPanel() {
                     </select>
                   </label>
 
-                  <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Concessionnaire</span>
-                    <select
-                      value={concessionnaireId}
-                      onChange={(e) => setConcessionnaireId(e.target.value)}
-                      className={inputClass}
-                      disabled={concessionnairesLoading}
-                    >
-                      <option value="">
-                        {concessionnairesLoading ? "Chargement des concessionnaires…" : "Aucun concessionnaire"}
-                      </option>
-                      {concessionnaires.map((c) => (
-                        <option key={c.id} value={c.id}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                    {concessionnairesError ? (
-                      <span className="text-[11px] leading-4 text-rose-700">{concessionnairesError}</span>
-                    ) : null}
-                  </label>
+                  <ConcessionnaireSearchPicker
+                    key={`agrement-create-${createOpen}`}
+                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire</span>}
+                    selected={createPdv}
+                    onSelectedChange={(r) => {
+                      setCreatePdv(r);
+                      const codes = produits.filter((p) => p.actif).map((p) => p.code);
+                      const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                      if (picked) setProduitCode(picked);
+                      const agIds = agences.filter((a) => a.actif && a.id).map((a) => a.id);
+                      const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                      if (pickedAg) setAgenceId(pickedAg);
+                    }}
+                    statutActifOnly
+                    inscriptionFinaliseeOnly
+                    listExtraParams={{
+                      ...(agenceId.trim() ? { agenceId: agenceId.trim() } : {}),
+                      ...(produitCode.trim() ? { produitCode: produitCode.trim().toUpperCase() } : {}),
+                    }}
+                    inputClassName={inputClass}
+                    searchPlaceholder="Rechercher (code, nom…)"
+                  />
                     </div>
                   </section>
 
@@ -730,7 +690,7 @@ export default function AgrementsPanel() {
                       Document et notes
                     </p>
                     <div className="grid gap-3">
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-700">
                       <svg
                         aria-hidden="true"
@@ -760,7 +720,7 @@ export default function AgrementsPanel() {
                     <button
                       type="button"
                       onClick={() => pdfInputRef.current?.click()}
-                      className="flex w-full items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-2 py-1 text-left text-[11px] leading-4 text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
                     >
                       <span className="inline-flex min-w-0 items-center gap-1.5">
                         <svg
@@ -782,7 +742,7 @@ export default function AgrementsPanel() {
                     </button>
                   </label>
 
-                  <label className="grid gap-1">
+                  <label className="grid min-w-0 gap-1">
                     <span className="text-xs font-medium text-slate-700">Observations</span>
                     <textarea
                       value={observations}
@@ -802,6 +762,7 @@ export default function AgrementsPanel() {
                   ref={importFileInputRef}
                   type="file"
                   accept=".json,.csv,.xlsx,.xls,.pdf"
+                  aria-label="Importer des agréments"
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}
                 />

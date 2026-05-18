@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { conflict } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { hashPassword } from "@/lib/auth/password";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
@@ -28,6 +30,11 @@ const createUserSchema = z.object({
 
 const listSchema = z.object({
   status: z.enum(["ALL", "ACTIF", "INACTIF"]).optional().default("ALL"),
+  role: z.enum(LONACI_ROLES).optional(),
+  agenceId: z.string().trim().optional(),
+  q: z.string().trim().optional(),
+  page: z.coerce.number().int().min(1).optional().default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).optional().default(20),
 });
 
 export async function GET(request: NextRequest) {
@@ -39,14 +46,45 @@ export async function GET(request: NextRequest) {
   await ensureUsersIndexes();
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides" }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
   const users = await listUsers();
-  const filtered =
+  const statusFiltered =
     parsed.data.status === "ALL"
       ? users
       : users.filter((u) => (parsed.data.status === "ACTIF" ? u.actif : !u.actif));
-  return NextResponse.json({ users: filtered.map(sanitizeUser) }, { status: 200 });
+
+  const roleFiltered = parsed.data.role ? statusFiltered.filter((u) => u.role === parsed.data.role) : statusFiltered;
+  const agenceFiltered = parsed.data.agenceId
+    ? roleFiltered.filter((u) => (u.agenceId ?? "").trim() === parsed.data.agenceId)
+    : roleFiltered;
+
+  const q = parsed.data.q?.trim().toLowerCase();
+  const searched = q
+    ? agenceFiltered.filter((u) => {
+        const haystack = [u.email, u.nom, u.prenom, u.matricule ?? "", u.role].join(" ").toLowerCase();
+        return haystack.includes(q);
+      })
+    : agenceFiltered;
+
+  const total = searched.length;
+  const totalPages = Math.max(1, Math.ceil(total / parsed.data.pageSize));
+  const page = Math.min(parsed.data.page, totalPages);
+  const start = (page - 1) * parsed.data.pageSize;
+  const pageItems = searched.slice(start, start + parsed.data.pageSize);
+
+  return NextResponse.json(
+    {
+      users: pageItems.map(sanitizeUser),
+      pagination: {
+        page,
+        pageSize: parsed.data.pageSize,
+        total,
+        totalPages,
+      },
+    },
+    { status: 200 },
+  );
 }
 
 export async function POST(request: NextRequest) {
@@ -57,25 +95,19 @@ export async function POST(request: NextRequest) {
 
   const parsed = createUserSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json(
-      {
-        message: "Donnees invalides",
-        issues: parsed.error.issues,
-      },
-      { status: 400 },
-    );
+    return zodBadRequest(parsed.error);
   }
 
   await ensureUsersIndexes();
 
   const existing = await findUserByEmail(parsed.data.email);
   if (existing) {
-    return NextResponse.json({ message: "Un compte existe deja avec cet email" }, { status: 409 });
+    return conflict("Un compte existe deja avec cet email", "DUPLICATE_EMAIL");
   }
   if (parsed.data.matricule) {
     const existingMatricule = await findUserByMatricule(parsed.data.matricule);
     if (existingMatricule) {
-      return NextResponse.json({ message: "Un compte existe deja avec ce matricule" }, { status: 409 });
+      return conflict("Un compte existe deja avec ce matricule", "DUPLICATE_MATRICULE");
     }
   }
 

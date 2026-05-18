@@ -133,11 +133,11 @@ export async function transitionAgrement(input: {
   const $set: Record<string, unknown> = { statut: input.target, updatedAt: now, updatedByUserId: input.actorId };
 
   if (row.statut === "RECU" && input.target === "CONTROLE") {
-    if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(input.role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (input.role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
     $set.controlledAt = now;
     $set.controlledByUserId = input.actorId;
   } else if (row.statut === "CONTROLE" && input.target === "TRANSMIS") {
-    if (!["ASSIST_CDS", "CHEF_SERVICE"].includes(input.role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (input.role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
     $set.transmittedAt = now;
     $set.transmittedByUserId = input.actorId;
   } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {
@@ -220,6 +220,8 @@ export async function getAgrementDocumentMeta(id: string) {
     filename: row.documentFilename,
     mimeType: row.documentMimeType,
     storedRelativePath: row.documentStoredRelativePath,
+    agenceId: row.agenceId,
+    concessionnaireId: row.concessionnaireId,
   };
 }
 

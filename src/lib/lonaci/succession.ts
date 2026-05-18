@@ -5,7 +5,7 @@ import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
-import type { ContratDocument, SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
+import type { SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -36,6 +36,10 @@ function mapRow(row: StoredSuccession): SuccessionCaseDocument {
   return {
     ...row,
     _id: row._id.toHexString(),
+    validationN1At: row.validationN1At ?? null,
+    validationN1ByUserId: row.validationN1ByUserId ?? null,
+    validationN2At: row.validationN2At ?? null,
+    validationN2ByUserId: row.validationN2ByUserId ?? null,
   };
 }
 
@@ -120,6 +124,10 @@ export async function createSuccessionCase(input: CreateSuccessionInput): Promis
     ayantDroitEmail: null,
     documents: [],
     decision: null,
+    validationN1At: null,
+    validationN1ByUserId: null,
+    validationN2At: null,
+    validationN2ByUserId: null,
     stepHistory: [
       {
         step: firstStep,
@@ -287,6 +295,9 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     if (row.stepHistory.length !== SUCCESSION_STEPS.length - 1) {
       throw new Error("SUCCESSION_STEPS_INCOMPLETE");
     }
+    if (!row.validationN1At || !row.validationN2At) {
+      throw new Error("SUCCESSION_VALIDATION_N1_N2_REQUIRED");
+    }
   }
 
   const now = new Date();
@@ -359,6 +370,69 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     details: { step: nextKey },
   });
 
+  return mapRow(updated);
+}
+
+export async function recordSuccessionValidationN1(input: { caseId: string; actor: UserDocument }) {
+  if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
+  if (input.actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  const db = await getDatabase();
+  const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
+    _id: new ObjectId(input.caseId),
+    deletedAt: null,
+  });
+  if (!row) throw new Error("CASE_NOT_FOUND");
+  if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
+  if (row.validationN1At) throw new Error("SUCCESSION_VALIDATION_ALREADY_DONE");
+  const conc = await findConcessionnaireById(row.concessionnaireId);
+  if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+  const now = new Date();
+  await db.collection(COLLECTION).updateOne(
+    { _id: row._id },
+    {
+      $set: {
+        validationN1At: now,
+        validationN1ByUserId: input.actor._id ?? "",
+        updatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+      },
+    },
+  );
+  const updated = await db.collection<StoredSuccession>(COLLECTION).findOne({ _id: row._id });
+  if (!updated) throw new Error("CASE_NOT_FOUND");
+  return mapRow(updated);
+}
+
+export async function recordSuccessionValidationN2(input: { caseId: string; actor: UserDocument }) {
+  if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
+  if (input.actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
+  const db = await getDatabase();
+  const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
+    _id: new ObjectId(input.caseId),
+    deletedAt: null,
+  });
+  if (!row) throw new Error("CASE_NOT_FOUND");
+  if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
+  if (!row.validationN1At) throw new Error("SUCCESSION_VALIDATION_N1_REQUIRED");
+  if (row.validationN2At) throw new Error("SUCCESSION_VALIDATION_ALREADY_DONE");
+  const conc = await findConcessionnaireById(row.concessionnaireId);
+  if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+  const now = new Date();
+  await db.collection(COLLECTION).updateOne(
+    { _id: row._id },
+    {
+      $set: {
+        validationN2At: now,
+        validationN2ByUserId: input.actor._id ?? "",
+        updatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+      },
+    },
+  );
+  const updated = await db.collection<StoredSuccession>(COLLECTION).findOne({ _id: row._id });
+  if (!updated) throw new Error("CASE_NOT_FOUND");
   return mapRow(updated);
 }
 
@@ -452,6 +526,10 @@ export async function listSuccessionCases(
           : (nextStepKey(r.stepHistory.length) ?? SUCCESSION_STEPS[r.stepHistory.length - 1]),
       stepsCompleted: r.stepHistory.length,
       stepsTotal: SUCCESSION_STEPS.length,
+      validationN1At: r.validationN1At ? r.validationN1At.toISOString() : null,
+      validationN1ByUserId: r.validationN1ByUserId ?? null,
+      validationN2At: r.validationN2At ? r.validationN2At.toISOString() : null,
+      validationN2ByUserId: r.validationN2ByUserId ?? null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
     })),
@@ -461,17 +539,21 @@ export async function listSuccessionCases(
   };
 }
 
-export async function listSuccessionStaleAlerts() {
+export async function listSuccessionStaleAlerts(agenceId?: string | null) {
   const db = await getDatabase();
   const thresholdDays = 30;
   const threshold = new Date(Date.now() - thresholdDays * 24 * 60 * 60 * 1000);
+  const filter: Record<string, unknown> = {
+    status: "OUVERT",
+    deletedAt: null,
+    updatedAt: { $lte: threshold },
+  };
+  if (agenceId?.trim()) {
+    filter.agenceId = agenceId.trim();
+  }
   const rows = await db
     .collection<StoredSuccession>(COLLECTION)
-    .find({
-      status: "OUVERT",
-      deletedAt: null,
-      updatedAt: { $lte: threshold },
-    })
+    .find(filter)
     .sort({ updatedAt: 1 })
     .limit(200)
     .toArray();
