@@ -98,7 +98,12 @@ export async function allocateCautionPaymentReference(): Promise<string> {
 
 export async function resolveCautionPaymentReference(inputRef: string | undefined | null): Promise<string> {
   const trimmed = (inputRef ?? "").trim();
-  if (trimmed) return trimmed;
+  if (trimmed) {
+    if (trimmed.toUpperCase().startsWith("PROVISOIRE:")) {
+      throw new Error("CAUTION_PAYMENT_REFERENCE_REQUISE");
+    }
+    return trimmed;
+  }
   if (isCautionPaymentRefAutoGenerateEnabled()) {
     return allocateCautionPaymentReference();
   }
@@ -106,6 +111,11 @@ export async function resolveCautionPaymentReference(inputRef: string | undefine
 }
 
 async function resolveDestinataireEmail(caution: StoredCaution): Promise<string | null> {
+  const pdvId = caution.concessionnaireId?.trim();
+  if (pdvId) {
+    const conc = await findConcessionnaireById(pdvId);
+    return conc?.email?.trim() || null;
+  }
   const lid = caution.lonaciClientId?.trim();
   if (lid) {
     const client = await findLonaciClientById(lid);
@@ -144,24 +154,32 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
   let contratId: string | null = null;
   let agenceIdForLabel: string | null = null;
 
-  const lid = caution.lonaciClientId?.trim();
-  if (lid) {
-    lonaciClientId = lid;
-    const client = await findLonaciClientById(lid);
-    clientCode = client?.code ?? null;
-    identiteDetail = client?.nomComplet?.trim() || client?.raisonSociale || "—";
-    agenceIdForLabel = client?.agenceId ?? null;
-  } else if (caution.contratId?.trim()) {
-    contratId = caution.contratId.trim();
-    const contrat = await db.collection<StoredContrat>(CONTRATS_COLLECTION).findOne({
-      _id: new ObjectId(contratId),
-      deletedAt: null,
-    });
-    if (contrat) {
-      const conc = await findConcessionnaireById(contrat.concessionnaireId);
-      identiteLabel = "Concessionnaire";
-      identiteDetail = conc?.raisonSociale ?? conc?.nomComplet ?? "—";
-      agenceIdForLabel = conc?.agenceId ?? null;
+  const pdvLinkId = caution.concessionnaireId?.trim();
+  if (pdvLinkId) {
+    const conc = await findConcessionnaireById(pdvLinkId);
+    identiteLabel = "Concessionnaire";
+    identiteDetail = conc?.raisonSociale ?? conc?.nomComplet ?? "—";
+    agenceIdForLabel = conc?.agenceId ?? null;
+  } else {
+    const lid = caution.lonaciClientId?.trim();
+    if (lid) {
+      lonaciClientId = lid;
+      const client = await findLonaciClientById(lid);
+      clientCode = client?.code ?? null;
+      identiteDetail = client?.nomComplet?.trim() || client?.raisonSociale || "—";
+      agenceIdForLabel = client?.agenceId ?? null;
+    } else if (caution.contratId?.trim()) {
+      contratId = caution.contratId.trim();
+      const contrat = await db.collection<StoredContrat>(CONTRATS_COLLECTION).findOne({
+        _id: new ObjectId(contratId),
+        deletedAt: null,
+      });
+      if (contrat) {
+        const conc = await findConcessionnaireById(contrat.concessionnaireId);
+        identiteLabel = "Concessionnaire";
+        identiteDetail = conc?.raisonSociale ?? conc?.nomComplet ?? "—";
+        agenceIdForLabel = conc?.agenceId ?? null;
+      }
     }
   }
 

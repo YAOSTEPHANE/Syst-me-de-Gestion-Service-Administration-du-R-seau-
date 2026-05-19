@@ -1,9 +1,11 @@
 "use client";
 
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
   DOSSIER_CHECKLIST_STATUTS,
   DOSSIER_CHECKLIST_STATUT_LABELS,
+  computeChecklistProgress,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -48,9 +50,11 @@ export default function ConcessionnaireInscriptionChecklistBlock({
     setLocalStatuts(map);
   }, [checklist]);
 
-  const complet = useMemo(() => {
-    if (!checklist?.entries.length) return true;
-    return checklist.entries.every((e) => !e.obligatoire || localStatuts[e.itemId] === "FOURNI");
+  const progress = useMemo(() => {
+    if (!checklist?.entries.length) {
+      return { complet: true, obligatoiresFournis: 0, obligatoiresTotal: 0 };
+    }
+    return computeChecklistProgress(checklist.entries, localStatuts);
   }, [checklist, localStatuts]);
 
   const saveStatuts = useCallback(
@@ -98,17 +102,25 @@ export default function ConcessionnaireInscriptionChecklistBlock({
 
   return (
     <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+      <DossierCompletIndicator
+        complet={progress.complet}
+        size="banner"
+        live={editable}
+        obligatoiresFournis={progress.obligatoiresFournis}
+        obligatoiresTotal={progress.obligatoiresTotal}
+        className="mb-3"
+      />
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
           Pièces justificatives (inscription)
         </p>
-        <span
-          className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${
-            complet ? "border-emerald-300 bg-emerald-50 text-emerald-900" : "border-amber-300 bg-amber-50 text-amber-900"
-          }`}
-        >
-          {complet ? "Complet" : "Incomplet"}
-        </span>
+        <DossierCompletIndicator
+          complet={progress.complet}
+          size="sm"
+          live={editable}
+          obligatoiresFournis={progress.obligatoiresFournis}
+          obligatoiresTotal={progress.obligatoiresTotal}
+        />
       </div>
       {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
       <ul className="space-y-2">

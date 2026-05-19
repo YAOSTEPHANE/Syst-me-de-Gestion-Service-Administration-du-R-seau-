@@ -59,6 +59,18 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CAUTION_IMMUTABLE") {
       return conflict("Caution deja finalisee (statut immuable).", "CAUTION_IMMUTABLE");
     }
+    if (code === "CAUTION_FICHE_PROVISOIRE") {
+      return conflict(
+        "Régularisez le paiement de la fiche provisoire avant de passer en PAYÉE.",
+        "CAUTION_FICHE_PROVISOIRE",
+      );
+    }
+    if (code === "CAUTION_PAYMENT_REFERENCE_REQUISE") {
+      return conflict(
+        "Référence de paiement obligatoire pour valider le paiement (statut PAYÉE).",
+        "CAUTION_PAYMENT_REFERENCE_REQUISE",
+      );
+    }
     return serverError("Decision caution impossible.", "CAUTION_DECISION_FAILED");
   }
 }

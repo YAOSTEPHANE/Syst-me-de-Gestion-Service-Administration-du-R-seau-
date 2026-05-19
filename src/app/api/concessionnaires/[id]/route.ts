@@ -21,6 +21,7 @@ import {
   softDeleteConcessionnaire,
   updateConcessionnaire,
 } from "@/lib/lonaci/concessionnaires";
+import { getInscriptionCautionSummary } from "@/lib/lonaci/inscription-caution";
 import { ensureReferentialsIndexes, findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -143,8 +144,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     produitPrixCaution[code] = n;
   }
 
+  const inscriptionCaution = await getInscriptionCautionSummary(id);
+
   return NextResponse.json(
-    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles, produitPrixCaution },
+    { concessionnaire: sanitizeConcessionnairePublic(doc), produitLibelles, produitPrixCaution, inscriptionCaution },
     { status: 200 },
   );
 }

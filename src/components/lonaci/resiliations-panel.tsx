@@ -7,9 +7,26 @@ import ConcessionnaireSearchPicker, {
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import ResiliationChecklistBlock from "@/components/lonaci/resiliation-checklist-block";
+import { RESILIATION_CHECKLIST_ITEMS_SPEC_71 } from "@/lib/lonaci/resiliation-document-checklist";
+import {
+  RESILIATION_STATUTS_SPEC_72,
+  resiliationStatutMetierBadgeClass,
+  resolveResiliationStatutMetier,
+} from "@/lib/lonaci/resiliation-statut-metier";
+import { resiliationChecklistProgress } from "@/lib/lonaci/resiliations-checklist-progress";
+import { canRole } from "@/lib/auth/rbac";
+import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 
-type ResiliationStatus = "DOSSIER_RECU" | "RESILIE";
+type ResiliationStatus =
+  | "DOSSIER_RECU"
+  | "CONTROLE_CHEF_SECTION"
+  | "VALIDATION_N2"
+  | "RESILIE"
+  | "REJETEE";
 
 interface ResiliationItem {
   id: string;
@@ -19,8 +36,22 @@ interface ResiliationItem {
   motif: string;
   statut: ResiliationStatus;
   commentaire: string | null;
+  validatedAt: string | null;
+  contratId: string | null;
+  contratReference: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
+  statutMetierLabel: string;
+  statutMetierDescription: string;
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number; uploadedAt: string }>;
 }
+
+const WORKFLOW_STATUT_FILTER_LABELS: Record<ResiliationStatus, string> = {
+  DOSSIER_RECU: "Réception — constitution",
+  CONTROLE_CHEF_SECTION: "Circuit — N1",
+  VALIDATION_N2: "Circuit — N2",
+  RESILIE: "RÉSILIÉ",
+  REJETEE: "Rejetée",
+};
 
 interface ConcessionnaireItem {
   id: string;
@@ -101,6 +132,14 @@ export default function ResiliationsPanel() {
   const [meRole, setMeRole] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailItem, setDetailItem] = useState<ResiliationItem | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailChecklistLive, setDetailChecklistLive] = useState<{
+    complet: boolean;
+    obligatoiresFournis: number;
+    obligatoiresTotal: number;
+  } | null>(null);
 
   const [concessionnaires, setConcessionnaires] = useState<ConcessionnaireItem[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
@@ -220,21 +259,92 @@ export default function ResiliationsPanel() {
     }
   }
 
-  async function validateResiliation(id: string) {
+  async function openDetail(id: string) {
+    setDetailId(id);
+    setDetailLoading(true);
+    setDetailItem(null);
+    setDetailChecklistLive(null);
+    try {
+      const res = await fetch(`/api/resiliations/${encodeURIComponent(id)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Chargement du dossier impossible");
+      const data = (await res.json()) as { item: ResiliationItem };
+      setDetailItem(data.item);
+      setDetailChecklistLive(resiliationChecklistProgress(data.item.documentChecklist));
+    } catch (e) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
+      });
+      setDetailId(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function closeDetail() {
+    setDetailId(null);
+    setDetailItem(null);
+    setDetailChecklistLive(null);
+  }
+
+  function syncItemChecklist(id: string, checklist: DossierDocumentChecklistPayload) {
+    setItems((prev) => prev.map((r) => (r.id === id ? { ...r, documentChecklist: checklist } : r)));
+    setDetailItem((prev) => (prev && prev.id === id ? { ...prev, documentChecklist: checklist } : prev));
+    setDetailChecklistLive(resiliationChecklistProgress(checklist));
+  }
+
+  async function transitionResiliationRow(id: string, target: ResiliationStatus, options?: { confirmFinalize?: boolean }) {
+    if (target === "CONTROLE_CHEF_SECTION") {
+      const row =
+        detailId === id && detailItem ? detailItem : items.find((r) => r.id === id);
+      const checklistComplet =
+        detailId === id && detailChecklistLive
+          ? detailChecklistLive.complet
+          : row?.documentChecklist?.complet;
+      if (row?.documentChecklist && checklistComplet === false) {
+        setToast({
+          type: "error",
+          message: "Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » avant soumission.",
+        });
+        return;
+      }
+    }
+    if (target === "RESILIE" && options?.confirmFinalize) {
+      if (
+        !window.confirm(
+          "Confirmer la résiliation ? Cette action est irréversible (contrat archivé, concessionnaire résilié).",
+        )
+      ) {
+        return;
+      }
+    }
     setBusyId(id);
+    setError(null);
     try {
       const res = await fetch(`/api/resiliations/${encodeURIComponent(id)}/transition`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target: "RESILIE" }),
+        body: JSON.stringify({
+          target,
+          ...(target === "RESILIE" ? { confirmIrreversible: true as const } : {}),
+        }),
       });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
-        throw new Error(b?.message ?? "Validation impossible");
+        throw new Error(b?.message ?? "Transition impossible");
       }
-      setToast({ type: "success", message: "Résiliation validée (statut RÉSILIÉ)." });
+      setToast({
+        type: "success",
+        message: target === "RESILIE" ? "Résiliation finalisée — contrat archivé." : "Transition appliquée.",
+      });
       await load(page);
+      if (detailId === id) {
+        await openDetail(id);
+      }
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
@@ -291,7 +401,20 @@ export default function ResiliationsPanel() {
   }, [concessionnaires]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const canValidate = meRole === "CHEF_SERVICE";
+  const meRbacRole =
+    meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null;
+  const canValidateN1 = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "DOSSIERS", action: "VALIDATE_N1" }).allowed
+    : false;
+  const canValidateN2 = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "DOSSIERS", action: "VALIDATE_N2" }).allowed
+    : false;
+  const canFinalize = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "DOSSIERS", action: "FINALIZE" }).allowed
+    : false;
+  const canReject = meRbacRole
+    ? canRole({ role: meRbacRole, resource: "DOSSIERS", action: "REJECT" }).allowed
+    : false;
   function openCreate() {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -326,6 +449,53 @@ export default function ResiliationsPanel() {
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
           <h2 className="text-2xl font-semibold text-slate-900">Résiliations</h2>
+          <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
+            <p>
+              <span className="font-semibold text-cyan-900">7.1 — Checklist :</span> dossier complet obligatoire avant
+              traitement ({RESILIATION_CHECKLIST_ITEMS_SPEC_71.length} pièces communes + documents produit le cas
+              échéant).
+            </p>
+            <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
+                7.1 — Documents à fournir
+              </p>
+              <ul className="mt-2 list-inside list-disc space-y-1 text-slate-700">
+                {RESILIATION_CHECKLIST_ITEMS_SPEC_71.map((item) => (
+                  <li key={item.id}>{item.libelle}</li>
+                ))}
+              </ul>
+            </div>
+            <p className="text-[11px] text-slate-600">
+              Indicateur <span className="font-semibold">DOSSIER COMPLET / INCOMPLET</span> mis à jour en temps réel
+              lors de la saisie de la checklist. À la validation finale, le contrat passe en statut{" "}
+              <span className="font-semibold">RÉSILIÉ (archivé)</span> — il n&apos;est jamais supprimé (piste d&apos;audit).
+            </p>
+            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
+                7.2 — Statuts de la résiliation
+              </p>
+              <div className="mt-2 overflow-x-auto">
+                <table className="w-full min-w-md text-left text-[11px]">
+                  <thead>
+                    <tr className="border-b border-indigo-200 text-indigo-900">
+                      <th className="py-1.5 pr-3 font-semibold">Statut</th>
+                      <th className="py-1.5 font-semibold">Description</th>
+                    </tr>
+                  </thead>
+                  <tbody className="text-slate-700">
+                    {RESILIATION_STATUTS_SPEC_72.map((row) => (
+                      <tr key={row.statut} className="border-b border-indigo-100/80 last:border-0">
+                        <td className="py-1.5 pr-3 align-top font-semibold whitespace-nowrap text-slate-900">
+                          {row.label}
+                        </td>
+                        <td className="py-1.5 align-top leading-snug">{row.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
         </div>
         <div className="flex flex-wrap gap-2">
           <button
@@ -384,10 +554,13 @@ export default function ResiliationsPanel() {
       {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
 
       <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 md:grid-cols-5">
-        <select value={fStatus} onChange={(e) => setFStatus(e.target.value as ResiliationStatus | "")} className={inputClass}>
+        <select value={fStatus} onChange={(e) => setFStatus(e.target.value as ResiliationStatus | "")} className={inputClass} aria-label="Filtrer par statut">
           <option value="">Tous statuts</option>
-          <option value="DOSSIER_RECU">DOSSIER_RECU</option>
-          <option value="RESILIE">RESILIE</option>
+          {(Object.keys(WORKFLOW_STATUT_FILTER_LABELS) as ResiliationStatus[]).map((s) => (
+            <option key={s} value={s}>
+              {WORKFLOW_STATUT_FILTER_LABELS[s]}
+            </option>
+          ))}
         </select>
         <ConcessionnaireSearchPicker
           label={<span className="text-xs font-medium text-slate-600">Concessionnaire (filtre)</span>}
@@ -415,8 +588,10 @@ export default function ResiliationsPanel() {
           <p className="mt-1 text-xl font-semibold text-cyan-900">{total}</p>
         </article>
         <article className="rounded-xl border border-rose-200 bg-rose-50/80 p-3">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">Dossiers reçus</p>
-          <p className="mt-1 text-xl font-semibold text-rose-900">{items.filter((row) => row.statut === "DOSSIER_RECU").length}</p>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-700">En cours</p>
+          <p className="mt-1 text-xl font-semibold text-rose-900">
+            {items.filter((row) => row.statut !== "RESILIE" && row.statut !== "REJETEE").length}
+          </p>
         </article>
         <article className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Résiliés</p>
@@ -455,47 +630,264 @@ export default function ResiliationsPanel() {
                 <th className="px-3 py-2.5">Produit</th>
                 <th className="px-3 py-2.5">Date réception</th>
                 <th className="px-3 py-2.5">Statut</th>
-                <th className="px-3 py-2.5">Documents</th>
+                <th className="px-3 py-2.5">Checklist 7.1</th>
+                <th className="px-3 py-2.5">Pièces jointes</th>
                 <th className="px-3 py-2.5 text-right">Action</th>
               </tr>
             </thead>
             <tbody>
               {items.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100 transition hover:bg-cyan-50/40">
+                <tr
+                  key={row.id}
+                  className="cursor-pointer border-t border-slate-100 transition hover:bg-cyan-50/40"
+                  onClick={() => openDetail(row.id)}
+                >
                   <td className="px-3 py-2.5">{labelById.get(row.concessionnaireId) ?? row.concessionnaireId}</td>
                   <td className="px-3 py-2.5">{row.produitCode}</td>
                   <td className="px-3 py-2.5 text-xs">{new Date(row.dateReception).toLocaleString("fr-FR")}</td>
-                  <td className="px-3 py-2.5">{row.statut}</td>
                   <td className="px-3 py-2.5">
+                    <span
+                      className={`inline-flex max-w-[11rem] flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${resiliationStatutMetierBadgeClass(
+                        resolveResiliationStatutMetier({
+                          statut: row.statut,
+                          checklistComplet: row.documentChecklist?.complet ?? null,
+                        }),
+                      )}`}
+                      title={row.statutMetierDescription}
+                    >
+                      {row.statutMetierLabel}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
+                    {row.documentChecklist ? (
+                      (() => {
+                        const progress =
+                          detailId === row.id && detailChecklistLive
+                            ? detailChecklistLive
+                            : resiliationChecklistProgress(row.documentChecklist);
+                        return (
+                          <DossierCompletIndicator
+                            complet={progress.complet}
+                            size="sm"
+                            live={detailId === row.id && row.statut === "DOSSIER_RECU"}
+                            obligatoiresFournis={progress.obligatoiresFournis}
+                            obligatoiresTotal={progress.obligatoiresTotal}
+                          />
+                        );
+                      })()
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5" onClick={(e) => e.stopPropagation()}>
                     {row.attachments.length ? row.attachments.map((a) => (
                       <div key={a.id}>
                         <a href={`/api/resiliations/${row.id}/attachments/${a.id}`} target="_blank" rel="noreferrer" className="text-xs underline text-slate-700">{a.filename}</a>
                       </div>
                     )) : <span className="text-xs text-slate-400">—</span>}
                   </td>
-                  <td className="px-3 py-2.5 text-right">
-                    {row.statut === "DOSSIER_RECU" && canValidate ? (
-                      <button
-                        type="button"
-                        disabled={busyId === row.id}
-                        onClick={() => void validateResiliation(row.id)}
-                        className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white shadow-sm transition hover:border-rose-700 hover:bg-rose-700 disabled:opacity-60"
-                      >
-                        Valider (RÉSILIÉ)
-                      </button>
-                    ) : <span className="text-xs text-slate-400">—</span>}
+                  <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
+                    {row.statut === "RESILIE" ? (
+                      <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                        RÉSILIÉ
+                      </span>
+                    ) : row.statut === "REJETEE" ? (
+                      <span className="text-xs text-slate-400">Rejetée</span>
+                    ) : (
+                      <div className="flex flex-wrap justify-end gap-1">
+                        {row.statut === "DOSSIER_RECU" && canValidateN1 ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id || row.documentChecklist?.complet === false}
+                            title={
+                              row.documentChecklist?.complet === false
+                                ? "Checklist 7.1 incomplète"
+                                : undefined
+                            }
+                            onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}
+                            className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider N1
+                          </button>
+                        ) : null}
+                        {row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transitionResiliationRow(row.id, "VALIDATION_N2")}
+                            className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider N2
+                          </button>
+                        ) : null}
+                        {row.statut === "VALIDATION_N2" && canFinalize ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transitionResiliationRow(row.id, "RESILIE", { confirmFinalize: true })}
+                            className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Finaliser (RÉSILIÉ)
+                          </button>
+                        ) : null}
+                        {canReject ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transitionResiliationRow(row.id, "REJETEE")}
+                            className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700"
+                          >
+                            Rejeter
+                          </button>
+                        ) : null}
+                      </div>
+                    )}
                   </td>
                 </tr>
               ))}
               {!items.length ? (
                 <tr>
-                  <td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-500">Aucune résiliation.</td>
+                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">Aucune résiliation.</td>
                 </tr>
               ) : null}
             </tbody>
           </table>
         </div>
       )}
+
+      {detailId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="resiliation-detail-title">
+          <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeDetail} />
+          <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-rose-50 px-4 py-3">
+              <div>
+                <h3 id="resiliation-detail-title" className="text-sm font-semibold text-slate-900">
+                  Dossier résiliation {detailItem?.id.slice(-8) ?? detailId}
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600">
+                  {detailItem ? `${labelById.get(detailItem.concessionnaireId) ?? detailItem.concessionnaireId} · ${detailItem.produitCode}` : "…"}
+                </p>
+                {detailItem ? (
+                  <p className="mt-1 text-[11px] text-slate-600" title={detailItem.statutMetierDescription}>
+                    <span className="font-semibold text-indigo-900">Statut 7.2 :</span> {detailItem.statutMetierLabel}
+                  </p>
+                ) : null}
+              </div>
+              <button type="button" onClick={closeDetail} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">
+                ×
+              </button>
+            </div>
+            {detailItem?.documentChecklist ? (
+              <div className="shrink-0 border-b border-slate-200 px-4 py-2">
+                <DossierCompletIndicator
+                  complet={detailChecklistLive?.complet ?? detailItem.documentChecklist.complet}
+                  size="banner"
+                  live={detailItem.statut === "DOSSIER_RECU"}
+                  obligatoiresFournis={detailChecklistLive?.obligatoiresFournis}
+                  obligatoiresTotal={detailChecklistLive?.obligatoiresTotal}
+                />
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {detailLoading ? <p className="text-sm text-slate-500">Chargement du dossier…</p> : null}
+              {!detailLoading && detailItem?.statut === "RESILIE" && detailItem.contratReference ? (
+                <div className="mb-3 rounded-xl border border-slate-300 bg-slate-100 px-3 py-2.5 text-[11px] text-slate-800">
+                  <p className="font-semibold text-slate-900">Contrat archivé</p>
+                  <p className="mt-1 leading-snug">
+                    Réf. <span className="font-mono">{detailItem.contratReference}</span> — statut{" "}
+                    <span className="font-semibold">RÉSILIÉ</span>. Enregistrement conservé (non supprimé) pour la piste
+                    d&apos;audit.
+                  </p>
+                </div>
+              ) : null}
+              {!detailLoading && detailItem?.documentChecklist ? (
+                <ResiliationChecklistBlock
+                  resiliationId={detailItem.id}
+                  checklist={detailItem.documentChecklist}
+                  editable={detailItem.statut === "DOSSIER_RECU"}
+                  onUpdated={(checklist) => syncItemChecklist(detailItem.id, checklist)}
+                  onProgressChange={setDetailChecklistLive}
+                />
+              ) : !detailLoading ? (
+                <p className="text-sm text-slate-500">Checklist non disponible sur ce dossier.</p>
+              ) : null}
+              {!detailLoading && detailItem?.attachments.length ? (
+                <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">Pièces jointes</p>
+                  <ul className="mt-2 space-y-1">
+                    {detailItem.attachments.map((a) => (
+                      <li key={a.id}>
+                        <a
+                          href={`/api/resiliations/${detailItem.id}/attachments/${a.id}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="text-xs underline text-cyan-800"
+                        >
+                          {a.filename}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {!detailLoading ? (
+                <p className="mt-3 text-xs text-slate-600">
+                  <span className="font-semibold">Motif :</span> {detailItem?.motif ?? "—"}
+                </p>
+              ) : null}
+            </div>
+            {detailItem && detailItem.statut !== "RESILIE" && detailItem.statut !== "REJETEE" ? (
+              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2">
+                {detailItem.statut === "DOSSIER_RECU" && canValidateN1 ? (
+                  <button
+                    type="button"
+                    disabled={
+                      busyId === detailItem.id ||
+                      (detailChecklistLive?.complet ?? detailItem.documentChecklist?.complet) === false
+                    }
+                    onClick={() => void transitionResiliationRow(detailItem.id, "CONTROLE_CHEF_SECTION")}
+                    className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Valider N1
+                  </button>
+                ) : null}
+                {detailItem.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                  <button
+                    type="button"
+                    disabled={busyId === detailItem.id}
+                    onClick={() => void transitionResiliationRow(detailItem.id, "VALIDATION_N2")}
+                    className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Valider N2
+                  </button>
+                ) : null}
+                {detailItem.statut === "VALIDATION_N2" && canFinalize ? (
+                  <button
+                    type="button"
+                    disabled={busyId === detailItem.id}
+                    onClick={() =>
+                      void transitionResiliationRow(detailItem.id, "RESILIE", { confirmFinalize: true })
+                    }
+                    className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white"
+                  >
+                    Finaliser (RÉSILIÉ)
+                  </button>
+                ) : null}
+                {canReject ? (
+                  <button
+                    type="button"
+                    disabled={busyId === detailItem.id}
+                    onClick={() => void transitionResiliationRow(detailItem.id, "REJETEE")}
+                    className="rounded-lg border border-slate-400 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700"
+                  >
+                    Rejeter
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-resiliation-title">

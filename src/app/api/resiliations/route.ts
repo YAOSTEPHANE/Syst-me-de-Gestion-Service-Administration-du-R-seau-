@@ -21,7 +21,9 @@ import {
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  statut: z.enum(["DOSSIER_RECU", "RESILIE"]).optional(),
+  statut: z
+    .enum(["DOSSIER_RECU", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "RESILIE", "REJETEE"])
+    .optional(),
   concessionnaireId: z.string().optional(),
   produitCode: z.string().optional(),
   dateFrom: z.string().optional(),

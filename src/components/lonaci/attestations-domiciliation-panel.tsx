@@ -7,27 +7,49 @@ import ConcessionnaireSearchPicker, {
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import {
+  ATTESTATION_CIRCUIT_ETAPES,
+  ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS,
+  ATTESTATION_DOMICILIATION_STATUT_LABELS,
+  ATTESTATION_DOMICILIATION_STATUTS_SPEC_44,
+  ATTESTATION_DOMICILIATION_TYPE_LABELS,
+} from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation";
 
 type DemandeType = "ATTESTATION_REVENU" | "DOMICILIATION_PRODUIT";
-type DemandeStatut = "DEMANDE_RECUE" | "TRANSMIS" | "FINALISE";
+type DemandeStatut = "DEMANDE_RECUE" | "TRANSMIS" | "FINALISE" | "VALIDE" | "ENVOYE_CLIENT";
+type ModuleView = "ATTESTATION_REVENU" | "DOMICILIATION_PRODUIT" | "ALL";
 
 interface DemandeItem {
   id: string;
   type: DemandeType;
   concessionnaireId: string | null;
+  agenceId: string | null;
   produitCode: string | null;
   dateDemande: string;
   statut: DemandeStatut;
   observations: string | null;
+  delaiTraitementClientJours: number | null;
+  clientEmailSentTo: string | null;
+  sentToClientAt: string | null;
   createdAt: string;
   updatedAt: string;
 }
 
 function statutBadgeClass(statut: DemandeStatut): string {
-  if (statut === "DEMANDE_RECUE") return "border-amber-200 bg-amber-50 text-amber-900";
-  if (statut === "TRANSMIS") return "border-sky-200 bg-sky-50 text-sky-900";
-  return "border-emerald-200 bg-emerald-50 text-emerald-900";
+  switch (statut) {
+    case "DEMANDE_RECUE":
+      return "border-amber-200 bg-amber-50 text-amber-900";
+    case "TRANSMIS":
+      return "border-sky-200 bg-sky-50 text-sky-900";
+    case "FINALISE":
+      return "border-emerald-200 bg-emerald-50 text-emerald-900";
+    case "VALIDE":
+      return "border-indigo-200 bg-indigo-50 text-indigo-900";
+    case "ENVOYE_CLIENT":
+      return "border-violet-200 bg-violet-50 text-violet-900";
+  }
 }
 
 function typeBadgeClass(type: DemandeType): string {
@@ -91,12 +113,22 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
 }
 
+function moduleViewToFilterType(view: ModuleView): "" | DemandeType {
+  if (view === "ALL") return "";
+  return view;
+}
+
 export default function AttestationsDomiciliationPanel() {
+  const [moduleView, setModuleView] = useState<ModuleView>("ATTESTATION_REVENU");
   const [items, setItems] = useState<DemandeItem[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const pageSize = 20;
   const [loading, setLoading] = useState(true);
+  const [indicators, setIndicators] = useState<AttestationsDomiciliationDashboardIndicators | null>(
+    null,
+  );
+  const [indicatorsLoading, setIndicatorsLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -107,11 +139,13 @@ export default function AttestationsDomiciliationPanel() {
   const [createError, setCreateError] = useState<string | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [filterType, setFilterType] = useState<"" | DemandeType>("");
+  const [filterType, setFilterType] = useState<"" | DemandeType>("ATTESTATION_REVENU");
   const [filterPdv, setFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [filterStatut, setFilterStatut] = useState<"" | DemandeStatut>("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
+  const [filterAgenceId, setFilterAgenceId] = useState("");
+  const [agences, setAgences] = useState<Array<{ id: string; libelle: string }>>([]);
 
   const [produits, setProduits] = useState<Array<{ code: string; libelle: string; actif: boolean }>>([]);
   const [referentialsLoading, setReferentialsLoading] = useState(false);
@@ -124,18 +158,48 @@ export default function AttestationsDomiciliationPanel() {
   const [observations, setObservations] = useState("");
   const [creating, setCreating] = useState(false);
 
+  const listQueryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (filterType) params.set("type", filterType);
+    if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
+    if (filterStatut) params.set("statut", filterStatut);
+    if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
+    if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
+    if (filterAgenceId) params.set("agenceId", filterAgenceId);
+    return params;
+  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo, filterAgenceId]);
+
+  async function loadIndicators() {
+    setIndicatorsLoading(true);
+    try {
+      const params = new URLSearchParams(listQueryParams);
+      const res = await fetch(`/api/attestations-domiciliation/stats?${params}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Indicateurs indisponibles");
+      const data = (await res.json()) as {
+        indicators: AttestationsDomiciliationDashboardIndicators;
+      };
+      setIndicators(data.indicators);
+    } catch {
+      setIndicators(null);
+    } finally {
+      setIndicatorsLoading(false);
+    }
+  }
+
   async function load(nextPage = page) {
     setLoading(true);
     setListError(null);
     try {
       const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
-      if (filterType) params.set("type", filterType);
-      if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
-      if (filterStatut) params.set("statut", filterStatut);
-      if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
-      if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
+      listQueryParams.forEach((value, key) => params.set(key, value));
 
-      const res = await fetch(`/api/attestations-domiciliation?${params}`, { credentials: "include", cache: "no-store" });
+      const res = await fetch(`/api/attestations-domiciliation?${params}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
       if (!res.ok) throw new Error("Chargement impossible");
       const data = (await res.json()) as { items: DemandeItem[]; total: number; page: number };
       setItems(data.items);
@@ -150,8 +214,17 @@ export default function AttestationsDomiciliationPanel() {
 
   useEffect(() => {
     void load(1);
+    void loadIndicators();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo]);
+  }, [listQueryParams]);
+
+  function onModuleViewChange(view: ModuleView) {
+    setModuleView(view);
+    const nextFilter = moduleViewToFilterType(view);
+    setFilterType(nextFilter);
+    if (view !== "ALL") setType(view);
+    setPage(1);
+  }
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -176,8 +249,9 @@ export default function AttestationsDomiciliationPanel() {
         throw new Error(body?.message ?? "Création impossible");
       }
       closeCreate();
-      setToast({ type: "success", message: "Demande enregistrée (statut DEMANDE_RECUE)." });
+      setToast({ type: "success", message: "Demande enregistrée (statut Demande reçue)." });
       await load(1);
+      void loadIndicators();
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
@@ -187,7 +261,7 @@ export default function AttestationsDomiciliationPanel() {
     }
   }
 
-  async function transition(id: string, target: "TRANSMIS" | "FINALISE") {
+  async function transition(id: string, target: "TRANSMIS" | "FINALISE" | "VALIDE") {
     setBusyId(id);
     setListError(null);
     try {
@@ -202,7 +276,41 @@ export default function AttestationsDomiciliationPanel() {
         throw new Error(body?.message ?? "Transition impossible");
       }
       await load(page);
+      void loadIndicators();
       setToast({ type: "success", message: "Transition effectuée." });
+    } catch (e) {
+      const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
+      setListError(message);
+      setToast({ type: "error", message });
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function envoyerAuClient(id: string) {
+    setBusyId(id);
+    setListError(null);
+    try {
+      const res = await fetch(
+        `/api/attestations-domiciliation/${encodeURIComponent(id)}/envoyer-client`,
+        { method: "POST", credentials: "include" },
+      );
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+        clientEmailSentTo?: string;
+        sentToClientAt?: string;
+      } | null;
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Envoi au client impossible");
+      }
+      await load(page);
+      void loadIndicators();
+      setToast({
+        type: "success",
+        message: body?.clientEmailSentTo
+          ? `Attestation envoyée à ${body.clientEmailSentTo} — statut Envoyé client.`
+          : "Envoi client effectué.",
+      });
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
@@ -234,6 +342,7 @@ export default function AttestationsDomiciliationPanel() {
         | null;
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1);
+      void loadIndicators();
       window.dispatchEvent(new Event("lonaci:data-imported"));
       setToast({
         type: "success",
@@ -251,26 +360,23 @@ export default function AttestationsDomiciliationPanel() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const exportQuery = useMemo(() => {
-    const params = new URLSearchParams();
-    if (filterType) params.set("type", filterType);
-    if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
-    if (filterStatut) params.set("statut", filterStatut);
-    if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
-    if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
-    return params.toString();
-  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo]);
+  const exportQuery = listQueryParams.toString();
 
   const inputClass =
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
   const inputClassXs =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-  const stats = useMemo(() => {
-    const demandeRecue = items.filter((i) => i.statut === "DEMANDE_RECUE").length;
-    const transmis = items.filter((i) => i.statut === "TRANSMIS").length;
-    const finalise = items.filter((i) => i.statut === "FINALISE").length;
-    return { demandeRecue, transmis, finalise };
-  }, [items]);
+  const dashboardTitle = "4.2 — Tableau de bord attestations";
+  const circuitEtapes = useMemo(
+    () => ATTESTATION_CIRCUIT_ETAPES.filter((e, i, arr) => arr.findIndex((x) => x.step === e.step) === i),
+    [],
+  );
+  const dashboardSubtitle =
+    moduleView === "ATTESTATION_REVENU"
+      ? "Attestation de revenu — demandes des concessionnaires, filtrable par période et par agence."
+      : moduleView === "DOMICILIATION_PRODUIT"
+        ? "Domiciliation produit — suivi et indicateurs de traitement."
+        : "Vue consolidée attestations et domiciliation.";
 
   function resetCreateFields() {
     setType("ATTESTATION_REVENU");
@@ -303,29 +409,32 @@ export default function AttestationsDomiciliationPanel() {
   }, [createOpen]);
 
   useEffect(() => {
-    if (!createOpen) return;
-    if (produits.length) return;
-
     let cancelled = false;
-    setReferentialsLoading(true);
-    setReferentialsError(null);
     void (async () => {
       try {
         const res = await fetch("/api/referentials", { credentials: "include", cache: "no-store" });
         if (!res.ok) throw new Error("Référentiels indisponibles");
-        const data = (await res.json()) as { produits?: Array<{ code: string; libelle: string; actif: boolean }> };
-        const next = (data.produits ?? []).slice().sort((a, b) => a.code.localeCompare(b.code, "fr"));
-        if (!cancelled) setProduits(next);
-      } catch (e) {
-        if (!cancelled) setReferentialsError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
-      } finally {
-        if (!cancelled) setReferentialsLoading(false);
+        const data = (await res.json()) as {
+          produits?: Array<{ code: string; libelle: string; actif: boolean }>;
+          agences?: Array<{ id: string; libelle: string }>;
+        };
+        if (cancelled) return;
+        setProduits((data.produits ?? []).slice().sort((a, b) => a.code.localeCompare(b.code, "fr")));
+        setAgences((data.agences ?? []).slice().sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")));
+      } catch {
+        if (!cancelled) setReferentialsError("Référentiels indisponibles");
       }
     })();
-
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    if (!createOpen || produits.length) return;
+    setReferentialsLoading(true);
+    setReferentialsError(null);
+    setReferentialsLoading(false);
   }, [createOpen, produits.length]);
 
   return (
@@ -335,10 +444,81 @@ export default function AttestationsDomiciliationPanel() {
         <div className="pointer-events-none absolute -bottom-12 left-20 h-40 w-40 rounded-full bg-indigo-200/30 blur-2xl" />
         <div className="relative mb-4 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="inline-flex rounded-full border border-cyan-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-700">
-            Infinitecore Systeme
+          <p className="inline-flex rounded-full border border-violet-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-800">
+            Attestations & domiciliation
           </p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">Attestations & domiciliation</h2>
+          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{dashboardTitle}</h2>
+          <p className="mt-1 max-w-2xl text-sm text-slate-600">{dashboardSubtitle}</p>
+          <div
+            className="mt-3 inline-flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm"
+            role="tablist"
+            aria-label="Périmètre module"
+          >
+            {(
+              [
+                ["ATTESTATION_REVENU", "Attestation de revenu"],
+                ["DOMICILIATION_PRODUIT", "Domiciliation"],
+                ["ALL", "Tout"],
+              ] as const
+            ).map(([view, label]) => (
+              <button
+                key={view}
+                type="button"
+                role="tab"
+                aria-selected={moduleView === view}
+                onClick={() => onModuleViewChange(view)}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
+                  moduleView === view
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-slate-600 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-4 rounded-xl border border-slate-200 bg-white/90 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+              4.3 — Circuit de traitement
+            </p>
+            <ol className="mt-2 space-y-2">
+              {circuitEtapes.map((etape) => (
+                <li key={etape.step} className="flex gap-2 text-[11px] leading-snug text-slate-700">
+                  <span className="shrink-0 font-mono font-semibold text-violet-700">{etape.step}.</span>
+                  <span>
+                    <span className="font-semibold text-slate-900">{etape.label}</span>
+                    {" — "}
+                    {etape.description}
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-900">
+              4.4 — Statuts du traitement attestation
+            </p>
+            <div className="mt-2 overflow-x-auto">
+              <table className="w-full min-w-md text-left text-[11px]">
+                <thead>
+                  <tr className="border-b border-violet-200 text-violet-900">
+                    <th className="py-1.5 pr-3 font-semibold">Statut</th>
+                    <th className="py-1.5 font-semibold">Description</th>
+                  </tr>
+                </thead>
+                <tbody className="text-slate-700">
+                  {ATTESTATION_DOMICILIATION_STATUTS_SPEC_44.map((row) => (
+                    <tr key={row.statut} className="border-b border-violet-100/80 last:border-0">
+                      <td className="py-1.5 pr-3 align-top font-semibold whitespace-nowrap text-slate-900">
+                        {row.label}
+                      </td>
+                      <td className="py-1.5 align-top leading-snug">{row.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
         <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
           <a
@@ -387,36 +567,131 @@ export default function AttestationsDomiciliationPanel() {
         </div>
       </div>
 
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          Tableau de bord — indicateurs clés
+          {indicatorsLoading ? " (chargement…)" : null}
+        </p>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <article className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Demande reçue</p>
-            <p className="mt-1 text-3xl font-bold text-amber-900">{stats.demandeRecue}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+              {ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}
+            </p>
+            <p className="mt-1 text-3xl font-bold text-amber-900">
+              {indicators?.enCours ?? "—"}
+            </p>
+            <p className="mt-1 text-[10px] leading-snug text-amber-800/90">
+              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.DEMANDE_RECUE}
+            </p>
+            <p className="mt-1 text-[11px] text-amber-800/80">
+              Dont {indicators?.enAttentePlus7Jours ?? "—"} &gt; 7 j
+            </p>
           </article>
           <article className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">Transmis</p>
-            <p className="mt-1 text-3xl font-bold text-sky-900">{stats.transmis}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">
+              {ATTESTATION_DOMICILIATION_STATUT_LABELS.TRANSMIS}
+            </p>
+            <p className="mt-1 text-3xl font-bold text-sky-900">{indicators?.transmisDfc ?? "—"}</p>
+            <p className="mt-1 text-[10px] leading-snug text-sky-800/90">
+              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.TRANSMIS}
+            </p>
           </article>
           <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Finalisés</p>
-            <p className="mt-1 text-3xl font-bold text-emerald-900">{stats.finalise}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
+              {ATTESTATION_DOMICILIATION_STATUT_LABELS.FINALISE}
+            </p>
+            <p className="mt-1 text-3xl font-bold text-emerald-900">{indicators?.finalise ?? "—"}</p>
+            <p className="mt-1 text-[10px] leading-snug text-emerald-800/90">
+              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.FINALISE}
+            </p>
           </article>
           <article className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Volume visible</p>
-            <p className="mt-1 text-3xl font-bold text-indigo-900">{total}</p>
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
+              {ATTESTATION_DOMICILIATION_STATUT_LABELS.VALIDE}
+            </p>
+            <p className="mt-1 text-3xl font-bold text-indigo-950">{indicators?.valide ?? "—"}</p>
+            <p className="mt-1 text-[10px] leading-snug text-indigo-800/90">
+              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.VALIDE}
+            </p>
+          </article>
+          <article className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-800">
+              {ATTESTATION_DOMICILIATION_STATUT_LABELS.ENVOYE_CLIENT}
+            </p>
+            <p className="mt-1 text-3xl font-bold text-violet-950">{indicators?.envoyeClient ?? "—"}</p>
+            <p className="mt-1 text-[10px] leading-snug text-violet-800/90">
+              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.ENVOYE_CLIENT}
+            </p>
+          </article>
+        </div>
+        <div className="mt-3 grid gap-3 lg:grid-cols-3">
+          <article className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
+              Nombre de demandes
+            </p>
+            <p className="mt-1 text-3xl font-bold text-indigo-950">
+              {indicators?.nombreDemandes ?? "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-indigo-900/80">
+              En cours et traitées — filtrable par période et par agence.
+            </p>
+          </article>
+          <article className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
+              Temps de traitement
+            </p>
+            <p className="mt-1 text-3xl font-bold text-cyan-950">
+              {indicators?.tempsTraitementMoyenClientJours != null
+                ? `${indicators.tempsTraitementMoyenClientJours} j`
+                : "—"}
+            </p>
+            <p className="mt-1 text-[11px] text-cyan-900/80">
+              Moyenne soumission → client
+              {indicators?.tempsTraitementEchantillon
+                ? ` (${indicators.tempsTraitementEchantillon} dossier(s))`
+                : ""}
+            </p>
+          </article>
+          <article className="rounded-2xl border border-slate-200 bg-white p-4">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Activité du mois</p>
+            <p className="mt-2 text-sm text-slate-800">
+              Nouvelles : <span className="font-semibold">{indicators?.createdThisMonth ?? "—"}</span>
+            </p>
+            <p className="text-sm text-slate-800">
+              Finalisées : <span className="font-semibold">{indicators?.finaliseThisMonth ?? "—"}</span>
+            </p>
+            {indicators?.tauxFinalisationClientPct != null ? (
+              <p className="mt-1 text-[11px] text-slate-500">
+                Taux envoyé client : {indicators.tauxFinalisationClientPct} %
+              </p>
+            ) : null}
           </article>
         </div>
       </div>
 
-      <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-5">
+      <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-6">
         <select
           aria-label="Filtre type"
           value={filterType}
-          onChange={(e) => setFilterType(e.target.value as "" | DemandeType)}
+          onChange={(e) => {
+            const next = e.target.value as "" | DemandeType;
+            setFilterType(next);
+            setModuleView(
+              next === "ATTESTATION_REVENU"
+                ? "ATTESTATION_REVENU"
+                : next === "DOMICILIATION_PRODUIT"
+                  ? "DOMICILIATION_PRODUIT"
+                  : "ALL",
+            );
+          }}
           className={inputClassXs}
         >
           <option value="">Tous types</option>
-          <option value="ATTESTATION_REVENU">ATTESTATION_REVENU</option>
-          <option value="DOMICILIATION_PRODUIT">DOMICILIATION_PRODUIT</option>
+          <option value="ATTESTATION_REVENU">
+            {ATTESTATION_DOMICILIATION_TYPE_LABELS.ATTESTATION_REVENU}
+          </option>
+          <option value="DOMICILIATION_PRODUIT">
+            {ATTESTATION_DOMICILIATION_TYPE_LABELS.DOMICILIATION_PRODUIT}
+          </option>
         </select>
         <div className="min-w-0">
           <ConcessionnaireSearchPicker
@@ -435,9 +710,24 @@ export default function AttestationsDomiciliationPanel() {
           className={inputClassXs}
         >
           <option value="">Tous statuts</option>
-          <option value="DEMANDE_RECUE">DEMANDE_RECUE</option>
-          <option value="TRANSMIS">TRANSMIS</option>
-          <option value="FINALISE">FINALISE</option>
+          <option value="DEMANDE_RECUE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}</option>
+          <option value="TRANSMIS">{ATTESTATION_DOMICILIATION_STATUT_LABELS.TRANSMIS}</option>
+          <option value="FINALISE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.FINALISE}</option>
+          <option value="VALIDE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.VALIDE}</option>
+          <option value="ENVOYE_CLIENT">{ATTESTATION_DOMICILIATION_STATUT_LABELS.ENVOYE_CLIENT}</option>
+        </select>
+        <select
+          aria-label="Filtre agence"
+          value={filterAgenceId}
+          onChange={(e) => setFilterAgenceId(e.target.value)}
+          className={inputClassXs}
+        >
+          <option value="">Toutes agences</option>
+          {agences.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.libelle}
+            </option>
+          ))}
         </select>
         <input
           aria-label="Date début"
@@ -512,6 +802,7 @@ export default function AttestationsDomiciliationPanel() {
                 <th className="px-3 py-2.5">Concessionnaire</th>
                 <th className="px-3 py-2.5">Date demande</th>
                 <th className="px-3 py-2.5">Statut</th>
+                <th className="px-3 py-2.5">Temps trait. (j)</th>
                 <th className="px-3 py-2.5">Observations</th>
                 <th className="px-3 py-2.5 text-right">Action</th>
               </tr>
@@ -521,7 +812,7 @@ export default function AttestationsDomiciliationPanel() {
                 <tr key={row.id} className="border-t border-slate-100 hover:bg-cyan-50/30">
                   <td className="px-3 py-2.5">
                     <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeBadgeClass(row.type)}`}>
-                      {row.type}
+                      {ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]}
                     </span>
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs">{row.produitCode ?? "—"}</td>
@@ -530,9 +821,17 @@ export default function AttestationsDomiciliationPanel() {
                     {new Date(row.dateDemande).toLocaleString("fr-FR")}
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statutBadgeClass(row.statut)}`}>
-                      {row.statut}
+                    <span
+                      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statutBadgeClass(row.statut)}`}
+                      title={ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS[row.statut]}
+                    >
+                      {ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}
                     </span>
+                  </td>
+                  <td className="px-3 py-2.5 whitespace-nowrap text-xs text-slate-700">
+                    {row.delaiTraitementClientJours != null
+                      ? `${row.delaiTraitementClientJours} j`
+                      : "—"}
                   </td>
                   <td className="px-3 py-2.5 max-w-[22rem] truncate text-xs text-slate-700">
                     {row.observations ?? "—"}
@@ -544,7 +843,7 @@ export default function AttestationsDomiciliationPanel() {
                         onClick={() => void transition(row.id, "TRANSMIS")}
                         className="inline-flex items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
                       >
-                        {busyId === row.id ? "..." : "Transmettre"}
+                        {busyId === row.id ? "..." : "Transmettre DFC"}
                       </button>
                     ) : row.statut === "TRANSMIS" ? (
                       <button
@@ -552,8 +851,30 @@ export default function AttestationsDomiciliationPanel() {
                         onClick={() => void transition(row.id, "FINALISE")}
                         className="inline-flex items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-emerald-700 hover:bg-emerald-700 disabled:opacity-60"
                       >
-                        {busyId === row.id ? "..." : "Finaliser"}
+                        {busyId === row.id ? "..." : "Finaliser (DFC)"}
                       </button>
+                    ) : row.statut === "FINALISE" ? (
+                      <button
+                        disabled={busyId === row.id}
+                        onClick={() => void transition(row.id, "VALIDE")}
+                        className="inline-flex items-center justify-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        {busyId === row.id ? "..." : "Mettre en révision"}
+                      </button>
+                    ) : row.statut === "VALIDE" ? (
+                      <button
+                        disabled={busyId === row.id}
+                        onClick={() => void envoyerAuClient(row.id)}
+                        className="inline-flex items-center justify-center rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-violet-700 hover:bg-violet-700 disabled:opacity-60"
+                      >
+                        {busyId === row.id ? "..." : "Envoyer (SMTP)"}
+                      </button>
+                    ) : row.statut === "ENVOYE_CLIENT" ? (
+                      <span className="text-[11px] text-violet-800" title={row.clientEmailSentTo ?? undefined}>
+                        {row.sentToClientAt
+                          ? new Date(row.sentToClientAt).toLocaleString("fr-FR")
+                          : "—"}
+                      </span>
                     ) : (
                       <span className="text-xs text-slate-400">—</span>
                     )}
@@ -562,7 +883,7 @@ export default function AttestationsDomiciliationPanel() {
               ))}
               {!items.length ? (
                 <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-500">
                     Aucune entrée.
                   </td>
                 </tr>
@@ -585,7 +906,9 @@ export default function AttestationsDomiciliationPanel() {
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-indigo-50 px-4 py-2.5">
               <div>
                 <h3 className="text-base font-semibold text-slate-900">Nouvelle demande</h3>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-600">Statut initial: DEMANDE_RECUE.</p>
+                <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
+                  Soumission agent — statut initial : {ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}.
+                </p>
               </div>
               <button
                 type="button"

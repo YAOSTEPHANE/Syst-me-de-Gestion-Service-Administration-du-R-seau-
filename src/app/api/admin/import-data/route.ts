@@ -159,8 +159,8 @@ function validateAndNormalizeImportRow(
   const normalized = { ...row };
 
   if (collection === "cessions") {
-    const kind = normalizeEnum(normalized.kind, ["CESSION", "DELOCALISATION"] as const);
-    if (!kind) return { row: null, error: "kind invalide (CESSION|DELOCALISATION)" };
+    const kind = normalizeEnum(normalized.kind, ["CESSION", "DELOCALISATION", "CESSION_DELOCALISATION"] as const);
+    if (!kind) return { row: null, error: "kind invalide (CESSION|DELOCALISATION|CESSION_DELOCALISATION)" };
     normalized.kind = kind;
 
     // Règle métier: à la création/import, une cession démarre obligatoirement avant validation N1.
@@ -183,6 +183,15 @@ function validateAndNormalizeImportRow(
       if (!isNonEmptyString(normalized.oldAdresse) || !isNonEmptyString(normalized.newAdresse)) {
         return { row: null, error: "oldAdresse/newAdresse requis" };
       }
+    }
+    if (kind === "CESSION_DELOCALISATION") {
+      if (!isObjectIdLike(normalized.cedantId)) return { row: null, error: "cedantId requis (ObjectId)" };
+      if (!isObjectIdLike(normalized.beneficiaireId))
+        return { row: null, error: "beneficiaireId requis (ObjectId)" };
+      if (!isNonEmptyString(normalized.produitCode)) return { row: null, error: "produitCode requis" };
+      normalized.produitCode = normalized.produitCode.trim().toUpperCase();
+      if (!isObjectIdLike(normalized.newAgenceId)) return { row: null, error: "newAgenceId requis (ObjectId)" };
+      if (!isNonEmptyString(normalized.newAdresse)) return { row: null, error: "newAdresse requis" };
     }
     if (!isNonEmptyString(normalized.motif)) return { row: null, error: "motif requis" };
     return { row: normalized };
@@ -238,8 +247,21 @@ function validateAndNormalizeImportRow(
       return { row: null, error: "agenceId invalide (ObjectId)" };
     }
     if (isNonEmptyString(normalized.produitCode)) normalized.produitCode = normalized.produitCode.trim().toUpperCase();
-    const statutActuel = normalizeEnum(normalized.statutActuel ?? "NON_BANCARISE", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
-    const nouveauStatut = normalizeEnum(normalized.nouveauStatut ?? "EN_COURS", ["NON_BANCARISE", "EN_COURS", "BANCARISE"] as const);
+    const bancStatuts = [
+      "NON_BANCARISE",
+      "EN_ATTENTE_RIB",
+      "RIB_FOURNI",
+      "RIB_VALIDE",
+      "BANCARISE",
+      "EN_COURS",
+    ] as const;
+    const mapBanc = (raw: unknown, fallback: string) => {
+      const v = typeof raw === "string" ? raw.trim().toUpperCase() : "";
+      if (v === "EN_COURS") return "EN_ATTENTE_RIB";
+      return normalizeEnum(v || fallback, bancStatuts) ?? null;
+    };
+    const statutActuel = mapBanc(normalized.statutActuel, "NON_BANCARISE");
+    const nouveauStatut = mapBanc(normalized.nouveauStatut, "EN_ATTENTE_RIB");
     const status = normalizeEnum(normalized.status ?? "SOUMIS", ["SOUMIS"] as const);
     if (!statutActuel || !nouveauStatut || !status) {
       return { row: null, error: "statuts bancarisation invalides (creation: SOUMIS uniquement)" };

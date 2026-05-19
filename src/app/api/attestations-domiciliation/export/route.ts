@@ -2,16 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 
-import { ensureAttestationsDomiciliationIndexes, listDemandesAttestationsDomiciliation } from "@/lib/lonaci/attestations-domiciliation";
+import {
+  attestationsListScopeAgenceId,
+  ensureAttestationsDomiciliationIndexes,
+  listDemandesAttestationsDomiciliation,
+} from "@/lib/lonaci/attestations-domiciliation";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { LONACI_ROLES } from "@/lib/lonaci/constants";
+import { getAttestationDomiciliationStatutLabel, LONACI_ROLES } from "@/lib/lonaci/constants";
 
 const schema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
   type: z.enum(["ATTESTATION_REVENU", "DOMICILIATION_PRODUIT"]).optional(),
   concessionnaireId: z.string().optional(),
   produitCode: z.string().optional(),
-  statut: z.enum(["DEMANDE_RECUE", "TRANSMIS", "FINALISE"]).optional(),
+  statut: z.enum(["DEMANDE_RECUE", "TRANSMIS", "FINALISE", "VALIDE", "ENVOYE_CLIENT"]).optional(),
+  agenceId: z.string().optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
 });
@@ -30,6 +35,10 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
+  const scopeAgenceId = attestationsListScopeAgenceId(auth.user);
+  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
+  const agenceId = scopeAgenceId ?? requestedAgenceId;
+
   const result = await listDemandesAttestationsDomiciliation({
     page: 1,
     pageSize: 20000,
@@ -37,19 +46,30 @@ export async function GET(request: NextRequest) {
     concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
+    agenceId,
+    scopeAgenceId,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
     dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
   });
 
   if (parsed.data.format === "excel") {
-    const header = ["Type", "ConcessionnaireId", "Produit", "Date demande", "Statut", "Observations"];
+    const header = [
+      "Type",
+      "ConcessionnaireId",
+      "Produit",
+      "Date demande",
+      "Statut",
+      "Delai client (j)",
+      "Observations",
+    ];
     const lines = result.items.map((r) =>
       [
         r.type,
         r.concessionnaireId ?? "",
         r.produitCode ?? "",
         r.dateDemande,
-        r.statut,
+        getAttestationDomiciliationStatutLabel(r.statut),
+        r.delaiTraitementClientJours != null ? String(r.delaiTraitementClientJours) : "",
         r.observations ?? "",
       ]
         .map((x) => escapeCell(String(x)))
@@ -78,7 +98,7 @@ export async function GET(request: NextRequest) {
       doc
         .fontSize(9)
         .text(
-          `${row.type} | ${row.produitCode ?? "—"} | ${new Date(row.dateDemande).toLocaleDateString("fr-FR")} | ${row.statut} | ${row.concessionnaireId ?? "—"}`,
+          `${row.type} | ${row.produitCode ?? "—"} | ${new Date(row.dateDemande).toLocaleDateString("fr-FR")} | ${getAttestationDomiciliationStatutLabel(row.statut)} | ${row.concessionnaireId ?? "—"}`,
         );
       if (row.observations) {
         doc.fontSize(8).fillColor("#444").text(row.observations, { indent: 10 });

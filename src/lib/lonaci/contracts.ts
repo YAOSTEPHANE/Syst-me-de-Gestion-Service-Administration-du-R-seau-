@@ -111,6 +111,53 @@ export async function findActiveContratIdForProduct(input: {
   return row?.id ?? null;
 }
 
+/** Archive le contrat ACTIF du produit (statut RESILIE, jamais deletedAt — audit trail). */
+export async function markActiveContratAsResilieForProduct(input: {
+  concessionnaireId: string;
+  produitCode: string;
+  actor: UserDocument;
+  resiliationId: string;
+}): Promise<{ contratId: string; contratReference: string }> {
+  const contrat = await prisma.contrat.findFirst({
+    where: {
+      concessionnaireId: input.concessionnaireId,
+      produitCode: input.produitCode.trim().toUpperCase(),
+      status: "ACTIF",
+      deletedAt: null,
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, reference: true },
+  });
+  if (!contrat) throw new Error("ACTIVE_CONTRAT_REQUIRED");
+
+  const now = new Date();
+  await prisma.contrat.update({
+    where: { id: contrat.id },
+    data: {
+      status: "RESILIE",
+      updatedAt: now,
+      updatedByUserId: input.actor._id ?? "",
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONTRAT",
+    entityId: contrat.id,
+    action: "CONTRAT_RESILIE_ARCHIVE",
+    userId: input.actor._id ?? "",
+    details: {
+      resiliationId: input.resiliationId,
+      concessionnaireId: input.concessionnaireId,
+      produitCode: input.produitCode.trim().toUpperCase(),
+      contratReference: contrat.reference,
+      archived: true,
+      deleted: false,
+    },
+  });
+
+  return { contratId: contrat.id, contratReference: contrat.reference };
+}
+
 export async function markActiveContratAsCedeForProduct(input: {
   concessionnaireId: string;
   produitCode: string;

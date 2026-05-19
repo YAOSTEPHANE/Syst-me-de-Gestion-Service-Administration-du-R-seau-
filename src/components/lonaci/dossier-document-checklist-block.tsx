@@ -1,11 +1,17 @@
 "use client";
 
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
+  contratStatutMetierBadgeClass,
+  type ContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
+import {
   DOSSIER_CHECKLIST_STATUTS,
   DOSSIER_CHECKLIST_STATUT_LABELS,
+  computeChecklistProgress,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import { DECHARGE_PROVISOIRE_DISCLAIMER, DECHARGE_DEFINITIVE_MENTION } from "@/lib/lonaci/dossier-decharge-constants";
@@ -16,12 +22,40 @@ type ChecklistDossierPatch = {
   payload: Record<string, unknown>;
   status?: string;
   updatedAt?: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
 };
+
+type DossierApiBody = {
+  payload: Record<string, unknown>;
+  status?: string;
+  updatedAt?: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
+};
+
+function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatch {
+  return {
+    payload: dossier.payload,
+    status: dossier.status,
+    updatedAt: dossier.updatedAt,
+    statutMetier: dossier.statutMetier,
+    statutMetierLabel: dossier.statutMetierLabel,
+    statutMetierDescription: dossier.statutMetierDescription,
+  };
+}
 
 type Props = {
   dossierId: string;
   payload: Record<string, unknown>;
   editable: boolean;
+  /** Permet « Générer le contrat » même en lecture seule (ex. dossier déjà soumis). */
+  canGenererContrat?: boolean;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
   onUpdated: (patch: ChecklistDossierPatch) => void;
 };
 
@@ -44,7 +78,17 @@ function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
   }
 }
 
-export default function DossierDocumentChecklistBlock({ dossierId, payload, editable, onUpdated }: Props) {
+export default function DossierDocumentChecklistBlock({
+  dossierId,
+  payload,
+  editable,
+  canGenererContrat,
+  statutMetier,
+  statutMetierLabel,
+  statutMetierDescription,
+  onUpdated,
+}: Props) {
+  const showGenererContrat = canGenererContrat ?? editable;
   const checklist = useMemo(() => parseDocumentChecklistPayload(payload), [payload]);
   const [localStatuts, setLocalStatuts] = useState<Record<string, DossierDocumentChecklistStatut>>({});
   const [saving, setSaving] = useState(false);
@@ -67,9 +111,11 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
     setLocalStatuts(map);
   }, [checklist]);
 
-  const complet = useMemo(() => {
-    if (!checklist) return true;
-    return checklist.entries.every((e) => !e.obligatoire || localStatuts[e.itemId] === "FOURNI");
+  const progress = useMemo(() => {
+    if (!checklist?.entries.length) {
+      return { complet: true, obligatoiresFournis: 0, obligatoiresTotal: 0 };
+    }
+    return computeChecklistProgress(checklist.entries, localStatuts);
   }, [checklist, localStatuts]);
 
   const saveStatuts = useCallback(
@@ -90,13 +136,13 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
         });
         const body = (await res.json().catch(() => null)) as {
           message?: string;
-          dossier?: { payload: Record<string, unknown> };
+          dossier?: DossierApiBody;
         } | null;
         if (!res.ok || !body?.dossier) {
           setError(friendlyErrorMessage(body?.message ?? "Enregistrement checklist impossible."));
           return;
         }
-        onUpdated({ payload: body.dossier.payload });
+        onUpdated(patchFromDossierResponse(body.dossier));
       } catch {
         setError("Erreur réseau ou serveur.");
       } finally {
@@ -122,18 +168,14 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
       const res = await lonaciFetch(`/api/dossiers/${dossierId}/generer-contrat`, { method: "POST" });
       const body = (await res.json().catch(() => null)) as {
         message?: string;
-        dossier?: { payload: Record<string, unknown>; status?: string; updatedAt?: string };
+        dossier?: DossierApiBody;
         submitted?: boolean;
       } | null;
       if (!res.ok || !body?.dossier) {
         setError(friendlyErrorMessage(body?.message ?? "Génération du contrat impossible."));
         return;
       }
-      onUpdated({
-        payload: body.dossier.payload,
-        status: body.dossier.status,
-        updatedAt: body.dossier.updatedAt,
-      });
+      onUpdated(patchFromDossierResponse(body.dossier));
       setContratMessage(
         body.submitted
           ? "Contrat généré et dossier soumis au circuit de validation (4 niveaux)."
@@ -158,19 +200,36 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-3">
+      <DossierCompletIndicator
+        complet={progress.complet}
+        size="banner"
+        live={editable}
+        obligatoiresFournis={progress.obligatoiresFournis}
+        obligatoiresTotal={progress.obligatoiresTotal}
+        className="mb-3"
+      />
+      {statutMetier && statutMetierLabel ? (
+        <div
+          className={`mb-3 rounded-lg border px-2.5 py-2 text-[11px] ${contratStatutMetierBadgeClass(statutMetier)}`}
+          title={statutMetierDescription ?? ""}
+        >
+          <p className="font-semibold">{statutMetierLabel}</p>
+          {statutMetierDescription ? <p className="mt-0.5 opacity-90">{statutMetierDescription}</p> : null}
+        </div>
+      ) : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Checklist documents</p>
           <p className="text-[11px] text-slate-500">Suivi obligatoire lors de la constitution du dossier.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={`rounded-full border px-2.5 py-0.5 text-[11px] font-semibold ${
-              complet ? "border-emerald-200 bg-emerald-50 text-emerald-800" : "border-amber-200 bg-amber-50 text-amber-900"
-            }`}
-          >
-            Dossier {complet ? "Complet" : "Incomplet"}
-          </span>
+          <DossierCompletIndicator
+            complet={progress.complet}
+            size="sm"
+            live={editable}
+            obligatoiresFournis={progress.obligatoiresFournis}
+            obligatoiresTotal={progress.obligatoiresTotal}
+          />
           <button
             type="button"
             onClick={() =>
@@ -184,7 +243,7 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
           >
             PDF checklist
           </button>
-          {!complet ? (
+          {!progress.complet ? (
             <button
               type="button"
               onClick={() =>
@@ -215,7 +274,7 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
               >
                 Décharge définitive (PDF)
               </button>
-              {editable ? (
+              {showGenererContrat && !hasContratGenere ? (
                 <button
                   type="button"
                   disabled={generatingContrat}
@@ -247,7 +306,7 @@ export default function DossierDocumentChecklistBlock({ dossierId, payload, edit
 
       {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
       {saving ? <p className="mb-2 text-xs text-slate-500">Enregistrement…</p> : null}
-      {!complet ? (
+      {!progress.complet ? (
         <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950">
           {DECHARGE_PROVISOIRE_DISCLAIMER}
         </p>

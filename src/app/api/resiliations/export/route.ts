@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { listResiliations, type ResiliationStatus } from "@/lib/lonaci/resiliations";
+import { resiliationDisplayStatutFields } from "@/lib/lonaci/resiliation-statut-metier";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 
 const schema = z.object({
   format: z.enum(["csv", "pdf"]).default("csv"),
-  statut: z.enum(["DOSSIER_RECU", "RESILIE"]).optional(),
+  statut: z
+    .enum(["DOSSIER_RECU", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "RESILIE", "REJETEE"])
+    .optional(),
   concessionnaireId: z.string().optional(),
   produitCode: z.string().optional(),
   dateFrom: z.string().optional(),
@@ -39,18 +42,22 @@ export async function GET(request: NextRequest) {
   if (parsed.data.format === "csv") {
     const lines = [
       "id,concessionnaireId,produitCode,dateReception,statut,motif,commentaire,validatedAt",
-      ...data.items.map((r) =>
-        [
+      ...data.items.map((r) => {
+        const display = resiliationDisplayStatutFields({
+          statut: r.statut,
+          checklistComplet: r.documentChecklist?.complet ?? null,
+        });
+        return [
           r.id,
           r.concessionnaireId,
           r.produitCode,
           r.dateReception,
-          r.statut,
+          display.statutMetierLabel,
           `"${r.motif.replaceAll('"', '""')}"`,
           `"${(r.commentaire ?? "").replaceAll('"', '""')}"`,
           r.validatedAt ?? "",
-        ].join(","),
-      ),
+        ].join(",");
+      }),
     ];
     return new NextResponse(lines.join("\n"), {
       status: 200,
@@ -64,7 +71,7 @@ export async function GET(request: NextRequest) {
   const rows = data.items
     .map(
       (r) =>
-        `<tr><td>${r.id}</td><td>${r.concessionnaireId}</td><td>${r.produitCode}</td><td>${new Date(r.dateReception).toLocaleString("fr-FR")}</td><td>${r.statut}</td><td>${r.motif}</td><td>${r.commentaire ?? ""}</td></tr>`,
+        `<tr><td>${r.id}</td><td>${r.concessionnaireId}</td><td>${r.produitCode}</td><td>${new Date(r.dateReception).toLocaleString("fr-FR")}</td><td>${r.statutMetierLabel}</td><td>${r.motif}</td><td>${r.commentaire ?? ""}</td></tr>`,
     )
     .join("");
   const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Résiliations</title></head><body><h1>Résiliations</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>ID</th><th>Concessionnaire</th><th>Produit</th><th>Date réception</th><th>Statut</th><th>Motif</th><th>Commentaire</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;

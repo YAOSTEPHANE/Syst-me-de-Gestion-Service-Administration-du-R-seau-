@@ -7,7 +7,13 @@ import {
   CONCESSIONNAIRE_STATUTS,
   type BancarisationStatut,
   type ConcessionnaireStatut,
+  RIB_ETATS,
+  type RibEtat,
 } from "@/lib/lonaci/constants";
+import {
+  bancarisationStatutFields,
+  normalizeBancarisationStatut,
+} from "@/lib/lonaci/bancarisation-statut";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import {
   buildInscriptionChecklistForProducts,
@@ -60,6 +66,12 @@ function mapDoc(row: {
   produitsAutorises: string[];
   statut: string;
   statutBancarisation: string | null;
+  etatRib?: string | null;
+  ribDemandeAt?: Date | null;
+  ribFourniAt?: Date | null;
+  ribValideAt?: Date | null;
+  bancariseAt?: Date | null;
+  ribPieceId?: string | null;
   compteBancaire: string | null;
   banqueEtablissement: string | null;
   gps: Prisma.JsonValue | null;
@@ -111,7 +123,16 @@ function mapDoc(row: {
     agenceId: row.agenceId,
     produitsAutorises: row.produitsAutorises,
     statut: row.statut as ConcessionnaireStatut,
-    statutBancarisation: (row.statutBancarisation ?? "NON_BANCARISE") as BancarisationStatut,
+    statutBancarisation: normalizeBancarisationStatut(row.statutBancarisation, row.etatRib),
+    etatRib: (() => {
+      const s = normalizeBancarisationStatut(row.statutBancarisation, row.etatRib);
+      return RIB_ETATS.includes(s as RibEtat) ? (s as RibEtat) : null;
+    })(),
+    ribDemandeAt: row.ribDemandeAt ?? null,
+    ribFourniAt: row.ribFourniAt ?? null,
+    ribValideAt: row.ribValideAt ?? null,
+    bancariseAt: row.bancariseAt ?? null,
+    ribPieceId: row.ribPieceId ?? null,
     compteBancaire: row.compteBancaire,
     banqueEtablissement: row.banqueEtablissement,
     gps: (row.gps as GpsPoint | null) ?? null,
@@ -195,7 +216,7 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
   const created = await prisma.concessionnaire.create({
     data: {
       codePdv,
-      inscriptionStatut: skipInscription ? "VALIDE" : "BROUILLON",
+      inscriptionStatut: skipInscription ? "VALIDE" : "DOSSIER_EN_COURS",
       nom: nom || null,
       prenom: prenom || null,
       codeTerminal: input.codeTerminal,
@@ -237,6 +258,15 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
     userId: input.createdByUserId,
     details: { codePdv: mapped.codePdv, raisonSociale: mapped.raisonSociale },
   });
+
+  if (!skipInscription) {
+    const { ensureInscriptionCautionProvisoireOnCreate } = await import("@/lib/lonaci/inscription-caution");
+    await ensureInscriptionCautionProvisoireOnCreate({
+      concessionnaire: mapped,
+      agenceCode: input.agenceCode,
+      actorUserId: input.createdByUserId,
+    });
+  }
 
   return mapped;
 }
@@ -309,7 +339,10 @@ export function buildConcessionnaireListWhere(
     filter.statut = params.statut;
   }
   if (params.inscriptionStatut) {
-    filter.inscriptionStatut = params.inscriptionStatut;
+    filter.inscriptionStatut =
+      params.inscriptionStatut === "DOSSIER_EN_COURS"
+        ? { in: ["DOSSIER_EN_COURS", "BROUILLON"] }
+        : params.inscriptionStatut;
   }
   if (params.inscriptionFinaliseeOnly) {
     filter.inscriptionStatut = "VALIDE";
@@ -401,7 +434,11 @@ export async function getConcessionnairesPanelStats(
     label: CONCESSIONNAIRE_STATUT_LABELS[key],
   }));
 
-  const bancMap = new Map(byBancRows.map((r) => [r.statutBancarisation, r._count._all]));
+  const bancMap = new Map<BancarisationStatut, number>();
+  for (const r of byBancRows) {
+    const key = normalizeBancarisationStatut(r.statutBancarisation, null);
+    bancMap.set(key, (bancMap.get(key) ?? 0) + r._count._all);
+  }
   const byBancarisation = BANCARISATION_STATUTS.filter((k) => (bancMap.get(k) ?? 0) > 0).map((key) => ({
     key,
     count: bancMap.get(key) ?? 0,
@@ -731,7 +768,13 @@ export function sanitizeConcessionnairePublic(doc: ConcessionnaireDocument) {
     agenceId: doc.agenceId,
     produitsAutorises: doc.produitsAutorises,
     statut: doc.statut,
-    statutBancarisation: doc.statutBancarisation,
+    ...bancarisationStatutFields(doc.statutBancarisation, doc.etatRib),
+    ribDemandeAt: doc.ribDemandeAt?.toISOString() ?? null,
+    ribFourniAt: doc.ribFourniAt?.toISOString() ?? null,
+    ribValideAt: doc.ribValideAt?.toISOString() ?? null,
+    bancariseAt: doc.bancariseAt?.toISOString() ?? null,
+    ribPieceId: doc.ribPieceId,
+    etatRib: doc.etatRib,
     compteBancaire: doc.compteBancaire,
     banqueEtablissement: doc.banqueEtablissement,
     gps: doc.gps,
@@ -777,7 +820,10 @@ export function sanitizeConcessionnaireListItem(doc: ConcessionnaireDocument) {
     agenceId: doc.agenceId,
     produitsAutorises: doc.produitsAutorises,
     statut: doc.statut,
-    statutBancarisation: doc.statutBancarisation,
+    ...bancarisationStatutFields(doc.statutBancarisation, doc.etatRib),
+    ribDemandeAt: doc.ribDemandeAt?.toISOString() ?? null,
+    bancariseAt: doc.bancariseAt?.toISOString() ?? null,
+    etatRib: doc.etatRib,
     compteBancaire: doc.compteBancaire,
     banqueEtablissement: doc.banqueEtablissement,
     ville: doc.ville,

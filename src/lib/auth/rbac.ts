@@ -262,6 +262,13 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "PARAMETRES", action: "CONFIGURE", allowed: false },
   ],
 
+  DISPATCHER: [
+    { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "CONTRATS", action: "READ", allowed: true, scope: "GLOBAL" },
+    { resource: "NOTIFICATIONS", action: "READ", allowed: true, scope: "OWN_OR_ASSIGNED" },
+    { resource: "NOTIFICATIONS", action: "UPDATE", allowed: true, scope: "OWN_OR_ASSIGNED" },
+  ],
+
   LECTURE_SEULE: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
@@ -430,6 +437,15 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
+    module: "Checklist décès §10.1",
+    permissions: {
+      AGENT: "A, S",
+      CHEF_SECTION: "C, S",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "V",
+    },
+  },
+  {
     module: "Bancarisation",
     permissions: {
       AGENT: "A",
@@ -445,6 +461,24 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
       CHEF_SECTION: "C N1",
       ASSIST_CDS: "C N2",
       CHEF_SERVICE: "S, C",
+    },
+  },
+  {
+    module: "Dispatcher codes grattage",
+    permissions: {
+      AGENT: "—",
+      CHEF_SECTION: "—",
+      ASSIST_CDS: "—",
+      CHEF_SERVICE: "S",
+    },
+  },
+  {
+    module: "Contrats grattage",
+    permissions: {
+      AGENT: "A, S",
+      CHEF_SECTION: "C, S",
+      ASSIST_CDS: "S",
+      CHEF_SERVICE: "V, S",
     },
   },
   {

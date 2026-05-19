@@ -3,11 +3,20 @@ import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { createScratchLot, ensureGprGrattageIndexes, listScratchLots } from "@/lib/lonaci/gpr-grattage";
+import {
+  createScratchLot,
+  ensureGprGrattageIndexes,
+  listScratchLots,
+  SCRATCH_CODE_STATUSES,
+} from "@/lib/lonaci/gpr-grattage";
+import { GRATTAGE_API_ROLES } from "@/lib/lonaci/grattage-access";
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  concessionnaireId: z.string().optional(),
+  produitCode: z.string().optional(),
+  status: z.enum(SCRATCH_CODE_STATUSES).optional(),
 });
 
 const createSchema = z.object({
@@ -18,19 +27,27 @@ const createSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, { roles: [...GRATTAGE_API_ROLES] });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureGprGrattageIndexes();
-  const data = await listScratchLots(parsed.data);
+  const data = await listScratchLots({
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    concessionnaireId: parsed.data.concessionnaireId,
+    produitCode: parsed.data.produitCode,
+    status: parsed.data.status,
+  });
   return NextResponse.json(data, { status: 200 });
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, {
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+  });
   if ("error" in auth) return auth.error;
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

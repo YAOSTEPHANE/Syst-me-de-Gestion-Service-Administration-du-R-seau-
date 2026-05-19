@@ -42,6 +42,7 @@ function inferModuleKeyFromPath(pathname: string): string | null {
   if (p.includes("/api/pdv-integrations")) return "PDV_INTEGRATIONS";
   if (p.includes("/api/gpr-registrations")) return "LONACI_REGISTRIES";
   if (p.includes("/api/scratch-codes")) return "LONACI_REGISTRIES";
+  if (p.includes("/api/grattage-contrats")) return "LONACI_REGISTRIES";
   if (p.includes("/api/attestations-domiciliation")) return "ATTESTATIONS_DOMICILIATION";
   if (p.includes("/api/lonaci-registries") || p.includes("/api/admr-registries")) return "LONACI_REGISTRIES";
   if (p.includes("/api/reports")) return "REPORTS";

@@ -3,15 +3,27 @@ import { z } from "zod";
 
 import { conflict, notFound, serverError } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { isCautionPaymentRefAutoGenerateEnabled } from "@/lib/lonaci/caution-fiche-definitive";
 import { CAUTION_ENCAISSEMENT_MODES } from "@/lib/lonaci/constants";
 import { ensureSprint4Indexes, regulariserCautionPaiement } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
-const schema = z.object({
-  modeReglement: z.enum(CAUTION_ENCAISSEMENT_MODES),
-  paymentReference: z.string().max(200).optional(),
-  dueDate: z.string().datetime().optional(),
-});
+const schema = z
+  .object({
+    modeReglement: z.enum(CAUTION_ENCAISSEMENT_MODES),
+    paymentReference: z.string().trim().max(200).optional(),
+    dueDate: z.string().datetime().optional(),
+  })
+  .superRefine((data, ctx) => {
+    if (isCautionPaymentRefAutoGenerateEnabled()) return;
+    if (!(data.paymentReference ?? "").trim()) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Référence de paiement obligatoire pour la régularisation.",
+        path: ["paymentReference"],
+      });
+    }
+  });
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -54,8 +66,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CAUTION_WRONG_STATUS") {
       return conflict("Regularisation impossible dans ce statut.", "CAUTION_WRONG_STATUS");
     }
-    if (code === "CAUTION_REGULARISATION_REFERENCE_REQUISE") {
-      return conflict("Reference de paiement obligatoire.", "CAUTION_REGULARISATION_REFERENCE_REQUISE");
+    if (code === "CAUTION_REGULARISATION_REFERENCE_REQUISE" || code === "CAUTION_PAYMENT_REFERENCE_REQUISE") {
+      return conflict(
+        "Référence de paiement obligatoire (hors trace interne PROVISOIRE).",
+        "CAUTION_PAYMENT_REFERENCE_REQUISE",
+      );
     }
     return serverError("Regularisation impossible.", "CAUTION_REGULARISER_FAILED");
   }

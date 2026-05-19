@@ -15,6 +15,7 @@ import {
   type ConcessionnaireInscriptionStatut,
   type ConcessionnaireStatut,
 } from "@/lib/lonaci/constants";
+import { bancarisationStatutBadgeClass } from "@/lib/lonaci/bancarisation-statut";
 import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
@@ -25,18 +26,17 @@ type FicheModalTab = "fiche" | "contrats" | "historique" | "pieces";
 const OTHER_PRODUCT_CODE = "AUTRES";
 const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
 
-/** Libellés courts dans le tableau (cohérents avec la fiche : Oui / Non / En cours). */
+/** Libellés courts dans le tableau (spec 8.3). */
 const BANCARISATION_TABLE_COURT: Record<BancarisationStatut, string> = {
-  BANCARISE: "Oui",
   NON_BANCARISE: "Non",
-  EN_COURS: "En cours",
+  EN_ATTENTE_RIB: "Attente RIB",
+  RIB_FOURNI: "RIB fourni",
+  RIB_VALIDE: "RIB validé",
+  BANCARISE: "Oui",
 };
 
-const BANCARISATION_UI_TOKENS: Record<BancarisationStatut, string> = {
-  BANCARISE: "border border-emerald-300 bg-emerald-50 text-emerald-900",
-  NON_BANCARISE: "border border-rose-300 bg-rose-50 text-rose-900",
-  EN_COURS: "border border-amber-200 bg-amber-50 text-amber-900",
-};
+const bancarisationUiToken = (statut: BancarisationStatut) =>
+  `border ${bancarisationStatutBadgeClass(statut)}`;
 
 const CONCESSIONNAIRE_STATUS_TOKENS: Record<string, string> = {
   ACTIF: "border-green-400 bg-green-100 text-green-900",
@@ -93,7 +93,7 @@ function classePastilleProduitTableau(code: string): string {
 }
 
 function classeCelluleBancarisation(sb: BancarisationStatut): string {
-  return BANCARISATION_UI_TOKENS[sb];
+  return bancarisationUiToken(sb);
 }
 
 function ConcessionnaireRowActionsMenu({
@@ -715,7 +715,7 @@ export default function ConcessionnairesPanel() {
       setToast({
         type: "success",
         message:
-          "Fiche créée en brouillon. Ouvrez-la pour joindre les pièces, compléter la checklist et soumettre à validation N1.",
+          "Fiche créée — dossier en cours (avant paiement caution). Ouvrez-la pour joindre les pièces, compléter la checklist et soumettre à validation N1.",
       });
       if (newId) {
         setFicheModalId(newId);
@@ -1237,7 +1237,7 @@ export default function ConcessionnairesPanel() {
                   Nouveau concessionnaire
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Parcours d&apos;inscription : brouillon → pièces & checklist → soumission → validation N1 → code PDV.
+                  Parcours d&apos;inscription : dossier en cours → pièces & checklist → N1 (code PDV) → caution payée → actif.
                 </p>
               </div>
               <button
@@ -1530,7 +1530,7 @@ export default function ConcessionnairesPanel() {
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Statuts & bancarisation</p>
                       <div className="grid gap-2">
                         <p className="text-[11px] text-slate-600">
-                          Fiche créée en brouillon ; statut « Actif » et code PDV après validation N1.
+                          Dossier en cours ; code PDV après validation N1, statut actif après paiement caution.
                         </p>
                         <label className="grid gap-1">
                           <span className="text-xs font-medium text-slate-700">Statut de bancarisation</span>

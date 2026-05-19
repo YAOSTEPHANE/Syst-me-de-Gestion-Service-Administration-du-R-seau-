@@ -21,8 +21,17 @@ import {
   deliverCautionFicheDefinitive,
   resolveCautionPaymentReference,
 } from "@/lib/lonaci/caution-fiche-definitive";
+import { resolvePaymentReferenceForPayee } from "@/lib/lonaci/caution-payment-reference";
+import {
+  CAUTION_PENDING_PAYMENT_STATUSES,
+  cautionStatutMetierDescription,
+  cautionStatutMetierLabel,
+  isCautionPendingPayment,
+  resolveCautionStatutMetier,
+  type CautionStatutMetier,
+} from "@/lib/lonaci/caution-statut-metier";
 import { listContratsAllMatching, type ListContratsParams } from "@/lib/lonaci/contracts";
-import { listProduits } from "@/lib/lonaci/referentials";
+import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, listAgenceIdsZoneAbidjan, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
@@ -59,9 +68,12 @@ type InsertPdvIntegration = Omit<StoredPdvIntegration, "_id">;
 function cautionAuditEntity(caution: {
   contratId?: string;
   lonaciClientId?: string | null;
+  concessionnaireId?: string | null;
 }): { entityType: AuditEntityType; entityId: string } {
   const cid = caution.contratId?.trim();
   if (cid) return { entityType: "CONTRAT", entityId: cid };
+  const pdvId = typeof caution.concessionnaireId === "string" ? caution.concessionnaireId.trim() : "";
+  if (pdvId) return { entityType: "CONCESSIONNAIRE", entityId: pdvId };
   const lid = typeof caution.lonaciClientId === "string" ? caution.lonaciClientId.trim() : "";
   if (lid) return { entityType: "CLIENT", entityId: lid };
   return { entityType: "CONTRAT", entityId: "—" };
@@ -106,6 +118,7 @@ export async function ensureSprint4Indexes() {
   await col.createIndexes([
     { key: { status: 1, dueDate: 1 }, name: "idx_status_dueDate" },
     { key: { lonaciClientId: 1 }, name: "idx_lonaci_client" },
+    { key: { concessionnaireId: 1 }, name: "idx_concessionnaire", sparse: true },
   ]);
   await db.collection<StoredPdvIntegration>(PDV_INTEGRATIONS_COLLECTION).createIndexes([
     { key: { reference: 1 }, unique: true, name: "uniq_reference" },
@@ -134,6 +147,7 @@ async function findContratById(id: string): Promise<ContratDocument | null> {
 export async function createCaution(input: {
   contratId?: string;
   lonaciClientId?: string;
+  concessionnaireId?: string;
   produitCode?: string;
   montant: number;
   modeReglement: CautionPaymentMode;
@@ -146,12 +160,24 @@ export async function createCaution(input: {
   const actionBy = userDisplayName(input.actor);
   const contratId = input.contratId?.trim();
   const lonaciClientId = input.lonaciClientId?.trim();
+  const concessionnaireId = input.concessionnaireId?.trim();
 
-  if (contratId && lonaciClientId) throw new Error("CAUTION_CREATE_AMBIGUOUS_LINK");
-  if (!contratId && !lonaciClientId) throw new Error("CAUTION_CREATE_NO_LINK");
+  const linkCount = [contratId, lonaciClientId, concessionnaireId].filter(Boolean).length;
+  if (linkCount > 1) throw new Error("CAUTION_CREATE_AMBIGUOUS_LINK");
+  if (linkCount === 0) throw new Error("CAUTION_CREATE_NO_LINK");
 
   const isProvisoire = Boolean(input.ficheProvisoire);
-  const numeroFicheProvisoire = isProvisoire ? await nextNumeroFicheProvisoire() : null;
+  let numeroFicheProvisoire: string | null = null;
+  if (isProvisoire) {
+    if (concessionnaireId) {
+      const conc = await findConcessionnaireById(concessionnaireId);
+      const agence = conc?.agenceId ? await findAgenceById(conc.agenceId) : null;
+      const { nextNumeroCautionDossier } = await import("@/lib/lonaci/caution-fiche-provisoire");
+      numeroFicheProvisoire = await nextNumeroCautionDossier(agence?.code ?? "LONACI");
+    } else {
+      numeroFicheProvisoire = await nextNumeroFicheProvisoire();
+    }
+  }
   const paymentReference = isProvisoire
     ? `PROVISOIRE:${numeroFicheProvisoire}`
     : input.paymentReference.trim();
@@ -175,6 +201,33 @@ export async function createCaution(input: {
 
     doc = {
       contratId,
+      montant: input.montant,
+      modeReglement,
+      status: "EN_ATTENTE",
+      dueDate: input.dueDate,
+      paymentReference,
+      observations: input.observations,
+      ficheProvisoire: isProvisoire,
+      numeroFicheProvisoire: isProvisoire ? numeroFicheProvisoire : null,
+      paidAt: null,
+      immutableAfterFinal: false,
+      createdByUserId: input.actor._id ?? "",
+      updatedByUserId: input.actor._id ?? "",
+      createdAt: now,
+      updatedAt: now,
+      deletedAt: null,
+    };
+  } else if (concessionnaireId) {
+    const concessionnaire = await findConcessionnaireById(concessionnaireId);
+    if (!concessionnaire || concessionnaire.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+    if (isStatutBloquant(concessionnaire.statut)) throw new Error("CONCESSIONNAIRE_BLOQUE");
+    const { isInscriptionAwaitingCautionPayment } = await import("@/lib/lonaci/concessionnaire-inscription");
+    if (!isInscriptionAwaitingCautionPayment(concessionnaire)) {
+      throw new Error("CONCESSIONNAIRE_INSCRIPTION_CAUTION_NOT_READY");
+    }
+
+    doc = {
+      concessionnaireId,
       montant: input.montant,
       modeReglement,
       status: "EN_ATTENTE",
@@ -230,6 +283,7 @@ export async function createCaution(input: {
   const auditEnt = cautionAuditEntity({
     contratId: doc.contratId,
     lonaciClientId: doc.lonaciClientId ?? null,
+    concessionnaireId: doc.concessionnaireId ?? null,
   });
   await appendAuditLog({
     entityType: auditEnt.entityType,
@@ -244,12 +298,17 @@ export async function createCaution(input: {
       ficheProvisoire: isProvisoire,
       numeroFicheProvisoire: numeroFicheProvisoire ?? undefined,
       lonaciClientId: doc.lonaciClientId ?? undefined,
+      concessionnaireId: doc.concessionnaireId ?? undefined,
       contratId: doc.contratId ?? undefined,
       produitCode: doc.produitCode ?? undefined,
     },
   });
 
-  const cible = contratId ? `contrat ${contratId}` : `client Lonaci ${lonaciClientId}`;
+  const cible = contratId
+    ? `contrat ${contratId}`
+    : concessionnaireId
+      ? `concessionnaire ${concessionnaireId}`
+      : `client Lonaci ${lonaciClientId}`;
   await notifyRoleTargets(
     "CHEF_SECTION",
     isProvisoire ? "Fiche provisoire caution (paiement a regulariser)" : "Nouvelle caution enregistree",
@@ -429,9 +488,13 @@ export async function finalizeCaution(
   const hadFicheDefinitive = Boolean(caution.numeroFicheDefinitive?.trim());
   let numeroFicheDefinitive = caution.numeroFicheDefinitive?.trim() || null;
   let ficheDefinitiveEmiseLe = caution.ficheDefinitiveEmiseLe ?? null;
-  if (paid && !numeroFicheDefinitive) {
-    numeroFicheDefinitive = await nextNumeroFicheDefinitive();
-    ficheDefinitiveEmiseLe = now;
+  let paymentReferenceForPayee: string | undefined;
+  if (paid) {
+    paymentReferenceForPayee = await resolvePaymentReferenceForPayee(caution.paymentReference);
+    if (!numeroFicheDefinitive) {
+      numeroFicheDefinitive = await nextNumeroFicheDefinitive();
+      ficheDefinitiveEmiseLe = now;
+    }
   }
   await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
     { _id: new ObjectId(cautionId) },
@@ -440,6 +503,7 @@ export async function finalizeCaution(
         status,
         paidAt: paid ? now : null,
         immutableAfterFinal: true,
+        ...(paid && paymentReferenceForPayee ? { paymentReference: paymentReferenceForPayee } : {}),
         ...(paid && numeroFicheDefinitive
           ? { numeroFicheDefinitive, ficheDefinitiveEmiseLe: ficheDefinitiveEmiseLe ?? now }
           : {}),
@@ -451,13 +515,18 @@ export async function finalizeCaution(
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
     lonaciClientId: caution.lonaciClientId ?? null,
+    concessionnaireId: caution.concessionnaireId ?? null,
   });
   await appendAuditLog({
     entityType: auditEnt.entityType,
     entityId: auditEnt.entityId,
     action: "CAUTION_FINALIZE",
     userId: actor._id ?? "",
-    details: { cautionId, status },
+    details: {
+      cautionId,
+      status,
+      ...(paid && paymentReferenceForPayee ? { paymentReference: paymentReferenceForPayee } : {}),
+    },
   });
   const actionBy = userDisplayName(actor);
   const dossier = caution.contratId?.trim()
@@ -476,6 +545,15 @@ export async function finalizeCaution(
       status,
     },
   );
+  if (paid) {
+    const { completeInscriptionAfterCautionPaid, resolveConcessionnaireIdFromCautionLink } =
+      await import("@/lib/lonaci/concessionnaire-inscription");
+    const concId = await resolveConcessionnaireIdFromCautionLink(caution);
+    if (concId) {
+      await completeInscriptionAfterCautionPaid({ concessionnaireId: concId, actor });
+    }
+  }
+
   if (!paid || !numeroFicheDefinitive) return null;
   const emailResult = hadFicheDefinitive ? null : await deliverCautionFicheDefinitive(cautionId);
   return {
@@ -562,6 +640,75 @@ export async function returnCautionForCorrection(input: {
   );
 }
 
+export async function exonererCaution(input: {
+  cautionId: string;
+  motif: string;
+  actor: UserDocument;
+}): Promise<void> {
+  if (!ObjectId.isValid(input.cautionId)) throw new Error("CAUTION_NOT_FOUND");
+  const motif = input.motif.trim();
+  if (motif.length < 3) throw new Error("CAUTION_EXONERATION_MOTIF_REQUIS");
+
+  const db = await getDatabase();
+  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
+    _id: new ObjectId(input.cautionId),
+    deletedAt: null,
+  });
+  if (!caution) throw new Error("CAUTION_NOT_FOUND");
+  if (caution.immutableAfterFinal && caution.status !== "EXONEREE") {
+    throw new Error("CAUTION_IMMUTABLE");
+  }
+  if (caution.status === "PAYEE") throw new Error("CAUTION_DEJA_PAYEE");
+  if (caution.status === "EXONEREE") throw new Error("CAUTION_DEJA_EXONEREE");
+  if (!isCautionPendingPayment(caution.status)) throw new Error("CAUTION_WRONG_STATUS");
+
+  const now = new Date();
+  const observations = [caution.observations?.trim(), `Exonération Direction : ${motif}`]
+    .filter(Boolean)
+    .join("\n");
+
+  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: caution._id },
+    {
+      $set: {
+        status: "EXONEREE",
+        immutableAfterFinal: true,
+        paidAt: null,
+        observations: observations || null,
+        updatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+      },
+    },
+  );
+
+  const auditEnt = cautionAuditEntity({
+    contratId: caution.contratId,
+    lonaciClientId: caution.lonaciClientId ?? null,
+    concessionnaireId: caution.concessionnaireId ?? null,
+  });
+  await appendAuditLog({
+    entityType: auditEnt.entityType,
+    entityId: auditEnt.entityId,
+    action: "CAUTION_EXONERER",
+    userId: input.actor._id ?? "",
+    details: { cautionId: input.cautionId, motif },
+  });
+
+  const pdvId = caution.concessionnaireId?.trim();
+  if (pdvId) {
+    const { completeInscriptionAfterCautionPaid } = await import("@/lib/lonaci/concessionnaire-inscription");
+    await completeInscriptionAfterCautionPaid({ concessionnaireId: pdvId, actor: input.actor });
+  }
+
+  const actionBy = userDisplayName(input.actor);
+  await notifyRoleTargets(
+    "CHEF_SECTION",
+    "Caution exoneree (Direction)",
+    `Caution ${input.cautionId} exoneree | motif : ${motif} | acteur ${actionBy}.`,
+    { cautionId: input.cautionId, motif },
+  );
+}
+
 export async function listCautionAlertsJ10(agenceId?: string | null) {
   const thr = await getResolvedAlertThresholds();
   const db = await getDatabase();
@@ -569,7 +716,7 @@ export async function listCautionAlertsJ10(agenceId?: string | null) {
   const threshold = new Date(today);
   threshold.setDate(today.getDate() - thr.cautionOverdueDays);
   const cautionFilter: Record<string, unknown> = {
-    status: { $in: ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] },
+    status: { $in: [...CAUTION_PENDING_PAYMENT_STATUSES] },
     dueDate: { $lte: threshold },
     deletedAt: null,
   };
@@ -594,6 +741,7 @@ export async function listCautionAlertsJ10(agenceId?: string | null) {
     const clientIds = clientsInAgence.map((c) => c.id);
     const orParts: Record<string, unknown>[] = [];
     if (contractIds.length > 0) orParts.push({ contratId: { $in: contractIds } });
+    if (concessionnaireIds.length > 0) orParts.push({ concessionnaireId: { $in: concessionnaireIds } });
     if (clientIds.length > 0) orParts.push({ lonaciClientId: { $in: clientIds } });
     if (orParts.length === 0) {
       cautionFilter._id = { $in: [] };
@@ -903,6 +1051,7 @@ export interface CautionListRowDto {
   /** Vide si la caution est liée à un client Lonaci (module Clients) uniquement. */
   contratId: string;
   lonaciClientId: string | null;
+  concessionnaireId: string | null;
   clientCode: string | null;
   concessionnaireNom: string;
   produitCode: string;
@@ -910,6 +1059,10 @@ export interface CautionListRowDto {
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
+  /** Statut métier spec 2.3 (EN_ATTENTE, PAYEE, EN_RETARD, EXONEREE). */
+  statutMetier: CautionStatutMetier;
+  statutMetierLabel: string;
+  statutMetierDescription: string;
   paymentReference: string;
   observations: string | null;
   dueDate: string;
@@ -947,7 +1100,7 @@ export async function getCautionCounters(): Promise<{
 
   const base = { deletedAt: null };
 
-  const pendingStatuses = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+  const pendingStatuses = [...CAUTION_PENDING_PAYMENT_STATUSES];
 
   const [overdueJ10, enAttente, validatedThisMonth] = await Promise.all([
     db.collection(CAUTIONS_COLLECTION).countDocuments({
@@ -970,11 +1123,69 @@ export async function getCautionCounters(): Promise<{
   return { overdueJ10, enAttente, validatedThisMonth };
 }
 
+function mapRowToListDto(
+  row: StoredCaution,
+  today: Date,
+  overdueThreshold: Date,
+  fields: Omit<
+    CautionListRowDto,
+    | "id"
+    | "status"
+    | "statutMetier"
+    | "statutMetierLabel"
+    | "statutMetierDescription"
+    | "montant"
+    | "modeReglement"
+    | "paymentReference"
+    | "observations"
+    | "dueDate"
+    | "paidAt"
+    | "daysOverdue"
+    | "immutableAfterFinal"
+    | "depotAt"
+    | "ficheProvisoire"
+    | "numeroFicheProvisoire"
+    | "numeroFicheDefinitive"
+    | "ficheDefinitiveEmiseLe"
+  >,
+): CautionListRowDto {
+  const statutMetier = resolveCautionStatutMetier({
+    status: row.status,
+    dueDate: row.dueDate,
+    overdueThresholdDate: overdueThreshold,
+  });
+  return {
+    id: row._id.toHexString(),
+    ...fields,
+    montant: row.montant,
+    modeReglement: row.modeReglement,
+    status: row.status,
+    statutMetier,
+    statutMetierLabel: cautionStatutMetierLabel(statutMetier),
+    statutMetierDescription: cautionStatutMetierDescription(statutMetier),
+    paymentReference: row.paymentReference,
+    observations: row.observations,
+    dueDate: row.dueDate.toISOString(),
+    paidAt: row.paidAt ? row.paidAt.toISOString() : null,
+    daysOverdue: Math.floor((today.getTime() - row.dueDate.getTime()) / (1000 * 60 * 60 * 24)),
+    immutableAfterFinal: row.immutableAfterFinal,
+    depotAt: row.createdAt.toISOString(),
+    ficheProvisoire: Boolean(row.ficheProvisoire),
+    numeroFicheProvisoire: row.numeroFicheProvisoire ?? null,
+    numeroFicheDefinitive: row.numeroFicheDefinitive ?? null,
+    ficheDefinitiveEmiseLe: row.ficheDefinitiveEmiseLe ? row.ficheDefinitiveEmiseLe.toISOString() : null,
+  };
+}
+
 async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionListRowDto[]> {
   const today = new Date();
+  const overdueThreshold = await cautionDueThresholdDate();
   const contratIds = [...new Set(rows.map((r) => r.contratId).filter((id): id is string => Boolean(id?.trim())))];
   const clientIds = [
     ...new Set(rows.map((r) => r.lonaciClientId).filter((id): id is string => Boolean(id?.trim()))),
+  ];
+  const pdvDirectIds = [
+    ...new Set(rows.map((r) => r.concessionnaireId).filter((id): id is string => Boolean(id?.trim()))),
   ];
 
   let pdvByContratId = new Map<string, string>();
@@ -1037,6 +1248,38 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
     );
   }
 
+  const pdvCodeById = new Map<string, string>();
+  const pdvNomById = new Map<string, string>();
+  const pdvAgenceLabelById = new Map<string, string>();
+  if (pdvDirectIds.length > 0) {
+    const pdvs = await prisma.concessionnaire.findMany({
+      where: { id: { in: pdvDirectIds }, deletedAt: null },
+      select: { id: true, codePdv: true, nomComplet: true, raisonSociale: true, agenceId: true },
+    });
+    const agIds = [
+      ...new Set(
+        pdvs.map((p) => p.agenceId).filter((v): v is string => typeof v === "string" && ObjectId.isValid(v)),
+      ),
+    ];
+    const db = await getDatabase();
+    const agRows =
+      agIds.length === 0
+        ? []
+        : await db
+            .collection<{ _id: ObjectId; code: string; libelle: string }>("agences")
+            .find({ _id: { $in: agIds.map((id) => new ObjectId(id)) } }, { projection: { _id: 1, code: 1, libelle: 1 } })
+            .toArray();
+    const agMap = new Map(
+      agRows.map((a) => [a._id.toHexString(), `${a.code} - ${a.libelle}`.trim() || a.code || "—"]),
+    );
+    for (const p of pdvs) {
+      pdvCodeById.set(p.id, p.codePdv ?? "—");
+      pdvNomById.set(p.id, (p.nomComplet || p.raisonSociale || p.codePdv || "—").trim() || "—");
+      const aid = p.agenceId?.trim();
+      pdvAgenceLabelById.set(p.id, aid && ObjectId.isValid(aid) ? (agMap.get(aid) ?? aid) : "Sans agence");
+    }
+  }
+
   const clientCodeById = new Map<string, string>();
   const clientNomById = new Map<string, string>();
   const clientAgenceLabelById = new Map<string, string>();
@@ -1077,59 +1320,42 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
   return rows.map((row) => {
     const cid = row.contratId?.trim();
     if (cid) {
-      return {
-        id: row._id.toHexString(),
+      return mapRowToListDto(row, today, overdueThreshold, {
         contratId: cid,
         lonaciClientId: null,
+        concessionnaireId: null,
         clientCode: null,
         concessionnaireNom: concessionnaireNomByContratId.get(cid) ?? "—",
         produitCode: produitByContratId.get(cid) ?? ((row.produitCode || "").trim() || "—"),
         agenceLabel: agenceByContratId.get(cid) ?? "Sans agence",
-        montant: row.montant,
-        modeReglement: row.modeReglement,
-        status: row.status,
-        paymentReference: row.paymentReference,
-        observations: row.observations,
-        dueDate: row.dueDate.toISOString(),
-        paidAt: row.paidAt ? row.paidAt.toISOString() : null,
-        daysOverdue: Math.floor((today.getTime() - row.dueDate.getTime()) / (1000 * 60 * 60 * 24)),
-        immutableAfterFinal: row.immutableAfterFinal,
         pdvCode: pdvByContratId.get(cid) ?? "—",
-        depotAt: row.createdAt.toISOString(),
-        ficheProvisoire: Boolean(row.ficheProvisoire),
-        numeroFicheProvisoire: row.numeroFicheProvisoire ?? null,
-        numeroFicheDefinitive: row.numeroFicheDefinitive ?? null,
-        ficheDefinitiveEmiseLe: row.ficheDefinitiveEmiseLe
-          ? row.ficheDefinitiveEmiseLe.toISOString()
-          : null,
-      };
+      });
+    }
+    const pdvId = row.concessionnaireId?.trim();
+    if (pdvId) {
+      return mapRowToListDto(row, today, overdueThreshold, {
+        contratId: "",
+        lonaciClientId: null,
+        concessionnaireId: pdvId,
+        clientCode: null,
+        concessionnaireNom: pdvNomById.get(pdvId) ?? "—",
+        produitCode: (row.produitCode || "").trim() || "—",
+        agenceLabel: pdvAgenceLabelById.get(pdvId) ?? "Sans agence",
+        pdvCode: pdvCodeById.get(pdvId) ?? "—",
+      });
     }
     const lid = row.lonaciClientId?.trim() ?? "";
     const pcode = (row.produitCode || "").trim() || "—";
-    return {
-      id: row._id.toHexString(),
+    return mapRowToListDto(row, today, overdueThreshold, {
       contratId: "",
       lonaciClientId: lid || null,
+      concessionnaireId: null,
       clientCode: clientCodeById.get(lid) ?? null,
       concessionnaireNom: clientNomById.get(lid) ?? "—",
       produitCode: pcode,
       agenceLabel: clientAgenceLabelById.get(lid) ?? "Sans agence",
-      montant: row.montant,
-      modeReglement: row.modeReglement,
-      status: row.status,
-      paymentReference: row.paymentReference,
-      observations: row.observations,
-      dueDate: row.dueDate.toISOString(),
-      paidAt: row.paidAt ? row.paidAt.toISOString() : null,
-      daysOverdue: Math.floor((today.getTime() - row.dueDate.getTime()) / (1000 * 60 * 60 * 24)),
-      immutableAfterFinal: row.immutableAfterFinal,
       pdvCode: clientCodeById.get(lid) ?? "—",
-      depotAt: row.createdAt.toISOString(),
-      ficheProvisoire: Boolean(row.ficheProvisoire),
-      numeroFicheProvisoire: row.numeroFicheProvisoire ?? null,
-      numeroFicheDefinitive: row.numeroFicheDefinitive ?? null,
-      ficheDefinitiveEmiseLe: row.ficheDefinitiveEmiseLe ? row.ficheDefinitiveEmiseLe.toISOString() : null,
-    };
+    });
   });
 }
 
@@ -1147,7 +1373,7 @@ export async function listCautionsForTab(
   const base = { deletedAt: null };
   let filter: Record<string, unknown> = base;
 
-  const pendingStatuses = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
+  const pendingStatuses = [...CAUTION_PENDING_PAYMENT_STATUSES];
 
   if (tab === "J10_OVERDUE") {
     filter = { ...base, status: { $in: [...pendingStatuses] }, dueDate: { $lte: threshold } };
@@ -1227,7 +1453,7 @@ function singleCautionAttendusMetrics(
   let mPayee = 0;
   let nNonEnc = 0;
   let mNonEnc = 0;
-  if (status === "PAYEE") {
+  if (status === "PAYEE" || status === "EXONEREE") {
     nPayee = 1;
     mPayee = m;
   } else if (CAUTION_PENDING_STATUSES.includes(status as (typeof CAUTION_PENDING_STATUSES)[number])) {

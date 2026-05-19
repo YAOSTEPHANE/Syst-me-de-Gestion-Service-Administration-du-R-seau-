@@ -2,13 +2,16 @@ import type {
   DossierDocumentChecklistEntry,
   DossierDocumentChecklistPayload,
   DossierDocumentChecklistStatut,
+  ProduitDocument,
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
+const OTHER_PRODUCT_CODE = "AUTRES";
+
+export const DOSSIER_CHECKLIST_STATUT_VALUES = ["FOURNI", "MANQUANT", "EN_ATTENTE"] as const;
+
 export const DOSSIER_CHECKLIST_STATUTS: DossierDocumentChecklistStatut[] = [
-  "FOURNI",
-  "MANQUANT",
-  "EN_ATTENTE",
+  ...DOSSIER_CHECKLIST_STATUT_VALUES,
 ];
 
 export const DOSSIER_CHECKLIST_STATUT_LABELS: Record<DossierDocumentChecklistStatut, string> = {
@@ -53,6 +56,21 @@ export function isChecklistStatut(value: unknown): value is DossierDocumentCheck
 export function computeChecklistComplet(entries: DossierDocumentChecklistEntry[]): boolean {
   if (!entries.length) return true;
   return entries.every((e) => !e.obligatoire || e.statut === "FOURNI");
+}
+
+/** Calcul temps réel (UI) à partir des statuts locaux par itemId. */
+export function computeChecklistProgress(
+  entries: DossierDocumentChecklistEntry[],
+  statuts: Record<string, DossierDocumentChecklistStatut>,
+): { obligatoiresTotal: number; obligatoiresFournis: number; complet: boolean } {
+  const obligatoires = entries.filter((e) => e.obligatoire);
+  const obligatoiresFournis = obligatoires.filter((e) => statuts[e.itemId] === "FOURNI").length;
+  const obligatoiresTotal = obligatoires.length;
+  return {
+    obligatoiresTotal,
+    obligatoiresFournis,
+    complet: obligatoiresTotal === 0 || obligatoiresFournis === obligatoiresTotal,
+  };
 }
 
 export function buildChecklistFromTemplate(
@@ -123,6 +141,15 @@ export function mergeChecklistStatutPatch(
   return { entries, complet: computeChecklistComplet(entries) };
 }
 
+/** Indique si le dossier a une checklist produit et si elle est complète (null = pas de checklist). */
+export function readDossierChecklistComplet(
+  payload: Record<string, unknown> | null | undefined,
+): boolean | null {
+  const checklist = parseDocumentChecklistPayload(payload ?? {});
+  if (!checklist?.entries.length) return null;
+  return checklist.complet;
+}
+
 export function ensureDossierDocumentChecklist(
   payload: Record<string, unknown>,
   template: ProduitDocumentChecklistItem[],
@@ -145,4 +172,20 @@ export function ensureDossierDocumentChecklist(
     };
   }
   return buildChecklistFromTemplate(template, existing.entries);
+}
+
+export function mergeProductChecklistTemplates(produitCodes: string[], produits: ProduitDocument[]) {
+  const seen = new Set<string>();
+  const merged: ReturnType<typeof normalizeChecklistTemplate> = [];
+  for (const rawCode of produitCodes) {
+    const code = rawCode.trim().toUpperCase();
+    if (!code || code === OTHER_PRODUCT_CODE) continue;
+    const produit = produits.find((p) => p.code.trim().toUpperCase() === code);
+    for (const item of normalizeChecklistTemplate(produit?.documentsChecklist)) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+  return merged;
 }

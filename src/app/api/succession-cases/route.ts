@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { apiError, badRequest } from "@/lib/api/error-responses";
 import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { SUCCESSION_STATUTS_METIER } from "@/lib/lonaci/succession-statut-metier";
 import {
   createSuccessionCase,
   ensureSuccessionIndexes,
@@ -28,6 +29,7 @@ const listSchema = z.object({
   status: z.enum(["OUVERT", "CLOTURE"]).optional(),
   concessionnaireId: z.string().optional(),
   decisionType: z.enum(["TRANSFERT", "RESILIATION"]).optional(),
+  statutMetier: z.enum(SUCCESSION_STATUTS_METIER).optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
 });
@@ -70,6 +72,7 @@ export async function GET(request: NextRequest) {
     {
       concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
       decisionType: parsed.data.decisionType,
+      statutMetier: parsed.data.statutMetier,
       dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
       dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
     },
@@ -86,7 +89,7 @@ export async function POST(request: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse;
 
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
   });
   if ("error" in auth) return auth.error;
 

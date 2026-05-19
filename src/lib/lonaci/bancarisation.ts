@@ -2,6 +2,11 @@ import { ObjectId } from "mongodb";
 import { Prisma } from "@prisma/client";
 
 import { type BancarisationStatut } from "@/lib/lonaci/constants";
+import {
+  emptyBancarisationStatutCounts,
+  incrementBancarisationStatutCount,
+  normalizeBancarisationStatut,
+} from "@/lib/lonaci/bancarisation-statut";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import type {
   BancarisationRequestDocument,
@@ -253,7 +258,7 @@ export async function validateBancarisationRequest(input: {
     await prisma.concessionnaire.updateMany({
       where: { id: existing.concessionnaireId, deletedAt: null },
       data: {
-        statutBancarisation: existing.nouveauStatut,
+        statutBancarisation: normalizeBancarisationStatut(existing.nouveauStatut, null),
         compteBancaire: existing.nouveauStatut === "BANCARISE" ? existing.compteBancaire : null,
         banqueEtablissement: existing.banqueEtablissement,
         updatedByUserId: input.actor._id ?? "",
@@ -283,12 +288,19 @@ export async function bancarisationCountersByAgenceProduit(scopeAgenceId?: strin
   if (scopeAgenceId) where.agenceId = scopeAgenceId;
   const rows = await prisma.concessionnaire.findMany({
     where,
-    select: { agenceId: true, statutBancarisation: true, produitsAutorises: true },
+    select: {
+      agenceId: true,
+      statutBancarisation: true,
+      etatRib: true,
+      produitsAutorises: true,
+    },
   });
 
-  const map = new Map<string, { agenceId: string | null; produitCode: string; NON_BANCARISE: number; EN_COURS: number; BANCARISE: number }>();
+  const map = new Map<
+    string,
+    { agenceId: string | null; produitCode: string } & Record<BancarisationStatut, number>
+  >();
   for (const row of rows) {
-    const statut = (row.statutBancarisation ?? "NON_BANCARISE") as BancarisationStatut;
     const produits = row.produitsAutorises.length > 0 ? row.produitsAutorises : ["SANS_PRODUIT"];
     for (const p of produits) {
       const code = p.trim().toUpperCase() || "SANS_PRODUIT";
@@ -297,13 +309,11 @@ export async function bancarisationCountersByAgenceProduit(scopeAgenceId?: strin
         map.set(key, {
           agenceId: row.agenceId,
           produitCode: code,
-          NON_BANCARISE: 0,
-          EN_COURS: 0,
-          BANCARISE: 0,
+          ...emptyBancarisationStatutCounts(),
         });
       }
       const item = map.get(key)!;
-      item[statut] += 1;
+      incrementBancarisationStatutCount(item, row.statutBancarisation, row.etatRib);
     }
   }
   return [...map.values()].sort((a, b) => {

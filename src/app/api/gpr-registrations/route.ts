@@ -9,6 +9,7 @@ import {
   GPR_REGISTRATION_STATUSES,
   listGprRegistrations,
 } from "@/lib/lonaci/gpr-grattage";
+import { GPR_ADMIN_ROLES } from "@/lib/lonaci/grattage-access";
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -23,7 +24,7 @@ const createSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, { roles: [...GPR_ADMIN_ROLES] });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
@@ -35,7 +36,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, { roles: [...GPR_ADMIN_ROLES] });
   if ("error" in auth) return auth.error;
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {

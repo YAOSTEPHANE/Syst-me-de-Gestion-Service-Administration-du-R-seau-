@@ -23,7 +23,13 @@ import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import {
+  contratStatutMetierFields,
+  resolveContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
+import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
+import {
   ensureDossierDocumentChecklist,
+  parseDocumentChecklistPayload,
   mergeChecklistStatutPatch,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
@@ -296,6 +302,59 @@ async function notifyAfterTransition(
   });
 }
 
+/** Champs statut métier 3.5 pour un dossier contrat (API détail / liste). */
+export async function buildDossierContratStatutMetierFields(
+  dossier: Pick<DossierDocument, "type" | "status" | "concessionnaireId" | "payload">,
+) {
+  if (dossier.type !== "CONTRAT_ACTUALISATION") {
+    return {};
+  }
+  const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
+  const hasDocumentChecklist = Boolean(checklist?.entries.length);
+  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
+  let cautionPaid = false;
+  if (produitCode) {
+    const parentContratId =
+      typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
+    const explicitCautionId =
+      typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
+    const caution = await findAssociatedCautionForDossier(
+      dossier.concessionnaireId,
+      produitCode,
+      parentContratId,
+      explicitCautionId,
+    );
+    cautionPaid = caution?.status === "PAYEE";
+  }
+  const statutMetier = resolveContratStatutMetier({
+    dossierStatus: dossier.status,
+    checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+    cautionPaid,
+    hasDocumentChecklist,
+  });
+  return {
+    hasDocumentChecklist,
+    checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+    cautionPaid,
+    ...contratStatutMetierFields(statutMetier),
+  };
+}
+
+/** Bloque la soumission si la checklist documents du produit n’est pas entièrement « Fourni ». */
+export async function assertDossierContratSubmitAllowed(dossier: DossierDocument): Promise<void> {
+  if (dossier.type !== "CONTRAT_ACTUALISATION") return;
+  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
+  if (!produitCode) return;
+  const produit = await resolveProduitForContratWorkflow(produitCode);
+  const checklist = ensureDossierDocumentChecklist(
+    dossier.payload ?? {},
+    produit?.documentsChecklist ?? [],
+  );
+  if (checklist.entries.length > 0 && !checklist.complet) {
+    throw new Error("DOSSIER_CHECKLIST_INCOMPLETE");
+  }
+}
+
 export async function transitionDossier(
   dossierId: string,
   targetStatus: DossierStatus,
@@ -311,6 +370,9 @@ export async function transitionDossier(
   }
   if (!canTransition(dossier.status, targetStatus)) {
     throw new Error("INVALID_TRANSITION");
+  }
+  if (targetStatus === "SOUMIS") {
+    await assertDossierContratSubmitAllowed(dossier);
   }
 
   const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
@@ -547,24 +609,70 @@ export async function listDossiers(
     col.countDocuments(filter),
     col.find(filter).sort(sort).skip(skip).limit(pageSize).toArray(),
   ]);
+
+  const cautionPaidByDossierId = new Map<string, boolean>();
+  await Promise.all(
+    rows
+      .filter((row) => row.type === "CONTRAT_ACTUALISATION")
+      .map(async (row) => {
+        const dossierId = row._id.toHexString();
+        const produitCode = String(row.payload?.produitCode ?? "").trim().toUpperCase();
+        if (!produitCode) {
+          cautionPaidByDossierId.set(dossierId, false);
+          return;
+        }
+        const parentContratId =
+          typeof row.payload?.parentContratId === "string" ? row.payload.parentContratId : null;
+        const explicitCautionId =
+          typeof row.payload?.cautionId === "string" ? row.payload.cautionId : null;
+        const caution = await findAssociatedCautionForDossier(
+          row.concessionnaireId,
+          produitCode,
+          parentContratId,
+          explicitCautionId,
+        );
+        cautionPaidByDossierId.set(dossierId, caution?.status === "PAYEE");
+      }),
+  );
+
   return {
-    items: rows.map((row) => ({
-      id: row._id.toHexString(),
-      type: row.type,
-      reference: row.reference,
-      status: row.status,
-      concessionnaireId: row.concessionnaireId,
-      agenceId: row.agenceId,
-      payload: row.payload,
-      history: (row.history ?? []).map((h) => ({
-        ...h,
-        actedAt: h.actedAt.toISOString(),
-      })),
-      createdByUserId: row.createdByUserId,
-      updatedByUserId: row.updatedByUserId,
-      createdAt: row.createdAt.toISOString(),
-      updatedAt: row.updatedAt.toISOString(),
-    })),
+    items: rows.map((row) => {
+      const checklist =
+        row.type === "CONTRAT_ACTUALISATION"
+          ? parseDocumentChecklistPayload(row.payload ?? {})
+          : null;
+      const hasDocumentChecklist = Boolean(checklist?.entries.length);
+      const id = row._id.toHexString();
+      const base = {
+        id,
+        type: row.type,
+        reference: row.reference,
+        status: row.status,
+        concessionnaireId: row.concessionnaireId,
+        agenceId: row.agenceId,
+        payload: row.payload,
+        hasDocumentChecklist,
+        checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+        history: (row.history ?? []).map((h) => ({
+          ...h,
+          actedAt: h.actedAt.toISOString(),
+        })),
+        createdByUserId: row.createdByUserId,
+        updatedByUserId: row.updatedByUserId,
+        createdAt: row.createdAt.toISOString(),
+        updatedAt: row.updatedAt.toISOString(),
+      };
+      if (row.type !== "CONTRAT_ACTUALISATION") {
+        return base;
+      }
+      const statutMetier = resolveContratStatutMetier({
+        dossierStatus: row.status,
+        checklistComplet: base.checklistComplet,
+        cautionPaid: cautionPaidByDossierId.get(id) ?? false,
+        hasDocumentChecklist,
+      });
+      return { ...base, ...contratStatutMetierFields(statutMetier) };
+    }),
     total,
     page,
     pageSize,

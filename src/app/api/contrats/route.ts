@@ -12,8 +12,14 @@ import {
   listContrats,
   listScopeAgenceIdForContratsList,
 } from "@/lib/lonaci/contracts";
+import {
+  contratStatutMetierFields,
+  resolveContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
+import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -143,28 +149,67 @@ export async function GET(request: NextRequest) {
       itemsWithPdv.map((c) => c.dossierId).filter((id) => typeof id === "string" && /^[a-f0-9]{24}$/i.test(id)),
     ),
   ];
-  const dossierMetaById = new Map<string, { createdAt: Date; status: string }>();
+  const dossierMetaById = new Map<
+    string,
+    { createdAt: Date; status: string; payload: Record<string, unknown> }
+  >();
   if (dossierHexIds.length > 0) {
     const oids = dossierHexIds.map((id) => new ObjectId(id));
     const dossierDocs = await db
-      .collection<{ _id: ObjectId; createdAt: Date; status: string }>("dossiers")
+      .collection<{ _id: ObjectId; createdAt: Date; status: string; payload: Record<string, unknown> }>(
+        "dossiers",
+      )
       .find({ _id: { $in: oids } })
-      .project({ createdAt: 1, status: 1 })
+      .project({ createdAt: 1, status: 1, payload: 1 })
       .toArray();
     for (const d of dossierDocs) {
-      dossierMetaById.set(d._id.toHexString(), { createdAt: d.createdAt, status: d.status });
+      dossierMetaById.set(d._id.toHexString(), {
+        createdAt: d.createdAt,
+        status: d.status,
+        payload: d.payload ?? {},
+      });
     }
   }
 
-  const itemsEnriched = itemsWithPdv.map((c) => {
-    const meta = dossierMetaById.get(c.dossierId);
-    const depot = meta?.createdAt ?? new Date(c.createdAt);
-    return {
-      ...c,
-      dateDepot: depot.toISOString(),
-      dossierEtape: meta?.status ?? "FINALISE",
-    };
-  });
+  const itemsEnriched = await Promise.all(
+    itemsWithPdv.map(async (c) => {
+      const meta = dossierMetaById.get(c.dossierId);
+      const depot = meta?.createdAt ?? new Date(c.createdAt);
+      const dossierStatus = meta?.status ?? "FINALISE";
+      const checklist = parseDocumentChecklistPayload(meta?.payload ?? {});
+      const hasDocumentChecklist = Boolean(checklist?.entries.length);
+      let cautionPaid = false;
+      if (meta && c.produitCode) {
+        const parentContratId =
+          typeof meta.payload.parentContratId === "string" ? meta.payload.parentContratId : null;
+        const explicitCautionId =
+          typeof meta.payload.cautionId === "string" ? meta.payload.cautionId : null;
+        const caution = await findAssociatedCautionForDossier(
+          c.concessionnaireId,
+          c.produitCode,
+          parentContratId,
+          explicitCautionId,
+        );
+        cautionPaid = caution?.status === "PAYEE";
+      }
+      const statutMetier = resolveContratStatutMetier({
+        contratStatus: c.status,
+        dossierStatus,
+        checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+        cautionPaid,
+        hasDocumentChecklist,
+      });
+      return {
+        ...c,
+        dateDepot: depot.toISOString(),
+        dossierEtape: dossierStatus,
+        hasDocumentChecklist,
+        checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+        cautionPaid,
+        ...contratStatutMetierFields(statutMetier),
+      };
+    }),
+  );
   const dossierFilter: Record<string, unknown> = {
     deletedAt: null,
     type: "CONTRAT_ACTUALISATION",
@@ -275,22 +320,54 @@ export async function GET(request: NextRequest) {
     {
       ...result,
       items: itemsEnriched,
-      dossiers: dossiersRows.map((d) => ({
-        id: d._id.toHexString(),
-        reference: d.reference,
-        status: d.status,
-        concessionnaireId: d.concessionnaireId,
-        agenceId: d.agenceId,
-        payload: d.payload,
-        history: d.history.map((h) => ({
-          status: h.status,
-          actedByUserId: h.actedByUserId,
-          actedAt: h.actedAt.toISOString(),
-          comment: h.comment,
-        })),
-        createdAt: d.createdAt.toISOString(),
-        updatedAt: d.updatedAt.toISOString(),
-      })),
+      dossiers: await Promise.all(
+        dossiersRows.map(async (d) => {
+          const id = d._id.toHexString();
+          const checklist = parseDocumentChecklistPayload(d.payload ?? {});
+          const hasDocumentChecklist = Boolean(checklist?.entries.length);
+          const produitCode = String(d.payload?.produitCode ?? "").trim().toUpperCase();
+          let cautionPaid = false;
+          if (produitCode) {
+            const parentContratId =
+              typeof d.payload?.parentContratId === "string" ? d.payload.parentContratId : null;
+            const explicitCautionId =
+              typeof d.payload?.cautionId === "string" ? d.payload.cautionId : null;
+            const caution = await findAssociatedCautionForDossier(
+              d.concessionnaireId,
+              produitCode,
+              parentContratId,
+              explicitCautionId,
+            );
+            cautionPaid = caution?.status === "PAYEE";
+          }
+          const statutMetier = resolveContratStatutMetier({
+            dossierStatus: d.status,
+            checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+            cautionPaid,
+            hasDocumentChecklist,
+          });
+          return {
+            id,
+            reference: d.reference,
+            status: d.status,
+            concessionnaireId: d.concessionnaireId,
+            agenceId: d.agenceId,
+            payload: d.payload,
+            hasDocumentChecklist,
+            checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+            cautionPaid,
+            ...contratStatutMetierFields(statutMetier),
+            history: d.history.map((h) => ({
+              status: h.status,
+              actedByUserId: h.actedByUserId,
+              actedAt: h.actedAt.toISOString(),
+              comment: h.comment,
+            })),
+            createdAt: d.createdAt.toISOString(),
+            updatedAt: d.updatedAt.toISOString(),
+          };
+        }),
+      ),
       pendingByLevel,
       toSign,
       totalsByProduct: totals,

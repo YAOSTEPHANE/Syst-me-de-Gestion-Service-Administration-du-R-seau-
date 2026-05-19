@@ -244,6 +244,10 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
     const roleRaw = meUser?.role ?? "";
     const role = LONACI_ROLES.includes(roleRaw as LonaciRole) ? (roleRaw as LonaciRole) : null;
     const visibleNav = LONACI_NAV.filter((item) => {
+      if (role === "DISPATCHER") {
+        return item.href === "/dispatcher" || item.href === "/parametres";
+      }
+      if (item.href === "/dispatcher") return false;
       const rule = NAV_RBAC_RULES[item.href];
       if (!rule || !role) return true;
       return canRole({ role, resource: rule.resource, action: rule.action }).allowed;

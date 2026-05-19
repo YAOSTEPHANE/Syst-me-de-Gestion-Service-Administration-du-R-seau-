@@ -4,6 +4,7 @@ import { z } from "zod";
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
+  attestationsListScopeAgenceId,
   createDemandeAttestationDomiciliation,
   ensureAttestationsDomiciliationIndexes,
   listDemandesAttestationsDomiciliation,
@@ -16,7 +17,8 @@ const listSchema = z.object({
   type: z.enum(["ATTESTATION_REVENU", "DOMICILIATION_PRODUIT"]).optional(),
   concessionnaireId: z.string().optional(),
   produitCode: z.string().optional(),
-  statut: z.enum(["DEMANDE_RECUE", "TRANSMIS", "FINALISE"]).optional(),
+  statut: z.enum(["DEMANDE_RECUE", "TRANSMIS", "FINALISE", "VALIDE", "ENVOYE_CLIENT"]).optional(),
+  agenceId: z.string().optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
 });
@@ -39,6 +41,10 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
+  const scopeAgenceId = attestationsListScopeAgenceId(auth.user);
+  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
+  const agenceId = scopeAgenceId ?? requestedAgenceId;
+
   const result = await listDemandesAttestationsDomiciliation({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
@@ -46,6 +52,8 @@ export async function GET(request: NextRequest) {
     concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
+    agenceId,
+    scopeAgenceId,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
     dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
   });
@@ -53,7 +61,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION"] });
   if ("error" in auth) return auth.error;
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));

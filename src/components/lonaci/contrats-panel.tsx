@@ -3,6 +3,10 @@
 import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
+import {
+  contratStatutMetierBadgeClass,
+  type ContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import ConcessionnaireSearchPicker, {
@@ -66,6 +70,9 @@ interface ContratListeItem {
   dateDepot?: string;
   /** Statut workflow du dossier lié. */
   dossierEtape?: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
 }
 
 interface ToSignRow {
@@ -181,35 +188,6 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
     return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
   }
   throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
-}
-
-type ContratSuiviEtat = "VALIDE" | "EN_ATTENTE" | "REFUSE" | "EN_RETARD";
-
-function contratSuiviEtat(etape: string, dateDepotIso?: string): ContratSuiviEtat {
-  if (etape === "FINALISE") return "VALIDE";
-  if (etape === "REJETE") return "REFUSE";
-
-  // Dossier non finalisé/rejeté depuis plus de 7 jours => en retard.
-  const depot = dateDepotIso ? new Date(dateDepotIso) : null;
-  const now = Date.now();
-  const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-  if (depot && !Number.isNaN(depot.getTime()) && now - depot.getTime() > sevenDaysMs) {
-    return "EN_RETARD";
-  }
-  return "EN_ATTENTE";
-}
-
-function contratSuiviBadge(etat: ContratSuiviEtat) {
-  switch (etat) {
-    case "VALIDE":
-      return { label: "Validé", className: "bg-emerald-100 text-emerald-900" };
-    case "REFUSE":
-      return { label: "Refusé", className: "bg-rose-100 text-rose-900" };
-    case "EN_RETARD":
-      return { label: "En retard", className: "bg-amber-100 text-amber-900" };
-    default:
-      return { label: "En attente", className: "bg-slate-200 text-slate-800" };
-  }
 }
 
 /** Actions exposées dans le tableau (alignées sur `/api/dossiers/[id]/transition`). */
@@ -1527,8 +1505,11 @@ export default function ContratsPanel() {
                 <tbody>
                   {contratsListe.map((c) => {
                     const etape = c.dossierEtape ?? "FINALISE";
-                    const etatSuivi = contratSuiviEtat(etape, c.dateDepot ?? c.createdAt);
-                    const etatBadge = contratSuiviBadge(etatSuivi);
+                    const statutLabel = c.statutMetierLabel ?? c.status;
+                    const statutDescription = c.statutMetierDescription ?? "";
+                    const statutBadgeClass = c.statutMetier
+                      ? contratStatutMetierBadgeClass(c.statutMetier)
+                      : "bg-slate-200 text-slate-800";
                     const workflowPrimary = workflowPrimaryAction(etape);
                     const canDecideDossier = userCanOpenDossierDecisionModal(meRole, etape);
                     return (
@@ -1550,9 +1531,10 @@ export default function ContratsPanel() {
                         </td>
                         <td className="px-3 py-2.5 text-slate-800 sm:px-4">
                           <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${etatBadge.className}`}
+                            title={statutDescription}
+                            className={`inline-flex max-w-[11rem] rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight ${statutBadgeClass}`}
                           >
-                            {etatBadge.label}
+                            {statutLabel}
                           </span>
                         </td>
                         <td className="px-3 py-2.5 text-right sm:px-4">
@@ -1726,7 +1708,12 @@ export default function ContratsPanel() {
               </div>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Statut</p>
-                <p className="text-sm text-slate-900">{viewContrat.status}</p>
+                <p className="text-sm text-slate-900">
+                  {viewContrat.statutMetierLabel ?? viewContrat.status}
+                </p>
+                {viewContrat.statutMetierDescription ? (
+                  <p className="mt-0.5 text-xs text-slate-500">{viewContrat.statutMetierDescription}</p>
+                ) : null}
               </div>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Date d&apos;effet</p>

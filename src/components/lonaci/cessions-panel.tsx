@@ -9,9 +9,19 @@ import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CessionChecklistBlock from "@/components/lonaci/cession-checklist-block";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 import { canRole } from "@/lib/auth/rbac";
+import { CESSION_CHECKLIST_ITEMS_SPEC_52 } from "@/lib/lonaci/cession-document-checklist";
+import { DELOCALISATION_CHECKLIST_ITEMS_SPEC_61 } from "@/lib/lonaci/delocalisation-document-checklist";
+import { usesSimplifiedDelocalisationCircuit } from "@/lib/lonaci/cession-dossier-checklist";
+import { CESSION_STATUTS_SPEC_54 } from "@/lib/lonaci/cession-statut-metier";
+import { operationStatutMetierBadgeClass } from "@/lib/lonaci/cession-operation-statut-metier";
+import { DELOCALISATION_STATUTS_SPEC_63 } from "@/lib/lonaci/delocalisation-statut-metier";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 
 type CessionStatus =
   | "SAISIE_AGENT"
@@ -19,7 +29,17 @@ type CessionStatus =
   | "VALIDATION_N2"
   | "VALIDEE_CHEF_SERVICE"
   | "REJETEE";
-type CessionKind = "CESSION" | "DELOCALISATION";
+type CessionKind = "CESSION" | "DELOCALISATION" | "CESSION_DELOCALISATION";
+
+function kindLabel(k: CessionKind): string {
+  if (k === "CESSION") return "Cession";
+  if (k === "CESSION_DELOCALISATION") return "Cession-délocalisation";
+  return "Délocalisation";
+}
+
+function kindHasChecklistColumn(k: CessionKind): boolean {
+  return k === "CESSION" || k === "DELOCALISATION" || k === "CESSION_DELOCALISATION";
+}
 
 interface CessionItem {
   id: string;
@@ -37,7 +57,13 @@ interface CessionItem {
   dateDemande: string;
   motif: string;
   statut: CessionStatus;
+  acteGenereAt: string | null;
+  acteDelocalisationGenereAt: string | null;
+  linkedOperationId: string | null;
+  statutMetierLabel: string;
+  statutMetierDescription: string;
   commentaire: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
   attachmentsCount: number;
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number; uploadedAt: string }>;
   createdAt: string;
@@ -164,16 +190,16 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
   throw new Error("Format non supporté. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
 }
 
-function statusLabel(status: CessionStatus) {
+function workflowStatutFilterLabel(status: CessionStatus) {
   switch (status) {
     case "SAISIE_AGENT":
-      return "Saisie agent";
+      return "Saisie agent (constitution / dossier complet)";
     case "CONTROLE_CHEF_SECTION":
-      return "Validé N1 (chef section)";
+      return "Contrôle chef section (en validation)";
     case "VALIDATION_N2":
-      return "En validation N2";
+      return "Validation N2 (en validation / acte)";
     case "VALIDEE_CHEF_SERVICE":
-      return "Validée chef service";
+      return "Validée chef service (cession finalisée)";
     case "REJETEE":
       return "Rejetée";
   }
@@ -212,6 +238,14 @@ export default function CessionsPanel() {
   const docsInputRef = useRef<HTMLInputElement | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailItem, setDetailItem] = useState<CessionItem | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailChecklistLive, setDetailChecklistLive] = useState<{
+    complet: boolean;
+    obligatoiresFournis: number;
+    obligatoiresTotal: number;
+  } | null>(null);
 
   const [concessionnaires, setConcessionnaires] = useState<ConcessionnaireOption[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
@@ -219,30 +253,60 @@ export default function CessionsPanel() {
   const [refLoading, setRefLoading] = useState(false);
   const [refError, setRefError] = useState<string | null>(null);
 
+  const [filterStatut, setFilterStatut] = useState<"" | CessionStatus>("");
+  const [filterProduitCode, setFilterProduitCode] = useState("");
+  const [filterAgenceId, setFilterAgenceId] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState("");
+  const [filterDateTo, setFilterDateTo] = useState("");
+
+  const listQueryParams = useMemo(() => {
+    const params = new URLSearchParams();
+    params.set("kind", kind);
+    if (filterStatut) params.set("statut", filterStatut);
+    if (filterProduitCode) params.set("produitCode", filterProduitCode);
+    if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
+    if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
+    if (filterAgenceId) params.set("agenceId", filterAgenceId);
+    return params;
+  }, [kind, filterStatut, filterProduitCode, filterDateFrom, filterDateTo, filterAgenceId]);
+
+  const exportQuery = useMemo(() => {
+    const params = new URLSearchParams(listQueryParams);
+    params.set("format", "pdf");
+    return params.toString();
+  }, [listQueryParams]);
+
   const inputClass =
     "w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
 
-  const load = useCallback(async (nextPage = page) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
-      params.set("kind", kind);
-      const res = await fetch(`/api/cessions?${params}`, { credentials: "include", cache: "no-store" });
-      if (!res.ok) throw new Error("Chargement impossible");
-      const data = (await res.json()) as { items: CessionItem[]; total: number; page: number };
-      setItems(data.items);
-      setTotal(data.total);
-      setPage(data.page);
-    } catch (e) {
-      setError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
-    } finally {
-      setLoading(false);
-    }
-  }, [kind, page, pageSize]);
+  const load = useCallback(
+    async (nextPage = page) => {
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
+        listQueryParams.forEach((value, key) => params.set(key, value));
+        const res = await fetch(`/api/cessions?${params}`, { credentials: "include", cache: "no-store" });
+        if (!res.ok) throw new Error("Chargement impossible");
+        const data = (await res.json()) as { items: CessionItem[]; total: number; page: number };
+        setItems(data.items);
+        setTotal(data.total);
+        setPage(data.page);
+      } catch (e) {
+        setError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
+      } finally {
+        setLoading(false);
+      }
+    },
+    [listQueryParams, page, pageSize],
+  );
 
   useEffect(() => {
     void load(1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listQueryParams]);
+
+  useEffect(() => {
     void (async () => {
       try {
         const r = await fetch("/api/auth/me", { credentials: "include", cache: "no-store" });
@@ -253,7 +317,29 @@ export default function CessionsPanel() {
         setMeRole(null);
       }
     })();
-  }, [load]);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const refRes = await fetch("/api/referentials", { credentials: "include", cache: "no-store" });
+        if (!refRes.ok || cancelled) return;
+        const data = (await refRes.json()) as {
+          produits?: ProduitRef[];
+          agences?: AgenceRef[];
+        };
+        if (cancelled) return;
+        setProduits((data.produits ?? []).slice().sort((a, b) => a.code.localeCompare(b.code, "fr")));
+        setAgences((data.agences ?? []).slice().sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")));
+      } catch {
+        /* filtres : optionnel */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -331,16 +417,39 @@ export default function CessionsPanel() {
     setCreating(true);
     setCreateError(null);
     try {
-      if (kind === "CESSION") {
+      if (kind === "CESSION" || kind === "CESSION_DELOCALISATION") {
         if (!cedantPdv?.id || !beneficiairePdv?.id) {
-          setCreateError("Sélectionnez le cédant et le bénéficiaire.");
+          setCreateError("Sélectionnez le cédant et le bénéficiaire (cessionnaire).");
           setCreating(false);
           return;
         }
-      } else if (!delocPdv?.id) {
-        setCreateError("Sélectionnez le concessionnaire concerné.");
+        if (!produitCode.trim()) {
+          setCreateError("Sélectionnez le produit concerné.");
+          setCreating(false);
+          return;
+        }
+      }
+      if (kind === "DELOCALISATION") {
+        if (!delocPdv?.id) {
+          setCreateError("Sélectionnez le concessionnaire concerné.");
+          setCreating(false);
+          return;
+        }
+        if (!produitCode.trim()) {
+          setCreateError("Sélectionnez le produit (contrat conservé).");
+          setCreating(false);
+          return;
+        }
+      }
+      if ((kind === "DELOCALISATION" || kind === "CESSION_DELOCALISATION") && (!newGpsLat.trim() || !newGpsLng.trim())) {
+        setCreateError("Les coordonnées GPS de la nouvelle zone sont obligatoires.");
         setCreating(false);
         return;
+      }
+      if (kind === "CESSION_DELOCALISATION" && cedantPdv) {
+        const agIds = agences.map((a) => a.id);
+        const pickedAg = pickAgenceIdFromConcessionnaire(cedantPdv, agIds);
+        if (pickedAg && !oldAgenceId) setOldAgenceId(pickedAg);
       }
       const form = new FormData();
       form.set("kind", kind);
@@ -366,7 +475,7 @@ export default function CessionsPanel() {
       closeCreate();
       setToast({
         type: "success",
-        message: kind === "CESSION" ? "Demande de cession créée." : "Demande de délocalisation créée.",
+        message: `Demande de ${kindLabel(kind).toLowerCase()} créée.`,
       });
       await load(1);
     } catch (e) {
@@ -375,6 +484,60 @@ export default function CessionsPanel() {
       setCreating(false);
     }
   }
+
+  async function openDetail(id: string) {
+    setDetailId(id);
+    setDetailLoading(true);
+    setDetailItem(null);
+    try {
+      const res = await fetch(`/api/cessions/${encodeURIComponent(id)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Chargement du dossier impossible");
+      const data = (await res.json()) as { item: CessionItem };
+      setDetailItem(data.item);
+      if (data.item.documentChecklist?.entries.length) {
+        const statuts = Object.fromEntries(
+          data.item.documentChecklist.entries.map((e) => [e.itemId, e.statut]),
+        );
+        setDetailChecklistLive(computeChecklistProgress(data.item.documentChecklist.entries, statuts));
+      } else {
+        setDetailChecklistLive(null);
+      }
+    } catch (e) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
+      });
+      setDetailId(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function closeDetail() {
+    setDetailId(null);
+    setDetailItem(null);
+    setDetailChecklistLive(null);
+  }
+
+  const syncDetailChecklistToList = useCallback(
+    (
+      cessionId: string,
+      progress: { complet: boolean; obligatoiresFournis: number; obligatoiresTotal: number },
+    ) => {
+      setDetailChecklistLive(progress);
+      setItems((prev) =>
+        prev.map((r) =>
+          r.id === cessionId && r.documentChecklist
+            ? { ...r, documentChecklist: { ...r.documentChecklist, complet: progress.complet } }
+            : r,
+        ),
+      );
+    },
+    [],
+  );
 
   async function transition(id: string, target: CessionStatus) {
     setBusyId(id);
@@ -471,26 +634,108 @@ export default function CessionsPanel() {
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-indigo-700">Infinitecore Systeme</p>
           <h2 className="text-2xl font-semibold text-slate-900">Cessions & délocalisations</h2>
+          {kind === "CESSION" ? (
+            <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
+              <p>
+                <span className="font-semibold text-indigo-900">5.1 — Acte de cession :</span> génération d&apos;un
+                acte officiel à partir du cédant et du cessionnaire (PDF depuis le dossier).
+              </p>
+              <p>
+                <span className="font-semibold text-indigo-900">5.2 — Checklist :</span> pièces obligatoires à
+                compléter par l&apos;agent ({CESSION_CHECKLIST_ITEMS_SPEC_52.length} pièces communes + documents
+                produit le cas échéant).
+              </p>
+              <p>
+                <span className="font-semibold text-indigo-900">5.3 — Export liste PDF :</span> téléchargement de la
+                liste filtrée (période, agence, produit, statut) pour rapports mensuels et contrôles terrain — référence,
+                cédant, cessionnaire, date, statut, agence.
+              </p>
+              <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
+                  5.4 — Statuts de la cession
+                </p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-md text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-indigo-200 text-indigo-900">
+                        <th className="py-1.5 pr-3 font-semibold">Statut</th>
+                        <th className="py-1.5 font-semibold">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-700">
+                      {CESSION_STATUTS_SPEC_54.map((row) => (
+                        <tr key={row.statut} className="border-b border-indigo-100/80 last:border-0">
+                          <td className="py-1.5 pr-3 align-top font-semibold whitespace-nowrap text-slate-900">
+                            {row.label}
+                          </td>
+                          <td className="py-1.5 align-top leading-snug">{row.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {kind === "DELOCALISATION" ? (
+            <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
+              <p>
+                <span className="font-semibold text-cyan-900">6.1 — Délocalisation simple :</span> checklist par
+                produit, GPS obligatoire, validation Chef de Section puis Chef de Service, mise à jour fiche PDV.
+              </p>
+              <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
+                  6.3 — Statuts de la délocalisation
+                </p>
+                <div className="mt-2 overflow-x-auto">
+                  <table className="w-full min-w-md text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-cyan-200 text-cyan-900">
+                        <th className="py-1.5 pr-3 font-semibold">Statut</th>
+                        <th className="py-1.5 font-semibold">Description</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-slate-700">
+                      {DELOCALISATION_STATUTS_SPEC_63.map((row) => (
+                        <tr key={row.statut} className="border-b border-cyan-100/80 last:border-0">
+                          <td className="py-1.5 pr-3 align-top font-semibold whitespace-nowrap text-slate-900">
+                            {row.label}
+                          </td>
+                          <td className="py-1.5 align-top leading-snug">{row.description}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          ) : null}
+          {kind === "CESSION_DELOCALISATION" ? (
+            <div className="mt-3 max-w-2xl text-[11px] leading-snug text-slate-600">
+              <p>
+                <span className="font-semibold text-violet-900">6.2 — Cession-délocalisation :</span> checklists
+                cession + délocalisation, deux actes PDF, acquéreur en nouvelle zone, cédant archivé.
+              </p>
+            </div>
+          ) : null}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <select
             value={kind}
-            onChange={(e) => {
-              setKind(e.target.value as CessionKind);
-              void load(1);
-            }}
+            onChange={(e) => setKind(e.target.value as CessionKind)}
             className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
             aria-label="Type d'opération"
           >
             <option value="CESSION">Cession</option>
-            <option value="DELOCALISATION">Délocalisation</option>
+            <option value="DELOCALISATION">Délocalisation (6.1)</option>
+            <option value="CESSION_DELOCALISATION">Cession-délocalisation (6.2)</option>
           </select>
           <button
             type="button"
             onClick={openCreate}
             className="inline-flex items-center justify-center rounded-xl border border-indigo-600 bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700"
           >
-            {kind === "CESSION" ? "Créer demande de cession" : "Créer demande de délocalisation"}
+            Créer — {kindLabel(kind)}
           </button>
           <button
             type="button"
@@ -514,7 +759,86 @@ export default function CessionsPanel() {
           >
             {importingFile ? "Import..." : "Importer fichier vers le tableau"}
           </button>
+          <a
+            href={`/api/cessions/export?${exportQuery}`}
+            className="inline-flex items-center justify-center rounded-xl border border-rose-300 bg-rose-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-700"
+          >
+            Export PDF
+          </a>
         </div>
+      </div>
+
+      <div className="relative mb-3 grid gap-2 rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-6">
+        <select
+          aria-label="Filtre statut"
+          value={filterStatut}
+          onChange={(e) => setFilterStatut(e.target.value as "" | CessionStatus)}
+          className={inputClass}
+        >
+          <option value="">Tous statuts</option>
+          <option value="SAISIE_AGENT">{workflowStatutFilterLabel("SAISIE_AGENT")}</option>
+          <option value="CONTROLE_CHEF_SECTION">{workflowStatutFilterLabel("CONTROLE_CHEF_SECTION")}</option>
+          <option value="VALIDATION_N2">{workflowStatutFilterLabel("VALIDATION_N2")}</option>
+          <option value="VALIDEE_CHEF_SERVICE">{workflowStatutFilterLabel("VALIDEE_CHEF_SERVICE")}</option>
+          <option value="REJETEE">{workflowStatutFilterLabel("REJETEE")}</option>
+        </select>
+        <select
+          aria-label="Filtre produit"
+          value={filterProduitCode}
+          onChange={(e) => setFilterProduitCode(e.target.value)}
+          className={inputClass}
+        >
+          <option value="">Tous produits</option>
+          {produits
+            .filter((p) => p.actif)
+            .map((p) => (
+              <option key={p.id} value={p.code}>
+                {p.code} — {p.libelle}
+              </option>
+            ))}
+        </select>
+        <select
+          aria-label="Filtre agence"
+          value={filterAgenceId}
+          onChange={(e) => setFilterAgenceId(e.target.value)}
+          className={inputClass}
+        >
+          <option value="">Toutes agences</option>
+          {agences
+            .filter((a) => a.actif)
+            .map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.libelle}
+              </option>
+            ))}
+        </select>
+        <input
+          aria-label="Date début"
+          type="date"
+          value={filterDateFrom}
+          onChange={(e) => setFilterDateFrom(e.target.value)}
+          className={inputClass}
+        />
+        <input
+          aria-label="Date fin"
+          type="date"
+          value={filterDateTo}
+          onChange={(e) => setFilterDateTo(e.target.value)}
+          className={inputClass}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setFilterStatut("");
+            setFilterProduitCode("");
+            setFilterAgenceId("");
+            setFilterDateFrom("");
+            setFilterDateTo("");
+          }}
+          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50"
+        >
+          Réinitialiser filtres
+        </button>
       </div>
 
       {toast ? (
@@ -542,7 +866,7 @@ export default function CessionsPanel() {
         </article>
         <article className="rounded-xl border border-emerald-200 bg-emerald-50/80 p-3">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Type sélectionné</p>
-          <p className="mt-1 text-xl font-semibold text-emerald-900">{kind === "CESSION" ? "Cession" : "Délocalisation"}</p>
+          <p className="mt-1 text-xl font-semibold text-emerald-900">{kindLabel(kind)}</p>
         </article>
       </div>
 
@@ -563,10 +887,10 @@ export default function CessionsPanel() {
             <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
               <tr>
                 <th className="px-3 py-2.5">Réf</th>
-                {kind === "CESSION" ? (
+                {kind === "CESSION" || kind === "CESSION_DELOCALISATION" ? (
                   <>
                     <th className="px-3 py-2.5">Cédant</th>
-                    <th className="px-3 py-2.5">Bénéficiaire</th>
+                    <th className="px-3 py-2.5">Cessionnaire</th>
                     <th className="px-3 py-2.5">Produit</th>
                   </>
                 ) : (
@@ -578,6 +902,7 @@ export default function CessionsPanel() {
                 )}
                 <th className="px-3 py-2.5">Date demande</th>
                 <th className="px-3 py-2.5">Statut</th>
+                {kindHasChecklistColumn(kind) ? <th className="px-3 py-2.5">Checklist</th> : null}
                 <th className="px-3 py-2.5">Docs</th>
                 <th className="px-3 py-2.5 text-right">Action</th>
               </tr>
@@ -585,8 +910,16 @@ export default function CessionsPanel() {
             <tbody>
               {items.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100">
-                  <td className="px-3 py-2.5 font-mono text-xs">{row.reference}</td>
-                  {row.kind === "CESSION" ? (
+                  <td className="px-3 py-2.5 font-mono text-xs">
+                    <button
+                      type="button"
+                      onClick={() => void openDetail(row.id)}
+                      className="font-mono text-indigo-700 underline hover:text-indigo-900"
+                    >
+                      {row.reference}
+                    </button>
+                  </td>
+                  {row.kind === "CESSION" || row.kind === "CESSION_DELOCALISATION" ? (
                     <>
                       <td className="px-3 py-2.5">{concLabelById.get(row.cedantId ?? "") ?? row.cedantId}</td>
                       <td className="px-3 py-2.5">{concLabelById.get(row.beneficiaireId ?? "") ?? row.beneficiaireId}</td>
@@ -600,7 +933,34 @@ export default function CessionsPanel() {
                     </>
                   )}
                   <td className="px-3 py-2.5 whitespace-nowrap text-xs">{new Date(row.dateDemande).toLocaleString("fr-FR")}</td>
-                  <td className="px-3 py-2.5">{statusLabel(row.statut)}</td>
+                  <td className="px-3 py-2.5">
+                    <span
+                      className={`inline-flex max-w-[11rem] flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${operationStatutMetierBadgeClass(
+                        {
+                          kind: row.kind,
+                          statut: row.statut,
+                          checklistComplet: row.documentChecklist?.complet ?? null,
+                          acteGenereAt: row.acteGenereAt,
+                        },
+                      )}`}
+                      title={row.statutMetierDescription}
+                    >
+                      {row.statutMetierLabel}
+                    </span>
+                  </td>
+                  {kindHasChecklistColumn(kind) ? (
+                    <td className="px-3 py-2.5">
+                      {row.documentChecklist ? (
+                        <DossierCompletIndicator
+                          complet={row.documentChecklist.complet}
+                          size="sm"
+                          live={detailId === row.id}
+                        />
+                      ) : (
+                        <span className="text-xs text-slate-400">—</span>
+                      )}
+                    </td>
+                  ) : null}
                   <td className="px-3 py-2.5">
                     {row.attachments.length ? (
                       <div className="flex flex-col gap-1">
@@ -639,7 +999,21 @@ export default function CessionsPanel() {
                             Valider N1
                           </button>
                         ) : null}
-                        {row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                        {row.statut === "CONTROLE_CHEF_SECTION" &&
+                        usesSimplifiedDelocalisationCircuit(row.kind) &&
+                        canFinalize ? (
+                          <button
+                            type="button"
+                            disabled={busyId === row.id}
+                            onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}
+                            className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white"
+                          >
+                            Valider (chef de service)
+                          </button>
+                        ) : null}
+                        {row.statut === "CONTROLE_CHEF_SECTION" &&
+                        !usesSimplifiedDelocalisationCircuit(row.kind) &&
+                        canValidateN2 ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -671,7 +1045,8 @@ export default function CessionsPanel() {
                         ) : null}
                         {!(
                           (row.statut === "SAISIE_AGENT" && canValidateN1) ||
-                          (row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2) ||
+                          (row.statut === "CONTROLE_CHEF_SECTION" &&
+                            (canValidateN2 || (usesSimplifiedDelocalisationCircuit(row.kind) && canFinalize))) ||
                           (row.statut === "VALIDATION_N2" && canFinalize) ||
                           canReject
                         ) ? (
@@ -684,8 +1059,11 @@ export default function CessionsPanel() {
               ))}
               {!items.length ? (
                 <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-500">
-                    {kind === "CESSION" ? "Aucune demande de cession." : "Aucune demande de délocalisation."}
+                  <td
+                    colSpan={kindHasChecklistColumn(kind) ? 9 : 8}
+                    className="px-3 py-8 text-center text-sm text-slate-500"
+                  >
+                    Aucune demande de {kindLabel(kind).toLowerCase()}.
                   </td>
                 </tr>
               ) : null}
@@ -694,6 +1072,116 @@ export default function CessionsPanel() {
         </div>
       )}
 
+      {detailId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="cession-detail-title">
+          <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeDetail} />
+          <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-3">
+              <div>
+                <h3 id="cession-detail-title" className="text-sm font-semibold text-slate-900">
+                  Dossier {detailItem?.reference ?? detailId}
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600">
+                  {detailItem?.kind === "CESSION"
+                    ? "Demande de cession"
+                    : detailItem?.kind === "CESSION_DELOCALISATION"
+                      ? "Cession-délocalisation"
+                      : "Délocalisation"}
+                </p>
+                {detailItem ? (
+                  <p className="mt-1 text-[11px] text-slate-600" title={detailItem.statutMetierDescription}>
+                    <span className="font-semibold text-indigo-900">
+                      {detailItem.kind === "DELOCALISATION" ? "Statut 6.3" : "Statut 5.4"} :
+                    </span>{" "}
+                    {detailItem.statutMetierLabel}
+                  </p>
+                ) : null}
+              </div>
+              <button type="button" onClick={closeDetail} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">
+                ×
+              </button>
+            </div>
+            {detailItem && kindHasChecklistColumn(detailItem.kind) && detailChecklistLive ? (
+              <div className="shrink-0 border-b border-slate-200 px-4 py-2">
+                <DossierCompletIndicator
+                  complet={detailChecklistLive.complet}
+                  size="banner"
+                  live
+                  obligatoiresFournis={detailChecklistLive.obligatoiresFournis}
+                  obligatoiresTotal={detailChecklistLive.obligatoiresTotal}
+                />
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {detailLoading ? (
+                <p className="text-sm text-slate-500">Chargement…</p>
+              ) : detailItem ? (
+                <div className="space-y-3">
+                  {detailItem.linkedOperationId ? (
+                    <p className="text-[11px] text-violet-800">
+                      Traçabilité 6.2 : <span className="font-mono">{detailItem.linkedOperationId}</span>
+                    </p>
+                  ) : null}
+                  {(detailItem.kind === "CESSION" || detailItem.kind === "CESSION_DELOCALISATION") && (
+                    <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        5.1 — Acte de cession
+                      </p>
+                      <a
+                        href={`/api/cessions/${encodeURIComponent(detailItem.id)}/acte-cession/pdf`}
+                        className="mt-2 inline-flex rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Télécharger l&apos;acte de cession (PDF)
+                      </a>
+                    </section>
+                  )}
+                  {(detailItem.kind === "DELOCALISATION" || detailItem.kind === "CESSION_DELOCALISATION") && (
+                    <section className="rounded-xl border border-cyan-200 bg-cyan-50/80 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
+                        Acte de délocalisation
+                      </p>
+                      <a
+                        href={`/api/cessions/${encodeURIComponent(detailItem.id)}/acte-delocalisation/pdf`}
+                        className="mt-2 inline-flex rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      >
+                        Télécharger l&apos;acte de délocalisation (PDF)
+                      </a>
+                    </section>
+                  )}
+                  {detailItem.documentChecklist ? (
+                    <CessionChecklistBlock
+                      cessionId={detailItem.id}
+                      checklist={detailItem.documentChecklist}
+                      editable={
+                        detailItem.statut === "SAISIE_AGENT" &&
+                        Boolean(meRole && ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(meRole))
+                      }
+                      onUpdated={(next) => {
+                        setDetailItem((prev) => (prev ? { ...prev, documentChecklist: next } : prev));
+                        const statuts = Object.fromEntries(next.entries.map((e) => [e.itemId, e.statut]));
+                        syncDetailChecklistToList(
+                          detailItem.id,
+                          computeChecklistProgress(next.entries, statuts),
+                        );
+                      }}
+                      onProgressChange={(p) => syncDetailChecklistToList(detailItem.id, p)}
+                    />
+                  ) : (
+                    <p className="text-xs text-slate-500">Checklist indisponible.</p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-rose-700">Dossier introuvable.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-cession-title">
           <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeCreate} disabled={creating} />
@@ -701,7 +1189,7 @@ export default function CessionsPanel() {
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-2">
               <div>
                 <h3 id="create-cession-title" className="text-sm font-semibold text-slate-900">
-                  {kind === "CESSION" ? "Demande de cession" : "Demande de délocalisation"}
+                  {detailItem ? kindLabel(detailItem.kind) : "Dossier"}
                 </h3>
                 <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
                   {kind === "CESSION"
@@ -716,9 +1204,12 @@ export default function CessionsPanel() {
               {refError ? <p className="mb-2 text-xs text-rose-700">{refError}</p> : null}
 
               <div className="grid gap-3">
-                {kind === "CESSION" ? (
+                {kind === "CESSION" || kind === "CESSION_DELOCALISATION" ? (
                   <section className="grid gap-2 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Informations cession</p>
+                    <p className="text-[10px] leading-snug text-indigo-900/80">
+                      Après création : compléter la checklist 5.2 et générer l&apos;acte 5.1 depuis la référence du dossier.
+                    </p>
                     <ConcessionnaireSearchPicker
                       key={`cession-cedant-${createOpen}`}
                       label={<span className="text-xs font-medium text-slate-700">Concessionnaire cédant *</span>}
@@ -728,6 +1219,11 @@ export default function CessionsPanel() {
                         const codes = produits.map((p) => p.code);
                         const picked = pickProduitCodeFromConcessionnaire(r, codes);
                         if (picked) setProduitCode(picked);
+                        if (kind === "CESSION_DELOCALISATION" && r) {
+                          const agIds = agences.map((a) => a.id);
+                          const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                          if (pickedAg) setOldAgenceId(pickedAg);
+                        }
                       }}
                       statutActifOnly
                       inscriptionFinaliseeOnly
@@ -761,29 +1257,59 @@ export default function CessionsPanel() {
                       </select>
                     </label>
                   </section>
-                ) : (
+                ) : null}
+                {kind === "DELOCALISATION" || kind === "CESSION_DELOCALISATION" ? (
                   <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Informations délocalisation</p>
-                    <ConcessionnaireSearchPicker
-                      key={`deloc-pdv-${createOpen}`}
-                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>}
-                      selected={delocPdv}
-                      onSelectedChange={(r) => {
-                        setDelocPdv(r);
-                        if (!r) {
-                          setOldAgenceId("");
-                          return;
-                        }
-                        const agIds = agences.map((a) => a.id);
-                        const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
-                        if (pickedAg) setOldAgenceId(pickedAg);
-                      }}
-                      statutActifOnly
-                      inscriptionFinaliseeOnly
-                      inputClassName={inputClass}
-                      disabled={refLoading}
-                      searchPlaceholder="Rechercher (code, nom…)"
-                    />
+                    <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">
+                      {kind === "CESSION_DELOCALISATION"
+                        ? "Nouvelle zone de l'acquéreur (6.2)"
+                        : "Informations délocalisation (6.1)"}
+                    </p>
+                    {kind === "DELOCALISATION" ? (
+                      <ConcessionnaireSearchPicker
+                        key={`deloc-pdv-${createOpen}`}
+                        label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>}
+                        selected={delocPdv}
+                        onSelectedChange={(r) => {
+                          setDelocPdv(r);
+                          if (!r) {
+                            setOldAgenceId("");
+                            setProduitCode("");
+                            return;
+                          }
+                          const agIds = agences.map((a) => a.id);
+                          const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                          if (pickedAg) setOldAgenceId(pickedAg);
+                          const codes = produits.map((p) => p.code);
+                          const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                          if (picked) setProduitCode(picked);
+                        }}
+                        statutActifOnly
+                        inscriptionFinaliseeOnly
+                        inputClassName={inputClass}
+                        disabled={refLoading}
+                        searchPlaceholder="Rechercher (code, nom…)"
+                      />
+                    ) : null}
+                    {kind === "DELOCALISATION" ? (
+                      <label className="grid gap-1">
+                        <span className="text-xs font-medium text-slate-700">Produit (contrat conservé) *</span>
+                        <select
+                          required
+                          value={produitCode}
+                          onChange={(e) => setProduitCode(e.target.value)}
+                          className={inputClass}
+                          disabled={refLoading}
+                        >
+                          <option value="">{refLoading ? "Chargement…" : "Sélectionner un produit"}</option>
+                          {produits.map((p) => (
+                            <option key={p.code} value={p.code}>
+                              {p.libelle}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
                     <label className="grid gap-1">
                       <span className="text-xs font-medium text-slate-700">Ancienne adresse / agence *</span>
                       <input required value={oldAdresse} onChange={(e) => setOldAdresse(e.target.value)} className={inputClass} placeholder="Adresse actuelle" />
@@ -815,7 +1341,7 @@ export default function CessionsPanel() {
                       </label>
                     </div>
                   </section>
-                )}
+                ) : null}
                 <section className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                 <label className="grid gap-1">
                   <span className="text-xs font-medium text-slate-700">Date de la demande *</span>
@@ -823,7 +1349,11 @@ export default function CessionsPanel() {
                 </label>
                 <label className="grid gap-1">
                   <span className="text-xs font-medium text-slate-700">
-                    {kind === "CESSION" ? "Motif de la cession *" : "Motif de la délocalisation *"}
+                    {kind === "CESSION"
+                    ? "Motif de la cession *"
+                    : kind === "CESSION_DELOCALISATION"
+                      ? "Motif de l'opération *"
+                      : "Motif de la délocalisation *"}
                   </span>
                   <textarea required rows={2} value={motif} onChange={(e) => setMotif(e.target.value)} className={inputClass} />
                 </label>

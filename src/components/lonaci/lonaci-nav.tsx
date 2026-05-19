@@ -22,6 +22,8 @@ export const LONACI_NAV: LonaciNavItem[] = [
   { href: "/succession", label: "Décès et ayants droit", badge: "succession" },
   { href: "/bancarisation", label: "Bancarisation", badge: "bancarisation" },
   { href: "/gpr", label: "Création de code grattage" },
+  { href: "/contrats-grattage", label: "Contrats grattage" },
+  { href: "/dispatcher", label: "Dispatcher codes grattage", section: "Opérations" },
   { href: "/registres", label: "Registres" },
   { href: "/rapports", label: "Rapports", section: "Analyse" },
   { href: "/alertes", label: "Toutes les alertes" },

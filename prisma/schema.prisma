@@ -49,7 +49,7 @@ model Concessionnaire {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
   /** Attribué après validation N1 de l'inscription ; null en brouillon / soumis. */
   codePdv         String?   @unique
-  /** Parcours d'inscription : BROUILLON → SOUMIS → VALIDE (ou REJETE). Legacy : VALIDE. */
+  /** Parcours d'inscription : DOSSIER_EN_COURS → SOUMIS → N1 (code PDV) → caution payée → VALIDE. Legacy : VALIDE. */
   inscriptionStatut String  @default("VALIDE")
   nom             String?
   prenom          String?
@@ -72,6 +72,14 @@ model Concessionnaire {
   produitsAutorises String[]
   statut          String
   statutBancarisation String?
+  /** 8.1 — Collecte RIB : EN_ATTENTE_RIB | RIB_FOURNI | RIB_VALIDE */
+  etatRib         String?
+  ribDemandeAt    DateTime?
+  ribFourniAt     DateTime?
+  ribValideAt     DateTime?
+  /** 8.2 — Horodatage intégration paiement LONACI */
+  bancariseAt     DateTime?
+  ribPieceId      String?
   compteBancaire  String?
   banqueEtablissement String?
   gps             Json?

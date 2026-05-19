@@ -8,7 +8,12 @@ import { buildReportSummary, summaryToCsv } from "@/lib/lonaci/reports";
 import { ensureNotificationIndexes, notifyRoleTargets } from "@/lib/lonaci/notifications";
 import { listActiveUsersByRole } from "@/lib/lonaci/users";
 import { sendSmtpEmail } from "@/lib/email/smtp";
-import { ensureSuccessionIndexes, listSuccessionStaleAlerts } from "@/lib/lonaci/succession";
+import {
+  dispatchAutomaticSuccessionStaleAlerts,
+  ensureSuccessionIndexes,
+  listSuccessionStaleAlerts,
+} from "@/lib/lonaci/succession";
+import { dispatchAutomaticCautionJ10Alerts } from "@/lib/lonaci/caution-j10-alerts";
 import { ensureSprint4Indexes, listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -178,6 +183,8 @@ export async function POST(request: NextRequest) {
 
   const daily = await buildReportSummary("daily");
   const staleSuccession = await listSuccessionStaleAlerts();
+  const successionStaleDispatch = await dispatchAutomaticSuccessionStaleAlerts();
+  const j10Dispatch = await dispatchAutomaticCautionJ10Alerts();
   const cautionsJ10 = await listCautionAlertsJ10();
 
   const db = await getDatabase();
@@ -189,7 +196,9 @@ export async function POST(request: NextRequest) {
       summary: {
         dossiersTotal: daily.dossiers.total,
         cautionsJ10: cautionsJ10.length,
+        cautionsJ10Alerted: j10Dispatch.alerted,
         successionStale: staleSuccession.length,
+        successionStaleAlerted: successionStaleDispatch.alerted,
       },
       csvSnippet: summaryToCsv(daily).split("\n").slice(0, 12).join("\n"),
     });
@@ -405,7 +414,9 @@ export async function POST(request: NextRequest) {
       ok: true,
       daily,
       cautionsJ10Count: cautionsJ10.length,
+      cautionsJ10Alerted: j10Dispatch.alerted,
       successionStaleCount: staleSuccession.length,
+      successionStaleAlerted: successionStaleDispatch.alerted,
     },
     { status: 200 },
   );

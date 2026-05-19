@@ -5,7 +5,12 @@ import { requireApiAuth } from "@/lib/auth/guards";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { prepareContratFromDechargeDefinitive } from "@/lib/lonaci/contrat-document";
-import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import {
+  buildDossierContratStatutMetierFields,
+  ensureDossierIndexes,
+  findDossierById,
+  transitionDossier,
+} from "@/lib/lonaci/dossiers";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -69,9 +74,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
       );
     }
 
+    const statutFields = await buildDossierContratStatutMetierFields(current);
     return NextResponse.json(
       {
-        dossier: dossierToJson(current),
+        dossier: { ...dossierToJson(current), ...statutFields },
         contratGenere,
         created,
         submitted: current.status === "SOUMIS",

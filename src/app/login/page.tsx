@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, FormEvent, Suspense, useState } from "react";
+import { type ReactNode, FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 /** Fond + `<main>` identiques au rendu final pour éviter les erreurs d’hydratation avec `useSearchParams` + `Suspense`. */
@@ -28,6 +28,11 @@ function LoginPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isResetModalOpen, setIsResetModalOpen] = useState(Boolean(resetToken));
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -105,6 +110,16 @@ function LoginPageContent() {
     } finally {
       setResetLoading(false);
     }
+  }
+
+  if (!mounted) {
+    return (
+      <LoginShell>
+        <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
+          <p className="text-sm text-slate-300">Chargement...</p>
+        </section>
+      </LoginShell>
+    );
   }
 
   return (

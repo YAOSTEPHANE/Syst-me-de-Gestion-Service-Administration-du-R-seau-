@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
+import { successionStatutMetierFields } from "@/lib/lonaci/succession-statut-metier";
 import { ensureSuccessionIndexes, findSuccessionCaseById } from "@/lib/lonaci/succession";
 import { findUserById } from "@/lib/lonaci/users";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -49,12 +51,30 @@ export async function GET(request: NextRequest, context: RouteContext) {
   const users = await Promise.all([...allUserIds].map(async (userId) => [userId, await findUserById(userId)] as const));
   const userMap = new Map(users.map(([id2, u]) => [id2, u]));
 
+  const historyLen = doc.stepHistory.length;
+  const currentStepLabel =
+    doc.status === "CLOTURE"
+      ? null
+      : historyLen >= SUCCESSION_STEPS.length
+        ? null
+        : (SUCCESSION_STEPS[historyLen] ?? SUCCESSION_STEPS[historyLen - 1] ?? null);
+  const metier = successionStatutMetierFields({
+    status: doc.status,
+    decisionType: doc.decision?.type ?? null,
+    checklistComplet: doc.documentChecklist?.complet ?? false,
+    validationN1At: doc.validationN1At,
+    validationN2At: doc.validationN2At,
+    stepHistory: doc.stepHistory,
+    currentStepLabel,
+  });
+
   return NextResponse.json(
     {
       case: {
         id: doc._id,
         reference: doc.reference,
         status: doc.status,
+        ...metier,
         concessionnaire: {
           id: conc._id,
           codePdv: conc.codePdv,
@@ -143,6 +163,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
               }
             : null
           : null,
+        documentChecklist: doc.documentChecklist ?? null,
+        checklistComplet: doc.documentChecklist?.complet ?? false,
         createdAt: doc.createdAt.toISOString(),
         updatedAt: doc.updatedAt.toISOString(),
       },

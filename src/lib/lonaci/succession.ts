@@ -3,11 +3,29 @@ import { randomUUID } from "node:crypto";
 
 import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import {
+  buildSuccessionDocumentChecklist,
+  isSuccessionChecklistComplete,
+  parseSuccessionDocumentChecklist,
+  patchSuccessionDocumentChecklistStatuts,
+  successionChecklistWithActeDeces,
+} from "@/lib/lonaci/succession-document-checklist";
+import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
+import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import type { SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
+import { successionStatutMetierFields } from "@/lib/lonaci/succession-statut-metier";
+import type { SuccessionStatutMetier } from "@/lib/lonaci/succession-statut-metier";
+import { successionStaleAlertResetFields } from "@/lib/lonaci/succession-stale-alerts";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
+
+export {
+  countSuccessionStaleAlerts,
+  dispatchAutomaticSuccessionStaleAlerts,
+  listSuccessionStaleAlerts,
+} from "@/lib/lonaci/succession-stale-alerts";
 
 const COLLECTION = "succession_cases";
 const COUNTERS = "counters";
@@ -32,9 +50,32 @@ type InsertDossier = {
   deletedAt: null;
 };
 
-function mapRow(row: StoredSuccession): SuccessionCaseDocument {
+async function ensureRowDocumentChecklist(row: StoredSuccession): Promise<DossierDocumentChecklistPayload> {
+  const parsed = parseSuccessionDocumentChecklist(row.documentChecklist);
+  if (parsed?.entries.length) {
+    return successionChecklistWithActeDeces(parsed, Boolean(row.acteDeces));
+  }
+  const built = buildSuccessionDocumentChecklist({ acteDecesUploaded: Boolean(row.acteDeces) });
+  const db = await getDatabase();
+  await db.collection<StoredSuccession>(COLLECTION).updateOne(
+    { _id: row._id },
+    { $set: { documentChecklist: built, updatedAt: new Date(), ...successionStaleAlertResetFields() } },
+  );
+  return built;
+}
+
+export function successionChecklistProgress(checklist: DossierDocumentChecklistPayload | null | undefined) {
+  if (!checklist?.entries.length) {
+    return { complet: false, obligatoiresFournis: 0, obligatoiresTotal: 0 };
+  }
+  const statuts = Object.fromEntries(checklist.entries.map((e) => [e.itemId, e.statut]));
+  return computeChecklistProgress(checklist.entries, statuts);
+}
+
+function mapRow(row: StoredSuccession, documentChecklist: DossierDocumentChecklistPayload | null): SuccessionCaseDocument {
   return {
     ...row,
+    documentChecklist,
     _id: row._id.toHexString(),
     validationN1At: row.validationN1At ?? null,
     validationN1ByUserId: row.validationN1ByUserId ?? null,
@@ -122,6 +163,7 @@ export async function createSuccessionCase(input: CreateSuccessionInput): Promis
     ayantDroitLienParente: null,
     ayantDroitTelephone: null,
     ayantDroitEmail: null,
+    documentChecklist: buildSuccessionDocumentChecklist({ acteDecesUploaded: true }),
     documents: [],
     decision: null,
     validationN1At: null,
@@ -145,7 +187,7 @@ export async function createSuccessionCase(input: CreateSuccessionInput): Promis
 
   const result = await db.collection<InsertSuccession>(COLLECTION).insertOne(doc);
   const created = { ...doc, _id: result.insertedId };
-  const mapped = mapRow(created);
+  const mapped = mapRow(created, doc.documentChecklist ?? null);
 
   // À la déclaration: passage automatique du concessionnaire en DÉCÉDÉ (blocage opérations)
   const note = `DECES DECLARE: ${input.comment ?? ""}`.trim();
@@ -286,7 +328,16 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
   }
 
   if (nextKey === "VERIFICATION_JURIDIQUE") {
-    if (!row.documents.length) throw new Error("SUCCESSION_DOCUMENTS_REQUIRED");
+    const checklist = await ensureRowDocumentChecklist(row);
+    if (!isSuccessionChecklistComplete(checklist)) {
+      throw new Error("SUCCESSION_CHECKLIST_INCOMPLETE");
+    }
+    if (!row.validationN1At || !row.validationN2At) {
+      throw new Error("SUCCESSION_VALIDATION_N1_N2_REQUIRED");
+    }
+    if (input.actor.role !== "CHEF_SERVICE") {
+      throw new Error("VERIFICATION_JURIDIQUE_CHEF_SERVICE_ONLY");
+    }
   }
 
   if (nextKey === "DECISION") {
@@ -294,9 +345,6 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     if (!input.decisionType) throw new Error("DECISION_TYPE_REQUIRED");
     if (row.stepHistory.length !== SUCCESSION_STEPS.length - 1) {
       throw new Error("SUCCESSION_STEPS_INCOMPLETE");
-    }
-    if (!row.validationN1At || !row.validationN2At) {
-      throw new Error("SUCCESSION_VALIDATION_N1_N2_REQUIRED");
     }
   }
 
@@ -315,6 +363,7 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     stepHistory: newHistory,
     updatedAt: now,
     updatedByUserId: input.actor._id ?? "",
+    ...successionStaleAlertResetFields(),
   };
 
   if (nextKey === "IDENTIFICATION_AYANT_DROIT") {
@@ -370,7 +419,47 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     details: { step: nextKey },
   });
 
-  return mapRow(updated);
+  const checklist = await ensureRowDocumentChecklist(updated);
+  return mapRow(updated, checklist);
+}
+
+export async function patchSuccessionDocumentChecklist(input: {
+  caseId: string;
+  entries: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
+  actor: UserDocument;
+}): Promise<SuccessionCaseDocument> {
+  if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
+  const db = await getDatabase();
+  const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
+    _id: new ObjectId(input.caseId),
+    deletedAt: null,
+  });
+  if (!row) throw new Error("CASE_NOT_FOUND");
+  if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
+
+  const conc = await findConcessionnaireById(row.concessionnaireId);
+  if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+
+  const current = await ensureRowDocumentChecklist(row);
+  let next = patchSuccessionDocumentChecklistStatuts(current, input.entries);
+  next = successionChecklistWithActeDeces(next, Boolean(row.acteDeces));
+
+  const now = new Date();
+  await db.collection<StoredSuccession>(COLLECTION).updateOne(
+    { _id: row._id },
+    {
+      $set: {
+        documentChecklist: next,
+        updatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+        ...successionStaleAlertResetFields(),
+      },
+    },
+  );
+  const updated = await db.collection<StoredSuccession>(COLLECTION).findOne({ _id: row._id });
+  if (!updated) throw new Error("CASE_NOT_FOUND");
+  return mapRow(updated, next);
 }
 
 export async function recordSuccessionValidationN1(input: { caseId: string; actor: UserDocument }) {
@@ -383,7 +472,12 @@ export async function recordSuccessionValidationN1(input: { caseId: string; acto
   });
   if (!row) throw new Error("CASE_NOT_FOUND");
   if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
+  if (row.stepHistory.length < 2) throw new Error("SUCCESSION_STEP_ORDER");
   if (row.validationN1At) throw new Error("SUCCESSION_VALIDATION_ALREADY_DONE");
+  const checklistN1 = await ensureRowDocumentChecklist(row);
+  if (!isSuccessionChecklistComplete(checklistN1)) {
+    throw new Error("SUCCESSION_CHECKLIST_INCOMPLETE");
+  }
   const conc = await findConcessionnaireById(row.concessionnaireId);
   if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
   if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
@@ -396,12 +490,14 @@ export async function recordSuccessionValidationN1(input: { caseId: string; acto
         validationN1ByUserId: input.actor._id ?? "",
         updatedAt: now,
         updatedByUserId: input.actor._id ?? "",
+        ...successionStaleAlertResetFields(),
       },
     },
   );
   const updated = await db.collection<StoredSuccession>(COLLECTION).findOne({ _id: row._id });
   if (!updated) throw new Error("CASE_NOT_FOUND");
-  return mapRow(updated);
+  const checklist = await ensureRowDocumentChecklist(updated);
+  return mapRow(updated, checklist);
 }
 
 export async function recordSuccessionValidationN2(input: { caseId: string; actor: UserDocument }) {
@@ -428,12 +524,14 @@ export async function recordSuccessionValidationN2(input: { caseId: string; acto
         validationN2ByUserId: input.actor._id ?? "",
         updatedAt: now,
         updatedByUserId: input.actor._id ?? "",
+        ...successionStaleAlertResetFields(),
       },
     },
   );
   const updated = await db.collection<StoredSuccession>(COLLECTION).findOne({ _id: row._id });
   if (!updated) throw new Error("CASE_NOT_FOUND");
-  return mapRow(updated);
+  const checklist = await ensureRowDocumentChecklist(updated);
+  return mapRow(updated, checklist);
 }
 
 export async function addSuccessionDocument(input: {
@@ -458,7 +556,10 @@ export async function addSuccessionDocument(input: {
   };
   const r = await db.collection<StoredSuccession>(COLLECTION).updateOne(
     { _id: new ObjectId(input.caseId), deletedAt: null },
-    { $push: { documents: doc }, $set: { updatedAt: now, updatedByUserId: input.actorId } },
+    {
+      $push: { documents: doc },
+      $set: { updatedAt: now, updatedByUserId: input.actorId, ...successionStaleAlertResetFields() },
+    },
   );
   if (r.matchedCount === 0) throw new Error("CASE_NOT_FOUND");
   return doc.id;
@@ -471,7 +572,9 @@ export async function findSuccessionCaseById(id: string): Promise<SuccessionCase
     _id: new ObjectId(id),
     deletedAt: null,
   });
-  return row ? mapRow(row) : null;
+  if (!row) return null;
+  const checklist = await ensureRowDocumentChecklist(row);
+  return mapRow(row, checklist);
 }
 
 export async function listSuccessionCases(
@@ -482,6 +585,7 @@ export async function listSuccessionCases(
   filters?: {
     concessionnaireId?: string;
     decisionType?: "TRANSFERT" | "RESILIATION";
+    statutMetier?: SuccessionStatutMetier;
     dateFrom?: Date;
     dateTo?: Date;
   },
@@ -503,13 +607,31 @@ export async function listSuccessionCases(
     col.countDocuments(filter),
     col.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize).toArray(),
   ]);
-  return {
-    items: rows.map((r) => ({
+  const itemsRaw = await Promise.all(
+    rows.map(async (r) => {
+      const checklist = await ensureRowDocumentChecklist(r);
+      const currentStepLabel =
+        r.status === "CLOTURE"
+          ? null
+          : (nextStepKey(r.stepHistory.length) ?? SUCCESSION_STEPS[r.stepHistory.length - 1]);
+      const metier = successionStatutMetierFields({
+        status: r.status,
+        decisionType: r.decision?.type ?? null,
+        checklistComplet: checklist.complet,
+        validationN1At: r.validationN1At,
+        validationN2At: r.validationN2At,
+        stepHistory: r.stepHistory,
+        currentStepLabel,
+      });
+      return {
       id: r._id.toHexString(),
       reference: r.reference,
       concessionnaireId: r.concessionnaireId,
       agenceId: r.agenceId,
       status: r.status,
+      ...metier,
+      documentChecklist: checklist,
+      checklistComplet: checklist.complet,
       dateDeces: r.dateDeces ? r.dateDeces.toISOString() : null,
       ayantDroitNom: r.ayantDroitNom,
       ayantDroitTelephone: r.ayantDroitTelephone,
@@ -520,10 +642,7 @@ export async function listSuccessionCases(
         ...s,
         completedAt: s.completedAt.toISOString(),
       })),
-      currentStepLabel:
-        r.status === "CLOTURE"
-          ? null
-          : (nextStepKey(r.stepHistory.length) ?? SUCCESSION_STEPS[r.stepHistory.length - 1]),
+      currentStepLabel,
       stepsCompleted: r.stepHistory.length,
       stepsTotal: SUCCESSION_STEPS.length,
       validationN1At: r.validationN1At ? r.validationN1At.toISOString() : null,
@@ -532,39 +651,19 @@ export async function listSuccessionCases(
       validationN2ByUserId: r.validationN2ByUserId ?? null,
       createdAt: r.createdAt.toISOString(),
       updatedAt: r.updatedAt.toISOString(),
-    })),
-    total,
+    };
+    }),
+  );
+
+  const items = filters?.statutMetier
+    ? itemsRaw.filter((row) => row.statutMetier === filters.statutMetier)
+    : itemsRaw;
+
+  return {
+    items,
+    total: filters?.statutMetier ? items.length : total,
     page,
     pageSize,
   };
 }
 
-export async function listSuccessionStaleAlerts(agenceId?: string | null) {
-  const db = await getDatabase();
-  const thresholdDays = 30;
-  const threshold = new Date(Date.now() - thresholdDays * 24 * 60 * 60 * 1000);
-  const filter: Record<string, unknown> = {
-    status: "OUVERT",
-    deletedAt: null,
-    updatedAt: { $lte: threshold },
-  };
-  if (agenceId?.trim()) {
-    filter.agenceId = agenceId.trim();
-  }
-  const rows = await db
-    .collection<StoredSuccession>(COLLECTION)
-    .find(filter)
-    .sort({ updatedAt: 1 })
-    .limit(200)
-    .toArray();
-
-  return rows.map((r) => ({
-    id: r._id.toHexString(),
-    reference: r.reference,
-    concessionnaireId: r.concessionnaireId,
-    updatedAt: r.updatedAt.toISOString(),
-    daysInactive: Math.floor((Date.now() - r.updatedAt.getTime()) / (24 * 60 * 60 * 1000)),
-    stepsCompleted: r.stepHistory.length,
-    nextStep: nextStepKey(r.stepHistory.length),
-  }));
-}

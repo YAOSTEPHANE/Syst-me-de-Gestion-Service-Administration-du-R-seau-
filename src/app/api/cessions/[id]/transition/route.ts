@@ -47,6 +47,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (msg === "CESSION_NOT_FOUND") return NextResponse.json({ message: "Cession introuvable" }, { status: 404 });
     if (msg === "FORBIDDEN_TRANSITION") return NextResponse.json({ message: "Transition interdite pour votre rôle" }, { status: 403 });
     if (msg === "INVALID_TRANSITION") return NextResponse.json({ message: "Transition invalide" }, { status: 400 });
+    if (msg === "CHECKLIST_INCOMPLETE") {
+      return NextResponse.json(
+        { message: "Checklist documents incomplète — toutes les pièces obligatoires doivent être marquées « Fourni »." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ message: msg }, { status: 400 });
   }
 }

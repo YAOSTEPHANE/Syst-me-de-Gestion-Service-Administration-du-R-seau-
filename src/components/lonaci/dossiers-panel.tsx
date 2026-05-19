@@ -1,12 +1,20 @@
 "use client";
 
 import DossierContratActualisationForm from "@/components/lonaci/dossier-contrat-actualisation-form";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
-import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
+import {
+  userMayPatchDossierPayload,
+  userMayPerformDossierTransition,
+} from "@/lib/auth/dossier-transition-rbac";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+import {
+  contratStatutMetierBadgeClass,
+  type ContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DossierStatus =
@@ -60,6 +68,19 @@ interface DossierItem {
   type: string;
   concessionnaireId: string;
   updatedAt: string;
+  hasDocumentChecklist?: boolean;
+  checklistComplet?: boolean | null;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
+}
+
+function dossierSubmitBlockedByChecklist(item: DossierItem): boolean {
+  return (
+    item.type === "CONTRAT_ACTUALISATION" &&
+    item.hasDocumentChecklist === true &&
+    item.checklistComplet === false
+  );
 }
 
 interface DossierListResponse {
@@ -80,6 +101,9 @@ interface DossierDetailItem {
   history: Array<{ status: DossierStatus; actedByUserId: string; actedAt: string; comment: string | null }>;
   createdAt: string;
   updatedAt: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
 }
 
 type SortField = "updatedAt" | "reference" | "status";
@@ -286,6 +310,15 @@ export default function DossiersPanel() {
   }
 
   async function transition(id: string, action: TransitionAction, comment?: string | null) {
+    if (action === "SUBMIT") {
+      const row = items.find((i) => i.id === id);
+      if (row && dossierSubmitBlockedByChecklist(row)) {
+        const msg = friendlyErrorMessage("DOSSIER_CHECKLIST_INCOMPLETE");
+        setError(msg);
+        setToast({ type: "error", message: msg });
+        return false;
+      }
+    }
     const message = confirmMessage(action);
     if (message && !window.confirm(message)) {
       return;
@@ -722,7 +755,11 @@ export default function DossiersPanel() {
       <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
-          <h2 className="mt-1 text-2xl font-semibold text-slate-900">Dossiers workflow</h2>
+          <h2 className="mt-1 text-2xl font-semibold text-slate-900">Gestion des contrats — dossiers</h2>
+          <p className="mt-1 max-w-3xl text-xs text-slate-600">
+            Checklist documents par produit, décharges provisoire et définitive, génération du contrat puis circuit
+            de validation en 4 niveaux ; à la finalisation par le Chef de Service, le concessionnaire devient actif.
+          </p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
           <input
@@ -1110,6 +1147,8 @@ export default function DossiersPanel() {
                 </th>
                 <th className="px-3 py-2.5">Référence</th>
                 <th className="px-3 py-2.5">Statut</th>
+                <th className="px-3 py-2.5">Statut contrat</th>
+                <th className="px-3 py-2.5">Checklist</th>
                 <th className="px-3 py-2.5">Type</th>
                 <th className="px-3 py-2.5">Concessionnaire</th>
                 <th className="px-3 py-2.5">MAJ</th>
@@ -1137,12 +1176,41 @@ export default function DossiersPanel() {
                     />
                   </td>
                   <td className="px-3 py-2.5 font-mono text-xs" id={`dossier-${item.id}`}>
-                    {item.reference}
+                    <button
+                      type="button"
+                      onClick={() => void openDetail(item.id)}
+                      className="text-left text-cyan-700 hover:text-cyan-900 hover:underline"
+                    >
+                      {item.reference}
+                    </button>
                   </td>
                   <td className="px-3 py-2.5">
                     <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeClass(item.status)}`}>
                       {statusLabel(item.status)}
                     </span>
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {item.type === "CONTRAT_ACTUALISATION" && item.statutMetier ? (
+                      <span
+                        title={item.statutMetierDescription ?? ""}
+                        className={`inline-flex max-w-[10rem] rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight ${contratStatutMetierBadgeClass(item.statutMetier)}`}
+                      >
+                        {item.statutMetierLabel ?? item.statutMetier}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2.5">
+                    {item.hasDocumentChecklist ? (
+                      <DossierCompletIndicator
+                        complet={item.checklistComplet === true}
+                        size="sm"
+                        live={detailOpen && highlightedDossierId === item.id}
+                      />
+                    ) : (
+                      <span className="text-xs text-slate-400">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2.5">{item.type}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">
@@ -1159,11 +1227,19 @@ export default function DossiersPanel() {
                       {actionsForStatus(item.status)
                         .filter((action) => userMayPerformDossierTransition(meRole, action))
                         .filter((action) => !hideN1N2ForAdmin(meRole, action))
-                        .map((action) => (
+                        .map((action) => {
+                          const submitBlocked =
+                            action === "SUBMIT" && dossierSubmitBlockedByChecklist(item);
+                          return (
                           <button
                             key={action}
                             type="button"
-                            disabled={actionBusyId === item.id}
+                            disabled={actionBusyId === item.id || submitBlocked}
+                            title={
+                              submitBlocked
+                                ? "Checklist documents incomplète — marquez tous les documents obligatoires comme Fourni"
+                                : undefined
+                            }
                             onClick={() => {
                               if (action === "REJECT" || action === "RETURN_PREVIOUS") {
                                 openDecision(item.id, action);
@@ -1175,7 +1251,8 @@ export default function DossiersPanel() {
                           >
                             {actionLabel(action)}
                           </button>
-                        ))}
+                          );
+                        })}
                       {actionsForStatus(item.status)
                         .filter((a) => userMayPerformDossierTransition(meRole, a))
                         .filter((a) => !hideN1N2ForAdmin(meRole, a)).length === 0 ? (
@@ -1349,33 +1426,6 @@ export default function DossiersPanel() {
                     <p className="text-xs text-slate-700"><span className="font-semibold">Mis à jour:</span> {new Date(detailItem.updatedAt).toLocaleString("fr-FR")}</p>
                   </div>
                   {detailItem.type === "CONTRAT_ACTUALISATION" &&
-                  detailItem.status !== "BROUILLON" &&
-                  detailItem.status !== "REJETE" ? (
-                    <DossierDocumentChecklistBlock
-                      dossierId={detailItem.id}
-                      payload={(detailItem.payload ?? {}) as Record<string, unknown>}
-                      editable={false}
-                      onUpdated={(patch) =>
-                        setDetailItem((prev) =>
-                          prev
-                            ? {
-                                ...prev,
-                                payload: patch.payload,
-                                status: (patch.status as DossierStatus) ?? prev.status,
-                                updatedAt: patch.updatedAt ?? prev.updatedAt,
-                              }
-                            : prev,
-                        )
-                      }
-                    />
-                  ) : null}
-                  <div className="rounded-xl border border-slate-200 bg-white p-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">Payload</p>
-                    <pre className="max-h-48 overflow-auto rounded-lg border border-slate-200 bg-slate-50 p-2 text-[11px] text-slate-700">
-                      {JSON.stringify(detailItem.payload ?? {}, null, 2)}
-                    </pre>
-                  </div>
-                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
                   (detailItem.status === "BROUILLON" || detailItem.status === "REJETE") ? (
                     <DossierContratActualisationForm
                       dossier={detailItem}
@@ -1392,8 +1442,41 @@ export default function DossiersPanel() {
                           history: d.history as DossierDetailItem["history"],
                           createdAt: d.createdAt,
                           updatedAt: d.updatedAt,
+                          statutMetier: d.statutMetier,
+                          statutMetierLabel: d.statutMetierLabel,
+                          statutMetierDescription: d.statutMetierDescription,
                         });
                         setToast({ type: "success", message: "Dossier actualisé." });
+                        void load();
+                      }}
+                    />
+                  ) : null}
+                  {detailItem.type === "CONTRAT_ACTUALISATION" &&
+                  detailItem.status !== "BROUILLON" &&
+                  detailItem.status !== "REJETE" ? (
+                    <DossierDocumentChecklistBlock
+                      dossierId={detailItem.id}
+                      payload={(detailItem.payload ?? {}) as Record<string, unknown>}
+                      editable={false}
+                      canGenererContrat={userMayPatchDossierPayload(meRole)}
+                      statutMetier={detailItem.statutMetier}
+                      statutMetierLabel={detailItem.statutMetierLabel}
+                      statutMetierDescription={detailItem.statutMetierDescription}
+                      onUpdated={(patch) => {
+                        setDetailItem((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                payload: patch.payload,
+                                status: (patch.status ?? prev.status) as DossierStatus,
+                                updatedAt: patch.updatedAt ?? prev.updatedAt,
+                                statutMetier: patch.statutMetier ?? prev.statutMetier,
+                                statutMetierLabel: patch.statutMetierLabel ?? prev.statutMetierLabel,
+                                statutMetierDescription:
+                                  patch.statutMetierDescription ?? prev.statutMetierDescription,
+                              }
+                            : prev,
+                        );
                         void load();
                       }}
                     />

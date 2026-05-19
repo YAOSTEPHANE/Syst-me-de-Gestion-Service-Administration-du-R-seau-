@@ -1,4 +1,9 @@
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
+import { BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
+import {
+  emptyBancarisationStatutCounts,
+  incrementBancarisationStatutCount,
+} from "@/lib/lonaci/bancarisation-statut";
 import { getDatabase } from "@/lib/mongodb";
 
 export interface ActivityDay {
@@ -294,15 +299,15 @@ export async function getBancarisationSnapshot(agenceId?: string | null): Promis
     ])
     .toArray();
 
-  let nonBancarise = 0;
-  let enCours = 0;
-  let bancarise = 0;
+  const counts = emptyBancarisationStatutCounts();
   for (const row of rows) {
-    if (row._id === "NON_BANCARISE") nonBancarise = row.c;
-    if (row._id === "EN_COURS") enCours = row.c;
-    if (row._id === "BANCARISE") bancarise = row.c;
+    incrementBancarisationStatutCount(counts, row._id, null);
   }
-  const total = nonBancarise + enCours + bancarise;
+  const nonBancarise = counts.NON_BANCARISE;
+  const enCours =
+    counts.EN_ATTENTE_RIB + counts.RIB_FOURNI + counts.RIB_VALIDE;
+  const bancarise = counts.BANCARISE;
+  const total = BANCARISATION_STATUTS.reduce((s, k) => s + counts[k], 0);
   const tauxBancarisation = total > 0 ? Math.round((bancarise / total) * 100) : 0;
 
   return { nonBancarise, enCours, bancarise, total, tauxBancarisation };

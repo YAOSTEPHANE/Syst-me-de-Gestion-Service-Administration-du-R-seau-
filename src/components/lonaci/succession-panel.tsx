@@ -3,7 +3,20 @@
 import ConcessionnaireSearchPicker, {
   type ConcessionnairePickerRow,
 } from "@/components/lonaci/concessionnaire-search-picker";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import SuccessionChecklistBlock from "@/components/lonaci/succession-checklist-block";
+import SuccessionWorkflowStepper from "@/components/lonaci/succession-workflow-stepper";
+import {
+  SUCCESSION_CHECKLIST_SPEC_101,
+  successionChecklistProgress,
+} from "@/lib/lonaci/succession-document-checklist";
 import { getLonaciRoleLabel, SUCCESSION_STEP_LABELS } from "@/lib/lonaci/constants";
+import {
+  SUCCESSION_STATUTS_SPEC_103,
+  successionStatutMetierBadgeClass,
+  type SuccessionStatutMetier,
+} from "@/lib/lonaci/succession-statut-metier";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useState } from "react";
@@ -21,6 +34,11 @@ interface CaseRow {
   stepHistory: { step: string; completedAt: string; comment: string | null }[];
   validationN1At?: string | null;
   validationN2At?: string | null;
+  checklistComplet?: boolean;
+  documentChecklist?: DossierDocumentChecklistPayload | null;
+  statutMetier: SuccessionStatutMetier;
+  statutMetierLabel: string;
+  statutMetierDescription: string;
 }
 
 interface StaleRow {
@@ -28,7 +46,9 @@ interface StaleRow {
   reference: string;
   concessionnaireId: string;
   daysInactive: number;
+  daysSinceDeclaration?: number;
   nextStep: string | null;
+  thresholdDays?: number;
 }
 
 interface CaseDetailResponse {
@@ -70,6 +90,11 @@ interface CaseDetailResponse {
     validationN1ByUser: { prenom: string; nom: string; role: string } | null;
     validationN2At: string | null;
     validationN2ByUser: { prenom: string; nom: string; role: string } | null;
+    documentChecklist: DossierDocumentChecklistPayload | null;
+    checklistComplet: boolean;
+    statutMetier: SuccessionStatutMetier;
+    statutMetierLabel: string;
+    statutMetierDescription: string;
   };
 }
 
@@ -84,11 +109,19 @@ function friendlySuccessionError(raw: string): string {
     case "ACTE_DECES_REQUIRED":
       return "Acte de décès obligatoire pour ouvrir le dossier.";
     case "SUCCESSION_VALIDATION_N1_N2_REQUIRED":
-      return "Les validations N1 (chef de section) et N2 (assistant CDS) sont obligatoires avant la décision finale.";
+      return "Validations N1 et N2 obligatoires avant la vérification juridique OHADA (étape 20).";
+    case "VERIFICATION_JURIDIQUE_CHEF_SERVICE_ONLY":
+      return "Seul le chef de service peut valider l’étape 20 (vérification juridique OHADA).";
+    case "DECISION_CHEF_SERVICE_ONLY":
+      return "Seul le chef de service peut enregistrer la décision finale (étape 21).";
+    case "SUCCESSION_STEP_ORDER":
+      return "La validation N1 n’est possible qu’après l’identification de l’ayant droit (étape 18).";
     case "SUCCESSION_VALIDATION_N1_REQUIRED":
       return "La validation N1 (chef de section) est obligatoire avant la validation N2.";
     case "SUCCESSION_VALIDATION_ALREADY_DONE":
       return "Cette validation a déjà été enregistrée.";
+    case "SUCCESSION_CHECKLIST_INCOMPLETE":
+      return "Checklist §10.1 incomplète : marquez toutes les pièces obligatoires comme fournies.";
     default:
       return raw;
   }
@@ -128,7 +161,13 @@ export default function SuccessionPanel() {
   const [selectedCaseId, setSelectedCaseId] = useState("");
   const [detail, setDetail] = useState<CaseDetailResponse["case"] | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailChecklistLive, setDetailChecklistLive] = useState<{
+    complet: boolean;
+    obligatoiresFournis: number;
+    obligatoiresTotal: number;
+  } | null>(null);
   const [fStatus, setFStatus] = useState<"" | "OUVERT" | "CLOTURE">("");
+  const [fStatutMetier, setFStatutMetier] = useState<"" | SuccessionStatutMetier>("");
   const [fFilterPdv, setFFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
   const [fDecisionType, setFDecisionType] = useState<"" | "TRANSFERT" | "RESILIATION">("");
   const [fDateFrom, setFDateFrom] = useState("");
@@ -158,6 +197,7 @@ export default function SuccessionPanel() {
     try {
       const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
       if (fStatus) params.set("status", fStatus);
+      if (fStatutMetier) params.set("statutMetier", fStatutMetier);
       if (fFilterPdv?.id) params.set("concessionnaireId", fFilterPdv.id);
       if (fDecisionType) params.set("decisionType", fDecisionType);
       if (fDateFrom) params.set("dateFrom", new Date(fDateFrom).toISOString());
@@ -211,6 +251,11 @@ export default function SuccessionPanel() {
         }
         const payload = (await res.json()) as CaseDetailResponse;
         setDetail(payload.case);
+        if (payload.case.documentChecklist?.entries.length) {
+          setDetailChecklistLive(successionChecklistProgress(payload.case.documentChecklist));
+        } else {
+          setDetailChecklistLive(null);
+        }
       } catch (e) {
         setDetail(null);
         const message = friendlySuccessionError(e instanceof Error ? e.message : "Erreur");
@@ -225,7 +270,7 @@ export default function SuccessionPanel() {
   useEffect(() => {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fFilterPdv?.id, fDecisionType, fDateFrom, fDateTo]);
+  }, [fStatus, fStatutMetier, fFilterPdv?.id, fDecisionType, fDateFrom, fDateTo]);
 
   useEffect(() => {
     void (async () => {
@@ -298,6 +343,56 @@ export default function SuccessionPanel() {
   const visibleItems = staleOnlyActive
     ? items.filter((row) => stale.some((s) => s.id === row.id))
     : items;
+  const staleIds = new Set(stale.map((s) => s.id));
+  const staleThresholdDays = stale[0]?.thresholdDays ?? 30;
+
+  function rowChecklistProgress(row: CaseRow) {
+    if (selectedCaseId === row.id && detailChecklistLive) return detailChecklistLive;
+    if (row.documentChecklist?.entries.length) return successionChecklistProgress(row.documentChecklist);
+    return {
+      complet: row.checklistComplet ?? false,
+      obligatoiresFournis: 0,
+      obligatoiresTotal: 0,
+    };
+  }
+
+  const selectedRow = visibleItems.find((r) => r.id === selectedCaseId) ?? null;
+  const selectedRowProgress = selectedRow ? rowChecklistProgress(selectedRow) : null;
+
+  function advanceBlockReason(row: CaseRow): string | undefined {
+    const progress = rowChecklistProgress(row);
+    const step = row.currentStepLabel;
+    if (step === "DECISION") {
+      if (meRole !== "CHEF_SERVICE") {
+        return "Seul le chef de service peut enregistrer la décision finale (étape 21).";
+      }
+      if (!decisionType) {
+        return "Choisissez Transfert ou Résiliation dans le bloc « Avancer une étape ».";
+      }
+      return undefined;
+    }
+    if (step === "VERIFICATION_JURIDIQUE") {
+      if (!progress.complet) {
+        return "Checklist §10.1 incomplète : toutes les pièces obligatoires doivent être « Fourni ».";
+      }
+      if (!row.validationN1At || !row.validationN2At) {
+        return "Validations N1 et N2 requises avant la vérification juridique OHADA (étape 20).";
+      }
+      if (meRole !== "CHEF_SERVICE") {
+        return "Seul le chef de service peut valider la vérification juridique OHADA (étape 20).";
+      }
+      return undefined;
+    }
+    if (step === "PIECES_JUSTIFICATIVES") {
+      if (!progress.complet) {
+        return "Complétez la checklist §10.1 (étape 19) avant la vérification juridique OHADA.";
+      }
+      if (!row.validationN1At || !row.validationN2At) {
+        return "Enregistrez les validations N1 (chef de section) et N2 (assistant CDS).";
+      }
+    }
+    return undefined;
+  }
 
   function resetSuccessionCreateForm() {
     setCreateFormPdv(null);
@@ -484,7 +579,9 @@ export default function SuccessionPanel() {
         <div>
           <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
           <h2 className="text-2xl font-semibold tracking-tight text-slate-900">Décès et ayants droit</h2>
-          <p className="mt-1 text-sm text-slate-600">Workflow guidé en 5 étapes avec traçabilité et contrôles de validation.</p>
+          <p className="mt-1 text-sm text-slate-600">
+            Workflow §10.2 (étapes 17 à 21) — checklist §10.1 à l&apos;étape 19, conformité OHADA à l&apos;étape 20.
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -503,14 +600,87 @@ export default function SuccessionPanel() {
           </button>
         </div>
       </div>
+      <div className={`${cardClass} mb-5`}>
+        <h3 className="text-sm font-semibold text-violet-900">10.1 — Checklist de documents à fournir</h3>
+        <ul className="mt-2 grid gap-1 text-xs text-slate-700 sm:grid-cols-2">
+          {SUCCESSION_CHECKLIST_SPEC_101.map((row) => (
+            <li key={row.itemId} className="rounded-lg border border-violet-100 bg-violet-50/50 px-2 py-1">
+              {row.libelle}
+              {row.obligatoire ? <span className="text-rose-600"> *</span> : null}
+            </li>
+          ))}
+        </ul>
+        <p className="mt-2 text-[11px] text-slate-600">
+          Indicateur <span className="font-semibold">DOSSIER COMPLET / INCOMPLET</span> mis à jour en temps réel
+          à l&apos;étape 19 (vérification documentaire).
+        </p>
+      </div>
+
+      <div className={`${cardClass} mb-5`}>
+        <h3 className="text-sm font-semibold text-slate-900">10.2 — Workflow en 5 étapes</h3>
+        {selectedRow ? (
+          <SuccessionWorkflowStepper
+            className="mt-3"
+            stepsCompleted={selectedRow.stepsCompleted}
+            currentStepLabel={selectedRow.currentStepLabel}
+            status={selectedRow.status}
+          />
+        ) : (
+          <p className="mt-2 text-xs text-slate-600">
+            Sélectionnez un dossier dans la liste ou la fiche détaillée pour afficher la progression (17 → 21).
+          </p>
+        )}
+      </div>
+
+      <div className={`${cardClass} mb-5`}>
+        <h3 className="text-sm font-semibold text-indigo-900">10.3 — Statuts</h3>
+        <div className="mt-2 overflow-x-auto">
+          <table className="min-w-full text-left text-xs text-slate-700">
+            <thead>
+              <tr className="border-b border-indigo-100 text-indigo-900">
+                <th className="py-1.5 pr-3 font-semibold">Statut</th>
+                <th className="py-1.5 font-semibold">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SUCCESSION_STATUTS_SPEC_103.map((row) => (
+                <tr key={row.statut} className="border-b border-slate-100 last:border-0">
+                  <td className="py-1.5 pr-3">
+                    <span
+                      className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase ${successionStatutMetierBadgeClass(row.statut)}`}
+                    >
+                      {row.libelle}
+                    </span>
+                  </td>
+                  <td className="py-1.5">{row.description}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
       <div className={`${cardClass} relative mb-5 grid gap-2 md:grid-cols-6`}>
         <select
-          aria-label="Filtrer par statut"
+          aria-label="Filtrer par statut métier §10.3"
+          value={fStatutMetier}
+          onChange={(e) => setFStatutMetier(e.target.value as "" | SuccessionStatutMetier)}
+          className={subtleFieldClass}
+        >
+          <option value="">Tous statuts §10.3</option>
+          {SUCCESSION_STATUTS_SPEC_103.map((row) => (
+            <option key={row.statut} value={row.statut}>
+              {row.libelle}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Filtrer par statut technique"
           value={fStatus}
           onChange={(e) => setFStatus(e.target.value as "" | "OUVERT" | "CLOTURE")}
           className={subtleFieldClass}
         >
-          <option value="">Tous statuts</option>
+          <option value="">Tous (ouvert / clos)</option>
           <option value="OUVERT">OUVERT</option>
           <option value="CLOTURE">CLOTURE</option>
         </select>
@@ -583,12 +753,36 @@ export default function SuccessionPanel() {
       </div>
 
       {stale.length ? (
-        <div className="mb-5 rounded-2xl border border-amber-200 bg-linear-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
-          <p className="font-semibold">Alerte 30 jours sans action ({stale.length})</p>
+        <div
+          className="mb-5 rounded-2xl border border-amber-200 bg-linear-to-r from-amber-50 to-orange-50 px-4 py-3 text-sm text-amber-900 shadow-sm"
+          role="alert"
+        >
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <p className="font-semibold">
+              Alerte automatique — aucune action depuis {staleThresholdDays} j. après déclaration ({stale.length})
+            </p>
+            <Link
+              href="/succession?status=OUVERT&staleOnly=1"
+              className="rounded-lg border border-amber-400 bg-white px-2.5 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-50"
+            >
+              Voir tous
+            </Link>
+          </div>
+          <p className="mt-1 text-xs text-amber-800">
+            Notification in-app envoyée aux chefs de section, assistants CDS et chefs de service (cron journalier).
+          </p>
           <ul className="mt-2 list-inside list-disc text-xs text-amber-800">
             {stale.slice(0, 8).map((s) => (
               <li key={s.id}>
-                {s.reference} — {s.daysInactive} j. — prochaine:{" "}
+                <button
+                  type="button"
+                  className="text-left underline hover:text-amber-950"
+                  onClick={() => setSelectedCaseId(s.id)}
+                >
+                  {s.reference}
+                </button>{" "}
+                — inactif {s.daysInactive} j.
+                {s.daysSinceDeclaration != null ? ` · déclaré il y a ${s.daysSinceDeclaration} j.` : ""} — prochaine :{" "}
                 {s.nextStep ? (SUCCESSION_STEP_LABELS[s.nextStep as keyof typeof SUCCESSION_STEP_LABELS] ?? s.nextStep) : "—"}
               </li>
             ))}
@@ -736,11 +930,34 @@ export default function SuccessionPanel() {
       ) : null}
 
       <div className={`${cardClass} mb-5`}>
-        <h3 className="text-sm font-semibold text-slate-900">Avancer une étape</h3>
+        <h3 className="text-sm font-semibold text-slate-900">Avancer une étape (§10.2)</h3>
         <p className="mt-1 text-xs text-slate-600">
-          Renseignez l’ayant droit uniquement avant l’étape « Identification ayant droit ». Dernière étape : Chef(fe)
-          de service uniquement (avec décision obligatoire transfert/résiliation).
+          Étape 18 : renseignez l&apos;ayant droit. Étape 19 : checklist §10.1 + validations N1/N2. Étape 20 :
+          chef de service (OHADA). Étape 21 : décision transfert ou résiliation (chef de service).
         </p>
+        {selectedRow && selectedRow.status === "OUVERT" && selectedRowProgress ? (
+          <div className="mt-3">
+            <DossierCompletIndicator
+              complet={selectedRowProgress.complet}
+              size="banner"
+              live={selectedCaseId === selectedRow.id}
+              obligatoiresFournis={selectedRowProgress.obligatoiresFournis}
+              obligatoiresTotal={selectedRowProgress.obligatoiresTotal}
+            />
+            {selectedRow.currentStepLabel === "PIECES_JUSTIFICATIVES" && !selectedRowProgress.complet ? (
+              <p className="mt-2 text-[11px] font-medium text-amber-800">
+                Complétez la checklist §10.1 (étape 19) avant la vérification juridique OHADA.
+              </p>
+            ) : null}
+            {selectedRow.currentStepLabel === "PIECES_JUSTIFICATIVES" &&
+            selectedRowProgress.complet &&
+            (!selectedRow.validationN1At || !selectedRow.validationN2At) ? (
+              <p className="mt-2 text-[11px] font-medium text-amber-800">
+                Enregistrez les validations N1 et N2 dans la fiche détaillée (étape 19).
+              </p>
+            ) : null}
+          </div>
+        ) : null}
         <textarea
           value={advComment}
           onChange={(e) => setAdvComment(e.target.value)}
@@ -794,9 +1011,9 @@ export default function SuccessionPanel() {
       </div>
 
       <form onSubmit={uploadDocument} className={`${cardClass} mb-5`}>
-        <h3 className="text-sm font-semibold text-slate-900">Étape 3 — Documents collectés</h3>
+        <h3 className="text-sm font-semibold text-slate-900">19. Vérification documentaire — pièces complémentaires</h3>
         <p className="mt-1 text-xs text-slate-600">
-          Ajouter au moins un document de succession avant la vérification juridique.
+          Complétez la checklist §10.1 dans la fiche détaillée, enregistrez N1/N2, puis joignez les scans ci-dessous.
         </p>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           <select
@@ -835,7 +1052,7 @@ export default function SuccessionPanel() {
 
       <div className={`${cardClass} mb-5`}>
         <h3 className="text-sm font-semibold text-slate-900">Fiche détaillée par dossier</h3>
-        <p className="mt-1 text-xs text-slate-600">Timeline complète des 5 étapes, acteurs et documents.</p>
+        <p className="mt-1 text-xs text-slate-600">Workflow §10.2, checklist, validations N1/N2 et documents.</p>
         <div className="mt-2">
           <select
             value={selectedCaseId}
@@ -854,12 +1071,32 @@ export default function SuccessionPanel() {
         {detailLoading ? <p className="mt-3 text-xs text-slate-500">Chargement de la fiche...</p> : null}
         {detail ? (
           <div className="mt-3 space-y-3 text-xs text-slate-800">
+            <SuccessionWorkflowStepper
+              stepsCompleted={detail.stepHistory.length}
+              currentStepLabel={
+                detail.status === "CLOTURE"
+                  ? null
+                  : (items.find((r) => r.id === detail.id)?.currentStepLabel ?? null)
+              }
+              status={detail.status}
+            />
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold">
                 {detail.reference} — {detail.concessionnaire.codePdv} · {detail.concessionnaire.nomComplet}
               </p>
-              <p className="text-slate-600">
-                Dossier: {detail.status} · Concessionnaire: {detail.concessionnaire.statut} · Décès:{" "}
+              <p className="mt-2">
+                <span
+                  title={detail.statutMetierDescription}
+                  className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-bold uppercase ${successionStatutMetierBadgeClass(detail.statutMetier)}`}
+                >
+                  {detail.statutMetierLabel}
+                </span>
+              </p>
+              <p className="mt-1 text-slate-600">
+                {detail.statutMetierDescription}
+              </p>
+              <p className="mt-1 text-slate-600">
+                Statut technique: {detail.status} · Concessionnaire: {detail.concessionnaire.statut} · Décès:{" "}
                 {detail.dateDeces ? new Date(detail.dateDeces).toLocaleString("fr-FR") : "—"}
               </p>
             </div>
@@ -885,8 +1122,41 @@ export default function SuccessionPanel() {
                 {detail.ayantDroit.email ?? "—"}
               </p>
             </div>
+            {detail.documentChecklist ? (
+              <>
+                <div className="rounded-xl border border-slate-200 bg-white p-3">
+                  <DossierCompletIndicator
+                    complet={detailChecklistLive?.complet ?? detail.documentChecklist.complet}
+                    size="banner"
+                    live={detail.status === "OUVERT"}
+                    obligatoiresFournis={detailChecklistLive?.obligatoiresFournis}
+                    obligatoiresTotal={detailChecklistLive?.obligatoiresTotal}
+                  />
+                </div>
+                <SuccessionChecklistBlock
+                  caseId={detail.id}
+                  checklist={detail.documentChecklist}
+                  editable={detail.status === "OUVERT"}
+                  acteDecesPresent={Boolean(detail.acteDeces)}
+                  onUpdated={(checklist) => {
+                    setDetail((prev) =>
+                      prev ? { ...prev, documentChecklist: checklist, checklistComplet: checklist.complet } : prev,
+                    );
+                    setDetailChecklistLive(successionChecklistProgress(checklist));
+                    setItems((prev) =>
+                      prev.map((r) =>
+                        r.id === detail.id
+                          ? { ...r, checklistComplet: checklist.complet, documentChecklist: checklist }
+                          : r,
+                      ),
+                    );
+                  }}
+                  onProgressChange={setDetailChecklistLive}
+                />
+              </>
+            ) : null}
             <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="font-semibold">Documents</p>
+              <p className="font-semibold">Documents joints (compléments)</p>
               <ul className="mt-1 list-inside list-disc space-y-1">
                 {detail.acteDeces ? (
                   <li>
@@ -918,7 +1188,7 @@ export default function SuccessionPanel() {
               </ul>
             </div>
             <div className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="font-semibold">Validations N1 / N2 (avant décision finale)</p>
+              <p className="font-semibold">Étape 19 — Validations N1 / N2 (vérification documentaire)</p>
               <ul className="mt-1 list-inside list-disc space-y-1 text-slate-700">
                 <li>
                   N1 (chef de section) :{" "}
@@ -1014,7 +1284,8 @@ export default function SuccessionPanel() {
               <tr>
                 <th className="px-2 py-2">Réf</th>
                 <th className="px-2 py-2">Concessionnaire</th>
-                <th className="px-2 py-2">Statut</th>
+                <th className="px-2 py-2">Statut §10.3</th>
+                <th className="px-2 py-2">Dossier §10.1</th>
                 <th className="px-2 py-2">Progression</th>
                 <th className="px-2 py-2">Action</th>
               </tr>
@@ -1022,9 +1293,41 @@ export default function SuccessionPanel() {
             <tbody className="text-slate-900">
               {visibleItems.map((row) => (
                 <tr key={row.id} className="border-t border-slate-100 transition hover:bg-cyan-50/30">
-                  <td className="px-2 py-2 font-mono text-xs">{row.reference}</td>
+                  <td className="px-2 py-2 font-mono text-xs">
+                    {row.reference}
+                    {staleIds.has(row.id) ? (
+                      <span
+                        className="mt-1 block w-fit rounded-full border border-amber-300 bg-amber-100 px-1.5 py-0.5 text-[9px] font-bold uppercase text-amber-900"
+                        title={`Aucune action depuis ${staleThresholdDays} j. après déclaration`}
+                      >
+                        Alerte {staleThresholdDays}j
+                      </span>
+                    ) : null}
+                  </td>
                   <td className="px-2 py-2 font-mono text-xs">{row.concessionnaireId}</td>
-                  <td className="px-2 py-2">{row.status}</td>
+                  <td className="px-2 py-2">
+                    <span
+                      title={row.statutMetierDescription}
+                      className={`inline-flex max-w-[11rem] flex-col gap-0.5 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase leading-tight ${successionStatutMetierBadgeClass(row.statutMetier)}`}
+                    >
+                      {row.statutMetierLabel}
+                    </span>
+                    <span className="mt-1 block text-[9px] font-normal normal-case text-slate-500">{row.status}</span>
+                  </td>
+                  <td className="px-2 py-2">
+                    {(() => {
+                      const progress = rowChecklistProgress(row);
+                      return (
+                        <DossierCompletIndicator
+                          complet={progress.complet}
+                          size="sm"
+                          live={selectedCaseId === row.id && row.status === "OUVERT"}
+                          obligatoiresFournis={progress.obligatoiresFournis}
+                          obligatoiresTotal={progress.obligatoiresTotal}
+                        />
+                      );
+                    })()}
+                  </td>
                   <td className="px-2 py-2 text-xs">
                     {row.stepsCompleted}/{row.stepsTotal}
                     {row.currentStepLabel ? (
@@ -1055,17 +1358,8 @@ export default function SuccessionPanel() {
                       {row.status === "OUVERT" && row.currentStepLabel ? (
                         <button
                           type="button"
-                          disabled={
-                            advancingId === row.id ||
-                            (row.currentStepLabel === "DECISION" &&
-                              (!row.validationN1At || !row.validationN2At))
-                          }
-                          title={
-                            row.currentStepLabel === "DECISION" &&
-                            (!row.validationN1At || !row.validationN2At)
-                              ? "Enregistrez les validations N1 et N2 (fiche dossier) avant la décision finale."
-                              : undefined
-                          }
+                          disabled={advancingId === row.id || Boolean(advanceBlockReason(row))}
+                          title={advanceBlockReason(row)}
                           onClick={() => void advance(row.id, row.currentStepLabel)}
                           className="rounded-lg border border-cyan-600 px-2 py-1 text-xs font-medium text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
                         >
@@ -1078,7 +1372,7 @@ export default function SuccessionPanel() {
               ))}
               {!visibleItems.length ? (
                 <tr>
-                  <td colSpan={5} className="px-2 py-4 text-slate-500">
+                  <td colSpan={6} className="px-2 py-4 text-slate-500">
                     Aucun dossier succession.
                   </td>
                 </tr>

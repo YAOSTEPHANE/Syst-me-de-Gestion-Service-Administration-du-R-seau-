@@ -13,6 +13,7 @@ import type {
   PdvIntegrationStatus,
   SuccessionCaseStatus,
   SuccessionStep,
+  RibEtat,
 } from "@/lib/lonaci/constants";
 
 export type {
@@ -30,6 +31,7 @@ export type {
   PdvIntegrationStatus,
   SuccessionCaseStatus,
   SuccessionStep,
+  RibEtat,
 };
 
 export type UserStatus = "ACTIF" | "INACTIF";
@@ -171,6 +173,12 @@ export interface ConcessionnaireDocument {
   produitsAutorises: string[];
   statut: ConcessionnaireStatut;
   statutBancarisation: BancarisationStatut;
+  etatRib: RibEtat | null;
+  ribDemandeAt: Date | null;
+  ribFourniAt: Date | null;
+  ribValideAt: Date | null;
+  bancariseAt: Date | null;
+  ribPieceId: string | null;
   compteBancaire: string | null;
   banqueEtablissement: string | null;
   gps: GpsPoint | null;
@@ -277,6 +285,8 @@ export interface CautionDocument {
   contratId?: string;
   /** Client Lonaci (`clients`) lorsque la caution est constituée sans contrat. */
   lonaciClientId?: string | null;
+  /** Concessionnaire PDV en attente de caution d'inscription (après validation N1). */
+  concessionnaireId?: string | null;
   /** Code produit référentiel (obligatoire si `lonaciClientId`). */
   produitCode?: string | null;
   montant: number;
@@ -299,6 +309,8 @@ export interface CautionDocument {
   /** Date d’émission de la fiche définitive. */
   ficheDefinitiveEmiseLe?: Date | null;
   paidAt: Date | null;
+  /** Première alerte automatique J+10 émise (statut métier EN RETARD). */
+  j10AlertSentAt?: Date | null;
   immutableAfterFinal: boolean;
   createdByUserId: string;
   updatedByUserId: string;
@@ -354,6 +366,8 @@ export interface SuccessionCaseDocument {
   ayantDroitLienParente: string | null;
   ayantDroitTelephone: string | null;
   ayantDroitEmail: string | null;
+  /** §10.1 — Checklist documentaire décès / ayants droit */
+  documentChecklist?: DossierDocumentChecklistPayload | null;
   documents: Array<{
     id: string;
     filename: string;
@@ -382,6 +396,8 @@ export interface SuccessionCaseDocument {
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+  /** Dernière notification « sans action 30 j. » (réinitialisée à chaque activité métier). */
+  staleAlertSentAt?: Date | null;
 }
 
 export type AuditEntityType = "CLIENT" | "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";

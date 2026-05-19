@@ -50,6 +50,9 @@ export function dossierBulkErrorMessage(code: string): string {
   if (code === "ACTIVE_CONTRACT_EXISTS") return "Un contrat actif existe déjà.";
   if (code === "INVALID_TRANSITION") return "Transition de statut invalide.";
   if (code === "DOSSIER_NOT_FOUND") return "Dossier introuvable.";
+  if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
+    return "Soumission impossible : checklist documents incomplète (tous les documents obligatoires doivent être « Fourni »).";
+  }
   return "Transition impossible.";
 }
 

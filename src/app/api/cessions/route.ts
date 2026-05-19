@@ -12,6 +12,7 @@ import {
   type CessionStatus,
   addCessionAttachment,
 } from "@/lib/lonaci/cessions";
+import { concessionnaireListScopeAgenceId } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
   CESSION_ALLOWED_MIME,
@@ -22,16 +23,28 @@ import {
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
-  kind: z.enum(["CESSION", "DELOCALISATION"]).optional(),
+    kind: z.enum(["CESSION", "DELOCALISATION", "CESSION_DELOCALISATION"]).optional(),
   statut: z
     .enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "VALIDEE_CHEF_SERVICE", "REJETEE"])
     .optional(),
   produitCode: z.string().optional(),
+  agenceId: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
 });
+
+function parseFilterDate(value: string | undefined, endOfDay: boolean): Date | undefined {
+  if (!value?.trim()) return undefined;
+  const d = new Date(value.trim());
+  if (Number.isNaN(d.getTime())) return undefined;
+  if (endOfDay) d.setHours(23, 59, 59, 999);
+  else d.setHours(0, 0, 0, 0);
+  return d;
+}
 
 const createFormSchema = z
   .object({
-    kind: z.enum(["CESSION", "DELOCALISATION"]),
+    kind: z.enum(["CESSION", "DELOCALISATION", "CESSION_DELOCALISATION"]),
     concessionnaireId: z.string(),
     cedantId: z.string(),
     beneficiaireId: z.string(),
@@ -52,9 +65,25 @@ const createFormSchema = z
     }
     if (
       v.kind === "DELOCALISATION" &&
-      (!v.concessionnaireId || !v.oldAdresse || !v.oldAgenceId || !v.newAdresse || !v.newAgenceId || !v.newGpsLat || !v.newGpsLng)
+      (!v.concessionnaireId ||
+        !v.produitCode ||
+        !v.newAdresse ||
+        !v.newAgenceId ||
+        !v.newGpsLat ||
+        !v.newGpsLng)
     ) {
       ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Champs delocalisation obligatoires manquants." });
+    }
+    if (v.kind === "CESSION_DELOCALISATION") {
+      if (!v.cedantId || !v.beneficiaireId || !v.produitCode) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Champs cession obligatoires manquants." });
+      }
+      if (!v.newAdresse || !v.newAgenceId || !v.newGpsLat || !v.newGpsLng) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Nouvelle zone / adresse GPS obligatoires pour la cession-délocalisation.",
+        });
+      }
     }
   });
 
@@ -66,12 +95,17 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureCessionIndexes();
+  const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
   const result = await listCessions({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     kind: parsed.data.kind as CessionKind | undefined,
     statut: parsed.data.statut as CessionStatus | undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
+    agenceId: parsed.data.agenceId?.trim() || undefined,
+    scopeAgenceId,
+    dateFrom: parseFilterDate(parsed.data.dateFrom, false),
+    dateTo: parseFilterDate(parsed.data.dateTo, true),
   });
   return NextResponse.json(result, { status: 200 });
 }
@@ -122,13 +156,12 @@ export async function POST(request: NextRequest) {
   }
   const newGpsLat = Number(newGpsLatRaw);
   const newGpsLng = Number(newGpsLngRaw);
+  const needsGps = kind === "DELOCALISATION" || kind === "CESSION_DELOCALISATION";
   const newGps =
-    kind === "DELOCALISATION"
-      ? Number.isFinite(newGpsLat) && Number.isFinite(newGpsLng)
-        ? { lat: newGpsLat, lng: newGpsLng }
-        : null
+    needsGps && Number.isFinite(newGpsLat) && Number.isFinite(newGpsLng)
+      ? { lat: newGpsLat, lng: newGpsLng }
       : null;
-  if (kind === "DELOCALISATION" && !newGps) {
+  if (needsGps && !newGps) {
     return badRequest("Coordonnees GPS invalides.", "INVALID_GPS");
   }
 

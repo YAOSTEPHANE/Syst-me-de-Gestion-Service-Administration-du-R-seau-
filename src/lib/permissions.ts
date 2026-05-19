@@ -90,4 +90,5 @@ function hasPermission(role: Role, module: Module): boolean {
     return PERMISSIONS_MATRIX[role][module] || false;
 }
 
-export { Role, Module, PERMISSIONS_MATRIX, hasPermission };
+export type { Role, Module };
+export { PERMISSIONS_MATRIX, hasPermission };

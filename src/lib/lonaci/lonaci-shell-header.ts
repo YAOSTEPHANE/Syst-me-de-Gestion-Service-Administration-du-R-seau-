@@ -86,13 +86,19 @@ export function lonaciShellHeader(
     return { title: "Agréments", sub: `Contrôles et agréments produits · ${dl}` };
   }
   if (pathname.startsWith("/attestations-domiciliation")) {
-    return { title: "Attestations & domiciliation", sub: `Demandes, suivi et exports · ${dl}` };
+    return {
+      title: "Attestations & domiciliation",
+      sub: `Tableau de bord 4.2 · circuit 4.3 · statuts 4.4 · ${dl}`,
+    };
   }
   if (pathname.startsWith("/cessions")) {
-    return { title: "Cessions & délocalisations", sub: `Transferts de PDV · ${dl}` };
+      return {
+        title: "Cessions & délocalisations",
+        sub: `Cession 5.x · délocalisation 6.1–6.3 · ${dl}`,
+      };
   }
   if (pathname.startsWith("/resiliations")) {
-    return { title: "Résiliations", sub: `Clôture de contrats · ${dl}` };
+    return { title: "Résiliations", sub: `Checklist 7.1 · clôture de contrats · ${dl}` };
   }
   if (pathname.startsWith("/succession")) {
     const o = kpi?.dossierValidation.successionOuverts;
@@ -108,8 +114,14 @@ export function lonaciShellHeader(
       sub: b ? `${b.nonBancarise} non bancarisés · ${b.enCours} en cours · ${dl}` : dl,
     };
   }
+  if (pathname.startsWith("/contrats-grattage")) {
+    return { title: "Contrats grattage", sub: `§9.3 Liste, statuts et export PDF · ${dl}` };
+  }
+  if (pathname.startsWith("/dispatcher")) {
+    return { title: "Dispatcher codes grattage", sub: `Distribution, stocks et alertes · ${dl}` };
+  }
   if (pathname.startsWith("/gpr")) {
-    return { title: "Création de code grattage", sub: `GPR, lots et codes · ${dl}` };
+    return { title: "Création de code grattage", sub: `§9.1 GPR, lots et codes · ${dl}` };
   }
   if (pathname.startsWith("/rapports") && !pathname.startsWith("/rapports/print")) {
     return { title: "Rapports", sub: `Analyse & exports · ${dl}` };

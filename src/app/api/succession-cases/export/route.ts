@@ -41,11 +41,13 @@ export async function GET(request: NextRequest) {
 
   if (parsed.data.format === "csv") {
     const lines = [
-      "reference,concessionnaireId,status,stepsCompleted,stepsTotal,decisionType,autoDossierContratReference,updatedAt",
+      "reference,concessionnaireId,statutMetier,statutMetierLabel,status,stepsCompleted,stepsTotal,decisionType,autoDossierContratReference,updatedAt",
       ...data.items.map((r) =>
         [
           r.reference,
           r.concessionnaireId,
+          r.statutMetier,
+          r.statutMetierLabel,
           r.status,
           r.stepsCompleted,
           r.stepsTotal,
@@ -67,10 +69,10 @@ export async function GET(request: NextRequest) {
   const rows = data.items
     .map(
       (r) =>
-        `<tr><td>${r.reference}</td><td>${r.concessionnaireId}</td><td>${r.status}</td><td>${r.stepsCompleted}/${r.stepsTotal}</td><td>${r.decisionType ?? ""}</td><td>${r.autoDossierContratReference ?? ""}</td><td>${new Date(r.updatedAt).toLocaleString("fr-FR")}</td></tr>`,
+        `<tr><td>${r.reference}</td><td>${r.concessionnaireId}</td><td>${r.statutMetierLabel}</td><td>${r.status}</td><td>${r.stepsCompleted}/${r.stepsTotal}</td><td>${r.decisionType ?? ""}</td><td>${r.autoDossierContratReference ?? ""}</td><td>${new Date(r.updatedAt).toLocaleString("fr-FR")}</td></tr>`,
     )
     .join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Décès et ayants droit</title></head><body><h1>Décès et ayants droit</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>Réf</th><th>Concessionnaire</th><th>Statut</th><th>Progression</th><th>Décision</th><th>Dossier contrat auto</th><th>MAJ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Décès et ayants droit</title></head><body><h1>Décès et ayants droit</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>Réf</th><th>Concessionnaire</th><th>Statut §10.3</th><th>Statut technique</th><th>Progression</th><th>Décision</th><th>Dossier contrat auto</th><th>MAJ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
   return new NextResponse(html, {
     status: 200,
     headers: {

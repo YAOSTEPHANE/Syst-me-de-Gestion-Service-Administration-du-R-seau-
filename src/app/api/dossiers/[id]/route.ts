@@ -8,6 +8,7 @@ import { CONTRAT_OPERATION_TYPES } from "@/lib/lonaci/constants";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
+  buildDossierContratStatutMetierFields,
   ensureDossierIndexes,
   findDossierById,
   patchContratDossierPayload,
@@ -94,7 +95,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 
-  return NextResponse.json({ dossier: dossierToJson(dossier) }, { status: 200 });
+  const statutFields = await buildDossierContratStatutMetierFields(dossier);
+  return NextResponse.json({ dossier: { ...dossierToJson(dossier), ...statutFields } }, { status: 200 });
 }
 
 export async function PATCH(request: NextRequest, context: RouteContext) {
@@ -116,7 +118,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   try {
     const updated = await patchContratDossierPayload(id, parsed.data, auth.user);
-    return NextResponse.json({ dossier: dossierToJson(updated) }, { status: 200 });
+    const statutFields = await buildDossierContratStatutMetierFields(updated);
+    return NextResponse.json({ dossier: { ...dossierToJson(updated), ...statutFields } }, { status: 200 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "DOSSIER_NOT_FOUND") {

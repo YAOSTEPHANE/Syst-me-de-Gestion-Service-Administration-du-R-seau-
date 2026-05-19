@@ -99,6 +99,9 @@ interface CautionListItem {
   montant: number;
   modeReglement: (typeof CAUTION_PAYMENT_MODES)[number];
   status: CautionStatus;
+  statutMetier?: "EN_ATTENTE" | "PAYEE" | "EN_RETARD" | "EXONEREE";
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
   /** Réf. encaissement ; en fiche provisoire la trace interne peut être au format PROVISOIRE: + N° FPC — l'affichage liste utilise cautionReferenceListeOuFiche. */
   paymentReference: string;
   observations: string | null;
@@ -157,12 +160,19 @@ function labelTab(tab: CautionListTab): string {
 }
 
 function cautionStatutLabel(row: CautionListItem, tab: CautionListTab): string {
-  if (tab === "VALIDATED_THIS_MONTH") return "Terminée";
-  if (row.status === "VALIDE_N1") return "Validé N1";
-  if (row.status === "VALIDE_N2") return "Validé N2";
-  if (row.status === "A_CORRIGER") return "ì corriger";
-  if (tab === "J10_OVERDUE") return "Retardé";
-  return "En attente finalisation";
+  if (row.statutMetierLabel?.trim()) return row.statutMetierLabel.trim();
+  if (tab === "VALIDATED_THIS_MONTH") return "Payée";
+  if (tab === "J10_OVERDUE") return "En retard";
+  return "En attente";
+}
+
+function cautionStatutMetierBadgeClass(row: CautionListItem, tab: CautionListTab): string {
+  const metier = row.statutMetier;
+  if (metier === "PAYEE") return "border-emerald-200 bg-emerald-50 text-emerald-800";
+  if (metier === "EXONEREE") return "border-violet-200 bg-violet-50 text-violet-900";
+  if (metier === "EN_RETARD" || tab === "J10_OVERDUE") return CAUTION_COLOR_TOKENS.risk.badge;
+  if (metier === "EN_ATTENTE" || tab === "EN_ATTENTE") return CAUTION_COLOR_TOKENS.pending.badge;
+  return CAUTION_COLOR_TOKENS.pending.badge;
 }
 
 /** Référence comme sur la fiche provisoire (N° FPC indiqué à la caisse) ; hors fiche provisoire, référence d'encaissement. */
@@ -179,6 +189,13 @@ function cautionReferenceListeOuFiche(row: CautionListItem): string {
     return pr || "—";
   }
   return (row.paymentReference ?? "").trim() || "—";
+}
+
+/** Référence d'encaissement requise avant passage en statut PAYÉE (hors trace interne PROVISOIRE:…). */
+function cautionPaymentReferenceMissingForPayee(row: CautionListItem): boolean {
+  const pr = (row.paymentReference ?? "").trim();
+  if (!pr) return true;
+  return pr.toUpperCase().startsWith("PROVISOIRE:");
 }
 
 /** Fiche définitive remise au porteur après validation du paiement ou finalisation payée. */
@@ -604,6 +621,7 @@ export default function CautionsPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [importingFile, setImportingFile] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
+  const reloadCautionsListRef = useRef<(() => Promise<void>) | null>(null);
   const [meRole, setMeRole] = useState<string | null>(null);
   const meRbacRole = useMemo<LonaciRole | null>(
     () => (meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null),
@@ -639,23 +657,25 @@ export default function CautionsPanel() {
       const showFinalize = pipelineStatus && !row.ficheProvisoire && mayFinalize;
       const showReturn = pipelineStatus && mayReturn;
       const showReject = pipelineStatus && mayReject;
+      const mayExonerer = meRole === "CHEF_SERVICE" && pipelineStatus && row.statutMetier !== "EXONEREE";
       const showActionCell =
         tab !== "VALIDATED_THIS_MONTH" &&
         !row.immutableAfterFinal &&
-        (showFinalize || showReturn || showReject || showRegularize);
+        row.statutMetier !== "PAYEE" &&
+        row.statutMetier !== "EXONEREE" &&
+        (showFinalize || showReturn || showReject || showRegularize || mayExonerer);
 
       if (!showActionCell) {
+        const label = cautionStatutLabel(row, tab);
+        if (label === "—" && !row.statutMetier) {
+          return <span className="text-[11px] text-slate-500">—</span>;
+        }
         return (
           <span
-            className={
-              tab === "VALIDATED_THIS_MONTH" || row.status === "VALIDE_N1" || row.status === "VALIDE_N2"
-                ? "inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700"
-                : "text-[11px] text-slate-500"
-            }
+            title={row.statutMetierDescription ?? undefined}
+            className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cautionStatutMetierBadgeClass(row, tab)}`}
           >
-            {tab === "VALIDATED_THIS_MONTH" || row.status === "VALIDE_N1" || row.status === "VALIDE_N2"
-              ? "Validée"
-              : "—"}
+            {label}
           </span>
         );
       }
@@ -724,10 +744,44 @@ export default function CautionsPanel() {
               Rejeter
             </button>
           ) : null}
+          {mayExonerer ? (
+            <button
+              type="button"
+              disabled={finalizingId === row.id}
+              onClick={() => {
+                const motif = window.prompt("Motif d'exonération (décision Direction) :");
+                if (!motif?.trim()) return;
+                void (async () => {
+                  setFinalizingId(row.id);
+                  setError(null);
+                  try {
+                    const res = await fetch(`/api/cautions/${encodeURIComponent(row.id)}/exonerer`, {
+                      method: "POST",
+                      credentials: "include",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ motif: motif.trim() }),
+                    });
+                    const body = (await res.json().catch(() => null)) as { message?: string } | null;
+                    if (!res.ok) {
+                      throw new Error(friendlyErrorMessage(body?.message ?? "Exonération impossible"));
+                    }
+                    await reloadCautionsListRef.current?.();
+                  } catch (e) {
+                    setError(e instanceof Error ? e.message : "Exonération impossible");
+                  } finally {
+                    setFinalizingId(null);
+                  }
+                })();
+              }}
+              className="rounded-lg border border-violet-400 bg-violet-50 px-2 py-1 text-[10px] font-semibold text-violet-900"
+            >
+              Exonérer
+            </button>
+          ) : null}
         </div>
       );
     },
-    [finalizingId, meRbacRole, mayRegularizePaiement, tab],
+    [finalizingId, meRbacRole, mayRegularizePaiement, meRole, tab],
   );
 
   useEffect(() => {
@@ -937,6 +991,10 @@ export default function CautionsPanel() {
       setLoading(false);
     }
   }, [pageSize, tab]);
+
+  useEffect(() => {
+    reloadCautionsListRef.current = load;
+  }, [load]);
 
   useEffect(() => {
     const onDataImported = () => {
@@ -2385,16 +2443,10 @@ export default function CautionsPanel() {
             </thead>
             <tbody className="text-slate-900">
               {cautionListDisplayRows.map((displayRow) => {
-                const badgeClass =
-                  tab === "J10_OVERDUE"
-                    ? CAUTION_COLOR_TOKENS.risk.badge
-                    : tab === "EN_ATTENTE"
-                      ? CAUTION_COLOR_TOKENS.pending.badge
-                      : CAUTION_COLOR_TOKENS.validated.badge;
-
                 if (displayRow.kind === "single") {
                   const row = displayRow.row;
                   const statutLabel = cautionStatutLabel(row, tab);
+                  const statutBadgeClass = cautionStatutMetierBadgeClass(row, tab);
                   return (
                     <tr key={row.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50">
                       <td className="px-2 py-2 font-mono whitespace-nowrap">
@@ -2414,7 +2466,10 @@ export default function CautionsPanel() {
                       <td className="px-2 py-2">{row.montant?.toLocaleString("fr-FR") ?? row.montant}</td>
                       <td className="px-2 py-2">{row.agenceLabel || "Sans agence"}</td>
                       <td className="px-2 py-2">
-                        <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
+                        <span
+                          title={row.statutMetierDescription ?? undefined}
+                          className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statutBadgeClass}`}
+                        >
                           {statutLabel}
                         </span>
                       </td>
@@ -2426,6 +2481,7 @@ export default function CautionsPanel() {
                 const { key, rows } = displayRow;
                 const primary = rows[0]!;
                 const statutLabel = cautionStatutLabel(primary, tab);
+                const statutBadgeClass = cautionStatutMetierBadgeClass(primary, tab);
                 const totalMontant = rows.reduce(
                   (acc, r) => acc + (typeof r.montant === "number" ? r.montant : 0),
                   0,
@@ -2470,7 +2526,10 @@ export default function CautionsPanel() {
                     </td>
                     <td className="px-2 py-2">{agenceCell}</td>
                     <td className="px-2 py-2">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
+                      <span
+                        title={primary.statutMetierDescription ?? undefined}
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statutBadgeClass}`}
+                      >
                         {statutLabel}
                       </span>
                     </td>
@@ -2564,6 +2623,25 @@ export default function CautionsPanel() {
               <strong>Approuver</strong> ou <strong>Rejeter</strong> rend la caution immuable.{" "}
               <strong>Retourner pour correction</strong> garde la caution modifiable.
             </div>
+
+            {finalizeDecision === "APPROUVER" &&
+            finalizeModal.mode === "row" &&
+            (finalizeModal.row.ficheProvisoire ||
+              cautionPaymentReferenceMissingForPayee(finalizeModal.row)) ? (
+              <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-950">
+                {finalizeModal.row.ficheProvisoire ? (
+                  <>
+                    Fiche provisoire active : <strong>régularisez le paiement</strong> avec la référence
+                    d&apos;encaissement avant d&apos;approuver (statut PAYÉE).
+                  </>
+                ) : (
+                  <>
+                    <strong>Référence de paiement obligatoire</strong> pour passer en PAYÉE — saisissez-la via
+                    régularisation ou à la création de la caution.
+                  </>
+                )}
+              </div>
+            ) : null}
 
             <div className="mt-3 grid gap-1.5">
               <p className="text-[11px] font-semibold text-slate-700">Décision</p>
@@ -2686,7 +2764,11 @@ export default function CautionsPanel() {
                 disabled={
                   !finalizeAck ||
                   finalizingId !== null ||
-                  (finalizeDecision !== "APPROUVER" && !finalizeComment.trim())
+                  (finalizeDecision !== "APPROUVER" && !finalizeComment.trim()) ||
+                  (finalizeDecision === "APPROUVER" &&
+                    finalizeModal.mode === "row" &&
+                    (finalizeModal.row.ficheProvisoire ||
+                      cautionPaymentReferenceMissingForPayee(finalizeModal.row)))
                 }
                 onClick={() => void confirmFinalizeFromModal()}
                 className="rounded-md border border-emerald-700 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"

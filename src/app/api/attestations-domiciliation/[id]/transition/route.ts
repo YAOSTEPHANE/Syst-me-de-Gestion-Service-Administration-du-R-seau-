@@ -6,7 +6,7 @@ import { ensureAttestationsDomiciliationIndexes, transitionDemandeAttestationDom
 import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
 
 const schema = z.object({
-  target: z.enum(["TRANSMIS", "FINALISE"]),
+  target: z.enum(["TRANSMIS", "FINALISE", "VALIDE"]),
 });
 
 interface RouteContext {
@@ -18,12 +18,19 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
+  const rolesByTarget = {
+    TRANSMIS: ["CHEF_SERVICE"] as const,
+    FINALISE: ["ASSIST_CDS"] as const,
+    VALIDE: ["CHEF_SERVICE"] as const,
+  };
+
   const auth = await checkPermission(request, {
-    roles: ["ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...rolesByTarget[parsed.data.target]],
     resource: "DOSSIERS",
     action: resolveRbacAction(parsed.data.target, {
       TRANSMIS: "VALIDATE_N2",
       FINALISE: "FINALIZE",
+      VALIDE: "FINALIZE",
     }),
   });
   if ("error" in auth) return auth.error;
@@ -46,7 +53,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "FORBIDDEN_TRANSITION") {
       return NextResponse.json({ message: "Transition interdite pour votre role." }, { status: 403 });
     }
-    if (code === "INVALID_TRANSITION") {
+    if (code === "INVALID_TRANSITION" || code === "USE_ENVOYER_CLIENT_ENDPOINT") {
       return NextResponse.json({ message: "Transition invalide." }, { status: 409 });
     }
     return NextResponse.json({ message: "Transition impossible." }, { status: 500 });

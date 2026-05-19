@@ -5,7 +5,10 @@ import ConcessionnaireSearchPicker, {
   pickProduitCodesFromConcessionnaire,
   type ConcessionnairePickerRow,
 } from "@/components/lonaci/concessionnaire-search-picker";
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
+
+import { SCRATCH_CODE_STATUT_LABELS, type ScratchCodeStatut } from "@/lib/lonaci/constants";
 
 type RefProduit = { code: string; libelle: string; actif: boolean };
 type RefConcessionnaire = { id: string; codePdv: string; raisonSociale: string };
@@ -285,7 +288,11 @@ export default function GprModulePage() {
           </p>
           <h2 className="text-xl font-semibold text-slate-900">Création de code grattage</h2>
           <p className="mt-1 text-sm text-slate-700">
-            Enregistrements GPR, lots de codes et synchronisations.
+            Enregistrements GPR, lots de codes et synchronisations. Contrats :{" "}
+            <Link href="/contrats-grattage" className="text-teal-700 underline">
+              §9.3 Contrats grattage
+            </Link>
+            .
           </p>
         </div>
       </header>
@@ -451,8 +458,14 @@ export default function GprModulePage() {
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-slate-900">Codes grattage</h3>
-            <p className="text-xs text-slate-600">Création, attribution, activation avec validation N1 et export par lot.</p>
+            <h3 className="text-sm font-semibold text-slate-900">Codes grattage (§9.1)</h3>
+            <p className="text-xs text-slate-600">
+              Lots (produit, quantité, référence auto), attribution horodatée, historique par PDV. Distribution :{" "}
+              <Link href="/dispatcher" className="text-violet-700 underline">
+                module Dispatcher
+              </Link>
+              .
+            </p>
           </div>
           <button
             type="button"
@@ -603,7 +616,7 @@ export default function GprModulePage() {
                   <td className="px-3 py-2.5">{row.generatedCount}</td>
                   <td className="px-3 py-2.5">
                     <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${scratchStatusStyle(row.status)}`}>
-                      {row.status}
+                      {SCRATCH_CODE_STATUT_LABELS[row.status as ScratchCodeStatut] ?? row.status}
                     </span>
                   </td>
                   <td className="px-3 py-2.5">{row.history.length} évts</td>

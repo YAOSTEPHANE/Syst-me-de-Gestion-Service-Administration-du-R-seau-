@@ -3,7 +3,16 @@
 import Link from "next/link";
 import ConcessionnaireInscriptionChecklistBlock from "@/components/lonaci/concessionnaire-inscription-checklist-block";
 import {
+  CAUTION_FICHE_DEFINITIVE_TITLE,
+  CAUTION_FICHE_PAYEE_MENTION,
+} from "@/lib/lonaci/caution-fiche-definitive-constants";
+import {
+  CAUTION_FICHE_EN_ATTENTE_MENTION,
+  CAUTION_FICHE_PROVISOIRE_TITLE,
+} from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import {
   LONACI_ROLES,
+  BANCARISATION_STATUT_LABELS,
   CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS,
   CONCESSIONNAIRE_STATUT_LABELS,
   CONCESSIONNAIRE_STATUTS,
@@ -12,6 +21,14 @@ import {
 } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import {
+  contratStatutMetierBadgeClass,
+  contratStatutMetierDescription,
+  contratStatutMetierLabel,
+  resolveContratStatutMetier,
+  type ContratStatutMetier,
+} from "@/lib/lonaci/contrat-statut-metier";
+import { readDossierChecklistComplet } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +61,19 @@ interface PieceMeta {
   uploadedByUserId: string;
 }
 
+interface InscriptionCautionSummary {
+  cautionId: string | null;
+  numeroFicheProvisoire: string | null;
+  numeroFicheDefinitive: string | null;
+  status: string | null;
+  statutMetier: string | null;
+  statutMetierLabel: string | null;
+  statutMetierDescription: string | null;
+  montant: number | null;
+  ficheProvisoire: boolean;
+  paidAt: string | null;
+}
+
 interface ConcessionnaireDetail {
   id: string;
   codePdv: string | null;
@@ -52,6 +82,7 @@ interface ConcessionnaireDetail {
   prenom: string | null;
   documentChecklist: DossierDocumentChecklistPayload | null;
   inscriptionRejetMotif: string | null;
+  inscriptionValideN1At: string | null;
   codeTerminal: string | null;
   codeConcessionnaire: string | null;
   nomComplet: string;
@@ -158,6 +189,9 @@ interface ContratListeRow {
   dossierId: string;
   dateDepot?: string;
   dossierEtape?: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
 }
 
 /** Dossier contrat (Mongo) non finalisé — renvoyé par GET /api/contrats avec `concessionnaireId`. */
@@ -166,6 +200,44 @@ interface DossierContratListeRef {
   reference: string;
   status: string;
   updatedAt: string;
+  payload?: Record<string, unknown>;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
+  cautionPaid?: boolean;
+  hasDocumentChecklist?: boolean;
+  checklistComplet?: boolean | null;
+}
+
+function dossierContratProduitCode(d: DossierContratListeRef): string {
+  const code = d.payload?.produitCode;
+  return typeof code === "string" ? code.trim().toUpperCase() : "";
+}
+
+function dossierContratStatutMetier(d: DossierContratListeRef): {
+  statut: ContratStatutMetier;
+  label: string;
+  description: string;
+} {
+  if (d.statutMetier && d.statutMetierLabel) {
+    return {
+      statut: d.statutMetier,
+      label: d.statutMetierLabel,
+      description: d.statutMetierDescription ?? "",
+    };
+  }
+  const checklistComplet = readDossierChecklistComplet(d.payload ?? {});
+  const statut = resolveContratStatutMetier({
+    dossierStatus: d.status,
+    checklistComplet,
+    cautionPaid: d.cautionPaid ?? false,
+    hasDocumentChecklist: d.hasDocumentChecklist ?? checklistComplet !== null,
+  });
+  return {
+    statut,
+    label: contratStatutMetierLabel(statut),
+    description: contratStatutMetierDescription(statut),
+  };
 }
 
 function isContratActifRow(c: ContratListeRow): boolean {
@@ -206,6 +278,8 @@ export default function ConcessionnaireFicheModal({
   const [deactivating, setDeactivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<ConcessionnaireDetail | null>(null);
+  const [inscriptionCaution, setInscriptionCaution] = useState<InscriptionCautionSummary | null>(null);
+  const [cautionPdfBusy, setCautionPdfBusy] = useState<"provisoire" | "definitive" | null>(null);
 
   const [nom, setNom] = useState("");
   const [prenom, setPrenom] = useState("");
@@ -304,9 +378,13 @@ export default function ConcessionnaireFicheModal({
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Fiche inaccessible");
       }
-      const data = (await res.json()) as { concessionnaire: ConcessionnaireDetail };
+      const data = (await res.json()) as {
+        concessionnaire: ConcessionnaireDetail;
+        inscriptionCaution?: InscriptionCautionSummary;
+      };
       const c = data.concessionnaire;
       setDetail(c);
+      setInscriptionCaution(data.inscriptionCaution ?? null);
       setNom(c.nom ?? "");
       setPrenom(c.prenom ?? "");
       setNomComplet(c.nomComplet ?? "");
@@ -443,10 +521,45 @@ export default function ConcessionnaireFicheModal({
   const inscriptionEditable =
     saisieReferentiel &&
     !readOnlyFiche &&
-    (inscriptionStatut === "BROUILLON" || inscriptionStatut === "REJETE");
+    (inscriptionStatut === "DOSSIER_EN_COURS" || inscriptionStatut === "REJETE");
+  const awaitingCautionPayment =
+    inscriptionStatut === "DOSSIER_EN_COURS" &&
+    Boolean(detail?.codePdv?.trim()) &&
+    Boolean(detail?.inscriptionValideN1At);
   const canSubmitInscription = inscriptionEditable;
   const canValidateN1 =
     (me?.role === "CHEF_SECTION" || me?.role === "CHEF_SERVICE") && inscriptionStatut === "SOUMIS";
+
+  async function downloadCautionPdf(kind: "provisoire" | "definitive") {
+    if (!concessionnaireId) return;
+    setCautionPdfBusy(kind);
+    setError(null);
+    try {
+      const path =
+        kind === "provisoire"
+          ? `/api/concessionnaires/${concessionnaireId}/fiche-caution-provisoire/pdf`
+          : `/api/concessionnaires/${concessionnaireId}/fiche-caution-definitive/pdf`;
+      const res = await fetch(path, { credentials: "include", cache: "no-store" });
+      if (!res.ok) {
+        const b = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(b?.message ?? "Téléchargement impossible");
+      }
+      const blob = await res.blob();
+      const ref =
+        kind === "provisoire"
+          ? inscriptionCaution?.numeroFicheProvisoire
+          : inscriptionCaution?.numeroFicheDefinitive;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = `${(ref ?? "fiche-caution").replace(/[^\w-]+/g, "_")}.pdf`;
+      a.click();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Téléchargement impossible");
+    } finally {
+      setCautionPdfBusy(null);
+    }
+  }
 
   async function runInscriptionTransition(
     action: "SUBMIT" | "VALIDATE_N1" | "REJECT" | "RETURN_TO_DRAFT",
@@ -778,10 +891,18 @@ export default function ConcessionnaireFicheModal({
               {detail.inscriptionStatut !== "VALIDE" ? (
                 <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 px-3 py-3 text-sm text-indigo-950">
                   <p className="font-semibold">Parcours d&apos;inscription</p>
-                  <p className="mt-1 text-xs text-indigo-900/90">
-                    Complétez la fiche, les pièces justificatives (onglet Pièces) et la checklist, puis soumettez pour
-                    validation N1. Le code PDV sera attribué après validation.
-                  </p>
+                  {awaitingCautionPayment ? (
+                    <p className="mt-1 text-xs text-indigo-900/90">
+                      Code PDV <strong>{detail.codePdv}</strong> attribué après validation N1. Enregistrez et finalisez
+                      le paiement de la caution pour activer le point de vente.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-indigo-900/90">
+                      Dossier en cours (avant paiement caution) : complétez la fiche, les pièces (onglet Pièces) et la
+                      checklist, puis soumettez pour validation N1. Le code PDV sera attribué à la validation N1 ; le
+                      PDV devient actif après paiement de la caution.
+                    </p>
+                  )}
                   {detail.inscriptionRejetMotif ? (
                     <p className="mt-2 text-xs text-rose-800">Motif de rejet : {detail.inscriptionRejetMotif}</p>
                   ) : null}
@@ -803,7 +924,7 @@ export default function ConcessionnaireFicheModal({
                         onClick={() => void runInscriptionTransition("RETURN_TO_DRAFT")}
                         className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                       >
-                        Reprendre en brouillon
+                        Reprendre le dossier
                       </button>
                     ) : null}
                     {canValidateN1 ? (
@@ -828,6 +949,67 @@ export default function ConcessionnaireFicheModal({
                           Rejeter
                         </button>
                       </>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              {inscriptionCaution?.cautionId ? (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-3 text-sm text-amber-950">
+                  <p className="font-semibold">Gestion de la caution</p>
+                  <p className="mt-1 text-xs text-amber-900/90">
+                    {CAUTION_FICHE_PROVISOIRE_TITLE} — {CAUTION_FICHE_EN_ATTENTE_MENTION}
+                  </p>
+                  {inscriptionCaution?.statutMetierLabel ? (
+                    <p className="mt-2 text-xs font-semibold text-amber-950" title={inscriptionCaution.statutMetierDescription ?? undefined}>
+                      Statut caution : {inscriptionCaution.statutMetierLabel}
+                      {inscriptionCaution.statutMetierDescription
+                        ? ` — ${inscriptionCaution.statutMetierDescription}`
+                        : null}
+                    </p>
+                  ) : null}
+                  <dl className="mt-2 grid gap-1 text-xs sm:grid-cols-2">
+                    <div>
+                      <dt className="text-amber-800/80">Référence dossier</dt>
+                      <dd className="font-mono font-semibold">
+                        {inscriptionCaution.numeroFicheProvisoire ?? "—"}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-amber-800/80">Montant dû</dt>
+                      <dd className="font-semibold">
+                        {inscriptionCaution.montant != null
+                          ? `${inscriptionCaution.montant.toLocaleString("fr-FR")} FCFA`
+                          : "—"}
+                      </dd>
+                    </div>
+                    {inscriptionCaution.status === "PAYEE" && inscriptionCaution.numeroFicheDefinitive ? (
+                      <div className="sm:col-span-2">
+                        <dt className="text-emerald-800/80">{CAUTION_FICHE_DEFINITIVE_TITLE}</dt>
+                        <dd className="font-mono text-emerald-900">
+                          {inscriptionCaution.numeroFicheDefinitive} — {CAUTION_FICHE_PAYEE_MENTION}
+                        </dd>
+                      </div>
+                    ) : null}
+                  </dl>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={cautionPdfBusy !== null}
+                      onClick={() => void downloadCautionPdf("provisoire")}
+                      className="rounded-lg border border-amber-600 bg-amber-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-50"
+                    >
+                      {cautionPdfBusy === "provisoire" ? "Génération…" : "PDF fiche provisoire"}
+                    </button>
+                    {inscriptionCaution.statutMetier === "PAYEE" || inscriptionCaution.status === "PAYEE" ? (
+                      <button
+                        type="button"
+                        disabled={cautionPdfBusy !== null}
+                        onClick={() => void downloadCautionPdf("definitive")}
+                        className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+                      >
+                        {cautionPdfBusy === "definitive" ? "Génération…" : "PDF fiche définitive"}
+                      </button>
                     ) : null}
                   </div>
                 </div>
@@ -1055,37 +1237,21 @@ export default function ConcessionnaireFicheModal({
                       </span>
                     ) : null}
                   </label>
-                  <fieldset className="grid gap-2">
-                    <legend className="text-xs font-medium text-slate-700">Bancarisation</legend>
-                    <div className="flex flex-wrap gap-2">
-                      {(
-                        [
-                          ["BANCARISE", "Oui"],
-                          ["NON_BANCARISE", "Non"],
-                          ["EN_COURS", "En cours"],
-                        ] as const
-                      ).map(([value, label]) => (
-                        <label
-                          key={value}
-                          className={`inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm transition ${
-                            statutBancarisation === value
-                              ? "border-cyan-600 bg-cyan-50 text-cyan-900"
-                              : "border-slate-200 bg-white text-slate-700 hover:border-slate-300"
-                          }`}
-                        >
-                          <input
-                            type="radio"
-                            name="statutBancarisation"
-                            value={value}
-                            checked={statutBancarisation === value}
-                            onChange={() => setStatutBancarisation(value)}
-                            className="h-4 w-4 shrink-0 border-slate-300 text-cyan-600 focus:ring-cyan-500"
-                          />
-                          <span>{label}</span>
-                        </label>
-                      ))}
-                    </div>
-                  </fieldset>
+                  <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 px-3 py-2.5 text-xs text-slate-700">
+                    <p className="font-semibold text-indigo-900">Bancarisation (8.3)</p>
+                    <p className="mt-1 font-medium text-slate-900">
+                      {BANCARISATION_STATUT_LABELS[
+                        statutBancarisation as keyof typeof BANCARISATION_STATUT_LABELS
+                      ] ?? statutBancarisation}
+                    </p>
+                    <p className="mt-1 text-[11px] text-slate-600">
+                      Parcours RIB et intégration via le module{" "}
+                      <Link href="/bancarisation" className="text-cyan-700 underline">
+                        Bancarisation
+                      </Link>
+                      .
+                    </p>
+                  </div>
                   <label className="grid gap-1">
                     <span className="text-xs font-medium text-slate-700">Compte bancaire</span>
                     <input value={compteBancaire} onChange={(e) => setCompteBancaire(e.target.value)} className={inputClass} />
@@ -1149,9 +1315,20 @@ export default function ConcessionnaireFicheModal({
                 <Link href={`/contrats?concessionnaireId=${detail.id}`} className="text-emerald-700 hover:underline">
                   Contrats
                 </Link>
-                <Link href={`/dossiers?concessionnaireId=${detail.id}`} className="text-cyan-700 hover:underline">
-                  Dossiers
+                <Link
+                  href={`/dossiers?concessionnaireId=${encodeURIComponent(detail.id)}`}
+                  className="text-cyan-700 hover:underline"
+                >
+                  Dossiers contrat
                 </Link>
+                {dossiersContratEnAttente[0] ? (
+                  <Link
+                    href={`/dossiers?reference=${encodeURIComponent(dossiersContratEnAttente[0].reference)}`}
+                    className="font-medium text-cyan-800 hover:underline"
+                  >
+                    Dossier en cours ({dossiersContratEnAttente[0].reference})
+                  </Link>
+                ) : null}
                 <Link
                   href={`/carte-pdv?concessionnaireId=${detail.id}${detail.agenceId ? `&agenceId=${encodeURIComponent(detail.agenceId)}` : ""}`}
                   className="text-violet-700 hover:underline"
@@ -1172,7 +1349,13 @@ export default function ConcessionnaireFicheModal({
                   href={`/contrats?concessionnaireId=${encodeURIComponent(detail.id)}`}
                   className="text-sm font-medium text-emerald-700 hover:underline"
                 >
-                  Ouvrir la page Contrats
+                  Page Contrats
+                </Link>
+                <Link
+                  href={`/dossiers?concessionnaireId=${encodeURIComponent(detail.id)}`}
+                  className="text-sm font-medium text-cyan-700 hover:underline"
+                >
+                  Dossiers & checklist
                 </Link>
               </div>
               {contratsError ? (
@@ -1198,23 +1381,44 @@ export default function ConcessionnaireFicheModal({
                       </tr>
                     </thead>
                     <tbody>
-                      {dossiersContratEnAttente.map((d) => (
+                      {dossiersContratEnAttente.map((d) => {
+                        const statutMetier = dossierContratStatutMetier(d);
+                        const produit = dossierContratProduitCode(d);
+                        return (
                         <tr
                           key={`dossier-${d.id}`}
                           className="border-b border-slate-100 align-top last:border-b-0 hover:bg-slate-50/80"
                         >
-                          <td className="px-3 py-2.5 text-slate-400">—</td>
-                          <td className="px-3 py-2.5 text-slate-400">—</td>
-                          <td className="px-3 py-2.5 text-slate-400">—</td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-slate-700">
+                            <Link
+                              href={`/dossiers?reference=${encodeURIComponent(d.reference)}`}
+                              className="text-cyan-700 hover:underline"
+                            >
+                              {d.reference}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2.5 font-mono text-xs text-slate-700">{produit || "—"}</td>
+                          <td className="px-3 py-2.5 text-slate-600">Dossier contrat</td>
                           <td className="px-3 py-2.5">
-                            <span className="inline-flex rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
-                              {labelDossierEtape(d.status)}
+                            <span
+                              title={statutMetier.description || labelDossierEtape(d.status)}
+                              className={`inline-flex max-w-[10rem] rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight ${contratStatutMetierBadgeClass(statutMetier.statut)}`}
+                            >
+                              {statutMetier.label}
                             </span>
                           </td>
                           <td className="px-3 py-2.5 text-slate-400">—</td>
-                          <td className="px-3 py-2.5 text-slate-400">—</td>
+                          <td className="px-3 py-2.5">
+                            <Link
+                              href={`/dossiers?reference=${encodeURIComponent(d.reference)}`}
+                              className="text-xs font-medium text-cyan-700 hover:underline"
+                            >
+                              Ouvrir
+                            </Link>
+                          </td>
                         </tr>
-                      ))}
+                        );
+                      })}
                       {contratsItems.map((c) => {
                         const actif = isContratActifRow(c);
                         return (
@@ -1225,9 +1429,18 @@ export default function ConcessionnaireFicheModal({
                                 <td className="px-3 py-2.5 font-mono text-xs text-slate-700">{c.produitCode}</td>
                                 <td className="px-3 py-2.5 text-slate-800">{labelOperationTypeContrat(c.operationType)}</td>
                                 <td className="px-3 py-2.5">
-                                  <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
-                                    {labelContratStatut(c.status)}
-                                  </span>
+                                  {c.statutMetier && c.statutMetierLabel ? (
+                                    <span
+                                      title={c.statutMetierDescription ?? labelContratStatut(c.status)}
+                                      className={`inline-flex max-w-[10rem] rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight ${contratStatutMetierBadgeClass(c.statutMetier)}`}
+                                    >
+                                      {c.statutMetierLabel}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
+                                      {labelContratStatut(c.status)}
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="whitespace-nowrap px-3 py-2.5 text-slate-700">
                                   {formatShortDate(c.dateEffet)}

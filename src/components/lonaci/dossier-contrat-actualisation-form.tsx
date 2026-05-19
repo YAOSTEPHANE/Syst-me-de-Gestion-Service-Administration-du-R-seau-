@@ -3,6 +3,7 @@
 import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import { userMayPatchDossierPayload } from "@/lib/auth/dossier-transition-rbac";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+import type { ContratStatutMetier } from "@/lib/lonaci/contrat-statut-metier";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
@@ -24,6 +25,9 @@ export type DossierContratActualisationDetail = {
   }>;
   createdAt: string;
   updatedAt: string;
+  statutMetier?: ContratStatutMetier;
+  statutMetierLabel?: string;
+  statutMetierDescription?: string;
 };
 
 type ContratActifOption = { id: string; reference: string; produitCode: string; status: string };
@@ -202,6 +206,9 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
           dossierId={dossier.id}
           payload={asPayloadRecord(dossier.payload)}
           editable={false}
+          statutMetier={dossier.statutMetier}
+          statutMetierLabel={dossier.statutMetierLabel}
+          statutMetierDescription={dossier.statutMetierDescription}
           onUpdated={() => {}}
         />
       </div>
@@ -316,12 +323,20 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
         dossierId={dossier.id}
         payload={payloadRecord}
         editable
+        canGenererContrat
+        statutMetier={dossier.statutMetier}
+        statutMetierLabel={dossier.statutMetierLabel}
+        statutMetierDescription={dossier.statutMetierDescription}
         onUpdated={(patch) =>
           onUpdated({
             ...dossier,
             payload: patch.payload,
             status: patch.status ?? dossier.status,
             updatedAt: patch.updatedAt ?? dossier.updatedAt,
+            statutMetier: patch.statutMetier ?? dossier.statutMetier,
+            statutMetierLabel: patch.statutMetierLabel ?? dossier.statutMetierLabel,
+            statutMetierDescription:
+              patch.statutMetierDescription ?? dossier.statutMetierDescription,
           })
         }
       />

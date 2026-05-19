@@ -47,6 +47,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CAUTION_WRONG_STATUS") {
       return conflict("La caution ne peut pas etre finalisee dans ce statut.", "CAUTION_WRONG_STATUS");
     }
+    if (code === "CAUTION_PAYMENT_REFERENCE_REQUISE") {
+      return conflict(
+        "Référence de paiement obligatoire pour passer en statut PAYÉE (régularisez la fiche provisoire ou saisissez la référence).",
+        "CAUTION_PAYMENT_REFERENCE_REQUISE",
+      );
+    }
     return serverError("Finalisation caution impossible.", "CAUTION_FINALIZE_FAILED");
   }
 }

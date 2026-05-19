@@ -2,12 +2,35 @@ import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 
 import { appendAuditLog } from "@/lib/lonaci/audit";
-import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
+import {
+  buildDocumentChecklistForKind,
+  isDocumentChecklistCompleteForKind,
+  kindHasDocumentChecklist,
+  parseDocumentChecklistForKind,
+  patchDocumentChecklistStatutsForKind,
+  usesSimplifiedDelocalisationCircuit,
+  type CessionDossierKind,
+} from "@/lib/lonaci/cession-dossier-checklist";
+import {
+  findConcessionnaireById,
+  softDeleteConcessionnaire,
+  updateConcessionnaire,
+} from "@/lib/lonaci/concessionnaires";
+import { listProduits } from "@/lib/lonaci/referentials";
 import { hasActiveContractForProduct, markActiveContratAsCedeForProduct } from "@/lib/lonaci/contracts";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
-import { type UserDocument, userDisplayName } from "@/lib/lonaci/types";
+import { type DossierDocumentChecklistPayload, type DossierDocumentChecklistStatut, type UserDocument, userDisplayName } from "@/lib/lonaci/types";
 import { sendSmtpEmail } from "@/lib/email/smtp";
+import { cessionOperationDisplayStatutFields } from "@/lib/lonaci/cession-operation-statut-metier";
+import {
+  buildCessionExportRows,
+  buildCessionsMongoFilter,
+  type CessionsListFilters,
+} from "@/lib/lonaci/cessions-export";
 import { getDatabase } from "@/lib/mongodb";
+
+export type { CessionsListFilters } from "@/lib/lonaci/cessions-export";
+export { buildCessionsMongoFilter, CESSION_STATUT_LABELS } from "@/lib/lonaci/cessions-export";
 
 const COLLECTION = "cessions";
 const COUNTERS_COLLECTION = "counters";
@@ -19,7 +42,7 @@ export type CessionStatus =
   | "VALIDATION_N2"
   | "VALIDEE_CHEF_SERVICE"
   | "REJETEE";
-export type CessionKind = "CESSION" | "DELOCALISATION";
+export type CessionKind = CessionDossierKind;
 
 interface CessionAttachment {
   id: string;
@@ -53,6 +76,10 @@ interface CessionStored {
   controlledByUserId: string | null;
   validatedAt: Date | null;
   validatedByUserId: string | null;
+  acteGenereAt: Date | null;
+  acteDelocalisationGenereAt: Date | null;
+  linkedOperationId: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
   createdByUserId: string;
   updatedByUserId: string;
   createdAt: Date;
@@ -76,7 +103,13 @@ export interface CessionListItem {
   dateDemande: string;
   motif: string;
   statut: CessionStatus;
+  acteGenereAt: string | null;
+  acteDelocalisationGenereAt: string | null;
+  linkedOperationId: string | null;
+  statutMetierLabel: string;
+  statutMetierDescription: string;
   commentaire: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
   attachmentsCount: number;
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number; uploadedAt: string }>;
   createdAt: string;
@@ -84,6 +117,15 @@ export interface CessionListItem {
 }
 
 function mapCession(row: CessionStored): CessionListItem {
+  const documentChecklist = kindHasDocumentChecklist(row.kind)
+    ? parseDocumentChecklistForKind(row.kind, row.documentChecklist)
+    : null;
+  const display = cessionOperationDisplayStatutFields({
+    kind: row.kind,
+    statut: row.statut,
+    checklistComplet: documentChecklist?.complet ?? null,
+    acteGenereAt: row.acteGenereAt,
+  });
   return {
     id: row._id.toHexString(),
     reference: row.reference,
@@ -100,7 +142,13 @@ function mapCession(row: CessionStored): CessionListItem {
     dateDemande: row.dateDemande.toISOString(),
     motif: row.motif,
     statut: row.statut,
+    acteGenereAt: row.acteGenereAt?.toISOString() ?? null,
+    acteDelocalisationGenereAt: row.acteDelocalisationGenereAt?.toISOString() ?? null,
+    linkedOperationId: row.linkedOperationId,
+    statutMetierLabel: display.statutMetierLabel,
+    statutMetierDescription: display.statutMetierDescription,
     commentaire: row.commentaire,
+    documentChecklist,
     attachmentsCount: row.attachments.length,
     attachments: row.attachments.map((a) => ({
       id: a.id,
@@ -120,6 +168,8 @@ export async function ensureCessionIndexes() {
     { key: { reference: 1 }, unique: true, name: "uniq_reference" },
     { key: { kind: 1, statut: 1, updatedAt: -1 }, name: "idx_kind_status_updated" },
     { key: { statut: 1, updatedAt: -1 }, name: "idx_status_updated" },
+    { key: { dateDemande: -1 }, name: "idx_date_demande" },
+    { key: { kind: 1, dateDemande: -1 }, name: "idx_kind_date_demande" },
     { key: { cedantId: 1 }, name: "idx_cedant" },
     { key: { beneficiaireId: 1 }, name: "idx_beneficiaire" },
     { key: { concessionnaireId: 1 }, name: "idx_concessionnaire" },
@@ -159,12 +209,14 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
   let cedant = null;
   let beneficiaire = null;
   let concessionnaire = null;
-  if (input.kind === "CESSION") {
-    if (!input.cedantId || !input.beneficiaireId || !input.produitCode) {
+  const produitCodeNorm = input.produitCode?.trim().toUpperCase() ?? null;
+
+  if (input.kind === "CESSION" || input.kind === "CESSION_DELOCALISATION") {
+    if (!input.cedantId || !input.beneficiaireId || !produitCodeNorm) {
       throw new Error("CESSION_FIELDS_REQUIRED");
     }
     if (input.cedantId === input.beneficiaireId) throw new Error("BENEFICIAIRE_DOIT_DIFFERER");
-    const hasActive = await hasActiveContractForProduct(input.cedantId, input.produitCode.trim().toUpperCase());
+    const hasActive = await hasActiveContractForProduct(input.cedantId, produitCodeNorm);
     if (!hasActive) throw new Error("CONTRAT_SOURCE_INACTIF");
     [cedant, beneficiaire] = await Promise.all([
       findConcessionnaireById(input.cedantId),
@@ -172,30 +224,70 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
     ]);
     if (!cedant || cedant.deletedAt) throw new Error("CEDANT_NOT_FOUND");
     if (!beneficiaire || beneficiaire.deletedAt) throw new Error("BENEFICIAIRE_NOT_FOUND");
-  } else {
-    if (!input.concessionnaireId || !input.oldAdresse || !input.oldAgenceId || !input.newAdresse || !input.newAgenceId || !input.newGps) {
+  }
+
+  if (input.kind === "DELOCALISATION") {
+    if (
+      !input.concessionnaireId ||
+      !produitCodeNorm ||
+      !input.newAdresse ||
+      !input.newAgenceId ||
+      !input.newGps
+    ) {
       throw new Error("DELOCALISATION_FIELDS_REQUIRED");
     }
     concessionnaire = await findConcessionnaireById(input.concessionnaireId);
     if (!concessionnaire || concessionnaire.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+    const hasActive = await hasActiveContractForProduct(input.concessionnaireId, produitCodeNorm);
+    if (!hasActive) throw new Error("CONTRAT_SOURCE_INACTIF");
+  }
+
+  if (input.kind === "CESSION_DELOCALISATION") {
+    if (!input.newAdresse || !input.newAgenceId || !input.newGps) {
+      throw new Error("CESSION_DELOCALISATION_FIELDS_REQUIRED");
+    }
   }
 
   const db = await getDatabase();
   const now = new Date();
   const reference = await nextReference();
+  const produits = kindHasDocumentChecklist(input.kind) ? await listProduits() : [];
+  const documentChecklist = kindHasDocumentChecklist(input.kind)
+    ? buildDocumentChecklistForKind(input.kind, produitCodeNorm, produits)
+    : null;
+  const linkedOperationId = input.kind === "CESSION_DELOCALISATION" ? randomUUID() : null;
+
   const doc: Omit<CessionStored, "_id"> = {
     reference,
     kind: input.kind,
     concessionnaireId: input.kind === "DELOCALISATION" ? input.concessionnaireId ?? null : null,
-    cedantId: input.kind === "CESSION" ? input.cedantId ?? null : null,
-    beneficiaireId: input.kind === "CESSION" ? input.beneficiaireId ?? null : null,
-    produitCode: input.kind === "CESSION" ? input.produitCode?.trim().toUpperCase() ?? null : null,
+    cedantId:
+      input.kind === "CESSION" || input.kind === "CESSION_DELOCALISATION" ? input.cedantId ?? null : null,
+    beneficiaireId:
+      input.kind === "CESSION" || input.kind === "CESSION_DELOCALISATION" ? input.beneficiaireId ?? null : null,
+    produitCode: produitCodeNorm,
     oldAdresse:
-      input.kind === "DELOCALISATION" ? (input.oldAdresse?.trim() || concessionnaire?.adresse || null) : null,
-    oldAgenceId: input.kind === "DELOCALISATION" ? (input.oldAgenceId || concessionnaire?.agenceId || null) : null,
-    newAdresse: input.kind === "DELOCALISATION" ? input.newAdresse?.trim() || null : null,
-    newAgenceId: input.kind === "DELOCALISATION" ? input.newAgenceId || null : null,
-    newGps: input.kind === "DELOCALISATION" ? input.newGps ?? null : null,
+      input.kind === "DELOCALISATION"
+        ? input.oldAdresse?.trim() || concessionnaire?.adresse || null
+        : input.kind === "CESSION_DELOCALISATION"
+          ? input.oldAdresse?.trim() || cedant?.adresse || null
+          : null,
+    oldAgenceId:
+      input.kind === "DELOCALISATION"
+        ? input.oldAgenceId || concessionnaire?.agenceId || null
+        : input.kind === "CESSION_DELOCALISATION"
+          ? input.oldAgenceId || cedant?.agenceId || null
+          : null,
+    newAdresse:
+      input.kind === "DELOCALISATION" || input.kind === "CESSION_DELOCALISATION"
+        ? input.newAdresse?.trim() || null
+        : null,
+    newAgenceId:
+      input.kind === "DELOCALISATION" || input.kind === "CESSION_DELOCALISATION"
+        ? input.newAgenceId || null
+        : null,
+    newGps:
+      input.kind === "DELOCALISATION" || input.kind === "CESSION_DELOCALISATION" ? input.newGps ?? null : null,
     dateDemande: input.dateDemande,
     motif: input.motif.trim(),
     statut: "SAISIE_AGENT",
@@ -205,6 +297,10 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
     controlledByUserId: null,
     validatedAt: null,
     validatedByUserId: null,
+    acteGenereAt: null,
+    acteDelocalisationGenereAt: null,
+    linkedOperationId,
+    documentChecklist,
     createdByUserId: input.actor._id,
     updatedByUserId: input.actor._id,
     createdAt: now,
@@ -225,12 +321,20 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
       beneficiaireId: doc.beneficiaireId,
       concessionnaireId: doc.concessionnaireId,
       produitCode: doc.produitCode,
+      linkedOperationId: doc.linkedOperationId,
     },
   });
 
+  const notifyTitle =
+    input.kind === "CESSION"
+      ? "Nouvelle demande de cession"
+      : input.kind === "CESSION_DELOCALISATION"
+        ? "Nouvelle demande cession-délocalisation"
+        : "Nouvelle demande de délocalisation";
+
   await notifyRoleTargets(
     "CHEF_SECTION",
-    input.kind === "CESSION" ? "Nouvelle demande de cession" : "Nouvelle demande de délocalisation",
+    notifyTitle,
     `Opération ${input.kind.toLowerCase()} | référence ${reference} | action contrôle N1 attendu | acteur ${actionBy}.`,
     { cessionId: r.insertedId.toHexString(), reference },
   );
@@ -270,18 +374,67 @@ export async function addCessionAttachment(input: {
   if (res.matchedCount === 0) throw new Error("CESSION_NOT_FOUND");
 }
 
+async function ensureDocumentChecklistStored(row: CessionStored): Promise<CessionStored> {
+  if (!kindHasDocumentChecklist(row.kind)) return row;
+  const parsed = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
+  if (parsed?.entries.length) return row;
+  const produits = await listProduits();
+  const checklist = buildDocumentChecklistForKind(row.kind, row.produitCode, produits);
+  const db = await getDatabase();
+  const now = new Date();
+  await db.collection<CessionStored>(COLLECTION).updateOne(
+    { _id: row._id },
+    { $set: { documentChecklist: checklist, updatedAt: now } },
+  );
+  return { ...row, documentChecklist: checklist };
+}
+
+export async function getCessionById(id: string): Promise<CessionListItem | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDatabase();
+  let row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(id), deletedAt: null });
+  if (!row) return null;
+  if (kindHasDocumentChecklist(row.kind)) {
+    row = await ensureDocumentChecklistStored(row);
+  }
+  return mapCession(row);
+}
+
+export async function patchCessionDocumentChecklist(input: {
+  id: string;
+  entries: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
+  actorId: string;
+}): Promise<CessionListItem> {
+  if (!ObjectId.isValid(input.id)) throw new Error("CESSION_NOT_FOUND");
+  const db = await getDatabase();
+  const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  if (!row) throw new Error("CESSION_NOT_FOUND");
+  if (!kindHasDocumentChecklist(row.kind)) throw new Error("CHECKLIST_NOT_SUPPORTED");
+  const current = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
+  if (!current?.entries.length) throw new Error("CHECKLIST_NOT_FOUND");
+  const next = patchDocumentChecklistStatutsForKind(row.kind, current, input.entries);
+  const now = new Date();
+  await db.collection<CessionStored>(COLLECTION).updateOne(
+    { _id: row._id },
+    {
+      $set: {
+        documentChecklist: next,
+        updatedAt: now,
+        updatedByUserId: input.actorId,
+      },
+    },
+  );
+  const updated = await db.collection<CessionStored>(COLLECTION).findOne({ _id: row._id });
+  if (!updated) throw new Error("CESSION_NOT_FOUND");
+  return mapCession(updated);
+}
+
 export async function listCessions(input: {
   page: number;
   pageSize: number;
-  kind?: CessionKind;
-  statut?: CessionStatus;
-  produitCode?: string;
-}) {
+} & CessionsListFilters) {
   const db = await getDatabase();
-  const filter: Record<string, unknown> = { deletedAt: null };
-  if (input.kind) filter.kind = input.kind;
-  if (input.statut) filter.statut = input.statut;
-  if (input.produitCode) filter.produitCode = input.produitCode.toUpperCase();
+  const filter = await buildCessionsMongoFilter(input);
   const skip = (input.page - 1) * input.pageSize;
   const [total, rows] = await Promise.all([
     db.collection<CessionStored>(COLLECTION).countDocuments(filter),
@@ -293,6 +446,53 @@ export async function listCessions(input: {
     page: input.page,
     pageSize: input.pageSize,
   };
+}
+
+const CESSION_EXPORT_MAX = 10_000;
+
+export async function listCessionsForExport(filters: CessionsListFilters) {
+  const db = await getDatabase();
+  const filter = await buildCessionsMongoFilter(filters);
+  const rows = await db
+    .collection<CessionStored>(COLLECTION)
+    .find(filter)
+    .sort({ dateDemande: -1, reference: 1 })
+    .limit(CESSION_EXPORT_MAX)
+    .toArray();
+  const exportRows = await buildCessionExportRows(rows);
+  return { rows, exportRows, truncated: rows.length >= CESSION_EXPORT_MAX };
+}
+
+/** Spec 5.4 — horodatage première génération d'acte (statut métier ACTE GÉNÉRÉ). */
+export async function markActeCessionGenere(cessionId: string) {
+  if (!ObjectId.isValid(cessionId)) return;
+  const db = await getDatabase();
+  const now = new Date();
+  await db.collection<CessionStored>(COLLECTION).updateOne(
+    {
+      _id: new ObjectId(cessionId),
+      deletedAt: null,
+      kind: { $in: ["CESSION", "CESSION_DELOCALISATION"] },
+      acteGenereAt: null,
+    },
+    { $set: { acteGenereAt: now, updatedAt: now } },
+  );
+}
+
+/** Spec 6.1 / 6.2 — horodatage première génération de l'acte de délocalisation. */
+export async function markActeDelocalisationGenere(cessionId: string) {
+  if (!ObjectId.isValid(cessionId)) return;
+  const db = await getDatabase();
+  const now = new Date();
+  await db.collection<CessionStored>(COLLECTION).updateOne(
+    {
+      _id: new ObjectId(cessionId),
+      deletedAt: null,
+      kind: { $in: ["DELOCALISATION", "CESSION_DELOCALISATION"] },
+      acteDelocalisationGenereAt: null,
+    },
+    { $set: { acteDelocalisationGenereAt: now, updatedAt: now } },
+  );
 }
 
 export async function getCessionAttachment(input: { id: string; attachmentId: string }) {
@@ -321,7 +521,28 @@ export async function getCessionAttachmentWithScope(input: { id: string; attachm
   };
 }
 
-function ensureTransitionAllowed(role: string, from: CessionStatus, target: CessionStatus) {
+function ensureTransitionAllowed(
+  role: string,
+  from: CessionStatus,
+  target: CessionStatus,
+  kind: CessionKind,
+) {
+  if (usesSimplifiedDelocalisationCircuit(kind)) {
+    if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
+      if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+      return;
+    }
+    if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDEE_CHEF_SERVICE") {
+      if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+      return;
+    }
+    if (target === "REJETEE") {
+      if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+      return;
+    }
+    throw new Error("INVALID_TRANSITION");
+  }
+
   if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
     if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
     return;
@@ -355,7 +576,14 @@ export async function transitionCession(input: {
   const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
   if (!row) throw new Error("CESSION_NOT_FOUND");
 
-  ensureTransitionAllowed(input.actor.role, row.statut, input.target);
+  ensureTransitionAllowed(input.actor.role, row.statut, input.target, row.kind);
+
+  if (input.target === "CONTROLE_CHEF_SECTION" && kindHasDocumentChecklist(row.kind)) {
+    const checklist = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
+    if (!isDocumentChecklistCompleteForKind(row.kind, checklist)) {
+      throw new Error("CHECKLIST_INCOMPLETE");
+    }
+  }
 
   const now = new Date();
   const $set: Record<string, unknown> = {
@@ -367,12 +595,21 @@ export async function transitionCession(input: {
   if (input.target === "CONTROLE_CHEF_SECTION") {
     $set.controlledAt = now;
     $set.controlledByUserId = input.actor._id;
-    await notifyRoleTargets(
-      "ASSIST_CDS",
-      "Cession / délocalisation : validation N2 attendue",
-      `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
-      { cessionId: input.id, reference: row.reference },
-    );
+    if (!usesSimplifiedDelocalisationCircuit(row.kind)) {
+      await notifyRoleTargets(
+        "ASSIST_CDS",
+        "Cession / délocalisation : validation N2 attendue",
+        `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+        { cessionId: input.id, reference: row.reference },
+      );
+    } else {
+      await notifyRoleTargets(
+        "CHEF_SERVICE",
+        "Délocalisation : validation finale attendue",
+        `Opération délocalisation | référence ${row.reference} | validation Chef de Service attendue | acteur ${actionBy}.`,
+        { cessionId: input.id, reference: row.reference },
+      );
+    }
   }
   if (input.target === "VALIDATION_N2") {
     await notifyRoleTargets(
@@ -385,12 +622,21 @@ export async function transitionCession(input: {
   if (input.target === "VALIDEE_CHEF_SERVICE") {
     $set.validatedAt = now;
     $set.validatedByUserId = input.actor._id;
+    if ((row.kind === "CESSION" || row.kind === "CESSION_DELOCALISATION") && !row.acteGenereAt) {
+      $set.acteGenereAt = now;
+    }
+    if (
+      (row.kind === "DELOCALISATION" || row.kind === "CESSION_DELOCALISATION") &&
+      !row.acteDelocalisationGenereAt
+    ) {
+      $set.acteDelocalisationGenereAt = now;
+    }
   }
 
   await db.collection<CessionStored>(COLLECTION).updateOne({ _id: row._id }, { $set });
 
   if (input.target === "VALIDEE_CHEF_SERVICE") {
-    if (row.kind === "CESSION") {
+    if (row.kind === "CESSION" || row.kind === "CESSION_DELOCALISATION") {
       const [cedant, beneficiaire] = await Promise.all([
         row.cedantId ? findConcessionnaireById(row.cedantId) : Promise.resolve(null),
         row.beneficiaireId ? findConcessionnaireById(row.beneficiaireId) : Promise.resolve(null),
@@ -412,15 +658,46 @@ export async function transitionCession(input: {
         const next = Array.from(new Set([...(beneficiaire.produitsAutorises ?? []), row.produitCode]));
         await updateConcessionnaire(beneficiaire._id, { produitsAutorises: next }, input.actor);
       }
+      if (row.kind === "CESSION_DELOCALISATION" && beneficiaire?._id && row.newAgenceId && row.newGps) {
+        await updateConcessionnaire(
+          beneficiaire._id,
+          {
+            agenceId: row.newAgenceId,
+            gps: row.newGps,
+            adresse: row.newAdresse ?? beneficiaire.adresse ?? null,
+          },
+          input.actor,
+        );
+        if (cedant?._id) {
+          await softDeleteConcessionnaire(cedant._id, input.actor);
+        }
+        await appendAuditLog({
+          entityType: "DOSSIER",
+          entityId: input.id,
+          action: "CESSION_DELOCALISATION_FINALISEE",
+          userId: input.actor._id ?? "",
+          details: {
+            reference: row.reference,
+            linkedOperationId: row.linkedOperationId,
+            cedantId: row.cedantId,
+            beneficiaireId: row.beneficiaireId,
+            newAgenceId: row.newAgenceId,
+          },
+        });
+      }
       const emails = [cedant?.email, beneficiaire?.email]
         .filter((v): v is string => Boolean(v && v.trim()))
         .map((v) => v.trim());
       if (emails.length) {
         const recipients = Array.from(new Set(emails)).join(", ");
+        const subject =
+          row.kind === "CESSION_DELOCALISATION"
+            ? `Cession-délocalisation validée ${row.reference}`
+            : `Cession validée ${row.reference}`;
         await sendSmtpEmail(
           emails,
-          `Cession validée ${row.reference}`,
-          `Opération cession | référence ${row.reference} | action cession validée et fiches mises à jour | acteur ${actionBy} | destinataires ${recipients}.`,
+          subject,
+          `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | dossier finalisé | acteur ${actionBy} | destinataires ${recipients}.`,
         );
       }
     } else if (row.concessionnaireId) {

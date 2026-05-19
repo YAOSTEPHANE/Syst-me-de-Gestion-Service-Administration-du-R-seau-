@@ -296,7 +296,7 @@ export function isStatutBloquant(
   return (CONCESSIONNAIRE_STATUTS_BLOQUANTS as readonly string[]).includes(statut);
 }
 
-/** Inscription non finalisée (pas de code PDV) : modules contrat / caution / etc. interdits. */
+/** Inscription non finalisée (caution payée) : modules contrat / dossier / etc. interdits. */
 export function assertConcessionnaireOperationnel(doc: ConcessionnaireDocument): void {
   if (!canUseConcessionnaireOperationnel(doc)) {
     if (doc.statut === "RESILIE" || doc.statut === "DECEDE") {

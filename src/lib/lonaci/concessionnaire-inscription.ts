@@ -1,8 +1,12 @@
 import type { ConcessionnaireInscriptionStatut } from "@/lib/lonaci/constants";
-import { CONCESSIONNAIRE_INSCRIPTION_STATUTS } from "@/lib/lonaci/constants";
+import {
+  CONCESSIONNAIRE_INSCRIPTION_STATUT_LEGACY_BROUILLON,
+  CONCESSIONNAIRE_INSCRIPTION_STATUTS,
+} from "@/lib/lonaci/constants";
 import {
   buildChecklistFromTemplate,
   computeChecklistComplet,
+  mergeProductChecklistTemplates,
   normalizeChecklistTemplate,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
@@ -20,7 +24,18 @@ import {
 } from "@/lib/lonaci/concessionnaires";
 import { prisma } from "@/lib/prisma";
 
-const OTHER_PRODUCT_CODE = "AUTRES";
+function normalizeStoredInscriptionStatut(
+  value: string | null | undefined,
+): ConcessionnaireInscriptionStatut | null {
+  const raw = (value ?? "").trim();
+  if (raw === CONCESSIONNAIRE_INSCRIPTION_STATUT_LEGACY_BROUILLON) {
+    return "DOSSIER_EN_COURS";
+  }
+  if (isInscriptionStatut(raw)) {
+    return raw;
+  }
+  return null;
+}
 
 export function isInscriptionStatut(value: unknown): value is ConcessionnaireInscriptionStatut {
   return (
@@ -34,13 +49,27 @@ export function resolveInscriptionStatut(doc: {
   inscriptionStatut?: string | null;
   codePdv?: string | null;
 }): ConcessionnaireInscriptionStatut {
-  if (isInscriptionStatut(doc.inscriptionStatut)) {
-    return doc.inscriptionStatut;
+  const normalized = normalizeStoredInscriptionStatut(doc.inscriptionStatut);
+  if (normalized) {
+    return normalized;
   }
   if (doc.codePdv?.trim()) {
     return "VALIDE";
   }
-  return "BROUILLON";
+  return "DOSSIER_EN_COURS";
+}
+
+export function isInscriptionDossierEditable(statut: ConcessionnaireInscriptionStatut): boolean {
+  return statut === "DOSSIER_EN_COURS" || statut === "REJETE";
+}
+
+/** PDV avec code attribué en N1, en attente du paiement de la caution d'inscription. */
+export function isInscriptionAwaitingCautionPayment(doc: ConcessionnaireDocument): boolean {
+  return (
+    resolveInscriptionStatut(doc) === "DOSSIER_EN_COURS" &&
+    Boolean(doc.codePdv?.trim()) &&
+    Boolean(doc.inscriptionValideN1At)
+  );
 }
 
 export function isConcessionnaireInscriptionFinalisee(doc: ConcessionnaireDocument): boolean {
@@ -66,24 +95,7 @@ export function buildInscriptionChecklistForProducts(
   return buildChecklistFromTemplate(template, previous?.entries ?? null);
 }
 
-export function mergeProductChecklistTemplates(
-  produitCodes: string[],
-  produits: ProduitDocument[],
-) {
-  const seen = new Set<string>();
-  const merged: ReturnType<typeof normalizeChecklistTemplate> = [];
-  for (const rawCode of produitCodes) {
-    const code = rawCode.trim().toUpperCase();
-    if (!code || code === OTHER_PRODUCT_CODE) continue;
-    const produit = produits.find((p) => p.code.trim().toUpperCase() === code);
-    for (const item of normalizeChecklistTemplate(produit?.documentsChecklist)) {
-      if (seen.has(item.id)) continue;
-      seen.add(item.id);
-      merged.push(item);
-    }
-  }
-  return merged;
-}
+export { mergeProductChecklistTemplates } from "@/lib/lonaci/produit-document-checklist";
 
 export function formatNomComplet(nom: string, prenom: string): string {
   return `${prenom.trim()} ${nom.trim()}`.trim();
@@ -165,7 +177,7 @@ function canTransition(
 ): boolean {
   if (action === "SUBMIT") {
     return (
-      (current === "BROUILLON" || current === "REJETE") &&
+      (current === "DOSSIER_EN_COURS" || current === "REJETE") &&
       target === "SOUMIS" &&
       ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)
     );
@@ -173,7 +185,7 @@ function canTransition(
   if (action === "VALIDATE_N1") {
     return (
       current === "SOUMIS" &&
-      target === "VALIDE" &&
+      target === "DOSSIER_EN_COURS" &&
       ["CHEF_SECTION", "CHEF_SERVICE"].includes(role)
     );
   }
@@ -187,7 +199,7 @@ function canTransition(
   if (action === "RETURN_TO_DRAFT") {
     return (
       current === "REJETE" &&
-      target === "BROUILLON" &&
+      target === "DOSSIER_EN_COURS" &&
       ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)
     );
   }
@@ -212,13 +224,13 @@ export async function transitionConcessionnaireInscription(input: {
       target = "SOUMIS";
       break;
     case "VALIDATE_N1":
-      target = "VALIDE";
+      target = "DOSSIER_EN_COURS";
       break;
     case "REJECT":
       target = "REJETE";
       break;
     case "RETURN_TO_DRAFT":
-      target = "BROUILLON";
+      target = "DOSSIER_EN_COURS";
       break;
   }
 
@@ -267,7 +279,6 @@ export async function transitionConcessionnaireInscription(input: {
     data.codePdv = codePdv;
     data.inscriptionValideN1At = now;
     data.inscriptionRejetMotif = null;
-    data.statut = "ACTIF";
   }
 
   await prisma.concessionnaire.updateMany({
@@ -331,4 +342,65 @@ export function patchDocumentChecklistStatuts(
     return { ...entry, statut: next };
   });
   return { entries, complet: computeChecklistComplet(entries) };
+}
+
+/**
+ * Finalise l'inscription (VALIDE + ACTIF) après paiement d'une caution d'inscription.
+ * Idempotent si l'inscription est déjà finalisée.
+ */
+export async function completeInscriptionAfterCautionPaid(input: {
+  concessionnaireId: string;
+  actor?: UserDocument;
+}): Promise<boolean> {
+  const doc = await findConcessionnaireById(input.concessionnaireId);
+  if (!doc || doc.deletedAt) {
+    return false;
+  }
+  if (isConcessionnaireInscriptionFinalisee(doc)) {
+    return false;
+  }
+  const current = resolveInscriptionStatut(doc);
+  if (current !== "DOSSIER_EN_COURS" || !doc.codePdv?.trim() || !doc.inscriptionValideN1At) {
+    return false;
+  }
+
+  const now = new Date();
+  await prisma.concessionnaire.updateMany({
+    where: { id: input.concessionnaireId, deletedAt: null },
+    data: {
+      inscriptionStatut: "VALIDE",
+      statut: "ACTIF",
+      updatedAt: now,
+      ...(input.actor?._id ? { updatedByUserId: input.actor._id } : {}),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CONCESSIONNAIRE",
+    entityId: input.concessionnaireId,
+    action: "INSCRIPTION_CAUTION_PAYEE",
+    userId: input.actor?._id ?? "",
+    details: {
+      codePdv: doc.codePdv,
+      from: current,
+      to: "VALIDE",
+    },
+  });
+
+  return true;
+}
+
+export async function resolveConcessionnaireIdFromCautionLink(caution: {
+  concessionnaireId?: string | null;
+  contratId?: string | null;
+}): Promise<string | null> {
+  const direct = (caution.concessionnaireId ?? "").trim();
+  if (direct) return direct;
+  const contratId = (caution.contratId ?? "").trim();
+  if (!contratId) return null;
+  const contrat = await prisma.contrat.findFirst({
+    where: { id: contratId, deletedAt: null },
+    select: { concessionnaireId: true },
+  });
+  return contrat?.concessionnaireId ?? null;
 }

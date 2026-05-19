@@ -1,4 +1,5 @@
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
+import { countSuccessionStaleAlerts } from "@/lib/lonaci/succession-stale-alerts";
 import { getDatabase } from "@/lib/mongodb";
 
 export type ReportPeriod = "daily" | "weekly" | "monthly";
@@ -87,8 +88,6 @@ export async function buildReportSummary(
   const today = new Date();
   const cautionDueThreshold = new Date(today);
   cautionDueThreshold.setDate(today.getDate() - thr.cautionOverdueDays);
-  const successionStaleThreshold = new Date(Date.now() - thr.successionStaleDays * 24 * 60 * 60 * 1000);
-
   let scopedConcessionnaireIds: string[] | null = null;
   if (scopedAgenceId) {
     const rows = await db
@@ -192,11 +191,7 @@ export async function buildReportSummary(
       dueDate: { $lte: cautionDueThreshold },
     }),
     db.collection("succession_cases").countDocuments({ ...successionMatch, status: "OUVERT" }),
-    db.collection("succession_cases").countDocuments({
-      ...successionMatch,
-      status: "OUVERT",
-      updatedAt: { $lte: successionStaleThreshold },
-    }),
+    countSuccessionStaleAlerts(scopedAgenceId),
     db.collection("pdv_integrations").countDocuments(pdvIntegrationsMatch),
     db
       .collection("contrats")

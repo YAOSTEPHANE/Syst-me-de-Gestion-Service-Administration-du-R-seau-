@@ -154,6 +154,15 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "INVALID_TRANSITION") {
       return NextResponse.json({ message: "Transition de statut invalide." }, { status: 409 });
     }
+    if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
+      return NextResponse.json(
+        {
+          message:
+            "Soumission impossible : la checklist documents doit être complète (tous les documents obligatoires en statut « Fourni »).",
+        },
+        { status: 409 },
+      );
+    }
     if (code === "DOSSIER_NOT_FOUND") {
       return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
     }

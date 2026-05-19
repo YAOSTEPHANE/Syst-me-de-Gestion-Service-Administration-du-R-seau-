@@ -2,9 +2,16 @@ import { randomBytes } from "crypto";
 
 import { ObjectId } from "mongodb";
 
+import {
+  GRATTAGE_STOCK_ALERT_DEFAULT,
+  type ScratchCodeStatut,
+  SCRATCH_CODE_STATUTS,
+} from "@/lib/lonaci/constants";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { UserDocument } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import { ensureGrattageContratIndexes, ensureGrattageContratsFromGpr } from "@/lib/lonaci/grattage-contrats";
+import { prisma } from "@/lib/prisma";
 import { getDatabase } from "@/lib/mongodb";
 
 const GPR_REGISTRATIONS_COLLECTION = "gpr_registrations";
@@ -24,8 +31,11 @@ export const GPR_REGISTRATION_STATUSES = [
 ] as const;
 export type GprRegistrationStatus = (typeof GPR_REGISTRATION_STATUSES)[number];
 
-export const SCRATCH_CODE_STATUSES = ["GENERE", "ATTRIBUE", "ACTIF", "EPUISE"] as const;
-export type ScratchCodeStatus = (typeof SCRATCH_CODE_STATUSES)[number];
+export const SCRATCH_CODE_STATUSES = SCRATCH_CODE_STATUTS;
+export type ScratchCodeStatus = ScratchCodeStatut;
+
+const GPR_ELIGIBLE_STATUSES: GprRegistrationStatus[] = ["VALIDE_N2", "SUIVI_CHEF_SERVICE"];
+const SCRATCH_DISTRIBUTED_STATUSES: ScratchCodeStatus[] = ["ATTRIBUE", "ACTIF", "EPUISE"];
 
 type StoredGprRegistration = {
   _id: ObjectId;
@@ -72,6 +82,7 @@ type StoredScratchLot = {
   requestedCount: number;
   generatedCount: number;
   status: ScratchCodeStatus;
+  attribueAt: Date | null;
   chefSectionValidatedAt: Date | null;
   activatedAt: Date | null;
   exhaustedAt: Date | null;
@@ -238,6 +249,17 @@ export async function transitionGprRegistration(input: {
       },
     } as unknown as Record<string, unknown>,
   );
+
+  if (input.targetStatus === "SUIVI_CHEF_SERVICE") {
+    await ensureGrattageContratIndexes();
+    await ensureGrattageContratsFromGpr({
+      concessionnaireId: row.concessionnaireId,
+      produitsActifs: row.produitsActifs,
+      gprRegistrationId: input.registrationId,
+      dateDebut: row.dateEnregistrement,
+      actor: input.actor,
+    });
+  }
 }
 
 export async function listGprRegistrations(params: { page: number; pageSize: number; status?: GprRegistrationStatus }) {
@@ -443,6 +465,7 @@ export async function createScratchLot(input: {
     requestedCount: input.nombreCodes,
     generatedCount: input.nombreCodes,
     status: "GENERE",
+    attribueAt: null,
     chefSectionValidatedAt: null,
     activatedAt: null,
     exhaustedAt: null,
@@ -476,10 +499,18 @@ export async function createScratchLot(input: {
   return { lotId: resolvedLotId, generatedCount: input.nombreCodes };
 }
 
-function canTransitionLot(role: LonaciRole, from: ScratchCodeStatus, to: ScratchCodeStatus) {
-  if (from === "GENERE" && to === "ATTRIBUE") return true;
+export function canTransitionScratchLot(
+  role: LonaciRole,
+  from: ScratchCodeStatus,
+  to: ScratchCodeStatus,
+): boolean {
+  if (from === "GENERE" && to === "ATTRIBUE") {
+    return ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "DISPATCHER"].includes(role);
+  }
   if (from === "ATTRIBUE" && to === "ACTIF") return role === "CHEF_SECTION";
-  if (from === "ACTIF" && to === "EPUISE") return ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role);
+  if (from === "ACTIF" && to === "EPUISE") {
+    return ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role);
+  }
   return false;
 }
 
@@ -491,7 +522,9 @@ export async function transitionScratchLot(input: {
   const db = await getDatabase();
   const lot = await db.collection<StoredScratchLot>(SCRATCH_LOTS_COLLECTION).findOne({ lotId: input.lotId, deletedAt: null });
   if (!lot) throw new Error("LOT_NOT_FOUND");
-  if (!canTransitionLot(input.actor.role, lot.status, input.targetStatus)) throw new Error("FORBIDDEN_TRANSITION");
+  if (!canTransitionScratchLot(input.actor.role, lot.status, input.targetStatus)) {
+    throw new Error("FORBIDDEN_TRANSITION");
+  }
   const now = new Date();
   await db.collection<StoredScratchLot>(SCRATCH_LOTS_COLLECTION).updateOne(
     { _id: lot._id },
@@ -500,6 +533,7 @@ export async function transitionScratchLot(input: {
         status: input.targetStatus,
         updatedAt: now,
         updatedByUserId: input.actor._id ?? "",
+        attribueAt: input.targetStatus === "ATTRIBUE" ? now : lot.attribueAt ?? null,
         chefSectionValidatedAt: input.targetStatus === "ACTIF" ? now : lot.chefSectionValidatedAt,
         activatedAt: input.targetStatus === "ACTIF" ? now : lot.activatedAt,
         exhaustedAt: input.targetStatus === "EPUISE" ? now : lot.exhaustedAt,
@@ -520,35 +554,198 @@ export async function transitionScratchLot(input: {
   );
 }
 
-export async function listScratchLots(params: { page: number; pageSize: number }) {
+function mapScratchLotRow(r: StoredScratchLot) {
+  return {
+    id: r._id.toHexString(),
+    lotId: r.lotId,
+    concessionnaireId: r.concessionnaireId,
+    produitCode: r.produitCode,
+    requestedCount: r.requestedCount,
+    generatedCount: r.generatedCount,
+    status: r.status,
+    attribueAt: r.attribueAt ? r.attribueAt.toISOString() : null,
+    activatedAt: r.activatedAt ? r.activatedAt.toISOString() : null,
+    createdAt: r.createdAt.toISOString(),
+    updatedAt: r.updatedAt.toISOString(),
+    history: r.history.map((h) => ({
+      action: h.action,
+      byUserId: h.byUserId,
+      at: h.at.toISOString(),
+      details: h.details,
+    })),
+  };
+}
+
+export async function listScratchLots(params: {
+  page: number;
+  pageSize: number;
+  concessionnaireId?: string;
+  produitCode?: string;
+  status?: ScratchCodeStatus;
+}) {
   const db = await getDatabase();
   const skip = (params.page - 1) * params.pageSize;
+  const filter: Record<string, unknown> = { deletedAt: null };
+  if (params.concessionnaireId) filter.concessionnaireId = params.concessionnaireId;
+  if (params.produitCode) filter.produitCode = params.produitCode.trim().toUpperCase();
+  if (params.status) filter.status = params.status;
   const col = db.collection<StoredScratchLot>(SCRATCH_LOTS_COLLECTION);
   const [total, rows] = await Promise.all([
-    col.countDocuments({ deletedAt: null }),
-    col.find({ deletedAt: null }).sort({ createdAt: -1 }).skip(skip).limit(params.pageSize).toArray(),
+    col.countDocuments(filter),
+    col.find(filter).sort({ createdAt: -1 }).skip(skip).limit(params.pageSize).toArray(),
   ]);
   return {
-    items: rows.map((r) => ({
-      id: r._id.toHexString(),
-      lotId: r.lotId,
-      concessionnaireId: r.concessionnaireId,
-      produitCode: r.produitCode,
-      requestedCount: r.requestedCount,
-      generatedCount: r.generatedCount,
-      status: r.status,
-      createdAt: r.createdAt.toISOString(),
-      updatedAt: r.updatedAt.toISOString(),
-      history: r.history.map((h) => ({
-        action: h.action,
-        byUserId: h.byUserId,
-        at: h.at.toISOString(),
-        details: h.details,
-      })),
-    })),
+    items: rows.map(mapScratchLotRow),
     total,
     page: params.page,
     pageSize: params.pageSize,
+  };
+}
+
+export async function listScratchHistoryByConcessionnaire(
+  concessionnaireId: string,
+  params: { page: number; pageSize: number },
+) {
+  const lots = await listScratchLots({
+    page: params.page,
+    pageSize: params.pageSize,
+    concessionnaireId,
+  });
+  const db = await getDatabase();
+  const codeCounts = await db
+    .collection<StoredScratchCode>(SCRATCH_CODES_COLLECTION)
+    .aggregate<{ _id: ScratchCodeStatus; count: number }>([
+      { $match: { concessionnaireId } },
+      { $group: { _id: "$status", count: { $sum: 1 } } },
+    ])
+    .toArray();
+  const codesByStatus = Object.fromEntries(codeCounts.map((c) => [c._id, c.count])) as Record<
+    ScratchCodeStatus,
+    number
+  >;
+  return { ...lots, codesByStatus, concessionnaireId };
+}
+
+export async function listEligibleConcessionnairesForProduct(input: {
+  produitCode: string;
+  agenceId?: string;
+  q?: string;
+  limit?: number;
+}) {
+  const produitCode = input.produitCode.trim().toUpperCase();
+  const limit = Math.min(Math.max(input.limit ?? 100, 1), 200);
+  const q = input.q?.trim().toLowerCase();
+
+  const pdvs = await prisma.concessionnaire.findMany({
+    where: {
+      deletedAt: null,
+      statut: "ACTIF",
+      inscriptionStatut: "VALIDE",
+      ...(input.agenceId ? { agenceId: input.agenceId } : {}),
+    },
+    select: {
+      id: true,
+      codePdv: true,
+      raisonSociale: true,
+      agenceId: true,
+    },
+    take: 500,
+    orderBy: { raisonSociale: "asc" },
+  });
+
+  const ids = pdvs.map((p) => p.id);
+  if (ids.length === 0) return [];
+
+  const db = await getDatabase();
+  const [contrats, gprRows] = await Promise.all([
+    prisma.contrat.findMany({
+      where: {
+        concessionnaireId: { in: ids },
+        produitCode,
+        status: "ACTIF",
+        deletedAt: null,
+      },
+      select: { concessionnaireId: true },
+    }),
+    db
+      .collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION)
+      .find({
+        concessionnaireId: { $in: ids },
+        deletedAt: null,
+        status: { $in: GPR_ELIGIBLE_STATUSES },
+        produitsActifs: produitCode,
+      })
+      .project({ concessionnaireId: 1 })
+      .toArray(),
+  ]);
+
+  const withContrat = new Set(contrats.map((c) => c.concessionnaireId));
+  const gprOk = new Set(gprRows.map((r) => r.concessionnaireId));
+
+  return pdvs
+    .filter((p) => withContrat.has(p.id) && gprOk.has(p.id))
+    .filter((p) => {
+      if (!q) return true;
+      const hay = `${p.codePdv} ${p.raisonSociale}`.toLowerCase();
+      return hay.includes(q);
+    })
+    .slice(0, limit)
+    .map((p) => ({
+      id: p.id,
+      codePdv: p.codePdv,
+      raisonSociale: p.raisonSociale,
+      agenceId: p.agenceId,
+      produitCode,
+    }));
+}
+
+export async function getScratchDispatcherDashboard(alertThreshold?: number) {
+  const envSeuil = Number.parseInt(process.env.GRATTAGE_STOCK_ALERT_THRESHOLD?.trim() ?? "", 10);
+  const seuil =
+    alertThreshold ?? (Number.isFinite(envSeuil) && envSeuil > 0 ? envSeuil : GRATTAGE_STOCK_ALERT_DEFAULT);
+
+  const db = await getDatabase();
+  const lots = await db
+    .collection<StoredScratchLot>(SCRATCH_LOTS_COLLECTION)
+    .find({ deletedAt: null })
+    .toArray();
+
+  let codesDistribues = 0;
+  let soldeRestant = 0;
+  const byProduit = new Map<string, { solde: number; distribues: number }>();
+
+  for (const lot of lots) {
+    const bucket = byProduit.get(lot.produitCode) ?? { solde: 0, distribues: 0 };
+    if (lot.status === "GENERE") {
+      soldeRestant += lot.generatedCount;
+      bucket.solde += lot.generatedCount;
+    }
+    if (SCRATCH_DISTRIBUTED_STATUSES.includes(lot.status)) {
+      codesDistribues += lot.generatedCount;
+      bucket.distribues += lot.generatedCount;
+    }
+    byProduit.set(lot.produitCode, bucket);
+  }
+
+  const alertesRupture = [...byProduit.entries()]
+    .filter(([, v]) => v.solde < seuil)
+    .map(([produitCode, v]) => ({
+      produitCode,
+      soldeRestant: v.solde,
+      codesDistribues: v.distribues,
+      seuil,
+    }))
+    .sort((a, b) => a.soldeRestant - b.soldeRestant);
+
+  return {
+    codesDistribues,
+    soldeRestant,
+    lotsTotal: lots.length,
+    lotsEnAttenteAttribution: lots.filter((l) => l.status === "GENERE").length,
+    lotsActifs: lots.filter((l) => l.status === "ACTIF").length,
+    alertesRupture,
+    seuilAlerte: seuil,
+    generatedAt: new Date().toISOString(),
   };
 }
 

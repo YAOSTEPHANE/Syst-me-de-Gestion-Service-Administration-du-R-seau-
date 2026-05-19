@@ -14,19 +14,35 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     CONCESSIONNAIRE_NOT_FOUND: "Le concessionnaire lié est introuvable.",
     AGENCE_FORBIDDEN: "Accès refusé : vous n’avez pas les droits sur cette ressource.",
     ACTE_DECES_REQUIRED: "Acte de décès obligatoire pour cette opération.",
+    SUCCESSION_CHECKLIST_INCOMPLETE:
+      "Checklist documentaire incomplète : toutes les pièces obligatoires (§10.1) doivent être marquées comme fournies avant la vérification juridique.",
+    SUCCESSION_DOCUMENTS_REQUIRED:
+      "Documents de succession requis avant la vérification juridique.",
     CONTRAT_NOT_FOUND: "Contrat introuvable.",
     CONTRAT_NOT_ACTIF: "Contrat non actif (opération refusée).",
     CONCESSIONNAIRE_BLOQUE: "Opération interdite (concessionnaire non actif/résilié/décédé).",
     CONCESSIONNAIRE_INSCRIPTION_PENDING:
-      "Inscription non finalisée : validez la fiche (N1) avant d'utiliser les modules opérationnels.",
+      "Inscription non finalisée : complétez le parcours (N1 puis paiement caution) avant les modules opérationnels.",
+    CONCESSIONNAIRE_INSCRIPTION_CAUTION_NOT_READY:
+      "La caution d'inscription ne peut être enregistrée qu'après validation N1 et attribution du code PDV.",
+    CAUTION_DEJA_EXONEREE: "Cette caution est déjà exonérée.",
+    CAUTION_DEJA_PAYEE: "Caution déjà payée — exonération impossible.",
+    CAUTION_EXONERATION_MOTIF_REQUIS: "Motif d'exonération obligatoire (3 caractères minimum).",
+    CAUTION_PAYMENT_REFERENCE_REQUISE:
+      "Référence de paiement obligatoire pour passer en statut PAYÉE. Régularisez d'abord la fiche provisoire avec la référence d'encaissement.",
     FORBIDDEN_TRANSITION: "Transition d'inscription non autorisée pour votre profil ou l'état actuel.",
     CHECKLIST_INCOMPLETE: "Toutes les pièces obligatoires doivent être marquées comme fournies.",
+    DOSSIER_CHECKLIST_INCOMPLETE:
+      "Soumission impossible : la checklist documents du dossier est incomplète. Marquez tous les documents obligatoires comme « Fourni ».",
     PHOTO_REQUIRED: "Une photo d'identité est obligatoire avant soumission.",
     NOM_REQUIRED: "Le nom est obligatoire.",
     PRENOM_REQUIRED: "Le prénom est obligatoire.",
     CNI_REQUIRED: "Le numéro CNI est obligatoire pour soumettre l'inscription.",
     TELEPHONE_REQUIRED: "Un numéro de contact principal est obligatoire.",
     GPS_REQUIRED: "La localisation GPS est obligatoire.",
+    CESSION_DELOCALISATION_FIELDS_REQUIRED:
+      "Cession-délocalisation : cédant, bénéficiaire, produit et nouvelle zone GPS sont obligatoires.",
+    CHECKLIST_NOT_SUPPORTED: "Ce type de dossier ne dispose pas de checklist documents.",
     PRODUITS_REQUIRED: "Sélectionnez au moins un produit.",
     CONCESSIONNAIRE_NOT_FOUND_2: "Concessionnaire introuvable.",
   };

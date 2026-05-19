@@ -22,6 +22,7 @@ const createBodySchema = z
   .object({
     contratId: z.string().min(1).optional(),
     lonaciClientId: z.string().min(1).optional(),
+    concessionnaireId: z.string().min(1).optional(),
     produitCode: z.string().min(1).max(64).optional(),
     montant: z.coerce.number().positive(),
     modeReglement: z.enum(CAUTION_PAYMENT_MODES).optional(),
@@ -33,18 +34,20 @@ const createBodySchema = z
   .superRefine((data, ctx) => {
     const c = (data.contratId ?? "").trim();
     const l = (data.lonaciClientId ?? "").trim();
-    if (c && l) {
+    const p = (data.concessionnaireId ?? "").trim();
+    const linkCount = [c, l, p].filter(Boolean).length;
+    if (linkCount > 1) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Preciser soit contratId soit lonaciClientId, pas les deux.",
+        message: "Preciser un seul rattachement : contratId, lonaciClientId ou concessionnaireId.",
         path: ["contratId"],
       });
       return;
     }
-    if (!c && !l) {
+    if (linkCount === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Identifiant client Lonaci (lonaciClientId) requis pour ce parcours.",
+        message: "Rattachement requis : contratId, lonaciClientId ou concessionnaireId.",
         path: ["lonaciClientId"],
       });
       return;
@@ -117,6 +120,7 @@ export async function POST(request: NextRequest) {
     const caution = await createCaution({
       contratId: (parsed.data.contratId ?? "").trim() || undefined,
       lonaciClientId: (parsed.data.lonaciClientId ?? "").trim() || undefined,
+      concessionnaireId: (parsed.data.concessionnaireId ?? "").trim() || undefined,
       produitCode: (parsed.data.produitCode ?? "").trim() || undefined,
       montant: parsed.data.montant,
       modeReglement,
@@ -148,6 +152,12 @@ export async function POST(request: NextRequest) {
       return conflict(
         "Inscription non finalisee : validation N1 requise.",
         "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+      );
+    }
+    if (code === "CONCESSIONNAIRE_INSCRIPTION_CAUTION_NOT_READY") {
+      return conflict(
+        "Caution d'inscription : validation N1 et code PDV requis avant enregistrement.",
+        "CONCESSIONNAIRE_INSCRIPTION_CAUTION_NOT_READY",
       );
     }
     if (code === "CLIENT_NOT_FOUND") {

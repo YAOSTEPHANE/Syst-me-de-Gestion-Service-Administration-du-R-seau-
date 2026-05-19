@@ -34,6 +34,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
       AGENCE_FORBIDDEN: 403,
       ROLE_FORBIDDEN: 403,
       SUCCESSION_VALIDATION_ALREADY_DONE: 409,
+      SUCCESSION_STEP_ORDER: 409,
+      SUCCESSION_CHECKLIST_INCOMPLETE: 409,
     };
     const status = map[code] ?? 500;
     return NextResponse.json({ message: code }, { status });

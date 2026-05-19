@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
+import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureGprGrattageIndexes, SCRATCH_CODE_STATUSES, transitionScratchLot } from "@/lib/lonaci/gpr-grattage";
+import { GRATTAGE_API_ROLES } from "@/lib/lonaci/grattage-access";
 
 const schema = z.object({
   targetStatus: z.enum(SCRATCH_CODE_STATUSES),
@@ -18,16 +19,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
-  const auth = await checkPermission(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
-    resource: "DOSSIERS",
-    action: resolveRbacAction(parsed.data.targetStatus, {
-      GENERE: "CONFIGURE",
-      ATTRIBUE: "UPDATE",
-      ACTIF: "FINALIZE",
-      EPUISE: "EXPORT",
-    }),
-  });
+  const auth = await requireApiAuth(request, { roles: [...GRATTAGE_API_ROLES] });
   if ("error" in auth) return auth.error;
   const { id } = await context.params;
   await ensureGprGrattageIndexes();
