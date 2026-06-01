@@ -72,9 +72,8 @@ describe("parcours RIB / bancarisation (statuts 8.3)", () => {
   });
 
   it("lit le legacy EN_COURS + etatRib", () => {
-    expect(canValidateRib(baseDoc({ statutBancarisation: "EN_COURS", etatRib: "RIB_FOURNI" }))).toBe(true);
-    expect(canIntegrateBancarisation(baseDoc({ statutBancarisation: "EN_COURS", etatRib: "RIB_VALIDE" }))).toBe(
-      true,
-    );
+    const legacy = { statutBancarisation: "EN_COURS" } as unknown as Partial<ConcessionnaireDocument>;
+    expect(canValidateRib(baseDoc({ ...legacy, etatRib: "RIB_FOURNI" }))).toBe(true);
+    expect(canIntegrateBancarisation(baseDoc({ ...legacy, etatRib: "RIB_VALIDE" }))).toBe(true);
   });
 });

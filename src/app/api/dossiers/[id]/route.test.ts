@@ -1,10 +1,16 @@
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { requireApiAuthMock, ensureDossierIndexesMock, patchContratDossierPayloadMock } = vi.hoisted(() => ({
+const {
+  requireApiAuthMock,
+  ensureDossierIndexesMock,
+  patchContratDossierPayloadMock,
+  buildDossierContratStatutMetierFieldsMock,
+} = vi.hoisted(() => ({
   requireApiAuthMock: vi.fn(),
   ensureDossierIndexesMock: vi.fn(),
   patchContratDossierPayloadMock: vi.fn(),
+  buildDossierContratStatutMetierFieldsMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/guards", () => ({
@@ -15,6 +21,7 @@ vi.mock("@/lib/lonaci/dossiers", () => ({
   ensureDossierIndexes: ensureDossierIndexesMock,
   findDossierById: vi.fn(async () => null),
   patchContratDossierPayload: patchContratDossierPayloadMock,
+  buildDossierContratStatutMetierFields: buildDossierContratStatutMetierFieldsMock,
 }));
 
 import { expectResponse } from "@/test-utils/expect-response";
@@ -26,6 +33,7 @@ describe("PATCH /api/dossiers/[id]", () => {
     vi.clearAllMocks();
     requireApiAuthMock.mockResolvedValue({ user: { _id: "u1", role: "AGENT", agenceId: "a1" } });
     ensureDossierIndexesMock.mockResolvedValue(undefined);
+    buildDossierContratStatutMetierFieldsMock.mockResolvedValue({});
   });
 
   it("rejette un corps vide (aucun champ)", async () => {

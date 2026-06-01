@@ -41,8 +41,9 @@ vi.mock("@/lib/lonaci/contrat-document", () => ({
 }));
 
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
+import type { UserDocument } from "@/lib/lonaci/types";
 
-const actor = { _id: "u1", role: "CHEF_SERVICE" } as const;
+const actor = { _id: "u1", role: "CHEF_SERVICE" } as UserDocument;
 
 const baseDossier = {
   _id: "d1",

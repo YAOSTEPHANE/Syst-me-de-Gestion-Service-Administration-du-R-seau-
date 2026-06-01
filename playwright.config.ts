@@ -37,7 +37,7 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: "npm run dev",
+    command: "npx tsx scripts/start-dev-e2e.ts",
     url: baseURL,
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 import { saveAssistantChecklist } from "@/lib/lonaci/assistant-operations";
@@ -29,7 +30,7 @@ export async function PUT(request: NextRequest) {
 
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
+    return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
   await saveAssistantChecklist({

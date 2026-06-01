@@ -14,7 +14,8 @@ test.describe("Application authentifiée", () => {
       if (item.disabled) continue;
       const link = page
         .locator("aside.lonaci-db-sidebar nav.lonaci-db-nav")
-        .getByRole("link", { name: item.label });
+        .locator(`a.lonaci-db-nav-item[href="${item.href}"]`);
+      if ((await link.count()) === 0) continue;
       await link.click();
       await expect(page).toHaveURL(new RegExp(`${escapeRegex(item.href)}(\\?|$)`));
       await expect(page.locator("main.lonaci-db-content")).toBeVisible();

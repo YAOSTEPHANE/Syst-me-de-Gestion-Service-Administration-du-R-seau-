@@ -1,14 +1,13 @@
 /**
- * Vérifie que Prisma et le driver Mongo natif joignent la même base (ping).
- * Usage : npm run verify:db
+ * Démarre `next dev` après chargement .env et conversion Mongo srv → standard (e2e / réseau d’entreprise).
  */
+import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 function loadEnvFile(filePath: string, override = false) {
   if (!existsSync(filePath)) return;
-  const content = readFileSync(filePath, "utf8");
-  for (const rawLine of content.split(/\r?\n/)) {
+  for (const rawLine of readFileSync(filePath, "utf8").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
     const eq = line.indexOf("=");
@@ -29,19 +28,20 @@ async function main() {
 
   const { initMongoSrvStandardUri } = await import("../src/lib/mongodb-srv-standard");
   await initMongoSrvStandardUri();
-  const { prisma } = await import("../src/lib/prisma");
-  const { getDatabase } = await import("../src/lib/mongodb");
 
-  await prisma.$runCommandRaw({ ping: 1 });
-  const db = await getDatabase();
-  await db.command({ ping: 1 });
-  await prisma.$disconnect();
+  const child = spawn("npx", ["next", "dev", "--turbopack", "--hostname", "127.0.0.1"], {
+    stdio: "inherit",
+    env: process.env,
+    shell: true,
+  });
 
-  console.log("[verify:db] Prisma et driver Mongo : connexion OK (ping).");
+  child.on("exit", (code, signal) => {
+    if (signal) process.kill(process.pid, signal);
+    process.exit(code ?? 1);
+  });
 }
 
-main().catch((err: unknown) => {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`[verify:db] Échec : ${message}`);
+main().catch((err) => {
+  console.error("[start-dev-e2e]", err);
   process.exit(1);
 });

@@ -19,6 +19,12 @@ function loadEnvFile(filePath: string, override = false) {
 }
 
 async function main() {
+  const root = process.cwd();
+  loadEnvFile(resolve(root, ".env"), false);
+  loadEnvFile(resolve(root, ".env.local"), true);
+  const runtimeEnv = process.env as Record<string, string | undefined>;
+  runtimeEnv.NODE_ENV ??= "development";
+
   if (process.env.ALLOW_SEED_ADMIN !== "true") {
     console.log(
       "Seed admin desactive: le premier compte CHEF_SERVICE doit etre cree manuellement en base a l'installation. (Definir ALLOW_SEED_ADMIN=true pour forcer ce script.)",
@@ -26,16 +32,11 @@ async function main() {
     return;
   }
 
-  const root = process.cwd();
-  loadEnvFile(resolve(root, ".env"), false);
-  loadEnvFile(resolve(root, ".env.local"), true);
-  const runtimeEnv = process.env as Record<string, string | undefined>;
-  runtimeEnv.NODE_ENV ??= "development";
+  const { initMongoSrvStandardUri } = await import("../src/lib/mongodb-srv-standard");
+  await initMongoSrvStandardUri();
 
-  const [{ createUser, ensureUsersIndexes, findUserByEmail }, { hashPassword }] = await Promise.all([
-    import("../src/lib/lonaci/users"),
-    import("../src/lib/auth/password"),
-  ]);
+  const [{ createUser, ensureUsersIndexes, findUserByEmail, updateUserPassword }, { hashPassword }] =
+    await Promise.all([import("../src/lib/lonaci/users"), import("../src/lib/auth/password")]);
 
   const email = (process.env.ADMIN_EMAIL ?? "admin@lonaci.ci").trim().toLowerCase();
   const password = (process.env.ADMIN_PASSWORD ?? "Admin@123456").trim();
@@ -53,7 +54,9 @@ async function main() {
 
   const existing = await findUserByEmail(email);
   if (existing) {
-    console.log(`Utilisateur déjà existant: ${existing.email} (${existing.role})`);
+    const passwordHash = await hashPassword(password);
+    await updateUserPassword(existing._id ?? "", passwordHash);
+    console.log(`Utilisateur existant — mot de passe synchronisé pour e2e/dev: ${existing.email} (${existing.role})`);
     return;
   }
 

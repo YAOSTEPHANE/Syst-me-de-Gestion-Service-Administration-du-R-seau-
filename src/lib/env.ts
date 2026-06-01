@@ -1,3 +1,21 @@
+import dns from "node:dns";
+
+import { getResolvedMongoUri } from "@/lib/mongodb-srv-standard";
+
+/** DNS alternatif pour `mongodb+srv` si le résolveur système refuse les requêtes SRV (réseau d’entreprise). */
+function applyOptionalMongoDnsServers() {
+  const raw = process.env.MONGODB_DNS_SERVERS?.trim();
+  if (!raw) return;
+  const servers = raw.split(",").map((s) => s.trim()).filter(Boolean);
+  if (servers.length > 0) {
+    dns.setServers(servers);
+  }
+}
+
+applyOptionalMongoDnsServers();
+
+export { initMongoSrvStandardUri } from "@/lib/mongodb-srv-standard";
+
 type RequiredServerEnvKey = "JWT_SECRET";
 
 /** Uniquement si la variable est absente en `development` — jamais en production. */
@@ -59,9 +77,9 @@ function parseDbNameFromMongoUri(uri: string): string | null {
  */
 function resolveMongoUri(): string {
   const fromMongo = process.env.MONGODB_URI?.trim();
-  if (fromMongo) return fromMongo;
+  if (fromMongo) return getResolvedMongoUri(fromMongo);
   const fromPrisma = process.env.DATABASE_URL?.trim();
-  if (fromPrisma) return fromPrisma;
+  if (fromPrisma) return getResolvedMongoUri(fromPrisma);
   if (process.env.NODE_ENV === "development") {
     usedDevEnvFallback = true;
     return DEV_ENV_DEFAULTS.MONGODB_URI;

@@ -21,6 +21,8 @@ describe("cession document checklist spec 5.2", () => {
         code: "LOTO",
         libelle: "Loto",
         actif: true,
+        createdAt: new Date("2026-01-01"),
+        updatedAt: new Date("2026-01-01"),
         documentsChecklist: [{ id: "rib", libelle: "RIB bancaire", obligatoire: true }],
       },
     ]);

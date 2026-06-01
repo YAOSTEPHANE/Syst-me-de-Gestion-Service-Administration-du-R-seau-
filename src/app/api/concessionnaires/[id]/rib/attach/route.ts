@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
+import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { sanitizeConcessionnairePublic } from "@/lib/lonaci/concessionnaires";
 import { ribWorkflowErrorResponse } from "@/lib/lonaci/rib-api-errors";
@@ -17,6 +19,14 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
+const ribFileSchema = z.object({
+  size: z.number().int().positive().max(MAX_PIECE_BYTES),
+  mimeType: z
+    .string()
+    .min(1)
+    .refine((m) => Boolean(ALLOWED_PIECE_MIME[m]), { message: "Type MIME non autorisé" }),
+});
+
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
@@ -29,12 +39,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!(file instanceof File)) {
     return badRequest("Fichier RIB requis (champ file).", "MISSING_FILE");
   }
-  if (file.size > MAX_PIECE_BYTES) {
-    return badRequest(`Fichier trop volumineux (max ${MAX_PIECE_BYTES} octets)`, "FILE_TOO_LARGE");
-  }
   const mimeType = file.type || "application/octet-stream";
-  if (!ALLOWED_PIECE_MIME[mimeType]) {
-    return badRequest("Type MIME non autorisé", "INVALID_MIME_TYPE");
+  const fileParsed = ribFileSchema.safeParse({ size: file.size, mimeType });
+  if (!fileParsed.success) {
+    return zodBadRequest(fileParsed.error, "Fichier RIB invalide");
   }
 
   const pieceId = randomUUID();
