@@ -29,10 +29,24 @@ jobs:
       - run: npm test
       - run: npm run check:api-routes
       - run: npm run check:api-zod
+      - run: npm run audit:deps
       - run: npx prisma generate
+
+  semgrep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: semgrep/semgrep-action@v1
+        with:
+          config: >-
+            p/typescript
+            p/nodejs
+            p/nextjs
+            p/owasp-top-ten
+
   build:
     runs-on: ubuntu-latest
-    needs: quality
+    needs: [quality, semgrep]
     env:
       DATABASE_URL: mongodb://127.0.0.1:27017/lonaci_ci
       JWT_SECRET: "01234567890123456789012345678901"

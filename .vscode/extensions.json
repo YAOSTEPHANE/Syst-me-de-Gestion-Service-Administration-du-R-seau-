@@ -1,6 +1,8 @@
 {
     "recommendations": [
         "pkief.material-icon-theme",
-        "beardedbear.beardedtheme"
+        "beardedbear.beardedtheme",
+        "snyk-security.snyk-vulnerability-scanner",
+        "sonarsource.sonarlint-vscode"
     ]
 }

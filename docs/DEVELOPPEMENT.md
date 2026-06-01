@@ -45,10 +45,20 @@ Règle pratique : **nouveau code** → préférer **Prisma** si vous ajoutez un 
 | `npm run verify:db` | Ping Prisma + Mongo natif (nécessite Mongo joignable) |
 | `npm run check:api-routes` | Auth sur les routes API |
 | `npm run check:api-zod` | Présence validation Zod sur les handlers |
-| `npm run lint` | ESLint |
+| `npm run security` | Audit npm (`audit-ci`) + checks API auth/Zod |
+| `npm run audit:deps` | CVE dépendances (allowlist `xlsx` dans `audit-ci.jsonc`) |
+| `npm run scan:semgrep` | SAST Semgrep (nécessite [Semgrep CLI](https://semgrep.dev/docs/getting-started/) installé) |
+| `npm run lint` | ESLint (+ règles `eslint-plugin-security` sur `api/`, `lib/`, `scripts/`) |
 
 Variables : copier `.env.example` vers `.env.local` ; voir aussi `docs/HEBERGEMENT.md`.
 
+## Sécurité (extensions Cursor recommandées)
+
+- **Snyk Security** ou **SonarLint** — alertes à l’édition
+- **CI** : job `semgrep` (OWASP / TypeScript / Next.js) + `npm run audit:deps` dans `quality`
+
+Voir aussi `docs/RISQUES.md`, `docs/SECURITY-IDOR-AUDIT.md`.
+
 ## Qualité avant merge
 
-Idéalement exécuter **`npm run test:all`** avant une PR ; à minima `npm test` + `npx tsc --noEmit` + `npm run lint`.
+Idéalement exécuter **`npm run test:all`** avant une PR ; à minima `npm test` + `npx tsc --noEmit` + `npm run security` + `npm run lint`.
