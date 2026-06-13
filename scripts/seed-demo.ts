@@ -155,6 +155,52 @@ function prismaUserToActor(row: {
   };
 }
 
+async function ensureSeedDemoIndexes(getDb: typeof import("../src/lib/mongodb").getDatabase) {
+  const db = await getDb();
+  await db.collection("dossiers").createIndexes([
+    { key: { reference: 1 }, unique: true, name: "uniq_reference" },
+    { key: { type: 1, status: 1 }, name: "idx_type_status" },
+    { key: { concessionnaireId: 1, updatedAt: -1 }, name: "idx_concessionnaire_updated" },
+    { key: { deletedAt: 1 }, name: "idx_deleted" },
+  ]);
+  const cautions = db.collection("cautions");
+  try {
+    await cautions.dropIndex("uniq_contrat");
+  } catch {
+    /* index absent ou déjà migré */
+  }
+  await cautions.createIndex(
+    { contratId: 1 },
+    { unique: true, sparse: true, name: "uniq_contrat_sparse" },
+  );
+  await cautions.createIndexes([
+    { key: { status: 1, dueDate: 1 }, name: "idx_status_dueDate" },
+    { key: { lonaciClientId: 1 }, name: "idx_lonaci_client" },
+    { key: { concessionnaireId: 1 }, name: "idx_concessionnaire", sparse: true },
+  ]);
+  await db.collection("pdv_integrations").createIndexes([
+    { key: { reference: 1 }, unique: true, name: "uniq_reference" },
+    { key: { codePdv: 1 }, name: "idx_codePdv" },
+    { key: { status: 1 }, name: "idx_status" },
+  ]);
+  await db.collection("contrats").createIndexes([
+    { key: { status: 1, concessionnaireId: 1 }, name: "idx_status_concessionnaire" },
+  ]);
+  await db.collection("caution_etat_attendus_saisis").createIndexes([
+    {
+      key: { yearMonth: 1, produitCode: 1 },
+      unique: true,
+      name: "uniq_caution_etat_attendus_month_produit",
+    },
+  ]);
+  await db.collection("succession_cases").createIndexes([
+    { key: { reference: 1 }, unique: true, name: "uniq_succession_ref" },
+    { key: { concessionnaireId: 1, status: 1 }, name: "idx_conc_status" },
+    { key: { agenceId: 1, updatedAt: -1 }, name: "idx_agence_updated" },
+    { key: { deletedAt: 1 }, name: "idx_deleted" },
+  ]);
+}
+
 async function main() {
   if (process.env.ALLOW_SEED_DEMO !== "true") {
     console.log(
@@ -169,20 +215,18 @@ async function main() {
   const runtimeEnv = process.env as NodeJS.ProcessEnv & { NODE_ENV?: string };
   runtimeEnv.NODE_ENV ??= "development";
 
+  const { initMongoSrvStandardUri } = await import("../src/lib/mongodb-srv-standard");
+  await initMongoSrvStandardUri();
+
   const [{ prisma }, { getDatabase }, { finalizeContratFromDossier }] = await Promise.all([
     import("../src/lib/prisma"),
     import("../src/lib/mongodb"),
     import("../src/lib/lonaci/contracts"),
   ]);
   const { ensureReferentialsIndexes } = await import("../src/lib/lonaci/referentials");
-  const { ensureDossierIndexes } = await import("../src/lib/lonaci/dossiers");
-  const { ensureSprint4Indexes } = await import("../src/lib/lonaci/sprint4");
-  const { ensureSuccessionIndexes } = await import("../src/lib/lonaci/succession");
 
   await ensureReferentialsIndexes();
-  await ensureDossierIndexes();
-  await ensureSprint4Indexes();
-  await ensureSuccessionIndexes();
+  await ensureSeedDemoIndexes(getDatabase);
 
   const existingDemo = await prisma.concessionnaire.findFirst({
     where: { codePdv: `${DEMO_PREFIX}000001` },

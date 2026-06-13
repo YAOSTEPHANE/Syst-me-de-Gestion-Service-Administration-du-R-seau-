@@ -26,7 +26,6 @@ import {
   contratStatutMetierFields,
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
-import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import {
   ensureDossierDocumentChecklist,
   parseDocumentChecklistPayload,
@@ -34,6 +33,17 @@ import {
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
+
+async function findAssociatedCautionForDossier(
+  ...args: Parameters<
+    (typeof import("@/lib/lonaci/dossier-decharge-provisoire"))["findAssociatedCautionForDossier"]
+  >
+) {
+  const { findAssociatedCautionForDossier: lookup } = await import(
+    "@/lib/lonaci/dossier-decharge-provisoire"
+  );
+  return lookup(...args);
+}
 
 const COLLECTION = "dossiers";
 const COUNTERS = "counters";
