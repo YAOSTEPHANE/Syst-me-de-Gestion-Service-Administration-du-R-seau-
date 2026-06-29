@@ -18,6 +18,7 @@ import {
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
+import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
@@ -242,6 +243,8 @@ export async function GET(request: NextRequest) {
       const checklist = parseDocumentChecklistPayload(meta?.payload ?? {});
       const hasDocumentChecklist = Boolean(checklist?.entries.length);
       let cautionPaid = false;
+      let cautionPaymentReference: string | null = null;
+      let dechargeDefinitiveEligible = false;
       if (meta && c.produitCode) {
         const parentContratId =
           typeof meta.payload.parentContratId === "string" ? meta.payload.parentContratId : null;
@@ -255,6 +258,13 @@ export async function GET(request: NextRequest) {
           explicitCautionId,
         });
         cautionPaid = caution?.status === "PAYEE";
+        cautionPaymentReference =
+          cautionPaid && caution?.paymentReference?.trim() ? caution.paymentReference.trim() : null;
+        dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
+          hasDocumentChecklist ? checklist! : { entries: [], complet: false },
+          cautionPaid,
+          Boolean(cautionPaymentReference),
+        );
       }
       const statutMetier = resolveContratStatutMetier({
         contratStatus: c.status,
@@ -270,6 +280,8 @@ export async function GET(request: NextRequest) {
         hasDocumentChecklist,
         checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
         cautionPaid,
+        cautionPaymentReference,
+        dechargeDefinitiveEligible,
         ...contratStatutMetierFields(statutMetier),
       };
     }),
@@ -393,6 +405,8 @@ export async function GET(request: NextRequest) {
           const hasDocumentChecklist = Boolean(checklist?.entries.length);
           const produitCode = String(d.payload?.produitCode ?? "").trim().toUpperCase();
           let cautionPaid = false;
+          let cautionPaymentReference: string | null = null;
+          let dechargeDefinitiveEligible = false;
           if (produitCode) {
             const parentContratId =
               typeof d.payload?.parentContratId === "string" ? d.payload.parentContratId : null;
@@ -406,6 +420,13 @@ export async function GET(request: NextRequest) {
               explicitCautionId,
             });
             cautionPaid = caution?.status === "PAYEE";
+            cautionPaymentReference =
+              cautionPaid && caution?.paymentReference?.trim() ? caution.paymentReference.trim() : null;
+            dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
+              hasDocumentChecklist ? checklist! : { entries: [], complet: false },
+              cautionPaid,
+              Boolean(cautionPaymentReference),
+            );
           }
           const statutMetier = resolveContratStatutMetier({
             dossierStatus: d.status,
@@ -423,6 +444,8 @@ export async function GET(request: NextRequest) {
             hasDocumentChecklist,
             checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
             cautionPaid,
+            cautionPaymentReference,
+            dechargeDefinitiveEligible,
             ...contratStatutMetierFields(statutMetier),
             history: d.history.map((h) => ({
               status: h.status,

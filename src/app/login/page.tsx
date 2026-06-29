@@ -14,12 +14,40 @@ function LoginShell({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * Squelette sans `<input>` : évite les extensions (gestionnaires de mots de passe) qui
+ * modifient id/htmlFor/autocomplete avant hydratation et provoquent un mismatch.
+ */
+function LoginFormPlaceholder() {
+  return (
+    <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
+      <div className="w-full rounded-3xl border border-white/15 bg-white/10 p-2 shadow-[0_30px_80px_rgba(2,6,23,0.65)] backdrop-blur-xl">
+        <div className="rounded-[1.35rem] border border-white/10 bg-slate-950/75 p-5 sm:p-6">
+          <div className="mb-5">
+            <p className="text-[11px] uppercase tracking-[0.2em] text-amber-300">LONACI</p>
+            <h1 className="mt-1 text-2xl font-semibold text-white">Connexion sécurisée</h1>
+            <p className="text-sm text-slate-300">Accédez au tableau de bord métier.</p>
+          </div>
+          <div className="space-y-3 rounded-xl border border-white/10 bg-white/5 p-4" aria-hidden="true">
+            <div className="h-3 w-20 rounded bg-white/10" />
+            <div className="h-10 rounded-lg bg-white/10" />
+            <div className="h-10 rounded-lg bg-white/10" />
+            <div className="h-10 rounded-lg bg-amber-300/25" />
+          </div>
+          <p className="mt-4 text-center text-xs text-slate-400">Préparation du formulaire…</p>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function LoginPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const resetToken = searchParams.get("resetToken") ?? "";
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [forgotIdentifier, setForgotIdentifier] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -28,10 +56,10 @@ function LoginPageContent() {
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [isResetModalOpen, setIsResetModalOpen] = useState(Boolean(resetToken));
-  const [mounted, setMounted] = useState(false);
+  const [formReady, setFormReady] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
+    setFormReady(true);
   }, []);
 
   async function onSubmit(e: FormEvent) {
@@ -112,12 +140,10 @@ function LoginPageContent() {
     }
   }
 
-  if (!mounted) {
+  if (!formReady) {
     return (
       <LoginShell>
-        <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
-          <p className="text-sm text-slate-300">Chargement...</p>
-        </section>
+        <LoginFormPlaceholder />
       </LoginShell>
     );
   }
@@ -169,17 +195,28 @@ function LoginPageContent() {
                 >
                   Mot de passe
                 </label>
-                <input
-                  id="login-password"
-                  type="password"
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="w-full rounded-lg border border-white/15 bg-white/10 px-3 py-2 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
-                  placeholder="********"
-                  autoComplete="current-password"
-                  suppressHydrationWarning
-                />
+                <div className="relative">
+                  <input
+                    id="login-password"
+                    type={showPassword ? "text" : "password"}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full rounded-lg border border-white/15 bg-white/10 py-2 pr-10 pl-3 text-sm text-white outline-none placeholder:text-slate-400 focus:border-amber-300/70 focus:bg-white/15"
+                    placeholder="********"
+                    autoComplete="current-password"
+                    suppressHydrationWarning
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute top-1/2 right-2 -translate-y-1/2 rounded-md px-2 py-1 text-[11px] font-medium text-slate-300 transition hover:bg-white/10 hover:text-white"
+                    aria-label={showPassword ? "Masquer le mot de passe" : "Afficher le mot de passe"}
+                    aria-pressed={showPassword}
+                  >
+                    {showPassword ? "Masquer" : "Afficher"}
+                  </button>
+                </div>
               </div>
               <button
                 type="submit"
@@ -296,9 +333,7 @@ export default function LoginPage() {
     <Suspense
       fallback={
         <LoginShell>
-          <section className="relative mx-auto flex h-full w-full max-w-md items-center justify-center">
-            <p className="text-sm text-slate-300">Chargement…</p>
-          </section>
+          <LoginFormPlaceholder />
         </LoginShell>
       }
     >

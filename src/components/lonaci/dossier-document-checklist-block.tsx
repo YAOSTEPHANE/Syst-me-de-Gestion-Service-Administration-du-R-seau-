@@ -14,7 +14,16 @@ import {
   computeChecklistProgress,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
-import { DECHARGE_PROVISOIRE_DISCLAIMER, DECHARGE_DEFINITIVE_MENTION } from "@/lib/lonaci/dossier-decharge-constants";
+import {
+  DECHARGE_DEFINITIVE_DESCRIPTION,
+  DECHARGE_DEFINITIVE_MENTION,
+  DECHARGE_DEFINITIVE_TITLE,
+  DECHARGE_PROVISOIRE_DISCLAIMER,
+} from "@/lib/lonaci/dossier-decharge-constants";
+import {
+  CONTRAT_GENERATION_STEPS,
+  CONTRAT_GENERATION_SUMMARY,
+} from "@/lib/lonaci/contrat-generation-constants";
 import type { DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
@@ -25,6 +34,11 @@ type ChecklistDossierPatch = {
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
+  cautionPaid?: boolean;
+  dechargeDefinitiveEligible?: boolean;
+  cautionPaymentReference?: string | null;
+  hasContratGenere?: boolean;
+  contratArchive?: boolean;
 };
 
 type DossierApiBody = {
@@ -34,6 +48,11 @@ type DossierApiBody = {
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
+  cautionPaid?: boolean;
+  dechargeDefinitiveEligible?: boolean;
+  cautionPaymentReference?: string | null;
+  hasContratGenere?: boolean;
+  contratArchive?: boolean;
 };
 
 function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatch {
@@ -44,6 +63,11 @@ function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatc
     statutMetier: dossier.statutMetier,
     statutMetierLabel: dossier.statutMetierLabel,
     statutMetierDescription: dossier.statutMetierDescription,
+    cautionPaid: dossier.cautionPaid,
+    dechargeDefinitiveEligible: dossier.dechargeDefinitiveEligible,
+    cautionPaymentReference: dossier.cautionPaymentReference ?? null,
+    hasContratGenere: dossier.hasContratGenere,
+    contratArchive: dossier.contratArchive,
   };
 }
 
@@ -53,6 +77,12 @@ type Props = {
   editable: boolean;
   /** Permet « Générer le contrat » même en lecture seule (ex. dossier déjà soumis). */
   canGenererContrat?: boolean;
+  cautionPaid?: boolean;
+  dechargeDefinitiveEligible?: boolean;
+  cautionPaymentReference?: string | null;
+  dossierStatus?: string;
+  hasContratGenere?: boolean;
+  contratArchive?: boolean;
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
@@ -83,6 +113,12 @@ export default function DossierDocumentChecklistBlock({
   payload,
   editable,
   canGenererContrat,
+  cautionPaid,
+  dechargeDefinitiveEligible,
+  cautionPaymentReference,
+  dossierStatus,
+  hasContratGenere: hasContratGenereProp,
+  contratArchive,
   statutMetier,
   statutMetierLabel,
   statutMetierDescription,
@@ -95,9 +131,16 @@ export default function DossierDocumentChecklistBlock({
   const [generatingContrat, setGeneratingContrat] = useState(false);
   const [contratMessage, setContratMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const hasContratGenere = Boolean(
+  const hasContratGenere = hasContratGenereProp ?? Boolean(
     payload?.contratGenere && typeof payload.contratGenere === "object",
   );
+  const contratGenere = hasContratGenere && payload?.contratGenere && typeof payload.contratGenere === "object"
+    ? (payload.contratGenere as Record<string, unknown>)
+    : null;
+  const contratReferencePreview =
+    typeof contratGenere?.referenceContratPreview === "string"
+      ? contratGenere.referenceContratPreview
+      : null;
 
   useEffect(() => {
     if (!checklist) {
@@ -117,6 +160,11 @@ export default function DossierDocumentChecklistBlock({
     }
     return computeChecklistProgress(checklist.entries, localStatuts);
   }, [checklist, localStatuts]);
+
+  const canDownloadDechargeDefinitive =
+    dechargeDefinitiveEligible !== undefined ? dechargeDefinitiveEligible : progress.complet;
+  const showDechargeDefinitiveHint =
+    progress.complet && dechargeDefinitiveEligible === false;
 
   const saveStatuts = useCallback(
     async (nextMap: Record<string, DossierDocumentChecklistStatut>) => {
@@ -262,6 +310,7 @@ export default function DossierDocumentChecklistBlock({
             <>
               <button
                 type="button"
+                disabled={!canDownloadDechargeDefinitive}
                 onClick={() =>
                   void triggerPdfDownload(
                     `/api/dossiers/${dossierId}/decharge-definitive/pdf`,
@@ -269,8 +318,12 @@ export default function DossierDocumentChecklistBlock({
                     setError,
                   )
                 }
-                className="rounded-lg border border-emerald-500 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 hover:bg-emerald-100"
-                title={`${DECHARGE_DEFINITIVE_MENTION} — caution payée requise`}
+                className="rounded-lg border border-emerald-500 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-900 hover:bg-emerald-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-500"
+                title={
+                  canDownloadDechargeDefinitive
+                    ? `${DECHARGE_DEFINITIVE_TITLE} — ${DECHARGE_DEFINITIVE_MENTION}`
+                    : "Checklist complète requise, caution payée et référence de paiement renseignée"
+                }
               >
                 Décharge définitive (PDF)
               </button>
@@ -296,7 +349,7 @@ export default function DossierDocumentChecklistBlock({
                   }
                   className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-slate-900"
                 >
-                  Contrat (PDF)
+                  {contratArchive ? "Contrat archivé (PDF)" : "Contrat (PDF)"}
                 </button>
               ) : null}
             </>
@@ -311,10 +364,46 @@ export default function DossierDocumentChecklistBlock({
           {DECHARGE_PROVISOIRE_DISCLAIMER}
         </p>
       ) : (
-        <p className="mb-2 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-900">
-          Checklist complète : générez la décharge définitive puis le contrat (caution payée requise). Le dossier suit
-          le circuit de validation à 4 niveaux ; à la finalisation, le concessionnaire devient actif.
-        </p>
+        <div className="mb-2 space-y-2">
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-900">
+            <span className="font-semibold">{DECHARGE_DEFINITIVE_TITLE}</span>
+            {" — "}
+            {DECHARGE_DEFINITIVE_DESCRIPTION}
+          </p>
+          {showDechargeDefinitiveHint ? (
+            <p className="rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950">
+              {cautionPaid === false
+                ? "Caution non payée : la décharge définitive sera disponible après encaissement et saisie de la référence de paiement."
+                : cautionPaymentReference
+                  ? "Référence de paiement manquante sur la caution liée — complétez-la dans le module Cautions."
+                  : "Conditions non remplies pour la décharge définitive (caution payée + référence de paiement)."}
+            </p>
+          ) : canDownloadDechargeDefinitive && cautionPaymentReference ? (
+            <p className="rounded-lg border border-emerald-300/80 bg-white px-2 py-1.5 text-[11px] text-emerald-950">
+              <span className="font-semibold">Réf. paiement caution :</span> {cautionPaymentReference}
+            </p>
+          ) : null}
+          <p className="rounded-lg border border-emerald-100 bg-emerald-50/60 px-2 py-1.5 text-[11px] text-emerald-900">
+            Générez la décharge définitive puis le contrat. Le dossier suit le circuit de validation à 4 niveaux ;
+            à la finalisation, le concessionnaire devient actif.
+          </p>
+          <div className="rounded-lg border border-cyan-200 bg-cyan-50/50 px-2.5 py-2 text-[11px] text-cyan-950">
+            <p className="font-semibold">{CONTRAT_GENERATION_SUMMARY}</p>
+            <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
+              {CONTRAT_GENERATION_STEPS.map((step) => (
+                <li key={step}>{step}</li>
+              ))}
+            </ol>
+          </div>
+          {hasContratGenere ? (
+            <p className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-800">
+              Contrat généré
+              {contratReferencePreview ? ` — réf. ${contratReferencePreview}` : ""}
+              {dossierStatus ? ` · étape dossier : ${dossierStatus}` : ""}
+              {contratArchive ? " · PDF archivé après validation finale" : ""}
+            </p>
+          ) : null}
+        </div>
       )}
       {contratMessage ? (
         <p className="mb-2 rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1.5 text-[11px] text-cyan-900">

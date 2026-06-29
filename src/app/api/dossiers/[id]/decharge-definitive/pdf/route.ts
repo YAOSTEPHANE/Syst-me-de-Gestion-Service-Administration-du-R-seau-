@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import {
   buildDossierDechargeDefinitiveView,
   renderDossierDechargeDefinitivePdf,
@@ -31,8 +30,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Decharge reservee aux dossiers contrat." }, { status: 400 });
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
+  const party = contratPartyFromDossier(dossier);
+  if (!party) {
+    return NextResponse.json({ message: "Dossier sans rattachement client ou PDV." }, { status: 404 });
+  }
+  try {
+    await assertDossierPartyReadable(party, auth.user);
+  } catch {
     return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 

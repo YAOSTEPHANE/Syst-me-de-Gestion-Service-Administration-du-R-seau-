@@ -14,12 +14,15 @@ import ClientSearchPicker, {
   pickProduitCodeFromClient,
   type ClientPickerRow,
 } from "@/components/lonaci/client-search-picker";
-import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
+import ProduitDocumentChecklistEditor from "@/components/lonaci/produit-document-checklist-editor";
+import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import {
   buildChecklistFromTemplate,
-  computeChecklistComplet,
   mergeProductChecklistTemplates,
+  parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, ProduitDocument } from "@/lib/lonaci/types";
 import Link from "next/link";
@@ -65,22 +68,6 @@ function produitsToDocumentRows(produits: ProduitRef[]): ProduitDocument[] {
   }));
 }
 
-function applyPiecesFournies(
-  checklist: DossierDocumentChecklistPayload | null,
-  fourniIds: ReadonlySet<string>,
-): DossierDocumentChecklistPayload | null {
-  if (!checklist) return null;
-  const entries = checklist.entries.map((entry) => ({
-    ...entry,
-    statut: fourniIds.has(entry.itemId)
-      ? ("FOURNI" as const)
-      : entry.statut === "MANQUANT"
-        ? ("MANQUANT" as const)
-        : ("EN_ATTENTE" as const),
-  }));
-  return { entries, complet: computeChecklistComplet(entries) };
-}
-
 function checklistToApiPatch(checklist: DossierDocumentChecklistPayload | null) {
   if (!checklist?.entries.length) return undefined;
   return checklist.entries.map((e) => ({ itemId: e.itemId, statut: e.statut }));
@@ -113,6 +100,11 @@ interface ContratListeItem {
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
+  hasDocumentChecklist?: boolean;
+  checklistComplet?: boolean | null;
+  cautionPaid?: boolean;
+  dechargeDefinitiveEligible?: boolean;
+  cautionPaymentReference?: string | null;
 }
 
 interface ToSignRow {
@@ -346,14 +338,6 @@ export default function ContratsPanel() {
   const [observations, setObservations] = useState("");
   const [createChecklist, setCreateChecklist] = useState<DossierDocumentChecklistPayload | null>(null);
 
-  const createPiecesFourniesIds = useMemo(
-    () =>
-      new Set(
-        createChecklist?.entries.filter((e) => e.statut === "FOURNI").map((e) => e.itemId) ?? [],
-      ),
-    [createChecklist],
-  );
-
   const createChecklistObligatoires = useMemo(() => {
     if (!createChecklist?.entries.length) return { total: 0, fournis: 0, complet: true };
     const obligatoires = createChecklist.entries.filter((e) => e.obligatoire);
@@ -401,6 +385,19 @@ export default function ContratsPanel() {
   const [editSaving, setEditSaving] = useState(false);
   const [viewContratOpen, setViewContratOpen] = useState(false);
   const [viewContrat, setViewContrat] = useState<ContratListeItem | null>(null);
+
+  const [checklistModalContrat, setChecklistModalContrat] = useState<ContratListeItem | null>(null);
+  const [checklistModalPayload, setChecklistModalPayload] = useState<Record<string, unknown> | null>(null);
+  const [checklistModalDossierStatus, setChecklistModalDossierStatus] = useState<string>("BROUILLON");
+  const [checklistModalStatutMetier, setChecklistModalStatutMetier] = useState<ContratStatutMetier | undefined>();
+  const [checklistModalStatutLabel, setChecklistModalStatutLabel] = useState<string | undefined>();
+  const [checklistModalStatutDescription, setChecklistModalStatutDescription] = useState<string | undefined>();
+  const [checklistModalCautionPaid, setChecklistModalCautionPaid] = useState<boolean | undefined>();
+  const [checklistModalDechargeEligible, setChecklistModalDechargeEligible] = useState<boolean | undefined>();
+  const [checklistModalPaymentRef, setChecklistModalPaymentRef] = useState<string | null | undefined>();
+  const [checklistModalHasContratGenere, setChecklistModalHasContratGenere] = useState<boolean | undefined>();
+  const [checklistModalContratArchive, setChecklistModalContratArchive] = useState<boolean | undefined>();
+  const [checklistModalLoading, setChecklistModalLoading] = useState(false);
 
   useEffect(() => {
     if (urlProduitCode) setListProduit(urlProduitCode);
@@ -775,7 +772,7 @@ export default function ContratsPanel() {
     }
     if (createChecklist?.entries.length && !createChecklistObligatoires.complet) {
       fail(
-        `Cochez toutes les pièces obligatoires du produit (${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total}).`,
+        `Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » (${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total}).`,
       );
       return;
     }
@@ -1043,6 +1040,83 @@ export default function ContratsPanel() {
   function closeViewContrat() {
     setViewContratOpen(false);
     setViewContrat(null);
+  }
+
+  async function openChecklistModal(contrat: ContratListeItem) {
+    setChecklistModalContrat(contrat);
+    setChecklistModalPayload(null);
+    setChecklistModalLoading(true);
+    try {
+      const res = await fetch(`/api/dossiers/${encodeURIComponent(contrat.dossierId)}`, {
+        credentials: "include",
+      });
+      const body = (await res.json().catch(() => null)) as {
+        message?: string;
+        dossier?: {
+          payload?: Record<string, unknown>;
+          status?: string;
+          statutMetier?: ContratStatutMetier;
+          statutMetierLabel?: string;
+          statutMetierDescription?: string;
+          cautionPaid?: boolean;
+          dechargeDefinitiveEligible?: boolean;
+          cautionPaymentReference?: string | null;
+          hasContratGenere?: boolean;
+          contratArchive?: boolean;
+        };
+      } | null;
+      if (!res.ok || !body?.dossier) {
+        setToast({
+          type: "error",
+          message: friendlyErrorMessage(body?.message ?? "Chargement de la checklist impossible."),
+        });
+        setChecklistModalContrat(null);
+        return;
+      }
+      setChecklistModalPayload(body.dossier.payload ?? {});
+      setChecklistModalDossierStatus(body.dossier.status ?? "BROUILLON");
+      setChecklistModalStatutMetier(body.dossier.statutMetier);
+      setChecklistModalStatutLabel(body.dossier.statutMetierLabel);
+      setChecklistModalStatutDescription(body.dossier.statutMetierDescription);
+      setChecklistModalCautionPaid(body.dossier.cautionPaid);
+      setChecklistModalDechargeEligible(body.dossier.dechargeDefinitiveEligible);
+      setChecklistModalPaymentRef(body.dossier.cautionPaymentReference ?? null);
+      setChecklistModalHasContratGenere(body.dossier.hasContratGenere);
+      setChecklistModalContratArchive(body.dossier.contratArchive);
+    } catch {
+      setToast({ type: "error", message: "Erreur réseau lors du chargement de la checklist." });
+      setChecklistModalContrat(null);
+    } finally {
+      setChecklistModalLoading(false);
+    }
+  }
+
+  function closeChecklistModal() {
+    setChecklistModalContrat(null);
+    setChecklistModalPayload(null);
+    setChecklistModalCautionPaid(undefined);
+    setChecklistModalDechargeEligible(undefined);
+    setChecklistModalPaymentRef(undefined);
+    setChecklistModalHasContratGenere(undefined);
+    setChecklistModalContratArchive(undefined);
+  }
+
+  function syncContratChecklistInList(dossierId: string, patch: { payload: Record<string, unknown> }) {
+    const checklist = parseDocumentChecklistPayload(patch.payload);
+    const hasDocumentChecklist = Boolean(checklist?.entries.length);
+    const checklistComplet = hasDocumentChecklist ? checklist!.complet : null;
+    setContratsListe((prev) =>
+      prev.map((item) =>
+        item.dossierId === dossierId
+          ? { ...item, hasDocumentChecklist, checklistComplet }
+          : item,
+      ),
+    );
+    if (viewContrat?.dossierId === dossierId) {
+      setViewContrat((prev) =>
+        prev ? { ...prev, hasDocumentChecklist, checklistComplet } : prev,
+      );
+    }
   }
 
   async function saveEditContrat() {
@@ -1590,6 +1664,7 @@ export default function ContratsPanel() {
                     <th className="px-3 py-2.5 sm:px-4">Type</th>
                     <th className="px-3 py-2.5 sm:px-4">Date dépôt</th>
                     <th className="px-3 py-2.5 sm:px-4">Statut</th>
+                    <th className="px-3 py-2.5 sm:px-4">Dossier</th>
                     <th className="px-3 py-2.5 text-right sm:px-4">Action</th>
                   </tr>
                 </thead>
@@ -1628,8 +1703,50 @@ export default function ContratsPanel() {
                             {statutLabel}
                           </span>
                         </td>
+                        <td className="px-3 py-2.5 sm:px-4">
+                          {c.hasDocumentChecklist ? (
+                            <DossierCompletIndicator
+                              complet={c.checklistComplet === true}
+                              size="sm"
+                              live
+                            />
+                          ) : (
+                            <span className="text-[10px] text-slate-400">—</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5 text-right sm:px-4">
-                          <div className="inline-flex items-center gap-2">
+                          <div className="inline-flex flex-wrap items-center justify-end gap-2">
+                            {c.hasDocumentChecklist ? (
+                              <button
+                                type="button"
+                                onClick={() => void openChecklistModal(c)}
+                                className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
+                              >
+                                Checklist
+                              </button>
+                            ) : null}
+                            {c.dechargeDefinitiveEligible ? (
+                              <button
+                                type="button"
+                                title="DÉCHARGE DÉFINITIVE — DOSSIER COMPLET"
+                                onClick={() =>
+                                  void downloadLonaciPdf(
+                                    `/api/dossiers/${c.dossierId}/decharge-definitive/pdf`,
+                                    `decharge-definitive-${c.reference}.pdf`,
+                                  ).catch((err) =>
+                                    setToast({
+                                      type: "error",
+                                      message: friendlyErrorMessage(
+                                        err instanceof Error ? err.message : "Téléchargement impossible.",
+                                      ),
+                                    }),
+                                  )
+                                }
+                                className="inline-flex items-center justify-center rounded-lg border border-emerald-500 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-emerald-900 shadow-sm transition hover:bg-emerald-100"
+                              >
+                                Décharge
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               onClick={() => openViewContrat(c)}
@@ -1756,6 +1873,88 @@ export default function ContratsPanel() {
                 {editSaving ? "Enregistrement..." : "Enregistrer"}
               </button>
             </div>
+          </div>
+        </div>
+      ) : null}
+
+      {checklistModalContrat ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="contrat-checklist-title"
+        >
+          <button
+            type="button"
+            className="absolute inset-0 bg-slate-900/60"
+            aria-label="Fermer"
+            onClick={closeChecklistModal}
+          />
+          <div className="relative z-10 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl">
+            <div className="mb-3 flex items-start justify-between gap-2 border-b border-slate-100 pb-2">
+              <div>
+                <h3 id="contrat-checklist-title" className="text-base font-semibold text-slate-900">
+                  Checklist documents — contrat
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600">
+                  {checklistModalContrat.reference} · {checklistModalContrat.produitCode}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeChecklistModal}
+                className="rounded-lg border border-slate-200 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+              >
+                Fermer
+              </button>
+            </div>
+            {checklistModalLoading ? (
+              <p className="text-sm text-slate-600">Chargement…</p>
+            ) : checklistModalPayload ? (
+              <DossierDocumentChecklistBlock
+                dossierId={checklistModalContrat.dossierId}
+                payload={checklistModalPayload}
+                editable={checklistModalDossierStatus === "BROUILLON" || checklistModalDossierStatus === "A_CORRIGER"}
+                canGenererContrat={
+                  checklistModalDossierStatus === "BROUILLON" || checklistModalDossierStatus === "A_CORRIGER"
+                }
+                cautionPaid={checklistModalCautionPaid}
+                dechargeDefinitiveEligible={checklistModalDechargeEligible}
+                cautionPaymentReference={checklistModalPaymentRef}
+                dossierStatus={checklistModalDossierStatus}
+                hasContratGenere={checklistModalHasContratGenere}
+                contratArchive={checklistModalContratArchive}
+                statutMetier={checklistModalStatutMetier}
+                statutMetierLabel={checklistModalStatutLabel}
+                statutMetierDescription={checklistModalStatutDescription}
+                onUpdated={(patch) => {
+                  setChecklistModalPayload(patch.payload);
+                  if (patch.status) setChecklistModalDossierStatus(patch.status);
+                  if (patch.statutMetier) setChecklistModalStatutMetier(patch.statutMetier);
+                  if (patch.statutMetierLabel) setChecklistModalStatutLabel(patch.statutMetierLabel);
+                  if (patch.statutMetierDescription) {
+                    setChecklistModalStatutDescription(patch.statutMetierDescription);
+                  }
+                  if (patch.cautionPaid !== undefined) setChecklistModalCautionPaid(patch.cautionPaid);
+                  if (patch.dechargeDefinitiveEligible !== undefined) {
+                    setChecklistModalDechargeEligible(patch.dechargeDefinitiveEligible);
+                  }
+                  if (patch.cautionPaymentReference !== undefined) {
+                    setChecklistModalPaymentRef(patch.cautionPaymentReference);
+                  }
+                  if (patch.hasContratGenere !== undefined) {
+                    setChecklistModalHasContratGenere(patch.hasContratGenere);
+                  }
+                  if (patch.contratArchive !== undefined) {
+                    setChecklistModalContratArchive(patch.contratArchive);
+                  }
+                  syncContratChecklistInList(checklistModalContrat.dossierId, patch);
+                  setListReloadTick((n) => n + 1);
+                }}
+              />
+            ) : (
+              <p className="text-sm text-slate-600">Aucune checklist configurée pour ce produit.</p>
+            )}
           </div>
         </div>
       ) : null}
@@ -1969,19 +2168,19 @@ export default function ContratsPanel() {
 
       {createOpen ? (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4"
           role="dialog"
           aria-modal="true"
           aria-labelledby="nouveau-contrat-title"
         >
           <button
             type="button"
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
+            className="absolute inset-0 bg-slate-900/55"
             aria-label="Fermer"
             disabled={creating}
             onClick={() => setCreateOpen(false)}
           />
-          <div className="relative z-10 flex max-h-[min(85vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+          <div className="relative z-10 isolate flex w-full max-w-2xl max-h-[calc(100dvh-1.5rem)] flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 to-indigo-50 px-3.5 py-2.5">
               <div>
                 <h3 id="nouveau-contrat-title" className="text-lg font-semibold text-slate-900">
@@ -1998,8 +2197,8 @@ export default function ContratsPanel() {
                 ×
               </button>
             </div>
-            <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-3.5 py-2">
+            <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain bg-white px-3.5 py-2">
                 <div className="mb-2 flex flex-wrap items-center gap-1">
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] font-semibold text-cyan-800">
                     1. Identification client
@@ -2136,16 +2335,17 @@ export default function ContratsPanel() {
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                         Documents du produit
                       </p>
-                      <ProduitSelectedPiecesChecklist
-                        selectedProduitCodes={[produitCode.trim().toUpperCase()]}
-                        produits={produits}
-                        title="Pièces à fournir pour ce contrat"
-                        hint="Cochez chaque pièce remise par le client. Toutes les pièces marquées obligatoires (*) doivent être cochées pour créer le dossier."
-                        value={createPiecesFourniesIds}
-                        onChange={(ids) =>
-                          setCreateChecklist((prev) => applyPiecesFournies(prev, ids))
-                        }
-                      />
+                      {createChecklist ? (
+                        <ProduitDocumentChecklistEditor
+                          checklist={createChecklist}
+                          editable
+                          onChange={setCreateChecklist}
+                          title="Pièces à fournir pour ce contrat"
+                          hint="Liste issue du référentiel produit — marquez chaque pièce Fourni, Manquant ou En attente."
+                        />
+                      ) : (
+                        <p className="text-xs text-slate-500">Préparation de la checklist…</p>
+                      )}
                       {createChecklist?.entries.length ? (
                         <p
                           className={`mt-2 text-[11px] ${
@@ -2154,7 +2354,7 @@ export default function ContratsPanel() {
                         >
                           {createChecklistObligatoires.complet
                             ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
-                            : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) cochée(s).`}
+                            : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) marquée(s) « Fourni ».`}
                         </p>
                       ) : null}
                     </section>
@@ -2216,7 +2416,7 @@ export default function ContratsPanel() {
                   </section>
                 </div>
               </div>
-              <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3.5 py-2">
+              <div className="shrink-0 border-t border-slate-200 bg-slate-50 px-3.5 py-2.5">
                 {createFormError ? (
                   <div
                     className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900"
@@ -2233,7 +2433,14 @@ export default function ContratsPanel() {
                   className="sr-only"
                   onChange={(e) => void onImportFileChange(e)}
                 />
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                  <button
+                    type="submit"
+                    disabled={creating}
+                    className="order-first w-full rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60 sm:order-last sm:ml-auto sm:w-auto sm:min-w-[200px]"
+                  >
+                    {creating ? "Création…" : "Créer le dossier"}
+                  </button>
                   <button
                     type="button"
                     disabled={importingFile}
@@ -2248,13 +2455,6 @@ export default function ContratsPanel() {
                     className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
                   >
                     Télécharger le modèle Excel
-                  </button>
-                  <button
-                    type="submit"
-                    disabled={creating}
-                    className="w-full rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2.5 text-sm font-medium text-white transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60 sm:w-auto sm:min-w-[200px]"
-                  >
-                    {creating ? "Création…" : "Créer le dossier"}
                   </button>
                 </div>
               </div>

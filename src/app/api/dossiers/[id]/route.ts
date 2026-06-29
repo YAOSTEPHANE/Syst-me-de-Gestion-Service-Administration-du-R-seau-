@@ -5,14 +5,13 @@ import { badRequest, conflict, forbidden, notFound } from "@/lib/api/error-respo
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { CONTRAT_OPERATION_TYPES } from "@/lib/lonaci/constants";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   buildDossierContratStatutMetierFields,
   ensureDossierIndexes,
   findDossierById,
   patchContratDossierPayload,
 } from "@/lib/lonaci/dossiers";
+import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import type { DossierDocument } from "@/lib/lonaci/types";
 
 interface RouteContext {
@@ -90,8 +89,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
+  const party = contratPartyFromDossier(dossier);
+  if (!party) {
+    return NextResponse.json({ message: "Dossier sans rattachement client ou PDV." }, { status: 404 });
+  }
+  try {
+    await assertDossierPartyReadable(party, auth.user);
+  } catch {
     return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 

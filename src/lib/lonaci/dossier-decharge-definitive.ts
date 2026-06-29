@@ -3,14 +3,15 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import PDFDocument from "pdfkit";
 
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   DECHARGE_DEFINITIVE_MENTION,
   DECHARGE_DEFINITIVE_TITLE,
+  dossierEligibleDechargeDefinitive,
 } from "@/lib/lonaci/dossier-decharge-constants";
 import {
   findAssociatedCautionForDossier,
 } from "@/lib/lonaci/dossier-decharge-provisoire";
+import { loadPartySnapshotForDossier } from "@/lib/lonaci/contrat-party-snapshot";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import { ensureDossierDocumentChecklist } from "@/lib/lonaci/produit-document-checklist";
@@ -19,12 +20,13 @@ import type {
   DossierDocument,
   DossierDocumentChecklistPayload,
 } from "@/lib/lonaci/types";
-import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
 
 export {
+  DECHARGE_DEFINITIVE_DESCRIPTION,
   DECHARGE_DEFINITIVE_MENTION,
   DECHARGE_DEFINITIVE_TITLE,
+  dossierEligibleDechargeDefinitive,
 } from "@/lib/lonaci/dossier-decharge-constants";
 
 const CAUTIONS_COLLECTION = "cautions";
@@ -56,16 +58,6 @@ export interface DossierDechargeDefinitiveView {
   numeroFicheProvisoire: string | null;
   numeroFicheDefinitive: string | null;
   cautionReferenceLabel: string;
-}
-
-export function dossierEligibleDechargeDefinitive(
-  checklist: DossierDocumentChecklistPayload,
-  cautionPaid: boolean,
-  hasPaymentReference: boolean,
-): boolean {
-  if (!checklist.entries.length) return false;
-  if (!checklist.complet) return false;
-  return cautionPaid && hasPaymentReference;
 }
 
 async function loadPaidCautionRecord(cautionId: string): Promise<StoredCaution | null> {
@@ -101,8 +93,8 @@ export async function buildDossierDechargeDefinitiveView(
   const produit = produitCode ? await resolveProduitForContratWorkflow(produitCode) : null;
   const checklist = ensureDossierDocumentChecklist(dossier.payload ?? {}, produit?.documentsChecklist ?? []);
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
+  const partySnapshot = await loadPartySnapshotForDossier(dossier);
+  if (!partySnapshot) {
     return null;
   }
 
@@ -126,15 +118,6 @@ export async function buildDossierDechargeDefinitiveView(
     return null;
   }
 
-  const db = await getDatabase();
-  const agenceMap = await loadAgenceLibelleMap(
-    db,
-    concessionnaire.agenceId ? [concessionnaire.agenceId] : [],
-  );
-  const agenceLabel = concessionnaire.agenceId
-    ? formatAgenceLibelle(agenceMap.get(concessionnaire.agenceId), concessionnaire.agenceId)
-    : "Sans agence";
-
   const documentsFournis = checklist.entries
     .filter((e) => e.statut === "FOURNI")
     .map((e) => (e.obligatoire ? e.libelle : `${e.libelle} (facultatif)`));
@@ -150,21 +133,17 @@ export async function buildDossierDechargeDefinitiveView(
     generatedAt: new Date(),
     dateValidation,
     mention: DECHARGE_DEFINITIVE_MENTION,
-    nomComplet: concessionnaire.nomComplet,
-    raisonSociale: concessionnaire.raisonSociale,
-    codePdv: concessionnaire.codePdv ?? "",
-    codeTerminal: concessionnaire.codeTerminal,
-    codeConcessionnaire: concessionnaire.codeConcessionnaire,
-    cniNumero: concessionnaire.cniNumero,
-    email: concessionnaire.email,
-    telephone:
-      concessionnaire.telephonePrincipal?.trim() ||
-      concessionnaire.telephone?.trim() ||
-      concessionnaire.telephoneSecondaire?.trim() ||
-      null,
-    adresse: concessionnaire.adresse,
-    ville: concessionnaire.ville,
-    agenceLabel,
+    nomComplet: partySnapshot.nomComplet,
+    raisonSociale: partySnapshot.raisonSociale,
+    codePdv: partySnapshot.codePdv,
+    codeTerminal: partySnapshot.codeTerminal,
+    codeConcessionnaire: partySnapshot.codeConcessionnaire,
+    cniNumero: partySnapshot.cniNumero,
+    email: partySnapshot.email,
+    telephone: partySnapshot.telephone,
+    adresse: partySnapshot.adresse,
+    ville: partySnapshot.ville,
+    agenceLabel: partySnapshot.agenceLabel,
     produitCode: produitCode || "—",
     produitLibelle: produit?.libelle ?? (produitCode || "—"),
     documentsFournis,
@@ -178,15 +157,17 @@ export async function buildDossierDechargeDefinitiveView(
 }
 
 function drawPdfHeader(doc: InstanceType<typeof PDFDocument>) {
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const x = doc.page.margins.left;
+  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const topY = doc.page.margins.top;
+  const bandH = 52;
   doc.save();
-  doc.rect(x, doc.y, w, 52).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, doc.y + 2);
-  doc.fontSize(7).text("Document officiel — module Dossiers", x + 14, doc.y + 2);
+  doc.rect(x, topY, w, bandH).fill("#0f3d2e");
+  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
+  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
+  doc.fontSize(7).text("Document officiel — module Contrats", x + 14, topY + 38);
   doc.restore();
-  doc.moveDown(3.2);
+  doc.y = topY + bandH + 14;
   doc.fillColor("#111827").fontSize(13).text(DECHARGE_DEFINITIVE_TITLE, { align: "center" });
   doc.moveDown(0.4);
   doc.fontSize(11).fillColor("#047857").text(DECHARGE_DEFINITIVE_MENTION, { align: "center", underline: true });

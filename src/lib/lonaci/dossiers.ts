@@ -17,6 +17,8 @@ import {
   canReadConcessionnaire,
   isStatutFicheGelee,
 } from "@/lib/lonaci/access";
+import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
+import { parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
 import {
   contratPartyFromDossier,
   contratMatchesParty,
@@ -366,6 +368,8 @@ export async function buildDossierContratStatutMetierFields(
   const hasDocumentChecklist = Boolean(checklist?.entries.length);
   const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
   let cautionPaid = false;
+  let cautionPaymentReference: string | null = null;
+  let dechargeDefinitiveEligible = false;
   if (produitCode) {
     const parentContratId =
       typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
@@ -379,6 +383,13 @@ export async function buildDossierContratStatutMetierFields(
       explicitCautionId,
     });
     cautionPaid = caution?.status === "PAYEE";
+    cautionPaymentReference =
+      cautionPaid && caution?.paymentReference?.trim() ? caution.paymentReference.trim() : null;
+    dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
+      hasDocumentChecklist ? checklist! : { entries: [], complet: false },
+      cautionPaid,
+      Boolean(cautionPaymentReference),
+    );
   }
   const statutMetier = resolveContratStatutMetier({
     dossierStatus: dossier.status,
@@ -390,6 +401,10 @@ export async function buildDossierContratStatutMetierFields(
     hasDocumentChecklist,
     checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
     cautionPaid,
+    cautionPaymentReference,
+    dechargeDefinitiveEligible,
+    hasContratGenere: Boolean(parseContratGenerePayload(dossier.payload ?? {})),
+    contratArchive: Boolean(parseContratGenerePayload(dossier.payload ?? {})?.contratSigneArchive),
     ...contratStatutMetierFields(statutMetier),
   };
 }

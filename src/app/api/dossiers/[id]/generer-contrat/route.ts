@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import { prepareContratFromDechargeDefinitive } from "@/lib/lonaci/contrat-document";
 import {
   buildDossierContratStatutMetierFields,
@@ -56,8 +55,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return badRequest("Generation contrat reservee aux dossiers contrat.", "DOSSIER_TYPE_UNSUPPORTED");
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
+  const party = contratPartyFromDossier(dossier);
+  if (!party) {
+    return notFound("Dossier sans rattachement client ou PDV.");
+  }
+  try {
+    await assertDossierPartyReadable(party, auth.user);
+  } catch {
     return forbidden("Acces refuse.", "AGENCE_FORBIDDEN");
   }
 
@@ -95,8 +99,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "DOSSIER_PAYLOAD_INVALID") {
       return badRequest("Payload dossier contrat invalide.", "DOSSIER_PAYLOAD_INVALID");
     }
-    if (code === "CONCESSIONNAIRE_NOT_FOUND") {
-      return notFound("Concessionnaire introuvable.");
+    if (code === "CONCESSIONNAIRE_NOT_FOUND" || code === "PARTY_NOT_FOUND") {
+      return notFound("Titulaire du dossier introuvable.");
     }
     return NextResponse.json({ message: "Generation du contrat impossible." }, { status: 500 });
   }

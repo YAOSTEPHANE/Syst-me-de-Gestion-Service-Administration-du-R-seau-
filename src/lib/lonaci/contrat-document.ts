@@ -3,36 +3,21 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import PDFDocument from "pdfkit";
 
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import {
-  buildDossierDechargeDefinitiveView,
-  dossierEligibleDechargeDefinitive,
-} from "@/lib/lonaci/dossier-decharge-definitive";
+import { loadPartySnapshotForDossier, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
+import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
+import { buildDossierDechargeDefinitiveView } from "@/lib/lonaci/dossier-decharge-definitive";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { previewNextContratReference } from "@/lib/lonaci/contracts";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import { ensureDossierDocumentChecklist } from "@/lib/lonaci/produit-document-checklist";
-import type { ConcessionnaireDocument, DossierDocument, UserDocument } from "@/lib/lonaci/types";
+import type { DossierDocument, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { saveContratArchivePdf } from "@/lib/storage/contrat-files";
 
 export const CONTRAT_OFFICIEL_TITLE = "CONTRAT DE CONCESSION — LONACI";
 
-export interface ContratGenereConcessionnaireSnapshot {
-  nomComplet: string;
-  raisonSociale: string;
-  codePdv: string;
-  codeTerminal: string | null;
-  codeConcessionnaire: string | null;
-  cniNumero: string | null;
-  email: string | null;
-  telephone: string | null;
-  adresse: string | null;
-  ville: string | null;
-  codePostal: string | null;
-  agenceLabel: string;
-}
+export type ContratGenereConcessionnaireSnapshot = ContratPartySnapshot;
 
 export interface ContratGenerePayload {
   generatedAt: string;
@@ -75,30 +60,6 @@ type DossierSignatureRow = {
   signedAt: Date | null;
   signerName: string | null;
 };
-
-function snapshotConcessionnaire(
-  conc: ConcessionnaireDocument,
-  agenceLabel: string,
-): ContratGenereConcessionnaireSnapshot {
-  return {
-    nomComplet: conc.nomComplet,
-    raisonSociale: conc.raisonSociale,
-    codePdv: conc.codePdv ?? "",
-    codeTerminal: conc.codeTerminal,
-    codeConcessionnaire: conc.codeConcessionnaire,
-    cniNumero: conc.cniNumero,
-    email: conc.email,
-    telephone:
-      conc.telephonePrincipal?.trim() ||
-      conc.telephone?.trim() ||
-      conc.telephoneSecondaire?.trim() ||
-      null,
-    adresse: conc.adresse,
-    ville: conc.ville,
-    codePostal: conc.codePostal,
-    agenceLabel,
-  };
-}
 
 export function parseContratGenerePayload(payload: Record<string, unknown> | null | undefined): ContratGenerePayload | null {
   const raw = payload?.contratGenere;
@@ -174,9 +135,9 @@ export async function prepareContratFromDechargeDefinitive(
     throw new Error("DECHARGE_DEFINITIVE_REQUIRED");
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  const partySnapshot = await loadPartySnapshotForDossier(dossier);
+  if (!partySnapshot) {
+    throw new Error("PARTY_NOT_FOUND");
   }
 
   const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
@@ -202,7 +163,7 @@ export async function prepareContratFromDechargeDefinitive(
     produitLibelle: produit?.libelle ?? produitCode,
     operationType,
     dateEffet: dateEffet.toISOString(),
-    concessionnaire: snapshotConcessionnaire(concessionnaire, dechargeView.agenceLabel),
+    concessionnaire: partySnapshot,
   };
 
   const db = await getDatabase();
@@ -264,15 +225,17 @@ export async function buildContratDocumentView(
 }
 
 function drawHeader(doc: InstanceType<typeof PDFDocument>, finalized: boolean) {
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const x = doc.page.margins.left;
+  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const topY = doc.page.margins.top;
+  const bandH = 52;
   doc.save();
-  doc.rect(x, doc.y, w, 52).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, doc.y + 2);
-  doc.fontSize(7).text("Document officiel — module Contrats", x + 14, doc.y + 2);
+  doc.rect(x, topY, w, bandH).fill("#0f3d2e");
+  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
+  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
+  doc.fontSize(7).text("Document officiel — module Contrats", x + 14, topY + 38);
   doc.restore();
-  doc.moveDown(3.2);
+  doc.y = topY + bandH + 14;
   doc.fillColor("#111827").fontSize(13).text(CONTRAT_OFFICIEL_TITLE, { align: "center" });
   doc.moveDown(0.35);
   doc

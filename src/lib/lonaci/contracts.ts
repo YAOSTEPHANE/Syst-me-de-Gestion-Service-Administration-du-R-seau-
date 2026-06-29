@@ -364,6 +364,27 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
     }
   }
 
+  if (party.kind === "client") {
+    const client = await findLonaciClientById(party.lonaciClientId);
+    if (client && client.statut !== "ACTIF" && client.statut !== "INACTIF") {
+      await prisma.lonaciClient.update({
+        where: { id: party.lonaciClientId },
+        data: {
+          statut: "ACTIF",
+          updatedAt: new Date(),
+          updatedByUserId: input.actor._id ?? "",
+        },
+      });
+      await appendAuditLog({
+        entityType: "CLIENT",
+        entityId: party.lonaciClientId,
+        action: "ACTIVATE_FROM_CONTRAT_FINALIZE",
+        userId: input.actor._id ?? "",
+        details: { dossierId: input.dossierId, contratId: created.id },
+      });
+    }
+  }
+
   return mapContrat(created);
 }
 
