@@ -9,11 +9,11 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
-import ConcessionnaireSearchPicker, {
-  pickAgenceIdFromConcessionnaire,
-  pickProduitCodeFromConcessionnaire,
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  pickAgenceIdFromClient,
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -21,7 +21,7 @@ import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useSta
 
 type OperationType = "NOUVEAU" | "ACTUALISATION";
 
-type ConcessionnaireOption = ConcessionnairePickerRow;
+type ClientOption = ClientPickerRow;
 
 interface AgenceRef {
   id: string;
@@ -277,7 +277,7 @@ const inputClass =
 
 export default function ContratsPanel() {
   const searchParams = useSearchParams();
-  const prefillConcessionnaireId = searchParams.get("concessionnaireId") ?? "";
+  const prefillLonaciClientId = searchParams.get("lonaciClientId") ?? searchParams.get("clientId") ?? "";
   const urlProduitCode = searchParams.get("produitCode")?.trim().toUpperCase() ?? "";
   const urlAgenceId = searchParams.get("agenceId")?.trim() ?? "";
   const urlStatus = searchParams.get("status")?.trim() ?? "";
@@ -296,7 +296,7 @@ export default function ContratsPanel() {
   const [createFormError, setCreateFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  const [selectedPdv, setSelectedPdv] = useState<ConcessionnaireOption | null>(null);
+  const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
 
   const [formAgenceId, setFormAgenceId] = useState("");
   const [produitCode, setProduitCode] = useState("");
@@ -553,7 +553,7 @@ export default function ContratsPanel() {
     })();
   }, [listReloadTick]);
 
-  const concessionnaireId = selectedPdv?.id ?? "";
+  const lonaciClientId = selectedClient?.id ?? "";
   const produitLabelByCode = useMemo(() => {
     const map = new Map<string, string>();
     for (const p of produits) {
@@ -592,36 +592,36 @@ export default function ContratsPanel() {
     setOperationType("NOUVEAU");
     setParentContratId("");
     setProduitCode("");
-    if (!prefillConcessionnaireId) {
-      setSelectedPdv(null);
+    if (!prefillLonaciClientId) {
+      setSelectedClient(null);
       setFormAgenceId("");
     }
-  }, [createOpen, prefillConcessionnaireId]);
+  }, [createOpen, prefillLonaciClientId]);
 
   useEffect(() => {
-    if (!createOpen || !prefillConcessionnaireId) return;
+    if (!createOpen || !prefillLonaciClientId) return;
     void (async () => {
       try {
-        const res = await fetch(`/api/concessionnaires/${prefillConcessionnaireId}`, {
+        const res = await fetch(`/api/clients/${prefillLonaciClientId}`, {
           credentials: "include",
           cache: "no-store",
         });
         if (!res.ok) return;
-        const data = (await res.json()) as { concessionnaire: ConcessionnaireOption };
-        const c = data.concessionnaire as ConcessionnaireOption;
-        setSelectedPdv(c);
+        const data = (await res.json()) as { client: ClientOption };
+        const c = data.client as ClientOption;
+        setSelectedClient(c);
         const agIds = agencesTriees.map((a) => a.id);
         setFormAgenceId(
-          pickAgenceIdFromConcessionnaire(c, agIds) || (typeof c.agenceId === "string" ? c.agenceId.trim() : "") || "",
+          pickAgenceIdFromClient(c, agIds) || (typeof c.agenceId === "string" ? c.agenceId.trim() : "") || "",
         );
       } catch {
         /* ignore */
       }
     })();
-  }, [createOpen, prefillConcessionnaireId, agencesTriees]);
+  }, [createOpen, prefillLonaciClientId, agencesTriees]);
 
   useEffect(() => {
-    if (operationType !== "ACTUALISATION" || !concessionnaireId || !produitCode.trim()) {
+    if (operationType !== "ACTUALISATION" || !lonaciClientId || !produitCode.trim()) {
       setParentsActifs([]);
       return;
     }
@@ -632,7 +632,7 @@ export default function ContratsPanel() {
         const params = new URLSearchParams({
           page: "1",
           pageSize: "100",
-          concessionnaireId,
+          lonaciClientId,
           produitCode: produitCode.trim().toUpperCase(),
         });
         const res = await fetch(`/api/contrats?${params}`, { credentials: "include", cache: "no-store" });
@@ -646,7 +646,7 @@ export default function ContratsPanel() {
         setParentsLoading(false);
       }
     })();
-  }, [operationType, concessionnaireId, produitCode, parentsFetchTick]);
+  }, [operationType, lonaciClientId, produitCode, parentsFetchTick]);
 
   useEffect(() => {
     if (operationType === "NOUVEAU") {
@@ -662,10 +662,10 @@ export default function ContratsPanel() {
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
-    if (!selectedPdv || !produitCode) return;
-    const allowed = selectedPdv.produitsAutorises ?? [];
+    if (!selectedClient || !produitCode) return;
+    const allowed = selectedClient.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
-  }, [selectedPdv, produitCode]);
+  }, [selectedClient, produitCode]);
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -676,25 +676,25 @@ export default function ContratsPanel() {
       setToast({ type: "error", message });
     };
 
-    if (!selectedPdv) {
-      fail("Sélectionnez un concessionnaire dans le référentiel (cliquez un résultat sous la recherche).");
+    if (!selectedClient) {
+      fail("Sélectionnez un client dans le référentiel (cliquez un résultat sous la recherche).");
       return;
     }
     if (!formAgenceId.trim()) {
       fail("Sélectionnez l’agence.");
       return;
     }
-    if (selectedPdv.agenceId && formAgenceId !== selectedPdv.agenceId) {
-      fail("L’agence doit correspondre au rattachement du point de vente sélectionné.");
+    if (selectedClient.agenceId && formAgenceId !== selectedClient.agenceId) {
+      fail("L’agence doit correspondre au rattachement du client sélectionné.");
       return;
     }
     if (!produitCode.trim()) {
       fail("Sélectionnez un produit.");
       return;
     }
-    const autorises = selectedPdv.produitsAutorises ?? [];
+    const autorises = selectedClient.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(autorises, produitCode)) {
-      fail("Ce produit n’est pas autorisé pour ce point de vente.");
+      fail("Ce produit n’est pas autorisé pour ce client.");
       return;
     }
     if (operationType === "ACTUALISATION" && !parentContratId.trim()) {
@@ -711,7 +711,7 @@ export default function ContratsPanel() {
     setToast(null);
     try {
       const body: Record<string, unknown> = {
-        concessionnaireId: selectedPdv.id,
+        lonaciClientId: selectedClient.id,
         agenceId: formAgenceId.trim(),
         produitCode: produitCode.trim().toUpperCase(),
         operationType,
@@ -1495,7 +1495,7 @@ export default function ContratsPanel() {
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-100/90 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
                     <th className="px-3 py-2.5 sm:px-4">Réf.</th>
-                    <th className="px-3 py-2.5 sm:px-4">Concessionnaire</th>
+                    <th className="px-3 py-2.5 sm:px-4">Client</th>
                     <th className="px-3 py-2.5 sm:px-4">Type</th>
                     <th className="px-3 py-2.5 sm:px-4">Date dépôt</th>
                     <th className="px-3 py-2.5 sm:px-4">Statut</th>
@@ -1695,7 +1695,7 @@ export default function ContratsPanel() {
                 <p className="font-mono text-xs text-slate-900">{viewContrat.reference}</p>
               </div>
               <div>
-                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Concessionnaire</p>
+                <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">Client</p>
                 <p className="text-sm text-slate-900">{viewContrat.nomPdv || "—"}</p>
               </div>
               <div>
@@ -1911,7 +1911,7 @@ export default function ContratsPanel() {
               <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-3.5 py-2">
                 <div className="mb-2 flex flex-wrap items-center gap-1">
                   <span className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[11px] font-semibold text-cyan-800">
-                    1. Identification PDV
+                    1. Identification client
                   </span>
                   <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-800">
                     2. Paramètres contrat
@@ -1924,16 +1924,16 @@ export default function ContratsPanel() {
                 <div className="grid gap-2.5">
                   <section className="rounded-xl border border-cyan-200/80 bg-white p-2.5 shadow-sm">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
-                      Point de vente
+                      Client
                     </p>
-                    <ConcessionnaireSearchPicker
-                      key={`contrat-create-${createOpen}-${prefillConcessionnaireId || "none"}`}
-                      label="Sélection du concessionnaire (recherche dans le référentiel) *"
-                      selected={selectedPdv}
+                    <ClientSearchPicker
+                      key={`contrat-create-${createOpen}-${prefillLonaciClientId || "none"}`}
+                      label="Sélection du client (recherche par nom, code, CNI…) *"
+                      selected={selectedClient}
                       onSelectedChange={(row) => {
-                        setSelectedPdv(row);
+                        setSelectedClient(row);
                         const agIds = agencesTriees.map((a) => a.id);
-                        const pickedAg = pickAgenceIdFromConcessionnaire(row, agIds);
+                        const pickedAg = pickAgenceIdFromClient(row, agIds);
                         setFormAgenceId(pickedAg || (row ? "" : ""));
                         const allCodes = produitsTries.map((p) => p.code);
                         const pool =
@@ -1942,11 +1942,9 @@ export default function ContratsPanel() {
                                 produitAutorisePourConcessionnaire(row.produitsAutorises ?? [], code),
                               )
                             : allCodes;
-                        const picked = pickProduitCodeFromConcessionnaire(row, pool);
+                        const picked = pickProduitCodeFromClient(row, pool);
                         if (picked) setProduitCode(picked);
                       }}
-                      statutActifOnly
-                      inscriptionFinaliseeOnly
                       inputClassName={inputClass}
                     />
                   </section>
@@ -1970,24 +1968,24 @@ export default function ContratsPanel() {
                             const code = p.code;
                             const label = p.libelle;
                             const ok =
-                              !selectedPdv ||
-                              produitAutorisePourConcessionnaire(selectedPdv.produitsAutorises ?? [], code);
+                              !selectedClient ||
+                              produitAutorisePourConcessionnaire(selectedClient.produitsAutorises ?? [], code);
                             return (
                               <option key={code} value={code} disabled={!ok}>
                                 {label}
-                                {!ok ? " (non autorisé pour ce PDV)" : ""}
+                                {!ok ? " (non autorisé pour ce client)" : ""}
                               </option>
                             );
                           })}
                         </select>
                         {refError ? <span className="text-[11px] text-rose-700">{refError}</span> : null}
-                        {!selectedPdv ? (
+                        {!selectedClient ? (
                           <span className="text-[11px] text-slate-500">
-                            Après choix du PDV, seuls les produits autorisés sur sa fiche restent sélectionnables.
+                            Après choix du client, seuls les produits autorisés sur sa fiche restent sélectionnables.
                           </span>
-                        ) : (selectedPdv.produitsAutorises ?? []).length === 0 ? (
+                        ) : (selectedClient.produitsAutorises ?? []).length === 0 ? (
                           <span className="text-[11px] text-amber-800">
-                            Aucun produit autorisé sur cette fiche PDV — complétez le référentiel concessionnaire.
+                            Aucun produit autorisé sur cette fiche client — complétez le référentiel client.
                           </span>
                         ) : null}
                       </label>
@@ -2007,9 +2005,9 @@ export default function ContratsPanel() {
                             </option>
                           ))}
                         </select>
-                        {selectedPdv?.agenceId ? (
+                        {selectedClient?.agenceId ? (
                           <span className="text-[11px] text-slate-500">
-                            Doit correspondre au rattachement du PDV ({agencesTriees.find((x) => x.id === selectedPdv.agenceId)?.libelle ?? selectedPdv.agenceId}).
+                            Doit correspondre au rattachement du client ({agencesTriees.find((x) => x.id === selectedClient.agenceId)?.libelle ?? selectedClient.agenceId}).
                           </span>
                         ) : null}
                       </label>
@@ -2066,7 +2064,7 @@ export default function ContratsPanel() {
                             </option>
                           ))}
                         </select>
-                        {concessionnaireId && produitCode.trim() ? (
+                        {lonaciClientId && produitCode.trim() ? (
                           <button
                             type="button"
                             onClick={() => setParentsFetchTick((n) => n + 1)}

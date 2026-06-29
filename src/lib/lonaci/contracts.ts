@@ -4,6 +4,8 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { findLonaciClientById } from "@/lib/lonaci/clients";
+import type { ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
 import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
 import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
@@ -12,7 +14,8 @@ const REF_COUNTER_ID = "contrat_ref";
 function mapContrat(row: {
   id: string;
   reference: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId: string | null;
   produitCode: string;
   operationType: string;
   status: string;
@@ -28,6 +31,7 @@ function mapContrat(row: {
     _id: row.id,
     reference: row.reference,
     concessionnaireId: row.concessionnaireId,
+    lonaciClientId: row.lonaciClientId,
     produitCode: row.produitCode,
     operationType: row.operationType as ContratOperationType,
     status: row.status as "ACTIF" | "RESILIE" | "CEDE",
@@ -92,6 +96,32 @@ export async function hasActiveContractForProduct(
     },
   });
   return count > 0;
+}
+
+export async function hasActiveContractForLonaciClient(
+  lonaciClientId: string,
+  produitCode: string,
+): Promise<boolean> {
+  const count = await prisma.contrat.count({
+    where: {
+      lonaciClientId,
+      produitCode: produitCode.trim().toUpperCase(),
+      status: "ACTIF",
+      deletedAt: null,
+    },
+  });
+  return count > 0;
+}
+
+export async function hasActiveContractForParty(
+  party: ContratPartyRef,
+  produitCode: string,
+): Promise<boolean> {
+  const pcode = produitCode.trim().toUpperCase();
+  if (party.kind === "client") {
+    return hasActiveContractForLonaciClient(party.lonaciClientId, pcode);
+  }
+  return hasActiveContractForProduct(party.concessionnaireId, pcode);
 }
 
 export async function findActiveContratIdForProduct(input: {
@@ -197,7 +227,8 @@ export async function markActiveContratAsCedeForProduct(input: {
 
 export interface FinalizeContratInput {
   dossierId: string;
-  concessionnaireId: string;
+  concessionnaireId?: string | null;
+  lonaciClientId?: string | null;
   produitCode: string;
   operationType: ContratOperationType;
   dateEffet: Date;
@@ -205,28 +236,53 @@ export interface FinalizeContratInput {
 }
 
 export async function finalizeContratFromDossier(input: FinalizeContratInput): Promise<ContratDocument> {
-  const concessionnaire = await findConcessionnaireById(input.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || isStatutFicheGelee(concessionnaire.statut)) {
-    throw new Error("CONCESSIONNAIRE_BLOQUE");
+  const lonaciClientId = input.lonaciClientId?.trim() || null;
+  const concessionnaireId = input.concessionnaireId?.trim() || null;
+  if (!lonaciClientId && !concessionnaireId) {
+    throw new Error("PARTY_REQUIRED");
   }
-  assertConcessionnaireOperationnel(concessionnaire);
 
   const produitCodeNormalized = input.produitCode.trim().toUpperCase();
+  const party: ContratPartyRef = lonaciClientId
+    ? { kind: "client", lonaciClientId }
+    : { kind: "concessionnaire", concessionnaireId: concessionnaireId! };
+
+  if (party.kind === "concessionnaire") {
+    const concessionnaire = await findConcessionnaireById(party.concessionnaireId);
+    if (!concessionnaire || concessionnaire.deletedAt || isStatutFicheGelee(concessionnaire.statut)) {
+      throw new Error("CONCESSIONNAIRE_BLOQUE");
+    }
+    assertConcessionnaireOperationnel(concessionnaire);
+  } else {
+    const client = await findLonaciClientById(party.lonaciClientId);
+    if (!client) {
+      throw new Error("CLIENT_NOT_FOUND");
+    }
+  }
 
   // Règles métier :
   // - NOUVEAU : refuser si un contrat ACTIF existe déjà.
   // - ACTUALISATION : résilier les contrats ACTIF existants avant de créer le nouveau.
   if (input.operationType === "NOUVEAU") {
-    const exists = await hasActiveContractForProduct(input.concessionnaireId, produitCodeNormalized);
+    const exists = await hasActiveContractForParty(party, produitCodeNormalized);
     if (exists) throw new Error("ACTIVE_CONTRACT_EXISTS");
   } else if (input.operationType === "ACTUALISATION") {
+    const activeWhere =
+      party.kind === "client"
+        ? {
+            lonaciClientId: party.lonaciClientId,
+            produitCode: produitCodeNormalized,
+            status: "ACTIF" as const,
+            deletedAt: null,
+          }
+        : {
+            concessionnaireId: party.concessionnaireId,
+            produitCode: produitCodeNormalized,
+            status: "ACTIF" as const,
+            deletedAt: null,
+          };
     const active = await prisma.contrat.findMany({
-      where: {
-        concessionnaireId: input.concessionnaireId,
-        produitCode: produitCodeNormalized,
-        status: "ACTIF",
-        deletedAt: null,
-      },
+      where: activeWhere,
       select: { id: true },
     });
 
@@ -252,7 +308,11 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
             entityId: c.id,
             action: "RESILIE_FROM_ACTUALISATION",
             userId: input.actor._id ?? "",
-            details: { produitCode: produitCodeNormalized, concessionnaireId: input.concessionnaireId },
+            details: {
+              produitCode: produitCodeNormalized,
+              concessionnaireId: concessionnaireId ?? undefined,
+              lonaciClientId: lonaciClientId ?? undefined,
+            },
           }),
         ),
       );
@@ -263,7 +323,8 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
   const created = await prisma.contrat.create({
     data: {
       reference,
-      concessionnaireId: input.concessionnaireId,
+      concessionnaireId,
+      lonaciClientId,
       produitCode: produitCodeNormalized,
       operationType: input.operationType,
       status: "ACTIF",
@@ -282,25 +343,25 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
     userId: input.actor._id ?? "",
     details: {
       dossierId: input.dossierId,
-      concessionnaireId: input.concessionnaireId,
+      concessionnaireId: concessionnaireId ?? undefined,
+      lonaciClientId: lonaciClientId ?? undefined,
       produitCode: created.produitCode,
       operationType: created.operationType,
     },
   });
 
-  if (concessionnaire.statut !== "ACTIF") {
-    await updateConcessionnaire(
-      input.concessionnaireId,
-      { statut: "ACTIF" },
-      input.actor,
-    );
-    await appendAuditLog({
-      entityType: "CONCESSIONNAIRE",
-      entityId: input.concessionnaireId,
-      action: "ACTIVATE_FROM_CONTRAT_FINALIZE",
-      userId: input.actor._id ?? "",
-      details: { dossierId: input.dossierId, contratId: created.id },
-    });
+  if (party.kind === "concessionnaire") {
+    const concessionnaire = await findConcessionnaireById(party.concessionnaireId);
+    if (concessionnaire && concessionnaire.statut !== "ACTIF") {
+      await updateConcessionnaire(party.concessionnaireId, { statut: "ACTIF" }, input.actor);
+      await appendAuditLog({
+        entityType: "CONCESSIONNAIRE",
+        entityId: party.concessionnaireId,
+        action: "ACTIVATE_FROM_CONTRAT_FINALIZE",
+        userId: input.actor._id ?? "",
+        details: { dossierId: input.dossierId, contratId: created.id },
+      });
+    }
   }
 
   return mapContrat(created);
@@ -431,7 +492,8 @@ export async function updateContratById(input: {
 export type ContratListRow = {
   id: string;
   reference: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId: string | null;
   produitCode: string;
   operationType: string;
   status: string;
@@ -454,15 +516,17 @@ export type ListContratsParams = {
   page: number;
   pageSize: number;
   concessionnaireId?: string;
+  lonaciClientId?: string;
   produitCode?: string;
   status?: "ACTIF" | "RESILIE" | "CEDE";
   /** Filtre libre sur la référence (contient, insensible à la casse). */
   referenceContains?: string;
   /**
-   * Si défini : uniquement ces concessionnaires (périmètre agence).
-   * Tableau vide : aucun contrat ne correspond.
+   * Si défini : uniquement ces concessionnaires (périmètre agence legacy PDV).
    */
   allowedConcessionnaireIds?: string[] | null;
+  /** Si défini : uniquement ces clients Lonaci (périmètre agence). */
+  allowedLonaciClientIds?: string[] | null;
   /** PDV rattachés à cette agence (via Prisma concessionnaires). */
   agenceId?: string;
   /** Filtre sur date d’effet du contrat (inclusif). */
@@ -475,7 +539,8 @@ export type ListContratsParams = {
 function mapPrismaContratToListRow(item: {
   id: string;
   reference: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId: string | null;
   produitCode: string;
   operationType: string;
   status: string;
@@ -488,6 +553,7 @@ function mapPrismaContratToListRow(item: {
     id: item.id,
     reference: item.reference,
     concessionnaireId: item.concessionnaireId,
+    lonaciClientId: item.lonaciClientId,
     produitCode: item.produitCode,
     operationType: item.operationType,
     status: item.status,
@@ -500,11 +566,6 @@ function mapPrismaContratToListRow(item: {
 
 export async function listContrats(params: ListContratsParams) {
   const { page, pageSize } = params;
-  if (params.allowedConcessionnaireIds !== null && params.allowedConcessionnaireIds !== undefined) {
-    if (params.allowedConcessionnaireIds.length === 0) {
-      return { items: [] as ContratListRow[], total: 0, page, pageSize };
-    }
-  }
   if (params.dossierIdsAllowlist !== null && params.dossierIdsAllowlist !== undefined) {
     if (params.dossierIdsAllowlist.length === 0) {
       return { items: [] as ContratListRow[], total: 0, page, pageSize };
@@ -517,43 +578,74 @@ export async function listContrats(params: ListContratsParams) {
     where.dossierId = { in: params.dossierIdsAllowlist };
   }
 
-  if (params.allowedConcessionnaireIds != null) {
-    const allowed = params.allowedConcessionnaireIds;
-    if (params.concessionnaireId) {
-      if (!allowed.includes(params.concessionnaireId)) {
-        return { items: [] as ContratListRow[], total: 0, page, pageSize };
-      }
-      where.concessionnaireId = params.concessionnaireId;
-    } else {
-      where.concessionnaireId = { in: allowed };
+  const scopeOr: Prisma.ContratWhereInput[] = [];
+  const allowedPdv = params.allowedConcessionnaireIds;
+  const allowedClients = params.allowedLonaciClientIds;
+  if (allowedPdv != null || allowedClients != null) {
+    const pdvIds = allowedPdv ?? [];
+    const clientIds = allowedClients ?? [];
+    if (pdvIds.length === 0 && clientIds.length === 0) {
+      return { items: [] as ContratListRow[], total: 0, page, pageSize };
     }
-  } else if (params.concessionnaireId) {
-    where.concessionnaireId = params.concessionnaireId;
+    if (pdvIds.length > 0) {
+      scopeOr.push({ concessionnaireId: { in: pdvIds } });
+    }
+    if (clientIds.length > 0) {
+      scopeOr.push({ lonaciClientId: { in: clientIds } });
+    }
+    if (scopeOr.length === 1) {
+      Object.assign(where, scopeOr[0]);
+    } else if (scopeOr.length > 1) {
+      where.OR = scopeOr;
+    }
+  }
+
+  if (params.lonaciClientId?.trim()) {
+    const lid = params.lonaciClientId.trim();
+    if (allowedClients != null && !allowedClients.includes(lid)) {
+      return { items: [] as ContratListRow[], total: 0, page, pageSize };
+    }
+    where.lonaciClientId = lid;
+    delete where.OR;
+    delete where.concessionnaireId;
+  } else if (params.concessionnaireId?.trim()) {
+    const cid = params.concessionnaireId.trim();
+    if (allowedPdv != null && !allowedPdv.includes(cid)) {
+      return { items: [] as ContratListRow[], total: 0, page, pageSize };
+    }
+    where.concessionnaireId = cid;
+    delete where.OR;
+    delete where.lonaciClientId;
   }
 
   const agenceId = params.agenceId?.trim();
-  if (agenceId) {
-    const pdvRows = await prisma.concessionnaire.findMany({
-      where: { deletedAt: null, agenceId },
-      select: { id: true },
-    });
-    const inAgence = pdvRows.map((p) => p.id);
-    if (inAgence.length === 0) {
+  if (agenceId && allowedPdv == null && allowedClients == null) {
+    const [pdvRows, clientRows] = await Promise.all([
+      prisma.concessionnaire.findMany({
+        where: { deletedAt: null, agenceId },
+        select: { id: true },
+      }),
+      prisma.lonaciClient.findMany({
+        where: { deletedAt: null, agenceId },
+        select: { id: true },
+      }),
+    ]);
+    const inAgencePdv = pdvRows.map((p) => p.id);
+    const inAgenceClients = clientRows.map((c) => c.id);
+    if (inAgencePdv.length === 0 && inAgenceClients.length === 0) {
       return { items: [] as ContratListRow[], total: 0, page, pageSize };
     }
-    const cur = where.concessionnaireId;
-    if (typeof cur === "string") {
-      if (!inAgence.includes(cur)) {
-        return { items: [] as ContratListRow[], total: 0, page, pageSize };
-      }
-    } else if (cur && typeof cur === "object" && "in" in cur && Array.isArray((cur as { in: string[] }).in)) {
-      const inter = (cur as { in: string[] }).in.filter((id) => inAgence.includes(id));
-      if (inter.length === 0) {
-        return { items: [] as ContratListRow[], total: 0, page, pageSize };
-      }
-      where.concessionnaireId = { in: inter };
+    const agenceOr: Prisma.ContratWhereInput[] = [];
+    if (inAgencePdv.length > 0) {
+      agenceOr.push({ concessionnaireId: { in: inAgencePdv } });
+    }
+    if (inAgenceClients.length > 0) {
+      agenceOr.push({ lonaciClientId: { in: inAgenceClients } });
+    }
+    if (agenceOr.length === 1) {
+      Object.assign(where, agenceOr[0]);
     } else {
-      where.concessionnaireId = { in: inAgence };
+      where.OR = agenceOr;
     }
   }
 

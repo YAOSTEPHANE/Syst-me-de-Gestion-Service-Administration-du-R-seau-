@@ -139,7 +139,8 @@ model BancarisationRequest {
 model Contrat {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   reference        String   @unique
-  concessionnaireId String
+  concessionnaireId String?
+  lonaciClientId    String?
   produitCode      String
   operationType    String
   status           String
@@ -153,6 +154,7 @@ model Contrat {
 
   @@map("contrats")
   @@index([concessionnaireId, produitCode, status, deletedAt], map: "idx_unique_active_check")
+  @@index([lonaciClientId, produitCode, status, deletedAt], map: "idx_client_active_check")
 }
 
 /** Comptes clients / tiers (distinct des concessionnaires PDV). */

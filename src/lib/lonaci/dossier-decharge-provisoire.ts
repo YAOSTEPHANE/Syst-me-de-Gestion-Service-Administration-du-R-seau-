@@ -3,12 +3,12 @@ import "server-only";
 import { ObjectId } from "mongodb";
 import PDFDocument from "pdfkit";
 
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   DECHARGE_PROVISOIRE_DISCLAIMER,
   DECHARGE_PROVISOIRE_TITLE,
 } from "@/lib/lonaci/dossier-decharge-constants";
 import { findDossierById } from "@/lib/lonaci/dossiers";
+import { loadDossierContratParty } from "@/lib/lonaci/dossier-contrat-party";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import {
   DOSSIER_CHECKLIST_STATUT_LABELS,
@@ -83,17 +83,22 @@ function mapCautionReference(caution: StoredCaution): DossierDechargeProvisoireC
 }
 
 export async function findAssociatedCautionForDossier(
-  concessionnaireId: string,
-  produitCode: string,
-  parentContratId?: string | null,
-  explicitCautionId?: string | null,
+  input: {
+    concessionnaireId?: string | null;
+    lonaciClientId?: string | null;
+    produitCode: string;
+    parentContratId?: string | null;
+    explicitCautionId?: string | null;
+  },
 ): Promise<DossierDechargeProvisoireCautionInfo | null> {
-  const pcode = produitCode.trim().toUpperCase();
+  const pcode = input.produitCode.trim().toUpperCase();
   const db = await getDatabase();
+  const concessionnaireId = input.concessionnaireId?.trim() || null;
+  const lonaciClientId = input.lonaciClientId?.trim() || null;
 
-  if (explicitCautionId?.trim() && ObjectId.isValid(explicitCautionId.trim())) {
+  if (input.explicitCautionId?.trim() && ObjectId.isValid(input.explicitCautionId.trim())) {
     const direct = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-      _id: new ObjectId(explicitCautionId.trim()),
+      _id: new ObjectId(input.explicitCautionId.trim()),
       deletedAt: null,
     });
     if (direct) {
@@ -102,16 +107,23 @@ export async function findAssociatedCautionForDossier(
   }
 
   const contratIds = new Set<string>();
-  if (parentContratId?.trim()) {
-    contratIds.add(parentContratId.trim());
+  if (input.parentContratId?.trim()) {
+    contratIds.add(input.parentContratId.trim());
   }
 
-  const contrats = await prisma.contrat.findMany({
-    where: { concessionnaireId, produitCode: pcode, deletedAt: null },
-    select: { id: true },
-  });
-  for (const c of contrats) {
-    contratIds.add(c.id);
+  const contratWhere = lonaciClientId
+    ? { lonaciClientId, produitCode: pcode, deletedAt: null }
+    : concessionnaireId
+      ? { concessionnaireId, produitCode: pcode, deletedAt: null }
+      : null;
+  if (contratWhere) {
+    const contrats = await prisma.contrat.findMany({
+      where: contratWhere,
+      select: { id: true },
+    });
+    for (const c of contrats) {
+      contratIds.add(c.id);
+    }
   }
 
   if (contratIds.size > 0) {
@@ -124,6 +136,21 @@ export async function findAssociatedCautionForDossier(
       const paid = rows.find((r) => r.status === "PAYEE");
       return mapCautionReference(paid ?? rows[0]);
     }
+  }
+
+  if (lonaciClientId) {
+    const clientRows = await db
+      .collection<StoredCaution>(CAUTIONS_COLLECTION)
+      .find({ deletedAt: null, lonaciClientId, produitCode: pcode })
+      .sort({ updatedAt: -1 })
+      .toArray();
+    if (!clientRows.length) return null;
+    const paid = clientRows.find((r) => r.status === "PAYEE");
+    return mapCautionReference(paid ?? clientRows[0]);
+  }
+
+  if (!concessionnaireId) {
+    return null;
   }
 
   const concessionnaire = await prisma.concessionnaire.findFirst({
@@ -189,8 +216,8 @@ export async function buildDossierDechargeProvisoireView(
     return null;
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
+  const party = await loadDossierContratParty(dossier);
+  if (!party) {
     return null;
   }
 
@@ -199,21 +226,22 @@ export async function buildDossierDechargeProvisoireView(
   const explicitCautionId =
     typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
   const caution = produitCode
-    ? await findAssociatedCautionForDossier(
-        dossier.concessionnaireId,
+    ? await findAssociatedCautionForDossier({
+        concessionnaireId: dossier.concessionnaireId,
+        lonaciClientId: dossier.lonaciClientId,
         produitCode,
         parentContratId,
         explicitCautionId,
-      )
+      })
     : null;
 
   const db = await getDatabase();
   const agenceMap = await loadAgenceLibelleMap(
     db,
-    concessionnaire.agenceId ? [concessionnaire.agenceId] : [],
+    party.agenceId ? [party.agenceId] : [],
   );
-  const agenceLabel = concessionnaire.agenceId
-    ? formatAgenceLibelle(agenceMap.get(concessionnaire.agenceId), concessionnaire.agenceId)
+  const agenceLabel = party.agenceId
+    ? formatAgenceLibelle(agenceMap.get(party.agenceId), party.agenceId)
     : "Sans agence";
 
   const { documentsFournis, documentsManquants } = splitChecklistDocuments(checklist);
@@ -222,10 +250,10 @@ export async function buildDossierDechargeProvisoireView(
     dossierReference: dossier.reference,
     dossierStatus: dossier.status,
     generatedAt: new Date(),
-    identiteLabel: "Concessionnaire",
-    identiteDetail: concessionnaire.raisonSociale?.trim() || concessionnaire.nomComplet || "—",
-    codePdv: concessionnaire.codePdv ?? "",
-    cniNumero: concessionnaire.cniNumero,
+    identiteLabel: party.kind === "client" ? "Client" : "Concessionnaire",
+    identiteDetail: party.displayName || "—",
+    codePdv: party.codeLabel,
+    cniNumero: party.cniNumero,
     agenceLabel,
     produitCode: produitCode || "—",
     produitLibelle: produit?.libelle ?? (produitCode || "—"),

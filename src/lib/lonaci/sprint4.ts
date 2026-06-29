@@ -1216,7 +1216,11 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
       where: { id: { in: contratIds }, deletedAt: null },
       select: { id: true, concessionnaireId: true, produitCode: true },
     });
-    const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
+    const pdvIds = [
+      ...new Set(
+        contrats.map((c) => c.concessionnaireId).filter((id): id is string => Boolean(id?.trim())),
+      ),
+    ];
     const concessionnaires =
       pdvIds.length === 0
         ? []
@@ -1251,17 +1255,17 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
       agences.map((a) => [a._id.toHexString(), `${a.code} - ${a.libelle}`.trim() || a.code || "—"]),
     );
     pdvByContratId = new Map(
-      contrats.map((c) => [c.id, pdvMap.get(c.concessionnaireId) ?? ""]),
+      contrats.map((c) => [c.id, pdvMap.get(c.concessionnaireId ?? "") ?? ""]),
     );
     concessionnaireNomByContratId = new Map(
-      contrats.map((c) => [c.id, concessionnaireMap.get(c.concessionnaireId) ?? "—"]),
+      contrats.map((c) => [c.id, concessionnaireMap.get(c.concessionnaireId ?? "") ?? "—"]),
     );
     produitByContratId = new Map(
       contrats.map((c) => [c.id, (c.produitCode || "").trim() || "—"]),
     );
     agenceByContratId = new Map(
       contrats.map((c) => {
-        const agenceId = concessionnaireById.get(c.concessionnaireId)?.agenceId ?? null;
+        const agenceId = concessionnaireById.get(c.concessionnaireId ?? "")?.agenceId ?? null;
         return [c.id, agenceId ? (agenceMap.get(agenceId) ?? agenceId) : "Sans agence"];
       }),
     );
@@ -1513,7 +1517,11 @@ export async function listContratsCautionAttendus(
     .toArray();
   const cautionByContratId = new Map(cautionRows.map((c) => [c.contratId, c]));
 
-  const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
+  const pdvIds = [
+    ...new Set(
+      contrats.map((c) => c.concessionnaireId).filter((id): id is string => Boolean(id?.trim())),
+    ),
+  ];
   const concessionnaires =
     pdvIds.length === 0
       ? []
@@ -1534,7 +1542,7 @@ export async function listContratsCautionAttendus(
   return contrats.map((c) => {
     const cau = cautionByContratId.get(c.id) ?? null;
     const metrics = singleCautionAttendusMetrics(cau);
-    const pdv = pdvMeta.get(c.concessionnaireId);
+    const pdv = pdvMeta.get(c.concessionnaireId ?? "");
     return {
       contratId: c.id,
       reference: c.reference,
@@ -1946,7 +1954,11 @@ export async function listContratEtatMensuelProduitAgenceMatrix(
     select: { id: true, produitCode: true, concessionnaireId: true, createdAt: true },
   });
 
-  const pdvIds = [...new Set(contrats.map((c) => c.concessionnaireId))];
+  const pdvIds = [
+    ...new Set(
+      contrats.map((c) => c.concessionnaireId).filter((id): id is string => Boolean(id?.trim())),
+    ),
+  ];
   const pdvs =
     pdvIds.length === 0
       ? []
@@ -1961,7 +1973,7 @@ export async function listContratEtatMensuelProduitAgenceMatrix(
     { produitCode: string; agenceKey: string; createdAt: Date }
   >();
   for (const ct of contrats) {
-    const pdv = pdvById.get(ct.concessionnaireId);
+    const pdv = pdvById.get(ct.concessionnaireId ?? "");
     const agenceKey = contratMatrixAgencePartitionKey(pdv?.agenceId ?? null);
     const produitCode = (ct.produitCode || "").trim().toUpperCase() || "—";
     contratById.set(ct.id, { produitCode, agenceKey, createdAt: ct.createdAt });

@@ -71,6 +71,7 @@ const listQuerySchema = z.object({
   q: z.string().optional(),
   statut: z.enum(CLIENT_STATUTS).optional(),
   eligibleForCaution: z.enum(["true", "false"]).optional(),
+  eligibleForContrat: z.enum(["true", "false"]).optional(),
   agenceId: z.string().optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
 });
@@ -154,6 +155,7 @@ export async function GET(request: NextRequest) {
       q: parsed.data.q,
       statut: parsed.data.statut,
       eligibleForCaution: parsed.data.eligibleForCaution === "true",
+      eligibleForContrat: parsed.data.eligibleForContrat === "true",
       agenceId: parsed.data.agenceId,
       readerScope,
       includeDeleted,

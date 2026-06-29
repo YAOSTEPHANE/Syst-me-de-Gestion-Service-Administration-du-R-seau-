@@ -238,7 +238,8 @@ export interface DossierDocument {
   type: DossierType;
   reference: string;
   status: DossierStatus;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId?: string | null;
   agenceId: string | null;
   payload: Record<string, unknown>;
   history: DossierValidationStep[];
@@ -252,7 +253,8 @@ export interface DossierDocument {
 export interface ContratDocument {
   _id?: string;
   reference: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId?: string | null;
   produitCode: string;
   operationType: ContratOperationType;
   status: ContratStatus;

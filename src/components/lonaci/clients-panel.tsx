@@ -829,24 +829,10 @@ export default function ClientsPanel() {
                   Client enregistré
                 </h3>
                 <p className="text-sm text-slate-600">
-                  Le compte de <strong className="text-slate-900">{createdClient.nomComplet}</strong> a été créé.
-                  {createdClient.statut === "EN_ATTENTE_N1" ? (
-                    <>
-                      {" "}
-                      Statut :{" "}
-                      <strong className="text-slate-900">{CLIENT_STATUT_LABELS.EN_ATTENTE_N1}</strong>. Un Chef de
-                      section doit valider la fiche avant la constitution d’une caution.
-                    </>
-                  ) : (
-                    <>
-                      {" "}
-                      Statut :{" "}
-                      <strong className="text-slate-900">
-                        {CLIENT_STATUT_LABELS[createdClient.statut as ClientStatut] ?? createdClient.statut}
-                      </strong>
-                      . Une caution peut être constituée ; le statut passera à « Actif » après paiement.
-                    </>
-                  )}
+                  Le compte de <strong className="text-slate-900">{createdClient.nomComplet}</strong> a été créé avec
+                  le statut{" "}
+                  <strong className="text-slate-900">{CLIENT_STATUT_LABELS.EN_ATTENTE_N1}</strong>. Un Chef de section
+                  doit valider la fiche (N1) avant la constitution d’une caution.
                 </p>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-center">
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
@@ -937,10 +923,11 @@ export default function ClientsPanel() {
                   </p>
                   <p className="text-xs text-slate-600">
                     L’identifiant unique ({CLIENT_CODE_PREFIX}-000001, …) est attribué automatiquement à
-                    l’enregistrement. Pour un agent, la fiche est soumise en{" "}
-                    <span className="font-medium text-sky-900">{CLIENT_STATUT_LABELS.EN_ATTENTE_N1}</span> ; le Chef
-                    de section valide avant la caution, puis le statut devient{" "}
-                    <span className="font-medium text-amber-900">{CLIENT_STATUT_LABELS.DOSSIER_EN_COURS}</span>.
+                    l’enregistrement. Statut initial :{" "}
+                    <span className="font-medium text-sky-900">{CLIENT_STATUT_LABELS.EN_ATTENTE_N1}</span> pour tous
+                    les rôles — le Chef de section valide (N1), puis le dossier passe en{" "}
+                    <span className="font-medium text-amber-900">{CLIENT_STATUT_LABELS.DOSSIER_EN_COURS}</span> avant la
+                    caution.
                   </p>
                   <label className="block text-sm">
                     <span className="text-slate-600">

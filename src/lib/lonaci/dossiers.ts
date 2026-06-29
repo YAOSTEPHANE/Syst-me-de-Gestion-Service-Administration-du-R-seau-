@@ -17,9 +17,17 @@ import {
   canReadConcessionnaire,
   isStatutFicheGelee,
 } from "@/lib/lonaci/access";
-import { findContratById, hasActiveContractForProduct } from "@/lib/lonaci/contracts";
+import {
+  contratPartyFromDossier,
+  contratMatchesParty,
+  loadDossierContratParty,
+  assertDossierPartyReadable,
+  type ContratPartyRef,
+} from "@/lib/lonaci/dossier-contrat-party";
+import { findContratById, hasActiveContractForParty } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import {
@@ -77,13 +85,15 @@ export async function ensureDossierIndexes() {
     { key: { reference: 1 }, unique: true, name: "uniq_reference" },
     { key: { type: 1, status: 1 }, name: "idx_type_status" },
     { key: { concessionnaireId: 1, updatedAt: -1 }, name: "idx_concessionnaire_updated" },
+    { key: { lonaciClientId: 1, updatedAt: -1 }, name: "idx_lonaci_client_updated" },
     { key: { deletedAt: 1 }, name: "idx_deleted" },
   ]);
 }
 
 export interface CreateDossierInput {
   type: DossierType;
-  concessionnaireId: string;
+  concessionnaireId?: string | null;
+  lonaciClientId?: string | null;
   payload: Record<string, unknown>;
   actor: UserDocument;
   /**
@@ -99,17 +109,37 @@ export interface CreateDossierInput {
 }
 
 export async function createDossier(input: CreateDossierInput): Promise<DossierDocument> {
-  const concessionnaire = await findConcessionnaireById(input.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  const lonaciClientId = input.lonaciClientId?.trim() || null;
+  const concessionnaireId = input.concessionnaireId?.trim() || null;
+  if (!lonaciClientId && !concessionnaireId) {
+    throw new Error("PARTY_REQUIRED");
   }
-  if (!canReadConcessionnaire(input.actor, concessionnaire)) {
-    throw new Error("AGENCE_FORBIDDEN");
+  if (lonaciClientId && concessionnaireId) {
+    throw new Error("PARTY_AMBIGUOUS");
   }
-  if (isStatutFicheGelee(concessionnaire.statut)) {
-    throw new Error("CONCESSIONNAIRE_BLOQUE");
+
+  let agenceId: string | null = null;
+  let party: ContratPartyRef;
+  if (lonaciClientId) {
+    party = { kind: "client", lonaciClientId };
+    await assertDossierPartyReadable(party, input.actor);
+    const client = await findLonaciClientById(lonaciClientId);
+    agenceId = client?.agenceId ?? null;
+  } else {
+    party = { kind: "concessionnaire", concessionnaireId: concessionnaireId! };
+    const concessionnaire = await findConcessionnaireById(concessionnaireId!);
+    if (!concessionnaire || concessionnaire.deletedAt) {
+      throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+    }
+    if (!canReadConcessionnaire(input.actor, concessionnaire)) {
+      throw new Error("AGENCE_FORBIDDEN");
+    }
+    if (isStatutFicheGelee(concessionnaire.statut)) {
+      throw new Error("CONCESSIONNAIRE_BLOQUE");
+    }
+    assertConcessionnaireOperationnel(concessionnaire);
+    agenceId = concessionnaire.agenceId ?? null;
   }
-  assertConcessionnaireOperationnel(concessionnaire);
 
   if (input.type === "CONTRAT_ACTUALISATION") {
     const produitCode = String(input.payload.produitCode ?? "").trim().toUpperCase();
@@ -122,10 +152,17 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
       throw new Error("PRODUIT_INVALID");
     }
     if (operationType === "NOUVEAU") {
-      const exists = await hasActiveContractForProduct(concessionnaire._id ?? "", produitCode);
+      const exists = await hasActiveContractForParty(party, produitCode);
       if (exists) {
         throw new Error("ACTIVE_CONTRACT_EXISTS");
       }
+    }
+    const partyProduits =
+      party.kind === "client"
+        ? ((await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [])
+        : ((await findConcessionnaireById(party.concessionnaireId))?.produitsAutorises ?? []);
+    if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
+      throw new Error("PRODUIT_NOT_ALLOWED");
     }
     const checklist = ensureDossierDocumentChecklist(
       input.payload,
@@ -145,8 +182,9 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
     type: input.type,
     reference,
     status: initialStatus,
-    concessionnaireId: input.concessionnaireId,
-    agenceId: concessionnaire.agenceId,
+    concessionnaireId,
+    lonaciClientId,
+    agenceId,
     payload: input.payload,
     history: input.initialHistory ?? [],
     createdByUserId: input.actor._id ?? "",
@@ -314,7 +352,7 @@ async function notifyAfterTransition(
 
 /** Champs statut métier 3.5 pour un dossier contrat (API détail / liste). */
 export async function buildDossierContratStatutMetierFields(
-  dossier: Pick<DossierDocument, "type" | "status" | "concessionnaireId" | "payload">,
+  dossier: Pick<DossierDocument, "type" | "status" | "concessionnaireId" | "lonaciClientId" | "payload">,
 ) {
   if (dossier.type !== "CONTRAT_ACTUALISATION") {
     return {};
@@ -328,12 +366,13 @@ export async function buildDossierContratStatutMetierFields(
       typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
     const explicitCautionId =
       typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
-    const caution = await findAssociatedCautionForDossier(
-      dossier.concessionnaireId,
+    const caution = await findAssociatedCautionForDossier({
+      concessionnaireId: dossier.concessionnaireId,
+      lonaciClientId: dossier.lonaciClientId,
       produitCode,
       parentContratId,
       explicitCautionId,
-    );
+    });
     cautionPaid = caution?.status === "PAYEE";
   }
   const statutMetier = resolveContratStatutMetier({
@@ -461,12 +500,14 @@ export async function patchContratDossierPayload(
     throw new Error("PATCH_EMPTY");
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  const party = contratPartyFromDossier(dossier);
+  if (!party) {
+    throw new Error("PARTY_REQUIRED");
   }
-  if (!canReadConcessionnaire(actor, concessionnaire)) {
-    throw new Error("AGENCE_FORBIDDEN");
+  await assertDossierPartyReadable(party, actor);
+  const partyProfile = await loadDossierContratParty(dossier);
+  if (!partyProfile) {
+    throw new Error("PARTY_NOT_FOUND");
   }
 
   const current = { ...(dossier.payload ?? {}) } as Record<string, unknown>;
@@ -500,7 +541,7 @@ export async function patchContratDossierPayload(
 
   let nextAgenceId = dossier.agenceId ?? null;
   if (patch.agenceId !== undefined) {
-    if (!concessionnaire.agenceId || patch.agenceId.trim() !== concessionnaire.agenceId) {
+    if (!partyProfile.agenceId || patch.agenceId.trim() !== partyProfile.agenceId) {
       throw new Error("AGENCE_INVALID");
     }
     next.agenceId = patch.agenceId.trim();
@@ -516,13 +557,13 @@ export async function patchContratDossierPayload(
   if (!produit) {
     throw new Error("PRODUIT_INVALID");
   }
-  if (!produitAutorisePourConcessionnaire(concessionnaire.produitsAutorises ?? [], produitCode)) {
+  if (!produitAutorisePourConcessionnaire(partyProfile.produitsAutorises ?? [], produitCode)) {
     throw new Error("PRODUIT_NOT_ALLOWED");
   }
 
   if (op === "NOUVEAU") {
     next.parentContratId = null;
-    const exists = await hasActiveContractForProduct(dossier.concessionnaireId, produitCode);
+    const exists = await hasActiveContractForParty(party, produitCode);
     if (exists) {
       throw new Error("ACTIVE_CONTRACT_EXISTS");
     }
@@ -535,7 +576,7 @@ export async function patchContratDossierPayload(
     if (
       !parent ||
       parent.status !== "ACTIF" ||
-      parent.concessionnaireId !== dossier.concessionnaireId ||
+      !contratMatchesParty(parent, party) ||
       parent.produitCode.trim().toUpperCase() !== produitCode
     ) {
       throw new Error("PARENT_CONTRAT_INVALID");
@@ -635,12 +676,13 @@ export async function listDossiers(
           typeof row.payload?.parentContratId === "string" ? row.payload.parentContratId : null;
         const explicitCautionId =
           typeof row.payload?.cautionId === "string" ? row.payload.cautionId : null;
-        const caution = await findAssociatedCautionForDossier(
-          row.concessionnaireId,
+        const caution = await findAssociatedCautionForDossier({
+          concessionnaireId: row.concessionnaireId,
+          lonaciClientId: row.lonaciClientId,
           produitCode,
           parentContratId,
           explicitCautionId,
-        );
+        });
         cautionPaidByDossierId.set(dossierId, caution?.status === "PAYEE");
       }),
   );

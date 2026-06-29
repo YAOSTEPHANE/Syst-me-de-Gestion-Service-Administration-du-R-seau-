@@ -1,9 +1,13 @@
 import "server-only";
 
 import {
+  contratPartyFromDossier,
+  type ContratPartyRef,
+} from "@/lib/lonaci/dossier-contrat-party";
+import {
   finalizeContratFromDossier,
   findContratByDossierId,
-  hasActiveContractForProduct,
+  hasActiveContractForParty,
 } from "@/lib/lonaci/contracts";
 import {
   archiveContratSigneForDossier,
@@ -123,13 +127,23 @@ export async function finalizeDossierContratActualisation(input: {
     };
   }
 
+  const party = contratPartyFromDossier(before);
+  if (!party) {
+    return {
+      ok: false,
+      code: "INVALID_PAYLOAD",
+      message: "Dossier sans client ni concessionnaire rattaché.",
+      httpStatus: 400,
+    };
+  }
+
   if (operationType === "NOUVEAU") {
-    const hasActive = await hasActiveContractForProduct(before.concessionnaireId, produitCode);
+    const hasActive = await hasActiveContractForParty(party, produitCode);
     if (hasActive) {
       return {
         ok: false,
         code: "ACTIVE_CONTRACT_EXISTS",
-        message: "Un contrat actif existe déjà pour ce produit et ce concessionnaire.",
+        message: "Un contrat actif existe déjà pour ce produit et ce client.",
         httpStatus: 409,
       };
     }
@@ -139,7 +153,8 @@ export async function finalizeDossierContratActualisation(input: {
   try {
     contrat = await finalizeContratFromDossier({
       dossierId: input.dossierId,
-      concessionnaireId: before.concessionnaireId,
+      concessionnaireId: party.kind === "concessionnaire" ? party.concessionnaireId : null,
+      lonaciClientId: party.kind === "client" ? party.lonaciClientId : null,
       produitCode,
       operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
       dateEffet,

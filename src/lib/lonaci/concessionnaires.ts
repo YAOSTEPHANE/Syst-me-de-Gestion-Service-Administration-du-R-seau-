@@ -271,8 +271,10 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
   return mapped;
 }
 
-export async function findConcessionnaireById(id: string): Promise<ConcessionnaireDocument | null> {
-  if (!isObjectId(id)) {
+export async function findConcessionnaireById(
+  id: string | null | undefined,
+): Promise<ConcessionnaireDocument | null> {
+  if (!id?.trim() || !isObjectId(id)) {
     return null;
   }
   const row = await prisma.concessionnaire.findUnique({ where: { id } });

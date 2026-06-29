@@ -8,10 +8,11 @@ import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit
 import { isStatutFicheGelee } from "@/lib/lonaci/access";
 import {
   findContratById,
-  hasActiveContractForProduct,
+  hasActiveContractForParty,
   listContrats,
   listScopeAgenceIdForContratsList,
 } from "@/lib/lonaci/contracts";
+import { contratMatchesParty, type ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
 import {
   contratStatutMetierFields,
   resolveContratStatutMetier,
@@ -19,26 +20,50 @@ import {
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { canReadClient } from "@/lib/lonaci/access";
+import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
-const createSchema = z.object({
-  concessionnaireId: z.string().min(1),
-  agenceId: z.string().min(1),
-  produitCode: z.string().min(1),
-  operationType: z.enum(["NOUVEAU", "ACTUALISATION"]),
-  /** ISO 8601 (ex. toISOString()) — le client peut envoyer des dates avec offset ou Z. */
-  dateOperation: z.string().refine((s) => !Number.isNaN(Date.parse(s)), { message: "dateOperation invalide" }),
-  parentContratId: z.string().min(1).nullish(),
-  /** null autorisé (formulaire envoie null si vide) — z.string().optional() seul rejetait null → 400. */
-  observations: z.string().max(5000).nullish(),
-});
+const createSchema = z
+  .object({
+    concessionnaireId: z.string().min(1).optional(),
+    lonaciClientId: z.string().min(1).optional(),
+    agenceId: z.string().min(1),
+    produitCode: z.string().min(1),
+    operationType: z.enum(["NOUVEAU", "ACTUALISATION"]),
+    /** ISO 8601 (ex. toISOString()) — le client peut envoyer des dates avec offset ou Z. */
+    dateOperation: z.string().refine((s) => !Number.isNaN(Date.parse(s)), { message: "dateOperation invalide" }),
+    parentContratId: z.string().min(1).nullish(),
+    /** null autorisé (formulaire envoie null si vide) — z.string().optional() seul rejetait null → 400. */
+    observations: z.string().max(5000).nullish(),
+  })
+  .superRefine((data, ctx) => {
+    const c = (data.concessionnaireId ?? "").trim();
+    const l = (data.lonaciClientId ?? "").trim();
+    if (!c && !l) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Client ou concessionnaire requis.",
+        path: ["lonaciClientId"],
+      });
+    }
+    if (c && l) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Preciser un seul rattachement : client ou concessionnaire.",
+        path: ["lonaciClientId"],
+      });
+    }
+  });
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   concessionnaireId: z.string().optional(),
+  lonaciClientId: z.string().optional(),
   produitCode: z.string().optional(),
   /** Filtre liste contrats : ACTIF / RESILIE / CEDE */
   status: z.enum(["ACTIF", "RESILIE", "CEDE"]).optional(),
@@ -67,12 +92,20 @@ export async function GET(request: NextRequest) {
 
   const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
   let allowedConcessionnaireIds: string[] | null = null;
+  let allowedLonaciClientIds: string[] | null = null;
   if (scopeAgenceId) {
-    const scoped = await prisma.concessionnaire.findMany({
-      where: { deletedAt: null, agenceId: scopeAgenceId },
-      select: { id: true },
-    });
-    allowedConcessionnaireIds = scoped.map((c) => c.id);
+    const [scopedPdv, scopedClients] = await Promise.all([
+      prisma.concessionnaire.findMany({
+        where: { deletedAt: null, agenceId: scopeAgenceId },
+        select: { id: true },
+      }),
+      prisma.lonaciClient.findMany({
+        where: { deletedAt: null, agenceId: scopeAgenceId },
+        select: { id: true },
+      }),
+    ]);
+    allowedConcessionnaireIds = scopedPdv.map((c) => c.id);
+    allowedLonaciClientIds = scopedClients.map((c) => c.id);
   }
 
   const db = await getDatabase();
@@ -115,28 +148,51 @@ export async function GET(request: NextRequest) {
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     concessionnaireId: parsed.data.concessionnaireId,
+    lonaciClientId: parsed.data.lonaciClientId,
     produitCode: parsed.data.produitCode,
     status: parsed.data.status,
     referenceContains: parsed.data.q,
     allowedConcessionnaireIds,
+    allowedLonaciClientIds,
     agenceId: agenceIdForList,
     dateEffetFrom,
     dateEffetTo,
     dossierIdsAllowlist,
   });
 
-  const pdvIds = [...new Set(result.items.map((c) => c.concessionnaireId))];
-  const pdvRows =
+  const pdvIds = [
+    ...new Set(result.items.map((c) => c.concessionnaireId).filter((id): id is string => Boolean(id?.trim()))),
+  ];
+  const clientIds = [
+    ...new Set(result.items.map((c) => c.lonaciClientId).filter((id): id is string => Boolean(id?.trim()))),
+  ];
+  const [pdvRows, clientRows] = await Promise.all([
     pdvIds.length === 0
-      ? []
-      : await prisma.concessionnaire.findMany({
+      ? Promise.resolve([])
+      : prisma.concessionnaire.findMany({
           where: { id: { in: pdvIds }, deletedAt: null },
           select: { id: true, codePdv: true, nomComplet: true, raisonSociale: true },
-        });
+        }),
+    clientIds.length === 0
+      ? Promise.resolve([])
+      : prisma.lonaciClient.findMany({
+          where: { id: { in: clientIds }, deletedAt: null },
+          select: { id: true, code: true, nomComplet: true, raisonSociale: true },
+        }),
+  ]);
   const pdvMap = new Map(pdvRows.map((p) => [p.id, p]));
+  const clientMap = new Map(clientRows.map((c) => [c.id, c]));
 
   const itemsWithPdv = result.items.map((c) => {
-    const pdv = pdvMap.get(c.concessionnaireId);
+    const client = c.lonaciClientId ? clientMap.get(c.lonaciClientId) : undefined;
+    if (client) {
+      return {
+        ...c,
+        codePdv: client.code ?? "",
+        nomPdv: client.nomComplet || client.raisonSociale || "",
+      };
+    }
+    const pdv = c.concessionnaireId ? pdvMap.get(c.concessionnaireId) : undefined;
     return {
       ...c,
       codePdv: pdv?.codePdv ?? "",
@@ -184,12 +240,13 @@ export async function GET(request: NextRequest) {
           typeof meta.payload.parentContratId === "string" ? meta.payload.parentContratId : null;
         const explicitCautionId =
           typeof meta.payload.cautionId === "string" ? meta.payload.cautionId : null;
-        const caution = await findAssociatedCautionForDossier(
-          c.concessionnaireId,
-          c.produitCode,
+        const caution = await findAssociatedCautionForDossier({
+          concessionnaireId: c.concessionnaireId,
+          lonaciClientId: c.lonaciClientId,
+          produitCode: c.produitCode,
           parentContratId,
           explicitCautionId,
-        );
+        });
         cautionPaid = caution?.status === "PAYEE";
       }
       const statutMetier = resolveContratStatutMetier({
@@ -238,7 +295,8 @@ export async function GET(request: NextRequest) {
       _id: ObjectId;
       reference: string;
       status: string;
-      concessionnaireId: string;
+      concessionnaireId: string | null;
+      lonaciClientId?: string | null;
       agenceId: string | null;
       payload: Record<string, unknown>;
       history: { status: string; actedByUserId: string; actedAt: Date; comment: string | null }[];
@@ -274,7 +332,8 @@ export async function GET(request: NextRequest) {
     .collection<{
       _id: ObjectId;
       reference: string;
-      concessionnaireId: string;
+      concessionnaireId: string | null;
+      lonaciClientId?: string | null;
       payload: Record<string, unknown>;
       updatedAt: Date;
     }>("dossiers")
@@ -332,12 +391,13 @@ export async function GET(request: NextRequest) {
               typeof d.payload?.parentContratId === "string" ? d.payload.parentContratId : null;
             const explicitCautionId =
               typeof d.payload?.cautionId === "string" ? d.payload.cautionId : null;
-            const caution = await findAssociatedCautionForDossier(
-              d.concessionnaireId,
+            const caution = await findAssociatedCautionForDossier({
+              concessionnaireId: d.concessionnaireId,
+              lonaciClientId: d.lonaciClientId,
               produitCode,
               parentContratId,
               explicitCautionId,
-            );
+            });
             cautionPaid = caution?.status === "PAYEE";
           }
           const statutMetier = resolveContratStatutMetier({
@@ -388,14 +448,17 @@ export async function POST(request: NextRequest) {
     return zodBadRequest(parsed.error);
   }
 
+  const lonaciClientId = (parsed.data.lonaciClientId ?? "").trim() || null;
+  const concessionnaireId = (parsed.data.concessionnaireId ?? "").trim() || null;
+  const party: ContratPartyRef = lonaciClientId
+    ? { kind: "client", lonaciClientId }
+    : { kind: "concessionnaire", concessionnaireId: concessionnaireId! };
+
   if (parsed.data.operationType === "NOUVEAU") {
-    const hasActive = await hasActiveContractForProduct(
-      parsed.data.concessionnaireId,
-      parsed.data.produitCode.trim().toUpperCase(),
-    );
+    const hasActive = await hasActiveContractForParty(party, parsed.data.produitCode.trim().toUpperCase());
     if (hasActive) {
       return conflict(
-        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "Un contrat actif existe deja pour ce produit et ce client.",
         "ACTIVE_CONTRACT_EXISTS",
       );
     }
@@ -408,33 +471,61 @@ export async function POST(request: NextRequest) {
       );
     }
     const parent = await findContratById(parsed.data.parentContratId);
-    if (!parent || parent.status !== "ACTIF") {
+    if (!parent || parent.status !== "ACTIF" || !contratMatchesParty(parent, party)) {
       return notFound("Contrat d'origine introuvable ou inactif.", "PARENT_CONTRAT_NOT_FOUND");
     }
   }
-  const concessionnaire = await findConcessionnaireById(parsed.data.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
+
+  let produitsAutorises: string[] = [];
+  if (party.kind === "client") {
+    const client = await findLonaciClientById(party.lonaciClientId);
+    if (!client) {
+      return notFound("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    if (!canReadClient(auth.user, client)) {
+      return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+    }
+    if (!isClientStatutEligibleForContrat(client.statut)) {
+      if (client.statut === "EN_ATTENTE_N1" || client.statut === "REJETE") {
+        return conflict(
+          "Validation N1 requise avant contrat.",
+          "CLIENT_INSCRIPTION_PENDING",
+        );
+      }
+      return conflict("Client bloque.", "CLIENT_BLOQUE");
+    }
+    if (!client.agenceId || client.agenceId !== parsed.data.agenceId) {
+      return badRequest("Agence invalide pour ce client.", "AGENCE_INVALID");
+    }
+    produitsAutorises = client.produitsAutorises ?? [];
+  } else {
+    const concessionnaire = await findConcessionnaireById(party.concessionnaireId);
+    if (!concessionnaire || concessionnaire.deletedAt) {
+      return notFound("Concessionnaire introuvable.", "CONCESSIONNAIRE_NOT_FOUND");
+    }
+    if (isStatutFicheGelee(concessionnaire.statut)) {
+      return conflict(
+        "Operation interdite: concessionnaire résilié ou décédé.",
+        "CONCESSIONNAIRE_BLOQUE",
+      );
+    }
+    if (!concessionnaire.agenceId || concessionnaire.agenceId !== parsed.data.agenceId) {
+      return badRequest("Agence invalide pour ce concessionnaire.", "AGENCE_INVALID");
+    }
+    produitsAutorises = concessionnaire.produitsAutorises ?? [];
   }
-  if (isStatutFicheGelee(concessionnaire.statut)) {
-    return conflict(
-      "Operation interdite: concessionnaire résilié ou décédé.",
-      "CONCESSIONNAIRE_BLOQUE",
-    );
-  }
-  if (!concessionnaire.agenceId || concessionnaire.agenceId !== parsed.data.agenceId) {
-    return badRequest("Agence invalide pour ce concessionnaire.", "AGENCE_INVALID");
-  }
+
   const p = parsed.data.produitCode.trim().toUpperCase();
-  if (!produitAutorisePourConcessionnaire(concessionnaire.produitsAutorises ?? [], p)) {
-    return badRequest("Produit non autorise pour ce concessionnaire.", "PRODUIT_NOT_ALLOWED");
+  if (!produitAutorisePourConcessionnaire(produitsAutorises, p)) {
+    return badRequest("Produit non autorise pour ce client.", "PRODUIT_NOT_ALLOWED");
   }
 
   await ensureDossierIndexes();
   try {
     const dossier = await createDossier({
       type: "CONTRAT_ACTUALISATION",
-      concessionnaireId: parsed.data.concessionnaireId,
+      concessionnaireId,
+      lonaciClientId,
       payload: {
         produitCode: parsed.data.produitCode.trim().toUpperCase(),
         operationType: parsed.data.operationType,
@@ -453,11 +544,14 @@ export async function POST(request: NextRequest) {
     if (code === "CONCESSIONNAIRE_BLOQUE") {
       return conflict("Concessionnaire bloque.", "CONCESSIONNAIRE_BLOQUE");
     }
-    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
+    if (code === "CLIENT_INSCRIPTION_PENDING") {
       return conflict(
-        "Inscription non finalisee : validation N1 requise avant contrat.",
-        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
+        "Validation N1 requise avant contrat.",
+        "CLIENT_INSCRIPTION_PENDING",
       );
+    }
+    if (code === "CLIENT_BLOQUE" || code === "CLIENT_NOT_FOUND") {
+      return conflict("Client bloque ou introuvable.", "CLIENT_BLOQUE");
     }
     if (code === "AGENCE_FORBIDDEN") {
       return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");

@@ -26,10 +26,7 @@ function isObjectId(id: string): boolean {
   return /^[a-f\d]{24}$/i.test(id);
 }
 
-function initialClientStatutOnCreate(actor: UserDocument): ClientStatut {
-  if (actor.role === "CHEF_SECTION" || actor.role === "CHEF_SERVICE") {
-    return "DOSSIER_EN_COURS";
-  }
+function initialClientStatutOnCreate(): ClientStatut {
   return "EN_ATTENTE_N1";
 }
 
@@ -102,6 +99,8 @@ export function buildClientListWhere(params: {
   statut?: ClientStatut;
   /** Clients éligibles caution : dossier en cours ou actif (exclut inactifs). */
   eligibleForCaution?: boolean;
+  /** Clients éligibles contrat : dossier en cours ou actif. */
+  eligibleForContrat?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -120,7 +119,7 @@ export function buildClientListWhere(params: {
     parts.push({ agenceId: params.agenceId });
   }
 
-  if (params.eligibleForCaution) {
+  if (params.eligibleForCaution || params.eligibleForContrat) {
     parts.push({ statut: { in: ["DOSSIER_EN_COURS", "ACTIF"] } });
   } else if (params.statut) {
     parts.push({ statut: params.statut });
@@ -159,6 +158,7 @@ export async function searchClients(params: {
   q?: string;
   statut?: ClientStatut;
   eligibleForCaution?: boolean;
+  eligibleForContrat?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -167,6 +167,7 @@ export async function searchClients(params: {
     q: params.q,
     statut: params.statut,
     eligibleForCaution: params.eligibleForCaution,
+    eligibleForContrat: params.eligibleForContrat,
     agenceId: params.agenceId,
     readerScope: params.readerScope,
     includeDeleted: params.includeDeleted,
@@ -343,8 +344,7 @@ export async function createClient(
 ) {
   const now = new Date();
   const code = await allocateClientCode();
-  const statut = initialClientStatutOnCreate(actor);
-  const n1ApprovedOnCreate = statut === "DOSSIER_EN_COURS";
+  const statut = initialClientStatutOnCreate();
   const produits = await listProduits();
   let documentChecklist = buildClientDocumentChecklistForProducts(
     input.produitsAutorises ?? [],
@@ -371,8 +371,8 @@ export async function createClient(
       produitsAutorises: input.produitsAutorises ?? [],
       documentChecklist: checklistToPrismaJson(documentChecklist),
       statut,
-      validationN1At: n1ApprovedOnCreate ? now : null,
-      validationN1ByUserId: n1ApprovedOnCreate ? actor._id ?? "" : null,
+      validationN1At: null,
+      validationN1ByUserId: null,
       rejetMotif: null,
       rejetAt: null,
       notes: input.notes,

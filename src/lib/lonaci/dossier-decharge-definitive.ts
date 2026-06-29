@@ -111,12 +111,13 @@ export async function buildDossierDechargeDefinitiveView(
   const explicitCautionId =
     typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
   const cautionLink = produitCode
-    ? await findAssociatedCautionForDossier(
-        dossier.concessionnaireId,
+    ? await findAssociatedCautionForDossier({
+        concessionnaireId: dossier.concessionnaireId,
+        lonaciClientId: dossier.lonaciClientId,
         produitCode,
         parentContratId,
         explicitCautionId,
-      )
+      })
     : null;
   const caution = cautionLink ? await loadPaidCautionRecord(cautionLink.cautionId) : null;
   const paymentReference = caution?.paymentReference?.trim() ?? "";

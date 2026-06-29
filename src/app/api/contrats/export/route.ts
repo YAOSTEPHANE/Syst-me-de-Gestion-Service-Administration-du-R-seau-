@@ -47,7 +47,16 @@ export async function GET(request: NextRequest) {
   });
   const consMap = new Map(concessionnaires.map((c) => [c.id, c]));
 
-  const allowedIds = scopeAgenceId ? new Set(concessionnaires.map((c) => c.id)) : null;
+  const clients =
+    scopeAgenceId != null
+      ? await prisma.lonaciClient.findMany({
+          where: { deletedAt: null, agenceId: scopeAgenceId },
+          select: { id: true, code: true, nomComplet: true, raisonSociale: true },
+        })
+      : [];
+  const clientMap = new Map(clients.map((c) => [c.id, c]));
+  const allowedPdvIds = scopeAgenceId ? new Set(concessionnaires.map((c) => c.id)) : null;
+  const allowedClientIds = scopeAgenceId ? new Set(clients.map((c) => c.id)) : null;
 
   const contrats = await prisma.contrat.findMany({
     where: { deletedAt: null },
@@ -55,9 +64,12 @@ export async function GET(request: NextRequest) {
     take: 20_000,
   });
 
-  const rows = allowedIds
-    ? contrats.filter((c) => allowedIds.has(c.concessionnaireId))
-    : contrats;
+  const rows = contrats.filter((c) => {
+    if (!allowedPdvIds && !allowedClientIds) return true;
+    if (c.lonaciClientId?.trim() && allowedClientIds?.has(c.lonaciClientId)) return true;
+    if (c.concessionnaireId?.trim() && allowedPdvIds?.has(c.concessionnaireId)) return true;
+    return false;
+  });
 
   const header = [
     "Reference",
@@ -71,9 +83,14 @@ export async function GET(request: NextRequest) {
     "Cree le",
   ];
   const lines = rows.map((r) => {
-    const pdv = consMap.get(r.concessionnaireId);
-    const nomPdv = pdv ? pdv.nomComplet || pdv.raisonSociale : "";
-    const codePdv = pdv?.codePdv ?? "";
+    const client = r.lonaciClientId ? clientMap.get(r.lonaciClientId) : undefined;
+    const pdv = r.concessionnaireId ? consMap.get(r.concessionnaireId) : undefined;
+    const nomPdv = client
+      ? client.nomComplet || client.raisonSociale
+      : pdv
+        ? pdv.nomComplet || pdv.raisonSociale
+        : "";
+    const codePdv = client?.code ?? pdv?.codePdv ?? "";
     return [
       r.reference,
       codePdv,

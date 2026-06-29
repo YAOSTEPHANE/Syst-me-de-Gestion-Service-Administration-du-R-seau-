@@ -19,8 +19,15 @@ export const CLIENT_STATUT_LABELS: Record<ClientStatut, string> = {
 /** Clients utilisables pour constituer une caution (après validation N1, avant ou après premier paiement). */
 export const CLIENT_STATUTS_ELIGIBLE_CAUTION: ClientStatut[] = ["DOSSIER_EN_COURS", "ACTIF"];
 
+/** Clients éligibles à un contrat (même périmètre que la caution). */
+export const CLIENT_STATUTS_ELIGIBLE_CONTRAT: ClientStatut[] = ["DOSSIER_EN_COURS", "ACTIF"];
+
 export function isClientStatutEligibleForCaution(statut: string): boolean {
   return (CLIENT_STATUTS_ELIGIBLE_CAUTION as readonly string[]).includes(statut);
+}
+
+export function isClientStatutEligibleForContrat(statut: string): boolean {
+  return (CLIENT_STATUTS_ELIGIBLE_CONTRAT as readonly string[]).includes(statut);
 }
 
 /** Préfixe des identifiants clients attribués automatiquement à la création (ex. CLI-000042). */
