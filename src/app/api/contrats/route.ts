@@ -19,15 +19,20 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
-import { createDossier, ensureDossierIndexes } from "@/lib/lonaci/dossiers";
+import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { canReadClient } from "@/lib/lonaci/access";
 import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
-import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
+
+const checklistItemSchema = z.object({
+  itemId: z.string().min(1),
+  statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+});
+
 const createSchema = z
   .object({
     concessionnaireId: z.string().min(1).optional(),
@@ -40,6 +45,7 @@ const createSchema = z
     parentContratId: z.string().min(1).nullish(),
     /** null autorisé (formulaire envoie null si vide) — z.string().optional() seul rejetait null → 400. */
     observations: z.string().max(5000).nullish(),
+    documentChecklist: z.array(checklistItemSchema).optional(),
   })
   .superRefine((data, ctx) => {
     const c = (data.concessionnaireId ?? "").trim();
@@ -536,13 +542,26 @@ export async function POST(request: NextRequest) {
         parentContratId: parsed.data.parentContratId ?? null,
         observations: parsed.data.observations ?? null,
       },
+      documentChecklist: parsed.data.documentChecklist,
       actor: auth.user,
     });
     const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
+    let resultDossier = dossier;
+    let submitted = false;
+    if (checklist?.complet) {
+      resultDossier = await transitionDossier(
+        dossier._id ?? "",
+        "SOUMIS",
+        auth.user,
+        "Soumis à la création après constitution de la checklist.",
+      );
+      submitted = true;
+    }
     return NextResponse.json(
       {
-        dossier,
+        dossier: resultDossier,
         checklistRequired: Boolean(checklist?.entries.length),
+        submitted,
       },
       { status: 201 },
     );

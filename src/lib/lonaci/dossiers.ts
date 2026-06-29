@@ -106,6 +106,8 @@ export interface CreateDossierInput {
    * Par défaut: [].
    */
   initialHistory?: DossierValidationStep[];
+  /** Statuts checklist documents (dossier contrat à la création). */
+  documentChecklist?: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
 }
 
 export async function createDossier(input: CreateDossierInput): Promise<DossierDocument> {
@@ -168,9 +170,12 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
       input.payload,
       produit.documentsChecklist ?? [],
     );
+    const mergedChecklist = input.documentChecklist?.length
+      ? mergeChecklistStatutPatch(checklist, input.documentChecklist)
+      : checklist;
     input.payload = {
       ...input.payload,
-      ...serializeDocumentChecklistPayload(checklist),
+      ...serializeDocumentChecklistPayload(mergedChecklist),
     };
   }
 

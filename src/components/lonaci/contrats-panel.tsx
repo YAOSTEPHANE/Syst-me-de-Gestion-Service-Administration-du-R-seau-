@@ -14,7 +14,14 @@ import ClientSearchPicker, {
   pickProduitCodeFromClient,
   type ClientPickerRow,
 } from "@/components/lonaci/client-search-picker";
+import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
+import {
+  buildChecklistFromTemplate,
+  computeChecklistComplet,
+  mergeProductChecklistTemplates,
+} from "@/lib/lonaci/produit-document-checklist";
+import type { DossierDocumentChecklistPayload, ProduitDocument } from "@/lib/lonaci/types";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -44,6 +51,39 @@ interface ProduitRef {
   code: string;
   libelle: string;
   actif: boolean;
+  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+}
+
+function produitsToDocumentRows(produits: ProduitRef[]): ProduitDocument[] {
+  return produits.map((p) => ({
+    code: p.code,
+    libelle: p.libelle,
+    actif: p.actif,
+    documentsChecklist: p.documentsChecklist,
+    createdAt: new Date(0),
+    updatedAt: new Date(0),
+  }));
+}
+
+function applyPiecesFournies(
+  checklist: DossierDocumentChecklistPayload | null,
+  fourniIds: ReadonlySet<string>,
+): DossierDocumentChecklistPayload | null {
+  if (!checklist) return null;
+  const entries = checklist.entries.map((entry) => ({
+    ...entry,
+    statut: fourniIds.has(entry.itemId)
+      ? ("FOURNI" as const)
+      : entry.statut === "MANQUANT"
+        ? ("MANQUANT" as const)
+        : ("EN_ATTENTE" as const),
+  }));
+  return { entries, complet: computeChecklistComplet(entries) };
+}
+
+function checklistToApiPatch(checklist: DossierDocumentChecklistPayload | null) {
+  if (!checklist?.entries.length) return undefined;
+  return checklist.entries.map((e) => ({ itemId: e.itemId, statut: e.statut }));
 }
 
 interface ContratActif {
@@ -304,6 +344,26 @@ export default function ContratsPanel() {
   const [operationType, setOperationType] = useState<OperationType>("NOUVEAU");
   const [parentContratId, setParentContratId] = useState("");
   const [observations, setObservations] = useState("");
+  const [createChecklist, setCreateChecklist] = useState<DossierDocumentChecklistPayload | null>(null);
+
+  const createPiecesFourniesIds = useMemo(
+    () =>
+      new Set(
+        createChecklist?.entries.filter((e) => e.statut === "FOURNI").map((e) => e.itemId) ?? [],
+      ),
+    [createChecklist],
+  );
+
+  const createChecklistObligatoires = useMemo(() => {
+    if (!createChecklist?.entries.length) return { total: 0, fournis: 0, complet: true };
+    const obligatoires = createChecklist.entries.filter((e) => e.obligatoire);
+    const fournis = obligatoires.filter((e) => e.statut === "FOURNI").length;
+    return {
+      total: obligatoires.length,
+      fournis,
+      complet: obligatoires.length === 0 || fournis === obligatoires.length,
+    };
+  }, [createChecklist]);
 
   const [parentsActifs, setParentsActifs] = useState<ContratActif[]>([]);
   const [parentsLoading, setParentsLoading] = useState(false);
@@ -662,6 +722,18 @@ export default function ContratsPanel() {
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
+    if (!createOpen || !produitCode.trim()) {
+      setCreateChecklist(null);
+      return;
+    }
+    const template = mergeProductChecklistTemplates(
+      [produitCode.trim().toUpperCase()],
+      produitsToDocumentRows(produits),
+    );
+    setCreateChecklist((prev) => buildChecklistFromTemplate(template, prev?.entries ?? null));
+  }, [createOpen, produitCode, produits]);
+
+  useEffect(() => {
     if (!selectedClient || !produitCode) return;
     const allowed = selectedClient.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
@@ -701,6 +773,12 @@ export default function ContratsPanel() {
       fail("Sélectionnez le contrat d’origine (actif).");
       return;
     }
+    if (createChecklist?.entries.length && !createChecklistObligatoires.complet) {
+      fail(
+        `Cochez toutes les pièces obligatoires du produit (${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total}).`,
+      );
+      return;
+    }
     const d = new Date(`${dateOperation}T12:00:00`);
     if (Number.isNaN(d.getTime())) {
       fail("Date d’opération invalide.");
@@ -721,27 +799,35 @@ export default function ContratsPanel() {
       if (operationType === "ACTUALISATION") {
         body.parentContratId = parentContratId.trim();
       }
+      const checklistPatch = checklistToApiPatch(createChecklist);
+      if (checklistPatch) {
+        body.documentChecklist = checklistPatch;
+      }
       const res = await fetch("/api/contrats", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const errBody = (await res.json().catch(() => null)) as {
+      const resBody = (await res.json().catch(() => null)) as {
         message?: string;
         code?: string;
         issues?: { path: (string | number)[]; message: string }[];
         checklistRequired?: boolean;
+        submitted?: boolean;
       } | null;
       if (!res.ok) {
-        const zodDetail = errBody?.issues?.map((i) => `${i.path.join(".")}: ${i.message}`).join(" — ");
-        throw new Error(zodDetail || errBody?.code || errBody?.message || "Création impossible.");
+        const zodDetail = resBody?.issues?.map((i) => `${i.path.join(".")}: ${i.message}`).join(" — ");
+        throw new Error(zodDetail || resBody?.code || resBody?.message || "Création impossible.");
       }
       setCreateFormError(null);
       setCreateOpen(false);
-      const successMsg = errBody?.checklistRequired
-        ? "Dossier créé en brouillon. Complétez la checklist documents (colonne « Décision dossier » ou module Dossiers), puis cliquez « Soumettre le dossier »."
-        : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
+      setCreateChecklist(null);
+      const successMsg = resBody?.submitted
+        ? "Dossier contrat créé et soumis pour validation N1."
+        : resBody?.checklistRequired
+          ? "Dossier créé en brouillon. Complétez la checklist documents puis soumettez-le."
+          : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
       setToast({ type: "success", message: successMsg });
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
@@ -1895,7 +1981,7 @@ export default function ContratsPanel() {
             disabled={creating}
             onClick={() => setCreateOpen(false)}
           />
-          <div className="relative z-10 flex max-h-[min(78vh,620px)] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+          <div className="relative z-10 flex max-h-[min(85vh,720px)] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
             <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 to-indigo-50 px-3.5 py-2.5">
               <div>
                 <h3 id="nouveau-contrat-title" className="text-lg font-semibold text-slate-900">
@@ -1921,8 +2007,11 @@ export default function ContratsPanel() {
                   <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2.5 py-1 text-[11px] font-semibold text-indigo-800">
                     2. Paramètres contrat
                   </span>
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-800">
+                    3. Pièces documents
+                  </span>
                   <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                    3. Validation
+                    4. Validation
                   </span>
                 </div>
 
@@ -2041,6 +2130,35 @@ export default function ContratsPanel() {
                       </label>
                     </div>
                   </section>
+
+                  {produitCode.trim() ? (
+                    <section className="rounded-xl border border-emerald-200/80 bg-white p-2.5 shadow-sm">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
+                        Documents du produit
+                      </p>
+                      <ProduitSelectedPiecesChecklist
+                        selectedProduitCodes={[produitCode.trim().toUpperCase()]}
+                        produits={produits}
+                        title="Pièces à fournir pour ce contrat"
+                        hint="Cochez chaque pièce remise par le client. Toutes les pièces marquées obligatoires (*) doivent être cochées pour créer le dossier."
+                        value={createPiecesFourniesIds}
+                        onChange={(ids) =>
+                          setCreateChecklist((prev) => applyPiecesFournies(prev, ids))
+                        }
+                      />
+                      {createChecklist?.entries.length ? (
+                        <p
+                          className={`mt-2 text-[11px] ${
+                            createChecklistObligatoires.complet ? "text-emerald-800" : "text-amber-900"
+                          }`}
+                        >
+                          {createChecklistObligatoires.complet
+                            ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
+                            : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) cochée(s).`}
+                        </p>
+                      ) : null}
+                    </section>
+                  ) : null}
 
                   {operationType === "ACTUALISATION" ? (
                     <section className="rounded-xl border border-violet-200 bg-violet-50/60 p-2.5 shadow-sm ring-1 ring-violet-900/[0.04]">

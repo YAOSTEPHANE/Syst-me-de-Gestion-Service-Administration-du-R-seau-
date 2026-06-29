@@ -66,7 +66,8 @@ interface DossierItem {
   reference: string;
   status: DossierStatus;
   type: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId?: string | null;
   updatedAt: string;
   hasDocumentChecklist?: boolean;
   checklistComplet?: boolean | null;
@@ -95,7 +96,8 @@ interface DossierDetailItem {
   reference: string;
   status: DossierStatus;
   type: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId?: string | null;
   agenceId: string | null;
   payload: unknown;
   history: Array<{ status: DossierStatus; actedByUserId: string; actedAt: string; comment: string | null }>;
@@ -1215,10 +1217,16 @@ export default function DossiersPanel() {
                   <td className="px-3 py-2.5">{item.type}</td>
                   <td className="px-3 py-2.5 font-mono text-xs">
                     <Link
-                      href={`/contrats?concessionnaireId=${encodeURIComponent(item.concessionnaireId)}`}
+                      href={
+                        item.lonaciClientId
+                          ? `/contrats?lonaciClientId=${encodeURIComponent(item.lonaciClientId)}`
+                          : item.concessionnaireId
+                            ? `/contrats?concessionnaireId=${encodeURIComponent(item.concessionnaireId)}`
+                            : "/contrats"
+                      }
                       className="text-cyan-700 hover:text-cyan-800"
                     >
-                      {item.concessionnaireId}
+                      {item.lonaciClientId ?? item.concessionnaireId ?? "—"}
                     </Link>
                   </td>
                   <td className="px-3 py-2.5">{new Date(item.updatedAt).toLocaleString()}</td>
@@ -1421,7 +1429,12 @@ export default function DossiersPanel() {
                     <p className="text-xs text-slate-700"><span className="font-semibold">Référence:</span> {detailItem.reference}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Statut:</span> {statusLabel(detailItem.status)}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Type:</span> {detailItem.type}</p>
-                    <p className="text-xs text-slate-700"><span className="font-semibold">Concessionnaire:</span> {detailItem.concessionnaireId}</p>
+                    <p className="text-xs text-slate-700">
+                      <span className="font-semibold">
+                        {detailItem.lonaciClientId ? "Client:" : "Concessionnaire:"}
+                      </span>{" "}
+                      {detailItem.lonaciClientId ?? detailItem.concessionnaireId ?? "—"}
+                    </p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Créé le:</span> {new Date(detailItem.createdAt).toLocaleString("fr-FR")}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Mis à jour:</span> {new Date(detailItem.updatedAt).toLocaleString("fr-FR")}</p>
                   </div>
@@ -1437,6 +1450,7 @@ export default function DossiersPanel() {
                           status: d.status as DossierStatus,
                           type: d.type,
                           concessionnaireId: d.concessionnaireId,
+                          lonaciClientId: d.lonaciClientId,
                           agenceId: d.agenceId,
                           payload: d.payload,
                           history: d.history as DossierDetailItem["history"],
