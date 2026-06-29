@@ -15,6 +15,10 @@ import {
   searchClients,
 } from "@/lib/lonaci/clients";
 import { findAgenceById } from "@/lib/lonaci/referentials";
+import {
+  normalizeProduitsAutorises,
+} from "@/lib/lonaci/produit-autorises-validation";
+import { findInvalidProduitAutorisesCodes } from "@/lib/lonaci/produit-autorises-validation.server";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 function emptyStringToNull(value: unknown): unknown {
@@ -49,6 +53,7 @@ const createSchema = z.object({
   ville: z.preprocess(emptyStringToNull, z.union([z.string().max(120), z.null()]).optional()),
   codePostal: z.preprocess(emptyStringToNull, z.union([z.string().max(12), z.null()]).optional()),
   agenceId: z.preprocess(emptyStringToNull, z.union([z.string().min(1), z.null()]).optional()),
+  produitsAutorises: z.array(z.string().min(1)).optional().default([]),
   statut: z.enum(CLIENT_STATUTS).optional(),
   notes: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
 });
@@ -229,6 +234,12 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const produitsAutorises = normalizeProduitsAutorises(parsed.data.produitsAutorises ?? []);
+  const invalidProduits = await findInvalidProduitAutorisesCodes(produitsAutorises);
+  if (invalidProduits.length > 0) {
+    return badRequest(`Produits invalides: ${invalidProduits.join(", ")}`, "INVALID_PRODUCTS");
+  }
+
   const raisonSociale =
     (parsed.data.raisonSociale && parsed.data.raisonSociale.trim().length >= 2
       ? parsed.data.raisonSociale.trim()
@@ -246,6 +257,7 @@ export async function POST(request: NextRequest) {
       ville: parsed.data.ville ?? null,
       codePostal: parsed.data.codePostal ?? null,
       agenceId,
+      produitsAutorises,
       statut: parsed.data.statut,
       notes: parsed.data.notes ?? null,
     },

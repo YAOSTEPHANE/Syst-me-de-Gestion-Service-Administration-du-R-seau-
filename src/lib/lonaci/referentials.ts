@@ -162,6 +162,7 @@ interface CreateProduitInput {
   libelle: string;
   /** Prix caution (FCFA), entier ≥ 0. */
   prix: number;
+  documentsChecklist?: ProduitDocumentChecklistItem[];
 }
 
 function normalizeCode(code: string) {
@@ -193,6 +194,9 @@ export async function createProduit(input: CreateProduitInput): Promise<ProduitD
     libelle: input.libelle.trim(),
     prix,
     actif: true,
+    ...(input.documentsChecklist?.length
+      ? { documentsChecklist: normalizeChecklistTemplate(input.documentsChecklist) }
+      : {}),
     createdAt: now,
     updatedAt: now,
   };

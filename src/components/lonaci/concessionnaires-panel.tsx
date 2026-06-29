@@ -1,6 +1,7 @@
 "use client";
 
 import ConcessionnaireFicheModal from "@/components/lonaci/concessionnaire-fiche-modal";
+import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import type { ConcessionnairesMapPointsResponse } from "@/lib/lonaci/concessionnaires-map-types";
 import Image from "next/image";
 import Link from "next/link";
@@ -151,6 +152,7 @@ interface ProduitRef {
   code: string;
   libelle: string;
   actif: boolean;
+  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
 }
 
 type ExtractedConcessionnaireDraft = {
@@ -1507,6 +1509,11 @@ export default function ConcessionnairesPanel() {
                             ) : null}
                           </div>
                         ) : null}
+                        <ProduitSelectedPiecesChecklist
+                          selectedProduitCodes={produitsAutorises}
+                          produits={produits}
+                          className="mt-3"
+                        />
                       </div>
                     </section>
                   </div>

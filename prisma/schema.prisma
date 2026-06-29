@@ -10,7 +10,8 @@ datasource db {
 model User {
   id               String    @id @default(auto()) @map("_id") @db.ObjectId
   email            String    @unique
-  matricule        String?   @unique
+  /** Unicité assurée côté API admin ; pas d’index unique Prisma (plusieurs `null` en Mongo). */
+  matricule        String?
   passwordHash     String
   nom              String
   prenom           String
@@ -34,6 +35,7 @@ model User {
   deletedAt        DateTime?
 
   @@map("users")
+  @@index([matricule], map: "idx_matricule")
   @@index([role], map: "idx_role")
   @@index([actif], map: "idx_actif")
 }
@@ -168,6 +170,7 @@ model LonaciClient {
   ville           String?
   codePostal      String?
   agenceId        String?
+  produitsAutorises String[]
   statut          String
   notes           String?
   createdByUserId String

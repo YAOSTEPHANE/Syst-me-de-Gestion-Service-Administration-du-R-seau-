@@ -2,6 +2,13 @@
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
 
+import ProduitPiecesEditor, {
+  createEmptyPiece,
+  piecesFromStored,
+  piecesToApiPayload,
+  type ProduitPieceDraft,
+} from "@/components/lonaci/produit-pieces-editor";
+
 interface ProduitRow {
   _id: string;
   code: string;
@@ -9,25 +16,6 @@ interface ProduitRow {
   prix?: number;
   actif: boolean;
   documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
-}
-
-function checklistToTextarea(items: ProduitRow["documentsChecklist"]): string {
-  return (items ?? []).map((i) => i.libelle).join("\n");
-}
-
-function parseChecklistTextarea(
-  text: string,
-  existing: ProduitRow["documentsChecklist"],
-): NonNullable<ProduitRow["documentsChecklist"]> {
-  const lines = text
-    .split(/\n/)
-    .map((l) => l.trim())
-    .filter((l) => l.length >= 2);
-  const byLibelle = new Map((existing ?? []).map((e) => [e.libelle.toLowerCase(), e]));
-  return lines.map((libelle, i) => {
-    const prev = byLibelle.get(libelle.toLowerCase());
-    return { id: prev?.id ?? `doc_${i + 1}`, libelle, obligatoire: prev?.obligatoire !== false };
-  });
 }
 
 export default function AdminProduitsPanel() {
@@ -45,7 +33,12 @@ export default function AdminProduitsPanel() {
   const [editLibelle, setEditLibelle] = useState("");
   const [editPrix, setEditPrix] = useState("");
   const [editActif, setEditActif] = useState(true);
-  const [editChecklistText, setEditChecklistText] = useState("");
+  const [editChecklistItems, setEditChecklistItems] = useState<ProduitPieceDraft[]>([]);
+  const [createChecklistItems, setCreateChecklistItems] = useState<ProduitPieceDraft[]>([]);
+  const [showCreatePieces, setShowCreatePieces] = useState(false);
+  const [piecesModalProduit, setPiecesModalProduit] = useState<ProduitRow | null>(null);
+  const [piecesModalItems, setPiecesModalItems] = useState<ProduitPieceDraft[]>([]);
+  const [savingPiecesId, setSavingPiecesId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
@@ -100,7 +93,49 @@ export default function AdminProduitsPanel() {
     setEditLibelle(p.libelle);
     setEditPrix(typeof p.prix === "number" ? String(p.prix) : "");
     setEditActif(p.actif);
-    setEditChecklistText(checklistToTextarea(p.documentsChecklist));
+    setEditChecklistItems(piecesFromStored(p.documentsChecklist));
+  }
+
+  function openPiecesModal(p: ProduitRow) {
+    setError(null);
+    setSuccess(null);
+    setPiecesModalProduit(p);
+    setPiecesModalItems(piecesFromStored(p.documentsChecklist));
+  }
+
+  function closePiecesModal() {
+    setPiecesModalProduit(null);
+    setPiecesModalItems([]);
+  }
+
+  async function savePiecesModal(e: FormEvent) {
+    e.preventDefault();
+    if (!piecesModalProduit) return;
+    setError(null);
+    setSuccess(null);
+    setSavingPiecesId(piecesModalProduit._id);
+    try {
+      const res = await fetch(`/api/admin/produits/${piecesModalProduit._id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentsChecklist: piecesToApiPayload(piecesModalItems) }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
+      if (!res.ok || !body?.produit) {
+        setError(body?.message ?? "Enregistrement des pièces impossible.");
+        return;
+      }
+      setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
+      setSuccess(
+        `Pièces du produit « ${body.produit.code} » enregistrées (${body.produit.documentsChecklist?.length ?? 0}).`,
+      );
+      closePiecesModal();
+    } catch {
+      setError("Erreur réseau ou serveur.");
+    } finally {
+      setSavingPiecesId(null);
+    }
   }
 
   function cancelEdit() {
@@ -124,7 +159,6 @@ export default function AdminProduitsPanel() {
       return;
     }
     setSavingId(editingId);
-    const editingRow = produits.find((row) => row._id === editingId);
     try {
       const res = await fetch(`/api/admin/produits/${editingId}`, {
         method: "PATCH",
@@ -135,7 +169,7 @@ export default function AdminProduitsPanel() {
           libelle: l,
           prix: prixNum,
           actif: editActif,
-          documentsChecklist: parseChecklistTextarea(editChecklistText, editingRow?.documentsChecklist),
+          documentsChecklist: piecesToApiPayload(editChecklistItems),
         }),
       });
       const body = (await res.json().catch(() => null)) as
@@ -288,7 +322,12 @@ export default function AdminProduitsPanel() {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code: c, libelle: l, prix: prixNum }),
+        body: JSON.stringify({
+          code: c,
+          libelle: l,
+          prix: prixNum,
+          documentsChecklist: piecesToApiPayload(createChecklistItems),
+        }),
       });
       const body = (await res.json().catch(() => null)) as
         | { message?: string; produit?: ProduitRow; issues?: { message: string }[] }
@@ -312,6 +351,8 @@ export default function AdminProduitsPanel() {
       setCode("");
       setLibelle("");
       setPrix("");
+      setCreateChecklistItems([]);
+      setShowCreatePieces(false);
       setSuccess(`Produit « ${body?.produit?.code ?? c} » créé.`);
     } catch {
       setError("Erreur réseau ou serveur.");
@@ -350,8 +391,8 @@ export default function AdminProduitsPanel() {
         <div>
           <h3 className="text-sm font-semibold text-slate-900">Produits (référentiel)</h3>
           <p className="mt-1 text-xs text-slate-600">
-            Création et modification réservées au <strong>chef de service</strong>. Le code est normalisé en
-            majuscules.
+            Création et modification réservées au <strong>chef de service</strong>. Configurez pour chaque produit
+            le montant caution et les <strong>pièces à fournir</strong> (checklists automatiques dans les dossiers).
           </p>
         </div>
         <button
@@ -410,6 +451,22 @@ export default function AdminProduitsPanel() {
           {creating ? "Création…" : "Créer le produit"}
         </button>
       </form>
+
+      <div className="mt-2 rounded-xl border border-slate-200 bg-white p-3">
+        <button
+          type="button"
+          onClick={() => setShowCreatePieces((v) => !v)}
+          className="flex w-full items-center justify-between text-left text-xs font-semibold text-slate-800"
+        >
+          <span>Pièces à fournir à la création (optionnel)</span>
+          <span className="text-slate-500">{showCreatePieces ? "▲" : "▼"}</span>
+        </button>
+        {showCreatePieces ? (
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            <ProduitPiecesEditor items={createChecklistItems} onChange={setCreateChecklistItems} />
+          </div>
+        ) : null}
+      </div>
 
       {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">{error}</p> : null}
       {success ? (
@@ -476,9 +533,8 @@ export default function AdminProduitsPanel() {
             <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
               <th className="px-3 py-2 font-semibold">Code</th>
               <th className="px-3 py-2 font-semibold">Libellé</th>
-              <th className="px-3 py-2 font-semibold" title="Référentiel caution : saisie directe, enregistrement au blur ou Entrée">
-                Montant attendu (FCFA)
-              </th>
+              <th className="px-3 py-2 font-semibold">Montant attendu (FCFA)</th>
+              <th className="px-3 py-2 font-semibold">Pièces à fournir</th>
               <th className="px-3 py-2 font-semibold">Statut</th>
               <th className="px-3 py-2 font-semibold">Actions</th>
               <th className="px-3 py-2 font-mono font-normal text-slate-500">ID</th>
@@ -487,7 +543,7 @@ export default function AdminProduitsPanel() {
           <tbody className="text-slate-800">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
                   Aucun produit ne correspond au filtre.
                 </td>
               </tr>
@@ -495,7 +551,7 @@ export default function AdminProduitsPanel() {
               filtered.map((p) =>
                 editingId === p._id ? (
                   <tr key={p._id} className="border-b border-slate-100 bg-cyan-50/50 last:border-b-0">
-                    <td colSpan={6} className="p-3">
+                    <td colSpan={7} className="p-3">
                       <form
                         onSubmit={onSaveEdit}
                         className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end"
@@ -539,19 +595,14 @@ export default function AdminProduitsPanel() {
                           />
                           <span className="text-xs font-medium text-slate-700">Actif</span>
                         </label>
-                        <label className="grid gap-1 sm:col-span-2 lg:col-span-12">
-                          <span className="text-xs font-medium text-slate-700">
-                            Checklist documents obligatoires (un libellé par ligne)
-                          </span>
-                          <textarea
-                            value={editChecklistText}
-                            onChange={(e) => setEditChecklistText(e.target.value)}
-                            rows={5}
-                            placeholder={"Pièce d'identité\nAttestation bancaire\nPhoto PDV"}
-                            className={`min-h-24 ${inputClass}`}
-                            aria-label="Checklist documents du produit"
+                        <div className="grid gap-1 sm:col-span-2 lg:col-span-12">
+                          <span className="text-xs font-medium text-slate-700">Pièces à fournir</span>
+                          <ProduitPiecesEditor
+                            items={editChecklistItems}
+                            onChange={setEditChecklistItems}
+                            disabled={savingId === p._id}
                           />
-                        </label>
+                        </div>
                         <div className="flex flex-wrap gap-2 lg:col-span-2">
                           <button
                             type="submit"
@@ -602,6 +653,23 @@ export default function AdminProduitsPanel() {
                       />
                     </td>
                     <td className="px-3 py-2">
+                      <div className="flex flex-col gap-1">
+                        <span className="text-[11px] text-slate-600">
+                          {(p.documentsChecklist?.length ?? 0) === 0
+                            ? "Aucune"
+                            : `${p.documentsChecklist!.length} pièce${p.documentsChecklist!.length > 1 ? "s" : ""}`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openPiecesModal(p)}
+                          disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
+                          className="w-fit rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
+                        >
+                          Gérer les pièces
+                        </button>
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
                       {p.actif ? (
                         <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
                           Actif
@@ -650,6 +718,46 @@ export default function AdminProduitsPanel() {
           </tbody>
         </table>
       </div>
+
+      {piecesModalProduit ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          role="dialog"
+          aria-modal
+          aria-labelledby="produit-pieces-modal-title"
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+            <h4 id="produit-pieces-modal-title" className="text-base font-semibold text-slate-900">
+              Pièces à fournir — {piecesModalProduit.code}
+            </h4>
+            <p className="mt-1 text-xs text-slate-600">{piecesModalProduit.libelle}</p>
+            <form onSubmit={(e) => void savePiecesModal(e)} className="mt-4 space-y-3">
+              <ProduitPiecesEditor
+                items={piecesModalItems}
+                onChange={setPiecesModalItems}
+                disabled={savingPiecesId === piecesModalProduit._id}
+              />
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  disabled={savingPiecesId === piecesModalProduit._id}
+                  onClick={closePiecesModal}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingPiecesId === piecesModalProduit._id}
+                  className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
+                >
+                  {savingPiecesId === piecesModalProduit._id ? "Enregistrement…" : "Enregistrer les pièces"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

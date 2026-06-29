@@ -161,6 +161,7 @@ export function sanitizeClientListItem(doc: {
   telephone: string | null;
   agenceId: string | null;
   statut: string;
+  produitsAutorises: string[];
   updatedAt: Date;
 }) {
   return {
@@ -174,6 +175,7 @@ export function sanitizeClientListItem(doc: {
     telephone: doc.telephone,
     agenceId: doc.agenceId,
     statut: doc.statut,
+    produitsAutorises: doc.produitsAutorises ?? [],
     updatedAt: doc.updatedAt.toISOString(),
   };
 }
@@ -192,6 +194,7 @@ export function sanitizeClientPublic(doc: {
   codePostal: string | null;
   agenceId: string | null;
   statut: string;
+  produitsAutorises: string[];
   notes: string | null;
   createdByUserId: string;
   updatedByUserId: string;
@@ -213,6 +216,7 @@ export function sanitizeClientPublic(doc: {
     codePostal: doc.codePostal,
     agenceId: doc.agenceId,
     statut: doc.statut,
+    produitsAutorises: doc.produitsAutorises ?? [],
     notes: doc.notes,
     createdByUserId: doc.createdByUserId,
     updatedByUserId: doc.updatedByUserId,
@@ -239,6 +243,7 @@ export async function createClient(
     ville: string | null;
     codePostal: string | null;
     agenceId: string | null;
+    produitsAutorises?: string[];
     statut?: ClientStatut;
     notes: string | null;
   },
@@ -261,6 +266,7 @@ export async function createClient(
       ville: input.ville,
       codePostal: input.codePostal,
       agenceId: input.agenceId,
+      produitsAutorises: input.produitsAutorises ?? [],
       statut,
       notes: input.notes,
       createdByUserId: actor._id ?? "",
@@ -294,6 +300,7 @@ export async function updateClient(
     ville?: string | null;
     codePostal?: string | null;
     agenceId?: string | null;
+    produitsAutorises?: string[];
     statut?: ClientStatut;
     notes?: string | null;
   },
@@ -320,6 +327,7 @@ export async function updateClient(
   if (patch.ville !== undefined) data.ville = patch.ville;
   if (patch.codePostal !== undefined) data.codePostal = patch.codePostal;
   if (patch.agenceId !== undefined) data.agenceId = patch.agenceId;
+  if (patch.produitsAutorises !== undefined) data.produitsAutorises = patch.produitsAutorises;
   if (patch.notes !== undefined) data.notes = patch.notes;
   if (patch.statut !== undefined && (CLIENT_STATUTS as readonly string[]).includes(patch.statut)) {
     data.statut = patch.statut;

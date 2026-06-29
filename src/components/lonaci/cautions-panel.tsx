@@ -17,6 +17,8 @@ import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericS
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
+import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
+import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import {
   CautionFicheDefinitiveModal,
   type CautionFicheDefinitiveModalData,
@@ -375,9 +377,16 @@ type LonaciClientSearchHit = {
   nomComplet: string | null;
   raisonSociale: string;
   statut?: string;
+  produitsAutorises?: string[];
 };
 
-type ReferentialProduitRow = { code: string; libelle: string; actif: boolean; prix?: number };
+type ReferentialProduitRow = {
+  code: string;
+  libelle: string;
+  actif: boolean;
+  prix?: number;
+  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+};
 
 function formatClientHitLabel(hit: LonaciClientSearchHit): string {
   const name = hit.nomComplet?.trim() || hit.raisonSociale?.trim() || hit.id;
@@ -589,7 +598,12 @@ export default function CautionsPanel() {
   const [clientSearchInput, setClientSearchInput] = useState("");
   const [clientSearchHits, setClientSearchHits] = useState<LonaciClientSearchHit[]>([]);
   const [clientSearchLoading, setClientSearchLoading] = useState(false);
-  const [clientFromPick, setClientFromPick] = useState<{ id: string; label: string; code: string } | null>(null);
+  const [clientFromPick, setClientFromPick] = useState<{
+    id: string;
+    label: string;
+    code: string;
+    produitsAutorises?: string[];
+  } | null>(null);
   const [selectedProduitCodes, setSelectedProduitCodes] = useState<string[]>([]);
   /** Filtre texte sur code / libellé pour retrouver un produit dans une longue liste. */
   const [produitSearch, setProduitSearch] = useState("");
@@ -829,16 +843,23 @@ export default function CautionsPanel() {
 
   const produitsPourSelect = useMemo(() => {
     const q = produitSearch.trim().toLowerCase();
+    const clientAutorises = clientFromPick?.produitsAutorises ?? [];
+    const catalogue =
+      clientAutorises.length > 0
+        ? referentialProduits.filter((p) =>
+            produitAutorisePourConcessionnaire(clientAutorises, p.code),
+          )
+        : referentialProduits;
     const match = (p: ReferentialProduitRow) => {
       if (!q) return true;
       const code = p.code.trim().toLowerCase();
       const lib = (p.libelle ?? "").trim().toLowerCase();
       return code.includes(q) || lib.includes(q);
     };
-    const fil = referentialProduits.filter(match);
+    const fil = catalogue.filter(match);
     const selectedUpper = selectedProduitCodes.map((c) => c.trim().toUpperCase()).filter(Boolean);
     const filCodes = new Set(fil.map((p) => p.code.trim().toUpperCase()));
-    const extras = referentialProduits.filter(
+    const extras = catalogue.filter(
       (p) => selectedUpper.includes(p.code.trim().toUpperCase()) && !filCodes.has(p.code.trim().toUpperCase()),
     );
     const orderedExtras: ReferentialProduitRow[] = [];
@@ -868,7 +889,7 @@ export default function CautionsPanel() {
       }
     }
     return out;
-  }, [referentialProduits, produitSearch, selectedProduitCodes]);
+  }, [referentialProduits, produitSearch, selectedProduitCodes, clientFromPick]);
 
   const referentielMontantTotal = useMemo(() => {
     const ordered = uniqueOrderedProduitCodes(selectedProduitCodes);
@@ -1514,9 +1535,23 @@ export default function CautionsPanel() {
                             onClick={() => {
                               setSelectedLonaciClientId(hit.id);
                               const label = formatClientHitLabel(hit);
-                              setClientFromPick({ id: hit.id, label, code: hit.code });
+                              const autorises = hit.produitsAutorises ?? [];
+                              setClientFromPick({
+                                id: hit.id,
+                                label,
+                                code: hit.code,
+                                produitsAutorises: autorises,
+                              });
                               setClientSearchInput(label);
                               setClientSearchHits([]);
+                              if (autorises.length > 0) {
+                                const pre = referentialProduits
+                                  .filter((p) => produitAutorisePourConcessionnaire(autorises, p.code))
+                                  .map((p) => p.code);
+                                setSelectedProduitCodes(uniqueOrderedProduitCodes(pre));
+                              } else {
+                                setSelectedProduitCodes([]);
+                              }
                             }}
                           >
                             {formatClientHitLabel(hit)}
@@ -1528,6 +1563,12 @@ export default function CautionsPanel() {
                   {selectedLonaciClientId.trim() ? (
                     <p className="text-[11px] text-emerald-800">
                       Client sélectionné : <span className="font-semibold">{clientFromPick?.label ?? "—"}</span>
+                      {(clientFromPick?.produitsAutorises?.length ?? 0) > 0 ? (
+                        <span className="block text-slate-600">
+                          Produits autorisés sur la fiche :{" "}
+                          {clientFromPick!.produitsAutorises!.join(", ")}
+                        </span>
+                      ) : null}
                     </p>
                   ) : null}
                 </section>
@@ -1641,6 +1682,15 @@ export default function CautionsPanel() {
                     </p>
                   ) : null}
                 </section>
+
+                {selectedProduitCodes.length > 0 ? (
+                  <ProduitSelectedPiecesChecklist
+                    selectedProduitCodes={selectedProduitCodes}
+                    produits={referentialProduits}
+                    title="Pièces à fournir (produits sélectionnés)"
+                    hint="Liste issue du référentiel produit — cochez les pièces remises avant constitution de la caution."
+                  />
+                ) : null}
 
                 <fieldset className="rounded-xl border-2 border-indigo-300/80 bg-gradient-to-b from-indigo-50/40 to-white p-3 shadow-sm">
                   <legend className="px-1 text-xs font-bold uppercase tracking-wide text-indigo-900">

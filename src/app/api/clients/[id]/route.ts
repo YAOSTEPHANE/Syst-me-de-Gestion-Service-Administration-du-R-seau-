@@ -10,6 +10,10 @@ import {
   softDeleteClient,
   updateClient,
 } from "@/lib/lonaci/clients";
+import {
+  normalizeProduitsAutorises,
+} from "@/lib/lonaci/produit-autorises-validation";
+import { findInvalidProduitAutorisesCodes } from "@/lib/lonaci/produit-autorises-validation.server";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const patchSchema = z
@@ -33,6 +37,7 @@ const patchSchema = z
     ville: z.union([z.string().max(120), z.null()]).optional(),
     codePostal: z.union([z.string().max(12), z.null()]).optional(),
     agenceId: z.union([z.string().min(1), z.null()]).optional(),
+    produitsAutorises: z.array(z.string().min(1)).optional(),
     statut: z.enum(CLIENT_STATUTS).optional(),
     notes: z.union([z.string().max(10000), z.null()]).optional(),
   })
@@ -96,7 +101,25 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
   }
 
-  const updated = await updateClient(id, parsed.data, auth.user);
+  if (parsed.data.produitsAutorises !== undefined) {
+    const produitsAutorises = normalizeProduitsAutorises(parsed.data.produitsAutorises);
+    const invalidProduits = await findInvalidProduitAutorisesCodes(produitsAutorises);
+    if (invalidProduits.length > 0) {
+      return NextResponse.json(
+        { message: `Produits invalides: ${invalidProduits.join(", ")}`, code: "INVALID_PRODUCTS" },
+        { status: 400 },
+      );
+    }
+  }
+
+  const patch = {
+    ...parsed.data,
+    ...(parsed.data.produitsAutorises !== undefined
+      ? { produitsAutorises: normalizeProduitsAutorises(parsed.data.produitsAutorises) }
+      : {}),
+  };
+
+  const updated = await updateClient(id, patch, auth.user);
   if (!updated) {
     return NextResponse.json({ message: "Mise a jour impossible" }, { status: 500 });
   }

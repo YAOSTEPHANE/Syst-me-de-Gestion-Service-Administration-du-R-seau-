@@ -29,6 +29,11 @@ export async function GET(request: NextRequest) {
         libelle: p.libelle,
         actif: p.actif,
         ...(typeof p.prix === "number" && Number.isFinite(p.prix) ? { prix: p.prix } : {}),
+        documentsChecklist: (p.documentsChecklist ?? []).map((item) => ({
+          id: item.id,
+          libelle: item.libelle,
+          obligatoire: item.obligatoire !== false,
+        })),
       })),
     },
     { status: 200 },

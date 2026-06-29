@@ -17,6 +17,7 @@ import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/con
 import { isStatutBloquant } from "@/lib/lonaci/access";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
 import { findLonaciClientById, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
+import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import {
   deliverCautionFicheDefinitive,
   resolveCautionPaymentReference,
@@ -251,6 +252,14 @@ export async function createCaution(input: {
 
     const pcode = (input.produitCode ?? "").trim().toUpperCase();
     if (!pcode) throw new Error("CLIENT_CAUTION_PRODUIT_REQUIS");
+
+    const clientAutorises = client.produitsAutorises ?? [];
+    if (
+      clientAutorises.length > 0 &&
+      !produitAutorisePourConcessionnaire(clientAutorises, pcode)
+    ) {
+      throw new Error("CLIENT_PRODUIT_NON_AUTORISE");
+    }
 
     const produits = await listProduits();
     const p = produits.find((x) => x.code === pcode && x.actif);

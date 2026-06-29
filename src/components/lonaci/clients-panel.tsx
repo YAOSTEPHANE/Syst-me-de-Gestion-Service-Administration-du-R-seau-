@@ -9,6 +9,8 @@ import {
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
 import type { AgenceZoneGeographique } from "@/lib/lonaci/types";
+import { OTHER_PRODUCT_CODE } from "@/lib/lonaci/produit-constants";
+import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 
 type ListItem = {
   id: string;
@@ -20,6 +22,7 @@ type ListItem = {
   email: string | null;
   telephone: string | null;
   agenceId: string | null;
+  produitsAutorises: string[];
   statut: string;
   updatedAt: string;
 };
@@ -30,6 +33,14 @@ type AgenceRef = {
   libelle: string;
   actif: boolean;
   zoneGeographique?: AgenceZoneGeographique;
+};
+
+type ProduitRef = {
+  id: string;
+  code: string;
+  libelle: string;
+  actif: boolean;
+  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
 };
 
 type ClientDetail = {
@@ -45,6 +56,7 @@ type ClientDetail = {
   ville: string | null;
   codePostal: string | null;
   agenceId: string | null;
+  produitsAutorises: string[];
   statut: string;
   notes: string | null;
 };
@@ -76,6 +88,8 @@ export default function ClientsPanel() {
   const [filterStatut, setFilterStatut] = useState("");
   const [filterAgence, setFilterAgence] = useState("");
   const [agences, setAgences] = useState<AgenceRef[]>([]);
+  const [produits, setProduits] = useState<ProduitRef[]>([]);
+  const [produitsAutorises, setProduitsAutorises] = useState<string[]>([]);
   const [meRole, setMeRole] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
 
@@ -190,8 +204,9 @@ export default function ClientsPanel() {
           fetch("/api/auth/me", { credentials: "include", cache: "no-store" }),
         ]);
         if (refRes.ok) {
-          const data = (await refRes.json()) as { agences: AgenceRef[] };
+          const data = (await refRes.json()) as { agences: AgenceRef[]; produits: ProduitRef[] };
           setAgences(data.agences ?? []);
+          setProduits((data.produits ?? []).filter((p) => p.actif));
         }
         if (meRes.ok) {
           const me = (await meRes.json()) as { user: { role: string } };
@@ -221,6 +236,7 @@ export default function ClientsPanel() {
     setEditingId(null);
     setEditingClientCode(null);
     setCreatedClient(null);
+    setProduitsAutorises([]);
   }
 
   function closeModal() {
@@ -258,6 +274,7 @@ export default function ClientsPanel() {
         statut: (CLIENT_STATUTS as readonly string[]).includes(c.statut) ? (c.statut as ClientStatut) : "ACTIF",
         notes: c.notes ?? "",
       });
+      setProduitsAutorises([...(c.produitsAutorises ?? [])]);
       setModalOpen(true);
     } catch {
       setError("Impossible de charger la fiche client.");
@@ -290,6 +307,7 @@ export default function ClientsPanel() {
             agenceId: form.agenceId.trim() || null,
             statut: form.statut,
             notes: form.notes.trim() || null,
+            produitsAutorises,
           }),
         });
         if (!res.ok) throw new Error();
@@ -316,6 +334,7 @@ export default function ClientsPanel() {
             agenceId: form.agenceId.trim(),
             statut: form.statut,
             notes: form.notes.trim() || null,
+            produitsAutorises,
           }),
         });
         if (!res.ok) throw new Error();
@@ -362,6 +381,73 @@ export default function ClientsPanel() {
   function displayNomPrincipal(row: ListItem): string {
     return row.nomComplet?.trim() || row.raisonSociale;
   }
+
+  function formatProduitsCell(codes: string[]): string {
+    if (!codes.length) return "—";
+    return codes
+      .map((c) => {
+        const p = produits.find((pr) => pr.code === c);
+        return p ? p.code : c;
+      })
+      .join(", ");
+  }
+
+  const produitsAutorisesFields = (
+    <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Produits</p>
+      <div className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2">
+        <p className="mb-1 text-xs font-medium text-slate-700">Produits autorisés</p>
+        <p className="mb-2 text-[11px] text-slate-600">
+          Limite les produits proposés lors de la création de cautions pour ce client. Laissez vide pour
+          autoriser tout le référentiel actif.
+        </p>
+        {produits.length === 0 ? (
+          <p className="text-xs text-amber-800">
+            Aucun produit actif chargé. Vérifiez le référentiel{" "}
+            <span className="font-medium">Administration → Produits</span>, puis rouvrez ce formulaire.
+          </p>
+        ) : (
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+            {produits.map((p) => (
+              <label key={p.id} className="flex items-center gap-2 text-xs text-slate-800">
+                <input
+                  type="checkbox"
+                  checked={produitsAutorises.includes(p.code)}
+                  onChange={(e) =>
+                    setProduitsAutorises((curr) =>
+                      e.target.checked ? [...curr, p.code] : curr.filter((code) => code !== p.code),
+                    )
+                  }
+                />
+                <span>
+                  {p.code} <span className="text-slate-500">({p.libelle})</span>
+                </span>
+              </label>
+            ))}
+            <label className="flex items-center gap-2 text-xs text-slate-800">
+              <input
+                type="checkbox"
+                checked={produitsAutorises.includes(OTHER_PRODUCT_CODE)}
+                onChange={(e) =>
+                  setProduitsAutorises((curr) =>
+                    e.target.checked
+                      ? [...curr, OTHER_PRODUCT_CODE]
+                      : curr.filter((code) => code !== OTHER_PRODUCT_CODE),
+                  )
+                }
+              />
+              <span>{OTHER_PRODUCT_CODE}</span>
+            </label>
+          </div>
+        )}
+        <ProduitSelectedPiecesChecklist
+          selectedProduitCodes={produitsAutorises}
+          produits={produits}
+          className="mt-3"
+        />
+      </div>
+    </section>
+  );
 
   return (
     <div className="space-y-4">
@@ -478,6 +564,7 @@ export default function ClientsPanel() {
                 <th className="py-2 pr-3">CNI</th>
                 <th className="py-2 pr-3">Contact</th>
                 <th className="py-2 pr-3">Agence (zone)</th>
+                <th className="py-2 pr-3">Produits</th>
                 <th className="py-2 pr-3">Statut</th>
                 <th className="py-2 pr-3 text-right">Actions</th>
               </tr>
@@ -485,13 +572,13 @@ export default function ClientsPanel() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-slate-500">
+                  <td colSpan={8} className="py-6 text-center text-slate-500">
                     Chargement…
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-6 text-center text-slate-500">
+                  <td colSpan={8} className="py-6 text-center text-slate-500">
                     Aucun client pour ces filtres.
                   </td>
                 </tr>
@@ -512,6 +599,9 @@ export default function ClientsPanel() {
                       </div>
                     </td>
                     <td className="py-2 pr-3 text-slate-600">{agenceLabel(row.agenceId)}</td>
+                    <td className="py-2 pr-3 text-xs text-slate-700" title={formatProduitsCell(row.produitsAutorises ?? [])}>
+                      {formatProduitsCell(row.produitsAutorises ?? [])}
+                    </td>
                     <td className="py-2 pr-3">
                       <span
                         className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STATUT_TOKENS[row.statut] ?? STATUT_TOKENS.INACTIF}`}
@@ -647,6 +737,7 @@ export default function ClientsPanel() {
                   </div>
                 )
               ) : null}
+              {produitsAutorisesFields}
               {!editingId ? (
                 <div className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
