@@ -404,7 +404,7 @@ async function fetchReferentialProduitsActifs(): Promise<ReferentialProduitRow[]
 }
 
 async function fetchClientsSearch(q: string, signal?: AbortSignal): Promise<LonaciClientSearchHit[]> {
-  const params = new URLSearchParams({ page: "1", pageSize: "20", q, statut: "ACTIF" });
+  const params = new URLSearchParams({ page: "1", pageSize: "20", q, eligibleForCaution: "true" });
   const response = await fetch(`/api/clients?${params.toString()}`, {
     credentials: "include",
     cache: "no-store",

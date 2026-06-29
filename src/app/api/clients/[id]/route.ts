@@ -16,6 +16,13 @@ import {
 import { findInvalidProduitAutorisesCodes } from "@/lib/lonaci/produit-autorises-validation.server";
 import { requireApiAuth } from "@/lib/auth/guards";
 
+const documentChecklistPatchSchema = z.array(
+  z.object({
+    itemId: z.string().min(1),
+    statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+  }),
+);
+
 const patchSchema = z
   .object({
     nomComplet: z.string().min(2).max(200).optional(),
@@ -38,6 +45,7 @@ const patchSchema = z
     codePostal: z.union([z.string().max(12), z.null()]).optional(),
     agenceId: z.union([z.string().min(1), z.null()]).optional(),
     produitsAutorises: z.array(z.string().min(1)).optional(),
+    documentChecklist: documentChecklistPatchSchema.optional(),
     statut: z.enum(CLIENT_STATUTS).optional(),
     notes: z.union([z.string().max(10000), z.null()]).optional(),
   })
@@ -119,12 +127,23 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       : {}),
   };
 
-  const updated = await updateClient(id, patch, auth.user);
-  if (!updated) {
-    return NextResponse.json({ message: "Mise a jour impossible" }, { status: 500 });
-  }
+  try {
+    const updated = await updateClient(id, patch, auth.user);
+    if (!updated) {
+      return NextResponse.json({ message: "Mise a jour impossible" }, { status: 500 });
+    }
 
-  return NextResponse.json({ client: sanitizeClientPublic(updated) });
+    return NextResponse.json({ client: sanitizeClientPublic(updated) });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_STATUT_CHANGE_FORBIDDEN") {
+      return NextResponse.json(
+        { message: "Changement de statut réservé au Chef(fe) de service ou aux workflows de validation.", code },
+        { status: 403 },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function DELETE(request: NextRequest, context: RouteContext) {

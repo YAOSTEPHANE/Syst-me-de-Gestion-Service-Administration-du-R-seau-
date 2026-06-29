@@ -16,7 +16,8 @@ import { broadcastCriticalEmailToRole } from "@/lib/lonaci/critical-email";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import { isStatutBloquant } from "@/lib/lonaci/access";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
-import { findLonaciClientById, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
+import { findLonaciClientById, activateClientAfterCautionPaid, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
+import { isClientStatutEligibleForCaution } from "@/lib/lonaci/client-constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import {
   deliverCautionFicheDefinitive,
@@ -249,6 +250,11 @@ export async function createCaution(input: {
     const client = await findLonaciClientById(lonaciClientId!);
     if (!client) throw new Error("CLIENT_NOT_FOUND");
     if (client.statut === "INACTIF") throw new Error("CLIENT_INACTIF");
+    if (!isClientStatutEligibleForCaution(client.statut)) {
+      if (client.statut === "EN_ATTENTE_N1") throw new Error("CLIENT_EN_ATTENTE_N1");
+      if (client.statut === "REJETE") throw new Error("CLIENT_REJETE");
+      throw new Error("CLIENT_STATUT_CAUTION_INTERDIT");
+    }
 
     const pcode = (input.produitCode ?? "").trim().toUpperCase();
     if (!pcode) throw new Error("CLIENT_CAUTION_PRODUIT_REQUIS");
@@ -560,6 +566,10 @@ export async function finalizeCaution(
     const concId = await resolveConcessionnaireIdFromCautionLink(caution);
     if (concId) {
       await completeInscriptionAfterCautionPaid({ concessionnaireId: concId, actor });
+    }
+    const clientId = caution.lonaciClientId?.trim();
+    if (clientId) {
+      await activateClientAfterCautionPaid(clientId, actor);
     }
   }
 

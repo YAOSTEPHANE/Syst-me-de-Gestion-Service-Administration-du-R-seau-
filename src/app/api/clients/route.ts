@@ -21,6 +21,13 @@ import {
 import { findInvalidProduitAutorisesCodes } from "@/lib/lonaci/produit-autorises-validation.server";
 import { requireApiAuth } from "@/lib/auth/guards";
 
+const documentChecklistPatchSchema = z.array(
+  z.object({
+    itemId: z.string().min(1),
+    statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+  }),
+);
+
 function emptyStringToNull(value: unknown): unknown {
   if (typeof value !== "string") return value;
   const trimmed = value.trim();
@@ -54,7 +61,7 @@ const createSchema = z.object({
   codePostal: z.preprocess(emptyStringToNull, z.union([z.string().max(12), z.null()]).optional()),
   agenceId: z.preprocess(emptyStringToNull, z.union([z.string().min(1), z.null()]).optional()),
   produitsAutorises: z.array(z.string().min(1)).optional().default([]),
-  statut: z.enum(CLIENT_STATUTS).optional(),
+  documentChecklist: documentChecklistPatchSchema.optional(),
   notes: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
 });
 
@@ -63,6 +70,7 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   q: z.string().optional(),
   statut: z.enum(CLIENT_STATUTS).optional(),
+  eligibleForCaution: z.enum(["true", "false"]).optional(),
   agenceId: z.string().optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
 });
@@ -145,6 +153,7 @@ export async function GET(request: NextRequest) {
       pageSize: parsed.data.pageSize,
       q: parsed.data.q,
       statut: parsed.data.statut,
+      eligibleForCaution: parsed.data.eligibleForCaution === "true",
       agenceId: parsed.data.agenceId,
       readerScope,
       includeDeleted,
@@ -258,7 +267,7 @@ export async function POST(request: NextRequest) {
       codePostal: parsed.data.codePostal ?? null,
       agenceId,
       produitsAutorises,
-      statut: parsed.data.statut,
+      documentChecklist: parsed.data.documentChecklist,
       notes: parsed.data.notes ?? null,
     },
     auth.user,

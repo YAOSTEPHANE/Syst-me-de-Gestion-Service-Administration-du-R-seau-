@@ -118,6 +118,8 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "CLIENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CLIENTS", action: "UPDATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CLIENTS", action: "DEACTIVATE", allowed: false },
+    { resource: "CLIENTS", action: "VALIDATE_N1", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "CLIENTS", action: "REJECT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
 
     { resource: "CONTRATS", action: "CREATE", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },

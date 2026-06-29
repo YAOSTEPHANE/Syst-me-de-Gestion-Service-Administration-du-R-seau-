@@ -172,6 +172,13 @@ model LonaciClient {
   agenceId        String?
   produitsAutorises String[]
   statut          String
+  /** Validation création par le Chef de section (N1). */
+  validationN1At        DateTime?
+  validationN1ByUserId  String?
+  rejetMotif            String?
+  rejetAt               DateTime?
+  /** Pièces justificatives cochées (référentiel produit). */
+  documentChecklist     Json?
   notes           String?
   createdByUserId String
   updatedByUserId String

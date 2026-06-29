@@ -29,6 +29,9 @@ type Props = {
   title?: string;
   hint?: string;
   className?: string;
+  /** Mode contrôlé : ids des pièces cochées « fournies » (persistées par le parent). */
+  value?: ReadonlySet<string>;
+  onChange?: (fourniIds: Set<string>) => void;
 };
 
 export default function ProduitSelectedPiecesChecklist({
@@ -37,24 +40,37 @@ export default function ProduitSelectedPiecesChecklist({
   title = "Pièces à fournir",
   hint = "Cochez les pièces remises par le client (selon le référentiel produit).",
   className = "",
+  value,
+  onChange,
 }: Props) {
   const items = useMemo(() => {
     if (!selectedProduitCodes.length) return [];
     return mergeProductChecklistTemplates(selectedProduitCodes, toProduitDocuments(produits));
   }, [selectedProduitCodes, produits]);
 
-  const [fourniIds, setFourniIds] = useState<Set<string>>(new Set());
+  const [internalFourniIds, setInternalFourniIds] = useState<Set<string>>(new Set());
+  const isControlled = value !== undefined;
+  const fourniIds = isControlled ? value : internalFourniIds;
+
+  const updateFourniIds = (updater: (prev: Set<string>) => Set<string>) => {
+    if (isControlled && onChange) {
+      onChange(updater(new Set(value)));
+      return;
+    }
+    setInternalFourniIds(updater);
+  };
 
   useEffect(() => {
+    if (isControlled) return;
     const validIds = new Set(items.map((i) => i.id));
-    setFourniIds((prev) => {
+    setInternalFourniIds((prev) => {
       const next = new Set<string>();
       for (const id of prev) {
         if (validIds.has(id)) next.add(id);
       }
       return next;
     });
-  }, [items]);
+  }, [items, isControlled]);
 
   if (!selectedProduitCodes.length) return null;
 
@@ -87,7 +103,7 @@ export default function ProduitSelectedPiecesChecklist({
                   type="checkbox"
                   checked={fourniIds.has(item.id)}
                   onChange={(e) =>
-                    setFourniIds((prev) => {
+                    updateFourniIds((prev) => {
                       const next = new Set(prev);
                       if (e.target.checked) next.add(item.id);
                       else next.delete(item.id);

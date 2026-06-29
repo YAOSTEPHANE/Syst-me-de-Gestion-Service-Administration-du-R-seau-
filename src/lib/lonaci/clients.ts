@@ -2,8 +2,18 @@ import type { Prisma } from "@prisma/client";
 
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { CLIENT_CODE_PREFIX, CLIENT_STATUTS, type ClientStatut } from "@/lib/lonaci/client-constants";
+import { patchDocumentChecklistStatuts } from "@/lib/lonaci/concessionnaire-inscription";
+import { notifyRoleTargets } from "@/lib/lonaci/notifications";
+import {
+  buildChecklistFromTemplate,
+  computeChecklistComplet,
+  isChecklistStatut,
+  mergeProductChecklistTemplates,
+} from "@/lib/lonaci/produit-document-checklist";
+import { listProduits } from "@/lib/lonaci/referentials";
 import { prisma } from "@/lib/prisma";
-import type { UserDocument } from "@/lib/lonaci/types";
+import type { DossierDocumentChecklistPayload, ProduitDocument, UserDocument } from "@/lib/lonaci/types";
+import { userDisplayName } from "@/lib/lonaci/types";
 
 const CLIENT_REF_COUNTER_ID = "client_ref";
 
@@ -14,6 +24,68 @@ export const lonaciClientNotDeletedWhere: Prisma.LonaciClientWhereInput = {
 
 function isObjectId(id: string): boolean {
   return /^[a-f\d]{24}$/i.test(id);
+}
+
+function initialClientStatutOnCreate(actor: UserDocument): ClientStatut {
+  if (actor.role === "CHEF_SECTION" || actor.role === "CHEF_SERVICE") {
+    return "DOSSIER_EN_COURS";
+  }
+  return "EN_ATTENTE_N1";
+}
+
+function clientValidationFieldsForSanitize(doc: {
+  validationN1At: Date | null;
+  validationN1ByUserId: string | null;
+  rejetMotif: string | null;
+  rejetAt: Date | null;
+}) {
+  return {
+    validationN1At: doc.validationN1At ? doc.validationN1At.toISOString() : null,
+    validationN1ByUserId: doc.validationN1ByUserId,
+    rejetMotif: doc.rejetMotif,
+    rejetAt: doc.rejetAt ? doc.rejetAt.toISOString() : null,
+  };
+}
+
+export function parseClientDocumentChecklist(
+  raw: unknown,
+): DossierDocumentChecklistPayload | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const obj = raw as Record<string, unknown>;
+  if (!Array.isArray(obj.entries)) return null;
+  const entries = obj.entries
+    .map((row) => {
+      if (!row || typeof row !== "object") return null;
+      const r = row as Record<string, unknown>;
+      const itemId = String(r.itemId ?? "").trim();
+      const libelle = String(r.libelle ?? "").trim();
+      if (!itemId || !libelle) return null;
+      const statut = isChecklistStatut(r.statut) ? r.statut : "EN_ATTENTE";
+      return {
+        itemId,
+        libelle,
+        obligatoire: r.obligatoire !== false,
+        statut,
+      };
+    })
+    .filter((e): e is NonNullable<typeof e> => e !== null);
+  const complet =
+    typeof obj.complet === "boolean" ? obj.complet : computeChecklistComplet(entries);
+  return { entries, complet };
+}
+
+export function buildClientDocumentChecklistForProducts(
+  produitCodes: string[],
+  produits: ProduitDocument[],
+  previous?: DossierDocumentChecklistPayload | null,
+): DossierDocumentChecklistPayload {
+  const template = mergeProductChecklistTemplates(produitCodes, produits);
+  if (!template.length) return { entries: [], complet: true };
+  return buildChecklistFromTemplate(template, previous?.entries ?? null);
+}
+
+function checklistToPrismaJson(checklist: DossierDocumentChecklistPayload | null | undefined) {
+  return (checklist ?? null) as unknown as import("@prisma/client").Prisma.InputJsonValue;
 }
 
 export async function allocateClientCode(): Promise<string> {
@@ -28,6 +100,8 @@ export async function allocateClientCode(): Promise<string> {
 export function buildClientListWhere(params: {
   q?: string;
   statut?: ClientStatut;
+  /** Clients éligibles caution : dossier en cours ou actif (exclut inactifs). */
+  eligibleForCaution?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -46,7 +120,9 @@ export function buildClientListWhere(params: {
     parts.push({ agenceId: params.agenceId });
   }
 
-  if (params.statut) {
+  if (params.eligibleForCaution) {
+    parts.push({ statut: { in: ["DOSSIER_EN_COURS", "ACTIF"] } });
+  } else if (params.statut) {
     parts.push({ statut: params.statut });
   }
 
@@ -82,6 +158,7 @@ export async function searchClients(params: {
   pageSize: number;
   q?: string;
   statut?: ClientStatut;
+  eligibleForCaution?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -89,6 +166,7 @@ export async function searchClients(params: {
   const where = buildClientListWhere({
     q: params.q,
     statut: params.statut,
+    eligibleForCaution: params.eligibleForCaution,
     agenceId: params.agenceId,
     readerScope: params.readerScope,
     includeDeleted: params.includeDeleted,
@@ -162,6 +240,11 @@ export function sanitizeClientListItem(doc: {
   agenceId: string | null;
   statut: string;
   produitsAutorises: string[];
+  documentChecklist?: unknown;
+  validationN1At: Date | null;
+  validationN1ByUserId: string | null;
+  rejetMotif: string | null;
+  rejetAt: Date | null;
   updatedAt: Date;
 }) {
   return {
@@ -176,6 +259,8 @@ export function sanitizeClientListItem(doc: {
     agenceId: doc.agenceId,
     statut: doc.statut,
     produitsAutorises: doc.produitsAutorises ?? [],
+    checklistComplet: parseClientDocumentChecklist(doc.documentChecklist)?.complet ?? null,
+    ...clientValidationFieldsForSanitize(doc),
     updatedAt: doc.updatedAt.toISOString(),
   };
 }
@@ -195,6 +280,11 @@ export function sanitizeClientPublic(doc: {
   agenceId: string | null;
   statut: string;
   produitsAutorises: string[];
+  documentChecklist: unknown;
+  validationN1At: Date | null;
+  validationN1ByUserId: string | null;
+  rejetMotif: string | null;
+  rejetAt: Date | null;
   notes: string | null;
   createdByUserId: string;
   updatedByUserId: string;
@@ -217,6 +307,8 @@ export function sanitizeClientPublic(doc: {
     agenceId: doc.agenceId,
     statut: doc.statut,
     produitsAutorises: doc.produitsAutorises ?? [],
+    documentChecklist: parseClientDocumentChecklist(doc.documentChecklist),
+    ...clientValidationFieldsForSanitize(doc),
     notes: doc.notes,
     createdByUserId: doc.createdByUserId,
     updatedByUserId: doc.updatedByUserId,
@@ -244,14 +336,24 @@ export async function createClient(
     codePostal: string | null;
     agenceId: string | null;
     produitsAutorises?: string[];
-    statut?: ClientStatut;
+    documentChecklist?: Array<{ itemId: string; statut: "FOURNI" | "MANQUANT" | "EN_ATTENTE" }>;
     notes: string | null;
   },
   actor: UserDocument,
 ) {
   const now = new Date();
   const code = await allocateClientCode();
-  const statut = input.statut && (CLIENT_STATUTS as readonly string[]).includes(input.statut) ? input.statut : "ACTIF";
+  const statut = initialClientStatutOnCreate(actor);
+  const n1ApprovedOnCreate = statut === "DOSSIER_EN_COURS";
+  const produits = await listProduits();
+  let documentChecklist = buildClientDocumentChecklistForProducts(
+    input.produitsAutorises ?? [],
+    produits,
+    null,
+  );
+  if (input.documentChecklist?.length && documentChecklist.entries.length) {
+    documentChecklist = patchDocumentChecklistStatuts(documentChecklist, input.documentChecklist);
+  }
 
   const row = await prisma.lonaciClient.create({
     data: {
@@ -267,7 +369,12 @@ export async function createClient(
       codePostal: input.codePostal,
       agenceId: input.agenceId,
       produitsAutorises: input.produitsAutorises ?? [],
+      documentChecklist: checklistToPrismaJson(documentChecklist),
       statut,
+      validationN1At: n1ApprovedOnCreate ? now : null,
+      validationN1ByUserId: n1ApprovedOnCreate ? actor._id ?? "" : null,
+      rejetMotif: null,
+      rejetAt: null,
       notes: input.notes,
       createdByUserId: actor._id ?? "",
       updatedByUserId: actor._id ?? "",
@@ -281,10 +388,44 @@ export async function createClient(
     entityId: row.id,
     action: "CREATE",
     userId: actor._id ?? "",
-    details: { code: row.code },
+    details: { code: row.code, statut: row.statut },
   });
 
+  if (statut === "EN_ATTENTE_N1") {
+    const label = row.nomComplet?.trim() || row.raisonSociale;
+    await notifyRoleTargets(
+      "CHEF_SECTION",
+      "Client en attente validation N1",
+      `Nouveau client ${row.code} (${label}) | validation Chef de section requise | saisi par ${userDisplayName(actor)}.`,
+      { clientId: row.id, code: row.code, agenceId: row.agenceId },
+    );
+  }
+
   return row;
+}
+
+/** Passe le client en ACTIF après paiement de la première caution (idempotent). */
+export async function activateClientAfterCautionPaid(clientId: string, actor: UserDocument): Promise<void> {
+  if (!isObjectId(clientId)) return;
+  const existing = await findLonaciClientById(clientId);
+  if (!existing || existing.statut !== "DOSSIER_EN_COURS") return;
+
+  await prisma.lonaciClient.update({
+    where: { id: clientId },
+    data: {
+      statut: "ACTIF",
+      updatedByUserId: actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CLIENT",
+    entityId: clientId,
+    action: "CLIENT_ACTIVATE_AFTER_CAUTION",
+    userId: actor._id ?? "",
+    details: { from: "DOSSIER_EN_COURS", to: "ACTIF" },
+  });
 }
 
 export async function updateClient(
@@ -301,6 +442,7 @@ export async function updateClient(
     codePostal?: string | null;
     agenceId?: string | null;
     produitsAutorises?: string[];
+    documentChecklist?: Array<{ itemId: string; statut: "FOURNI" | "MANQUANT" | "EN_ATTENTE" }>;
     statut?: ClientStatut;
     notes?: string | null;
   },
@@ -317,6 +459,28 @@ export async function updateClient(
     updatedByUserId: actor._id ?? "",
   };
 
+  let checklist = parseClientDocumentChecklist(existing.documentChecklist);
+  const produits = await listProduits();
+
+  if (patch.produitsAutorises !== undefined) {
+    data.produitsAutorises = patch.produitsAutorises;
+    checklist = buildClientDocumentChecklistForProducts(patch.produitsAutorises, produits, checklist);
+  }
+
+  if (patch.documentChecklist?.length) {
+    if (!checklist) {
+      const codes = patch.produitsAutorises ?? existing.produitsAutorises ?? [];
+      checklist = buildClientDocumentChecklistForProducts(codes, produits, null);
+    }
+    if (checklist.entries.length) {
+      checklist = patchDocumentChecklistStatuts(checklist, patch.documentChecklist);
+    }
+  }
+
+  if (checklist) {
+    data.documentChecklist = checklistToPrismaJson(checklist);
+  }
+
   if (patch.nomComplet !== undefined) data.nomComplet = patch.nomComplet.trim();
   if (patch.raisonSociale !== undefined) data.raisonSociale = patch.raisonSociale.trim();
   if (patch.cniNumero !== undefined) data.cniNumero = patch.cniNumero;
@@ -327,9 +491,11 @@ export async function updateClient(
   if (patch.ville !== undefined) data.ville = patch.ville;
   if (patch.codePostal !== undefined) data.codePostal = patch.codePostal;
   if (patch.agenceId !== undefined) data.agenceId = patch.agenceId;
-  if (patch.produitsAutorises !== undefined) data.produitsAutorises = patch.produitsAutorises;
   if (patch.notes !== undefined) data.notes = patch.notes;
   if (patch.statut !== undefined && (CLIENT_STATUTS as readonly string[]).includes(patch.statut)) {
+    if (actor.role !== "CHEF_SERVICE") {
+      throw new Error("CLIENT_STATUT_CHANGE_FORBIDDEN");
+    }
     data.statut = patch.statut;
   }
 
@@ -372,4 +538,132 @@ export async function softDeleteClient(id: string, actor: UserDocument): Promise
   });
 
   return true;
+}
+
+/** Validation N1 (Chef de section) : EN_ATTENTE_N1 → DOSSIER_EN_COURS. */
+export async function validateClientCreationN1(clientId: string, actor: UserDocument) {
+  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
+
+  const existing = await findLonaciClientById(clientId);
+  if (!existing) throw new Error("CLIENT_NOT_FOUND");
+  if (existing.statut !== "EN_ATTENTE_N1") throw new Error("CLIENT_WRONG_STATUS");
+
+  const now = new Date();
+  const row = await prisma.lonaciClient.update({
+    where: { id: clientId },
+    data: {
+      statut: "DOSSIER_EN_COURS",
+      validationN1At: now,
+      validationN1ByUserId: actor._id ?? "",
+      rejetMotif: null,
+      rejetAt: null,
+      updatedAt: now,
+      updatedByUserId: actor._id ?? "",
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CLIENT",
+    entityId: clientId,
+    action: "CLIENT_VALIDATE_N1",
+    userId: actor._id ?? "",
+    details: { from: "EN_ATTENTE_N1", to: "DOSSIER_EN_COURS" },
+  });
+
+  const label = row.nomComplet?.trim() || row.raisonSociale;
+  await notifyRoleTargets(
+    "AGENT",
+    "Client validé (N1)",
+    `Client ${row.code} (${label}) validé par ${userDisplayName(actor)} | dossier en cours — caution possible.`,
+    { clientId: row.id, code: row.code },
+  );
+
+  return row;
+}
+
+/** Rejet N1 : EN_ATTENTE_N1 → REJETE. */
+export async function rejectClientCreationN1(
+  clientId: string,
+  motif: string,
+  actor: UserDocument,
+) {
+  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
+
+  const trimmedMotif = motif.trim();
+  if (trimmedMotif.length < 3) throw new Error("CLIENT_REJET_MOTIF_REQUIS");
+
+  const existing = await findLonaciClientById(clientId);
+  if (!existing) throw new Error("CLIENT_NOT_FOUND");
+  if (existing.statut !== "EN_ATTENTE_N1") throw new Error("CLIENT_WRONG_STATUS");
+
+  const now = new Date();
+  const row = await prisma.lonaciClient.update({
+    where: { id: clientId },
+    data: {
+      statut: "REJETE",
+      rejetMotif: trimmedMotif,
+      rejetAt: now,
+      updatedAt: now,
+      updatedByUserId: actor._id ?? "",
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CLIENT",
+    entityId: clientId,
+    action: "CLIENT_REJECT_N1",
+    userId: actor._id ?? "",
+    details: { motif: trimmedMotif },
+  });
+
+  const label = row.nomComplet?.trim() || row.raisonSociale;
+  await notifyRoleTargets(
+    "AGENT",
+    "Client rejeté (N1)",
+    `Client ${row.code} (${label}) rejeté par ${userDisplayName(actor)} | motif : ${trimmedMotif}.`,
+    { clientId: row.id, code: row.code },
+  );
+
+  return row;
+}
+
+/** Resoumission après rejet : REJETE → EN_ATTENTE_N1. */
+export async function resubmitClientForValidation(clientId: string, actor: UserDocument) {
+  if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
+
+  const existing = await findLonaciClientById(clientId);
+  if (!existing) throw new Error("CLIENT_NOT_FOUND");
+  if (existing.statut !== "REJETE") throw new Error("CLIENT_WRONG_STATUS");
+
+  const now = new Date();
+  const row = await prisma.lonaciClient.update({
+    where: { id: clientId },
+    data: {
+      statut: "EN_ATTENTE_N1",
+      rejetMotif: null,
+      rejetAt: null,
+      updatedAt: now,
+      updatedByUserId: actor._id ?? "",
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CLIENT",
+    entityId: clientId,
+    action: "CLIENT_RESUBMIT",
+    userId: actor._id ?? "",
+    details: { from: "REJETE", to: "EN_ATTENTE_N1" },
+  });
+
+  const label = row.nomComplet?.trim() || row.raisonSociale;
+  await notifyRoleTargets(
+    "CHEF_SECTION",
+    "Client resoumis (validation N1)",
+    `Client ${row.code} (${label}) resoumis par ${userDisplayName(actor)} | validation Chef de section requise.`,
+    { clientId: row.id, code: row.code, agenceId: row.agenceId },
+  );
+
+  return row;
 }

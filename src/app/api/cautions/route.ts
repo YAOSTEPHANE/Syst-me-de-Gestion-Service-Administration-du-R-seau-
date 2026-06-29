@@ -166,6 +166,15 @@ export async function POST(request: NextRequest) {
     if (code === "CLIENT_INACTIF") {
       return conflict("Client Lonaci inactif.", "CLIENT_INACTIF");
     }
+    if (code === "CLIENT_EN_ATTENTE_N1") {
+      return conflict(
+        "Client en attente de validation N1 par le Chef de section.",
+        "CLIENT_EN_ATTENTE_N1",
+      );
+    }
+    if (code === "CLIENT_REJETE") {
+      return conflict("Client rejeté (N1) : corrigez la fiche et resoumettez.", "CLIENT_REJETE");
+    }
     if (code === "CLIENT_CAUTION_PRODUIT_REQUIS") {
       return conflict("produitCode obligatoire pour cette caution.", "CLIENT_CAUTION_PRODUIT_REQUIS");
     }
