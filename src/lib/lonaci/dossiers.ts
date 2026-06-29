@@ -424,13 +424,11 @@ export async function transitionDossier(
     await assertDossierContratSubmitAllowed(dossier);
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    throw new Error("CONCESSIONNAIRE_NOT_FOUND");
+  const party = contratPartyFromDossier(dossier);
+  if (!party) {
+    throw new Error("PARTY_REQUIRED");
   }
-  if (!canReadConcessionnaire(actor, concessionnaire)) {
-    throw new Error("AGENCE_FORBIDDEN");
-  }
+  await assertDossierPartyReadable(party, actor);
 
   const db = await getDatabase();
   const step = {

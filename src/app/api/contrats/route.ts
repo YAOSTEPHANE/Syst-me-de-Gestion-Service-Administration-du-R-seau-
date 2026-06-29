@@ -561,10 +561,23 @@ export async function POST(request: NextRequest) {
     }
     if (code === "ACTIVE_CONTRACT_EXISTS") {
       return conflict(
-        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "Un contrat actif existe deja pour ce produit et ce client.",
         "ACTIVE_CONTRACT_EXISTS",
       );
     }
+    if (code === "PRODUIT_NOT_ALLOWED") {
+      return badRequest("Produit non autorise pour ce client.", "PRODUIT_NOT_ALLOWED");
+    }
+    if (code === "AGENCE_INVALID") {
+      return badRequest("Agence invalide.", "AGENCE_INVALID");
+    }
+    if (code === "CONCESSIONNAIRE_NOT_FOUND" || code === "PARTY_REQUIRED") {
+      return badRequest("Client ou concessionnaire introuvable.", "PARTY_NOT_FOUND");
+    }
+    if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
+      return conflict("Checklist documents incomplete.", "DOSSIER_CHECKLIST_INCOMPLETE");
+    }
+    console.error("POST /api/contrats failed:", error);
     return apiError(500, "Creation dossier contrat impossible.", "CONTRAT_CREATE_FAILED");
   }
 }
