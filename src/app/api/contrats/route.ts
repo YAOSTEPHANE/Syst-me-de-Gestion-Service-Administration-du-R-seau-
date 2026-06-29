@@ -18,7 +18,8 @@ import {
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
-import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
+import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
+import { createDossier, ensureDossierIndexes } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { canReadClient } from "@/lib/lonaci/access";
@@ -537,8 +538,14 @@ export async function POST(request: NextRequest) {
       },
       actor: auth.user,
     });
-    const submitted = await transitionDossier(dossier._id ?? "", "SOUMIS", auth.user, "Soumis automatiquement à la création.");
-    return NextResponse.json({ dossier: submitted }, { status: 201 });
+    const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
+    return NextResponse.json(
+      {
+        dossier,
+        checklistRequired: Boolean(checklist?.entries.length),
+      },
+      { status: 201 },
+    );
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_BLOQUE") {
@@ -575,7 +582,10 @@ export async function POST(request: NextRequest) {
       return badRequest("Client ou concessionnaire introuvable.", "PARTY_NOT_FOUND");
     }
     if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
-      return conflict("Checklist documents incomplete.", "DOSSIER_CHECKLIST_INCOMPLETE");
+      return conflict(
+        "Soumission impossible : la checklist documents du dossier est incomplète. Marquez tous les documents obligatoires comme « Fourni ».",
+        "DOSSIER_CHECKLIST_INCOMPLETE",
+      );
     }
     console.error("POST /api/contrats failed:", error);
     return apiError(500, "Creation dossier contrat impossible.", "CONTRAT_CREATE_FAILED");

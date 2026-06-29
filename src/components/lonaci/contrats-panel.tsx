@@ -729,15 +729,20 @@ export default function ContratsPanel() {
       });
       const errBody = (await res.json().catch(() => null)) as {
         message?: string;
+        code?: string;
         issues?: { path: (string | number)[]; message: string }[];
+        checklistRequired?: boolean;
       } | null;
       if (!res.ok) {
         const zodDetail = errBody?.issues?.map((i) => `${i.path.join(".")}: ${i.message}`).join(" — ");
-        throw new Error(zodDetail || errBody?.message || "Création impossible.");
+        throw new Error(zodDetail || errBody?.code || errBody?.message || "Création impossible.");
       }
       setCreateFormError(null);
       setCreateOpen(false);
-      setToast({ type: "success", message: "Contrat créé avec succès." });
+      const successMsg = errBody?.checklistRequired
+        ? "Dossier créé en brouillon. Complétez la checklist documents (colonne « Décision dossier » ou module Dossiers), puis cliquez « Soumettre le dossier »."
+        : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
+      setToast({ type: "success", message: successMsg });
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");

@@ -14,7 +14,8 @@ export type DossierContratActualisationDetail = {
   reference: string;
   status: string;
   type: string;
-  concessionnaireId: string;
+  concessionnaireId: string | null;
+  lonaciClientId?: string | null;
   agenceId: string | null;
   payload: Record<string, unknown>;
   history: Array<{
@@ -95,7 +96,8 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
   }, [dossier.id, resetFromDossier]);
 
   useEffect(() => {
-    if (operationType !== "ACTUALISATION" || !dossier.concessionnaireId || !produitCode.trim()) {
+    const partyId = dossier.lonaciClientId?.trim() || dossier.concessionnaireId?.trim();
+    if (operationType !== "ACTUALISATION" || !partyId || !produitCode.trim()) {
       setParentsActifs([]);
       return;
     }
@@ -107,9 +109,13 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
         const params = new URLSearchParams({
           page: "1",
           pageSize: "100",
-          concessionnaireId: dossier.concessionnaireId,
           produitCode: produitCode.trim().toUpperCase(),
         });
+        if (dossier.lonaciClientId?.trim()) {
+          params.set("lonaciClientId", dossier.lonaciClientId.trim());
+        } else if (dossier.concessionnaireId?.trim()) {
+          params.set("concessionnaireId", dossier.concessionnaireId.trim());
+        }
         const res = await lonaciFetch(`/api/contrats?${params.toString()}`);
         if (!res.ok || cancelled) return;
         const data = (await res.json()) as { items: ContratActifOption[] };
@@ -123,7 +129,7 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
     return () => {
       cancelled = true;
     };
-  }, [operationType, dossier.concessionnaireId, produitCode]);
+  }, [operationType, dossier.concessionnaireId, dossier.lonaciClientId, produitCode]);
 
   useEffect(() => {
     if (operationType !== "ACTUALISATION" || parentsActifs.length !== 1) return;
