@@ -97,8 +97,18 @@ export type DossierStatus = (typeof DOSSIER_STATUSES)[number];
 export const DOSSIER_TYPES = ["CONTRAT_ACTUALISATION"] as const;
 export type DossierType = (typeof DOSSIER_TYPES)[number];
 
+/** Libellé utilisateur du type technique de dossier (tous les dossiers contrat partagent le même type en base). */
+export const DOSSIER_TYPE_LABELS: Record<DossierType, string> = {
+  CONTRAT_ACTUALISATION: "Dossier contrat",
+};
+
 export const CONTRAT_OPERATION_TYPES = ["NOUVEAU", "ACTUALISATION"] as const;
 export type ContratOperationType = (typeof CONTRAT_OPERATION_TYPES)[number];
+
+export const CONTRAT_OPERATION_TYPE_LABELS: Record<ContratOperationType, string> = {
+  NOUVEAU: "Nouveau contrat",
+  ACTUALISATION: "Actualisation d'annexe",
+};
 
 export const CONTRAT_STATUSES = ["ACTIF", "RESILIE", "CEDE"] as const;
 export type ContratStatus = (typeof CONTRAT_STATUSES)[number];

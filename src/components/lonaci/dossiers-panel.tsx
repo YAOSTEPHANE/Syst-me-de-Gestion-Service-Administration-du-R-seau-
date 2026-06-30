@@ -15,6 +15,7 @@ import {
   contratStatutMetierBadgeClass,
   type ContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
+import { formatDossierOperationLabel, formatDossierTypeDetail } from "@/lib/lonaci/dossier-labels";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 
 type DossierStatus =
@@ -66,6 +67,7 @@ interface DossierItem {
   reference: string;
   status: DossierStatus;
   type: string;
+  payload?: Record<string, unknown>;
   concessionnaireId: string | null;
   lonaciClientId?: string | null;
   updatedAt: string;
@@ -1151,7 +1153,7 @@ export default function DossiersPanel() {
                 <th className="px-3 py-2.5">Statut</th>
                 <th className="px-3 py-2.5">Statut contrat</th>
                 <th className="px-3 py-2.5">Checklist</th>
-                <th className="px-3 py-2.5">Type</th>
+                <th className="px-3 py-2.5">Opération</th>
                 <th className="px-3 py-2.5">Concessionnaire</th>
                 <th className="px-3 py-2.5">MAJ</th>
                 <th className="px-3 py-2.5">Actions</th>
@@ -1214,7 +1216,9 @@ export default function DossiersPanel() {
                       <span className="text-xs text-slate-400">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2.5">{item.type}</td>
+                  <td className="px-3 py-2.5 text-xs text-slate-800">
+                    {formatDossierOperationLabel(item.type, item.payload)}
+                  </td>
                   <td className="px-3 py-2.5 font-mono text-xs">
                     <Link
                       href={
@@ -1428,7 +1432,10 @@ export default function DossiersPanel() {
                   <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2">
                     <p className="text-xs text-slate-700"><span className="font-semibold">Référence:</span> {detailItem.reference}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Statut:</span> {statusLabel(detailItem.status)}</p>
-                    <p className="text-xs text-slate-700"><span className="font-semibold">Type:</span> {detailItem.type}</p>
+                    <p className="text-xs text-slate-700 sm:col-span-2">
+                      <span className="font-semibold">Nature :</span>{" "}
+                      {formatDossierTypeDetail(detailItem.type, detailItem.payload)}
+                    </p>
                     <p className="text-xs text-slate-700">
                       <span className="font-semibold">
                         {detailItem.lonaciClientId ? "Client:" : "Concessionnaire:"}

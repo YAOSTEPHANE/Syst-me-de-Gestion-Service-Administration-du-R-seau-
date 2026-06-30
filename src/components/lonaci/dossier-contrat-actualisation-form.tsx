@@ -4,6 +4,7 @@ import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-
 import { userMayPatchDossierPayload } from "@/lib/auth/dossier-transition-rbac";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import type { ContratStatutMetier } from "@/lib/lonaci/contrat-statut-metier";
+import { CONTRAT_OPERATION_TYPE_LABELS, CONTRAT_OPERATION_TYPES } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
@@ -250,7 +251,7 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
     <div className="space-y-3">
       <form onSubmit={onSubmit} className="space-y-2.5 rounded-xl border border-amber-200/90 bg-amber-50/50 p-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
-          Actualisation du dossier (brouillon / rejeté)
+          Modifier le dossier (brouillon / rejeté)
         </p>
       <p className="text-[11px] text-amber-950/80">
         Les modifications sont enregistrées immédiatement. Elles sont soumises aux mêmes règles métier qu’à la création
@@ -293,8 +294,11 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
             value={operationType}
             onChange={(e) => setOperationType(e.target.value as "NOUVEAU" | "ACTUALISATION")}
           >
-            <option value="NOUVEAU">Nouveau contrat</option>
-            <option value="ACTUALISATION">Actualisation d’annexe</option>
+            {CONTRAT_OPERATION_TYPES.map((op) => (
+              <option key={op} value={op}>
+                {CONTRAT_OPERATION_TYPE_LABELS[op]}
+              </option>
+            ))}
           </select>
         </label>
         <label className="grid gap-1">

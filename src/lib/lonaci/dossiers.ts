@@ -10,7 +10,7 @@ import type {
   UserDocument,
 } from "@/lib/lonaci/types";
 import { userDisplayName } from "@/lib/lonaci/types";
-import { appendAuditLog } from "@/lib/lonaci/audit";
+import { formatDossierOperationLabel } from "@/lib/lonaci/dossier-labels";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import {
@@ -250,7 +250,7 @@ async function notifyAfterTransition(
   comment: string | null,
 ) {
   const metadata = { dossierId: dossier._id, dossierReference: dossier.reference, status: target };
-  const operationLabel = dossier.type.replace(/_/g, " ").toLowerCase();
+  const operationLabel = formatDossierOperationLabel(dossier.type, dossier.payload);
   const actionBy = userDisplayName(actor);
   if (target === "SOUMIS") {
     await notifyRoleTargets(
@@ -694,6 +694,7 @@ export async function listDossiers(
         reference: row.reference,
         status: row.status,
         concessionnaireId: row.concessionnaireId,
+        lonaciClientId: row.lonaciClientId ?? null,
         agenceId: row.agenceId,
         payload: row.payload,
         hasDocumentChecklist,
