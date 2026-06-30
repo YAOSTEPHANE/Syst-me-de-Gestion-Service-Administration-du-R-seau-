@@ -22,12 +22,19 @@ export const CLIENT_STATUTS_ELIGIBLE_CAUTION: ClientStatut[] = ["DOSSIER_EN_COUR
 /** Clients éligibles à un contrat (même périmètre que la caution). */
 export const CLIENT_STATUTS_ELIGIBLE_CONTRAT: ClientStatut[] = ["DOSSIER_EN_COURS", "ACTIF"];
 
+/** Parcours client terminé (caution payée) — requis avant promotion concessionnaire PDV. */
+export const CLIENT_STATUTS_ELIGIBLE_PROMOTION_CONCESSIONNAIRE: ClientStatut[] = ["ACTIF"];
+
 export function isClientStatutEligibleForCaution(statut: string): boolean {
   return (CLIENT_STATUTS_ELIGIBLE_CAUTION as readonly string[]).includes(statut);
 }
 
 export function isClientStatutEligibleForContrat(statut: string): boolean {
   return (CLIENT_STATUTS_ELIGIBLE_CONTRAT as readonly string[]).includes(statut);
+}
+
+export function isClientStatutEligibleForPromotionConcessionnaire(statut: string): boolean {
+  return (CLIENT_STATUTS_ELIGIBLE_PROMOTION_CONCESSIONNAIRE as readonly string[]).includes(statut);
 }
 
 /** Préfixe des identifiants clients attribués automatiquement à la création (ex. CLI-000042). */

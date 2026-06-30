@@ -1,21 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
+import { listScopeAgenceIdForContratsList } from "@/lib/lonaci/contracts";
 import { prisma } from "@/lib/prisma";
 
 const querySchema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
 });
-
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
 
 function escapeCell(v: string) {
   return `"${v.replace(/"/g, '""')}"`;
@@ -34,7 +28,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const scopeAgenceId = listScopeAgenceId(auth.user);
+  const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
 
   let concessionnaireFilter: { deletedAt: null; agenceId?: string } = { deletedAt: null };
   if (scopeAgenceId) {

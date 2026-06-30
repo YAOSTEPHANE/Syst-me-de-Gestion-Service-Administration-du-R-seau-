@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { ObjectId } from "mongodb";
 
+import { forbidden } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import {
-  CONTRATS_ATTENDUS_CAUTIONS_MAX,
-  listScopeAgenceIdForContratsList,
-} from "@/lib/lonaci/contracts";
+import { CONTRATS_ATTENDUS_CAUTIONS_MAX } from "@/lib/lonaci/contracts";
+import { resolveListAgenceFilter } from "@/lib/lonaci/access";
+import { restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
 import { ensureSprint4Indexes, listContratsCautionAttendus } from "@/lib/lonaci/sprint4";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
@@ -40,10 +40,18 @@ export async function GET(request: NextRequest) {
   const db = await getDatabase();
 
   let allowedConcessionnaireIds: string[] | null = null;
-  const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
-  if (scopeAgenceId) {
+  const agenceScope = resolveListAgenceFilter(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+  const agenceRestriction = {
+    agenceId: agenceScope.agenceId,
+    agenceIds: agenceScope.agenceIds,
+  };
+  const agenceWhere = restrictionToPrismaAgenceWhere(agenceRestriction);
+  if (Object.keys(agenceWhere).length > 0) {
     const scoped = await prisma.concessionnaire.findMany({
-      where: { deletedAt: null, agenceId: scopeAgenceId },
+      where: { deletedAt: null, ...agenceWhere },
       select: { id: true },
     });
     allowedConcessionnaireIds = scoped.map((c) => c.id);
@@ -81,7 +89,10 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  const agenceIdForList = scopeAgenceId ?? parsed.data.agenceId ?? undefined;
+  const agenceIdForList =
+    agenceRestriction.agenceIds && agenceRestriction.agenceIds.length > 1
+      ? undefined
+      : agenceRestriction.agenceId ?? agenceRestriction.agenceIds?.[0];
 
   const listBase = {
     concessionnaireId: parsed.data.concessionnaireId,

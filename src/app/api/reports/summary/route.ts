@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import { buildReportSummary, type ReportPeriod } from "@/lib/lonaci/reports";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -23,10 +24,14 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+
   const summary = await buildReportSummary(
     parsed.data.period as ReportPeriod,
-    parsed.data.agenceId,
+    agenceScope.agenceId,
     parsed.data.compareAgences === "1" ? parsed.data.topAgences : 0,
+    agenceScope.agenceIds,
   );
   return NextResponse.json(summary, { status: 200 });
 }

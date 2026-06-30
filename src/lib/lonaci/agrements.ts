@@ -1,5 +1,6 @@
 import { ObjectId } from "mongodb";
 
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "agrements";
@@ -155,6 +156,7 @@ export async function listAgrements(input: {
   page: number;
   pageSize: number;
   agenceId?: string;
+  agenceIds?: string[];
   produitCode?: string;
   statut?: AgrementStatus;
   dateFrom?: Date;
@@ -162,7 +164,11 @@ export async function listAgrements(input: {
 }) {
   const db = await getDatabase();
   const filter: Record<string, unknown> = { deletedAt: null };
-  if (input.agenceId) filter.agenceId = input.agenceId;
+  const agenceMongo = restrictionToMongoAgenceFilter({
+    agenceId: input.agenceId,
+    agenceIds: input.agenceIds,
+  });
+  if (agenceMongo) filter.agenceId = agenceMongo;
   if (input.produitCode) filter.produitCode = input.produitCode.toUpperCase();
   if (input.statut) filter.statut = input.statut;
   if (input.dateFrom || input.dateTo) {

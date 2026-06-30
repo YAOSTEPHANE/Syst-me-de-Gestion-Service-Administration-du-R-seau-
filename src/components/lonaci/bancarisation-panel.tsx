@@ -1,7 +1,10 @@
 "use client";
 
+import ClientSearchPicker, {
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import ConcessionnaireSearchPicker, {
-  pickProduitCodeFromConcessionnaire,
   type ConcessionnairePickerRow,
 } from "@/components/lonaci/concessionnaire-search-picker";
 import Link from "next/link";
@@ -280,7 +283,7 @@ export default function BancarisationPanel() {
   const [decisionComment, setDecisionComment] = useState("");
   const [decisionAck, setDecisionAck] = useState(false);
 
-  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [createClient, setCreateClient] = useState<ClientPickerRow | null>(null);
   const [nouveauStatut, setNouveauStatut] = useState<Banc>("EN_ATTENTE_RIB");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [banqueEtablissement, setBanqueEtablissement] = useState("");
@@ -392,13 +395,13 @@ export default function BancarisationPanel() {
     setError(null);
     setToast(null);
     try {
-      if (!createPdv?.id) throw new Error("Sélectionnez un concessionnaire.");
+      if (!createClient?.id) throw new Error("Sélectionnez un client.");
       if (!file) throw new Error("Document justificatif obligatoire.");
       if (nouveauStatut === "BANCARISE" && !compteBancaire.trim()) {
         throw new Error("Le numero de compte bancaire est obligatoire pour BANCARISE.");
       }
       const form = new FormData();
-      form.set("concessionnaireId", createPdv.id);
+      form.set("lonaciClientId", createClient.id);
       form.set("nouveauStatut", nouveauStatut);
       form.set("compteBancaire", compteBancaire.trim());
       form.set("banqueEtablissement", banqueEtablissement.trim());
@@ -419,7 +422,7 @@ export default function BancarisationPanel() {
         message: "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service.",
       });
       setCreateOpen(false);
-      setCreatePdv(null);
+      setCreateClient(null);
       setCompteBancaire("");
       setBanqueEtablissement("");
       setDateEffet("");
@@ -1100,18 +1103,19 @@ export default function BancarisationPanel() {
             </div>
             <div className="grid gap-3 md:grid-cols-2">
               <div className="md:col-span-2">
-                <ConcessionnaireSearchPicker
+                <ClientSearchPicker
                   key={`banc-create-${createOpen}`}
-                  label={<span className="text-xs text-slate-600">Concessionnaire</span>}
-                  selected={createPdv}
+                  label={<span className="text-xs text-slate-600">Client Lonaci *</span>}
+                  selected={createClient}
                   onSelectedChange={(r) => {
-                    setCreatePdv(r);
+                    setCreateClient(r);
                     const codes = refsProduits.filter((p) => p.actif).map((p) => p.code);
-                    const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                    const picked = pickProduitCodeFromClient(r, codes);
                     if (picked) setProduitCode(picked);
                   }}
+                  filter="linkedPdv"
                   inputClassName="w-full rounded-xl border border-slate-300 bg-white px-2 py-2 text-sm text-slate-900"
-                  searchPlaceholder="Rechercher un PDV…"
+                  searchPlaceholder="Rechercher un client…"
                 />
               </div>
               <div>

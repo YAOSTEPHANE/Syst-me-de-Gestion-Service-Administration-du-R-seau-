@@ -14,6 +14,11 @@ import {
   bancarisationStatutFields,
   normalizeBancarisationStatut,
 } from "@/lib/lonaci/bancarisation-statut";
+import { resolveListAgenceFilter } from "@/lib/lonaci/access";
+import {
+  restrictionToMongoAgenceFilter,
+  type ListAgenceRestriction,
+} from "@/lib/lonaci/list-agence-restriction";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import {
   buildInscriptionChecklistForProducts,
@@ -63,6 +68,7 @@ function mapDoc(row: {
   ville: string | null;
   codePostal: string | null;
   agenceId: string | null;
+  sourceLonaciClientId?: string | null;
   produitsAutorises: string[];
   statut: string;
   statutBancarisation: string | null;
@@ -121,6 +127,7 @@ function mapDoc(row: {
     ville: row.ville,
     codePostal: row.codePostal,
     agenceId: row.agenceId,
+    sourceLonaciClientId: row.sourceLonaciClientId ?? null,
     produitsAutorises: row.produitsAutorises,
     statut: row.statut as ConcessionnaireStatut,
     statutBancarisation: normalizeBancarisationStatut(row.statutBancarisation, row.etatRib),
@@ -196,6 +203,8 @@ export interface CreateConcessionnaireInput {
   observations: string | null;
   notesInternes: string | null;
   createdByUserId: string;
+  sourceLonaciClientId?: string | null;
+  initialDocumentChecklist?: import("@/lib/lonaci/types").DossierDocumentChecklistPayload | null;
 }
 
 export async function createConcessionnaire(input: CreateConcessionnaireInput): Promise<ConcessionnaireDocument> {
@@ -208,15 +217,14 @@ export async function createConcessionnaire(input: CreateConcessionnaireInput): 
   const skipInscription = input.skipInscriptionWorkflow === true;
   const codePdv = skipInscription ? await nextCodePdvForAgence(input.agenceCode) : null;
   const produits = await listProduits();
-  const checklist = buildInscriptionChecklistForProducts(
-    input.produitsAutorises,
-    produits,
-    null,
-  );
+  const checklist =
+    input.initialDocumentChecklist ??
+    buildInscriptionChecklistForProducts(input.produitsAutorises, produits, null);
   const created = await prisma.concessionnaire.create({
     data: {
       codePdv,
       inscriptionStatut: skipInscription ? "VALIDE" : "DOSSIER_EN_COURS",
+      sourceLonaciClientId: input.sourceLonaciClientId?.trim() || null,
       nom: nom || null,
       prenom: prenom || null,
       codeTerminal: input.codeTerminal,
@@ -292,21 +300,22 @@ export interface SearchConcessionnairesParams {
   agenceId?: string;
   produitCode?: string;
   scopeAgenceId?: string | null;
+  scopeAgenceIds?: string[];
   includeDeleted: boolean;
 }
 
-/** Portée liste concessionnaires (même règle que GET /api/concessionnaires). */
-export function concessionnaireListScopeAgenceId(user: {
-  agenceId: string | null;
-  role: string;
-}): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) {
-    return user.agenceId;
-  }
-  return undefined;
+/** @deprecated Préférer {@link resolveListAgenceFilter} + {@link listAgenceScopeFields}. */
+export function concessionnaireListScopeAgenceId(user: UserDocument): string | undefined {
+  const result = resolveListAgenceFilter(user, undefined);
+  if (!result.ok) return undefined;
+  if (result.agenceIds?.length === 1) return result.agenceIds[0];
+  return result.agenceId;
+}
+
+export function concessionnaireListAgenceRestriction(user: UserDocument): ListAgenceRestriction {
+  const result = resolveListAgenceFilter(user, undefined);
+  if (!result.ok) return {};
+  return { agenceId: result.agenceId, agenceIds: result.agenceIds };
 }
 
 export type ConcessionnaireListFilterParams = Pick<
@@ -319,6 +328,7 @@ export type ConcessionnaireListFilterParams = Pick<
   | "agenceId"
   | "produitCode"
   | "scopeAgenceId"
+  | "scopeAgenceIds"
   | "includeDeleted"
 >;
 
@@ -331,7 +341,12 @@ export function buildConcessionnaireListWhere(
     filter.deletedAt = null;
   }
 
-  if (params.scopeAgenceId) {
+  if (params.scopeAgenceIds && params.scopeAgenceIds.length > 0) {
+    const mongoFilter = restrictionToMongoAgenceFilter({ agenceIds: params.scopeAgenceIds });
+    if (mongoFilter) {
+      filter.agenceId = typeof mongoFilter === "string" ? mongoFilter : { in: mongoFilter.$in };
+    }
+  } else if (params.scopeAgenceId) {
     filter.agenceId = params.scopeAgenceId;
   } else if (params.agenceId) {
     filter.agenceId = params.agenceId;

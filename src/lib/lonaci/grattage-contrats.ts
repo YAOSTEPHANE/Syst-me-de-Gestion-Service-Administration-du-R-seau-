@@ -9,8 +9,9 @@ import {
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { UserDocument } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
-import { prisma } from "@/lib/prisma";
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
+import { prisma } from "@/lib/prisma";
 
 const GRATTAGE_CONTRATS_COLLECTION = "grattage_contrats";
 const COUNTERS_COLLECTION = "counters";
@@ -263,11 +264,15 @@ export async function listGrattageContrats(params: {
   concessionnaireId?: string;
   statut?: GrattageContratStatut;
   scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
 }) {
   await refreshExpiredGrattageContrats();
   const db = await getDatabase();
   const filter: Record<string, unknown> = { deletedAt: null };
-  const agenceFilter = params.scopeAgenceId ?? params.agenceId;
+  const agenceFilter = restrictionToMongoAgenceFilter({
+    agenceId: params.scopeAgenceId ?? params.agenceId,
+    agenceIds: params.scopeAgenceIds,
+  });
   if (agenceFilter) filter.agenceId = agenceFilter;
   if (params.concessionnaireId) filter.concessionnaireId = params.concessionnaireId;
   if (params.statut) filter.statut = params.statut;
@@ -317,6 +322,7 @@ export async function listGrattageContratsForExport(params: {
   concessionnaireId?: string;
   statut?: GrattageContratStatut;
   scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
 }) {
   const all: GrattageContratListItem[] = [];
   let page = 1;

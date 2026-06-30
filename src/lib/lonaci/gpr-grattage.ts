@@ -629,6 +629,7 @@ export async function listScratchHistoryByConcessionnaire(
 export async function listEligibleConcessionnairesForProduct(input: {
   produitCode: string;
   agenceId?: string;
+  agenceIds?: string[];
   q?: string;
   limit?: number;
 }) {
@@ -636,12 +637,19 @@ export async function listEligibleConcessionnairesForProduct(input: {
   const limit = Math.min(Math.max(input.limit ?? 100, 1), 200);
   const q = input.q?.trim().toLowerCase();
 
+  const agenceWhere =
+    input.agenceIds && input.agenceIds.length > 0
+      ? { agenceId: { in: input.agenceIds } }
+      : input.agenceId
+        ? { agenceId: input.agenceId }
+        : {};
+
   const pdvs = await prisma.concessionnaire.findMany({
     where: {
       deletedAt: null,
       statut: "ACTIF",
       inscriptionStatut: "VALIDE",
-      ...(input.agenceId ? { agenceId: input.agenceId } : {}),
+      ...agenceWhere,
     },
     select: {
       id: true,

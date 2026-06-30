@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { concessionnaireListAgenceRestriction } from "@/lib/lonaci/concessionnaires";
 import { listSuccessionCases } from "@/lib/lonaci/succession";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
@@ -25,8 +26,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const scope = auth.user.role === "CHEF_SERVICE" && auth.user.agenceId === null ? undefined : auth.user.agenceId;
-  const data = await listSuccessionCases(1, 2000, scope, parsed.data.status, {
+  const agenceRestriction = concessionnaireListAgenceRestriction(auth.user);
+  const data = await listSuccessionCases(1, 2000, agenceRestriction, parsed.data.status, {
     concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
     decisionType: parsed.data.decisionType,
     dateFrom:

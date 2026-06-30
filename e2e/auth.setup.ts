@@ -19,7 +19,7 @@ setup("connexion et enregistrement de session", async ({ page }) => {
 
   await page.goto("/login");
   await page.getByLabel("Identifiant (email ou matricule)").fill(email);
-  await page.getByLabel("Mot de passe").fill(password);
+  await page.locator("#login-password").fill(password);
   await page.getByRole("button", { name: "Se connecter" }).click();
   await expect(page).toHaveURL(/\/dashboard(\/|$)/);
 

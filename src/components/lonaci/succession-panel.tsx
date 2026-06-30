@@ -1,8 +1,8 @@
 "use client";
 
-import ConcessionnaireSearchPicker, {
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import SuccessionChecklistBlock from "@/components/lonaci/succession-checklist-block";
 import SuccessionWorkflowStepper from "@/components/lonaci/succession-workflow-stepper";
@@ -103,7 +103,7 @@ function friendlySuccessionError(raw: string): string {
     case "CASE_NOT_FOUND":
       return "Dossier de succession introuvable (ID invalide ou dossier supprimé).";
     case "CONCESSIONNAIRE_NOT_FOUND":
-      return "Le concessionnaire lié au dossier n’a pas été trouvé.";
+      return "Le client lié au dossier n’a pas été trouvé.";
     case "AGENCE_FORBIDDEN":
       return "Accès refusé : vous n’avez pas les droits sur ce dossier.";
     case "ACTE_DECES_REQUIRED":
@@ -139,9 +139,9 @@ export default function SuccessionPanel() {
   const pageSize = 20;
   const [stale, setStale] = useState<StaleRow[]>([]);
 
-  const [concId, setConcId] = useState("");
-  const [createFormPdv, setCreateFormPdv] = useState<ConcessionnairePickerRow | null>(null);
-  const [manualConcIdOpen, setManualConcIdOpen] = useState(false);
+  const [clientId, setClientId] = useState("");
+  const [createFormClient, setCreateFormClient] = useState<ClientPickerRow | null>(null);
+  const [manualClientIdOpen, setManualClientIdOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [dateDeces, setDateDeces] = useState("");
   const [declComment, setDeclComment] = useState("");
@@ -168,7 +168,7 @@ export default function SuccessionPanel() {
   } | null>(null);
   const [fStatus, setFStatus] = useState<"" | "OUVERT" | "CLOTURE">("");
   const [fStatutMetier, setFStatutMetier] = useState<"" | SuccessionStatutMetier>("");
-  const [fFilterPdv, setFFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [fFilterClient, setFFilterClient] = useState<ClientPickerRow | null>(null);
   const [fDecisionType, setFDecisionType] = useState<"" | "TRANSFERT" | "RESILIATION">("");
   const [fDateFrom, setFDateFrom] = useState("");
   const [fDateTo, setFDateTo] = useState("");
@@ -198,7 +198,7 @@ export default function SuccessionPanel() {
       const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
       if (fStatus) params.set("status", fStatus);
       if (fStatutMetier) params.set("statutMetier", fStatutMetier);
-      if (fFilterPdv?.id) params.set("concessionnaireId", fFilterPdv.id);
+      if (fFilterClient?.id) params.set("lonaciClientId", fFilterClient.id);
       if (fDecisionType) params.set("decisionType", fDecisionType);
       if (fDateFrom) params.set("dateFrom", new Date(fDateFrom).toISOString());
       if (fDateTo) params.set("dateTo", new Date(fDateTo).toISOString());
@@ -270,7 +270,7 @@ export default function SuccessionPanel() {
   useEffect(() => {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fStatutMetier, fFilterPdv?.id, fDecisionType, fDateFrom, fDateTo]);
+  }, [fStatus, fStatutMetier, fFilterClient?.id, fDecisionType, fDateFrom, fDateTo]);
 
   useEffect(() => {
     void (async () => {
@@ -296,40 +296,50 @@ export default function SuccessionPanel() {
     }
   }, [selectedCaseId, loadDetail]);
 
+  const clientFromUrl = searchParams.get("lonaciClientId")?.trim() ?? searchParams.get("clientId")?.trim() ?? "";
   const concFromUrl = searchParams.get("concessionnaireId")?.trim() ?? "";
   const statusFromUrl = searchParams.get("status")?.trim() ?? "";
   const staleOnlyFromUrl = searchParams.get("staleOnly")?.trim() ?? "";
   const staleOnlyActive = staleOnlyFromUrl === "1";
   useEffect(() => {
-    if (!/^[a-f\d]{24}$/i.test(concFromUrl)) return;
-    setConcId(concFromUrl);
-    setManualConcIdOpen(false);
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`/api/concessionnaires/${encodeURIComponent(concFromUrl)}`, {
-          credentials: "include",
-          cache: "no-store",
-        });
-        if (!res.ok || cancelled) return;
-        const raw = (await res.json()) as Record<string, unknown>;
-        const id = String(raw.id ?? "").trim();
-        if (!id || cancelled) return;
-        setCreateFormPdv({
-          id,
-          codePdv: String(raw.codePdv ?? ""),
-          nomComplet: (raw.nomComplet as string | null | undefined) ?? null,
-          raisonSociale: (raw.raisonSociale as string | null | undefined) ?? null,
-          agenceId: (raw.agenceId as string | null | undefined) ?? null,
-        });
-      } catch {
-        if (!cancelled) setCreateFormPdv(null);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [concFromUrl]);
+    if (clientFromUrl && /^[a-f\d]{24}$/i.test(clientFromUrl)) {
+      setClientId(clientFromUrl);
+      setManualClientIdOpen(false);
+      let cancelled = false;
+      void (async () => {
+        try {
+          const res = await fetch(`/api/clients/${encodeURIComponent(clientFromUrl)}`, {
+            credentials: "include",
+            cache: "no-store",
+          });
+          if (!res.ok || cancelled) return;
+          const raw = (await res.json()) as { client?: Record<string, unknown> };
+          const c = raw.client;
+          if (!c || cancelled) return;
+          const id = String(c.id ?? "").trim();
+          if (!id) return;
+          setCreateFormClient({
+            id,
+            code: String(c.code ?? ""),
+            nomComplet: (c.nomComplet as string | null | undefined) ?? null,
+            raisonSociale: (c.raisonSociale as string | null | undefined) ?? null,
+            agenceId: (c.agenceId as string | null | undefined) ?? null,
+            produitsAutorises: Array.isArray(c.produitsAutorises) ? (c.produitsAutorises as string[]) : undefined,
+          });
+        } catch {
+          if (!cancelled) setCreateFormClient(null);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (concFromUrl && /^[a-f\d]{24}$/i.test(concFromUrl)) {
+      setClientId(concFromUrl);
+      setCreateFormClient(null);
+      setManualClientIdOpen(true);
+    }
+  }, [clientFromUrl, concFromUrl]);
 
   useEffect(() => {
     if (statusFromUrl === "OUVERT" || statusFromUrl === "CLOTURE") {
@@ -395,9 +405,9 @@ export default function SuccessionPanel() {
   }
 
   function resetSuccessionCreateForm() {
-    setCreateFormPdv(null);
-    setConcId("");
-    setManualConcIdOpen(false);
+    setCreateFormClient(null);
+    setClientId("");
+    setManualClientIdOpen(false);
     setDateDeces("");
     setDeclComment("");
     setActeDecesFile(null);
@@ -405,8 +415,8 @@ export default function SuccessionPanel() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
-    if (!concId.trim()) {
-      setToast({ type: "error", message: "Sélectionnez un concessionnaire dans la liste ou saisissez son ID." });
+    if (!clientId.trim()) {
+      setToast({ type: "error", message: "Sélectionnez un client dans la liste ou saisissez son ID." });
       return;
     }
     setCreating(true);
@@ -415,7 +425,11 @@ export default function SuccessionPanel() {
         throw new Error("ACTE_DECES_REQUIRED");
       }
       const form = new FormData();
-      form.set("concessionnaireId", concId.trim());
+      if (createFormClient?.id) {
+        form.set("lonaciClientId", clientId.trim());
+      } else {
+        form.set("concessionnaireId", clientId.trim());
+      }
       form.set("comment", declComment.trim() || "");
       form.set("dateDeces", dateDeces ? new Date(dateDeces).toISOString() : "");
       form.set("acteDeces", acteDecesFile);
@@ -685,15 +699,14 @@ export default function SuccessionPanel() {
           <option value="CLOTURE">CLOTURE</option>
         </select>
         <div className="min-w-0">
-          <ConcessionnaireSearchPicker
-            label={<span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Concessionnaire</span>}
-            selected={fFilterPdv}
-            onSelectedChange={setFFilterPdv}
-            statutActifOnly
-            inscriptionFinaliseeOnly
+          <ClientSearchPicker
+            label={<span className="text-[10px] font-medium uppercase tracking-wide text-slate-500">Client (filtre)</span>}
+            selected={fFilterClient}
+            onSelectedChange={setFFilterClient}
+            filter="linkedPdv"
             inputClassName={subtleFieldClass}
             showClearLink
-            searchPlaceholder="Filtrer par PDV…"
+            searchPlaceholder="Filtrer par client…"
           />
         </div>
         <select
@@ -724,7 +737,7 @@ export default function SuccessionPanel() {
           <a
             href={`/api/succession-cases/export?format=csv&${new URLSearchParams({
               ...(fStatus ? { status: fStatus } : {}),
-              ...(fFilterPdv?.id ? { concessionnaireId: fFilterPdv.id } : {}),
+              ...(fFilterClient?.id ? { lonaciClientId: fFilterClient.id } : {}),
               ...(fDecisionType ? { decisionType: fDecisionType } : {}),
               ...(fDateFrom ? { dateFrom: new Date(fDateFrom).toISOString() } : {}),
               ...(fDateTo ? { dateTo: new Date(fDateTo).toISOString() } : {}),
@@ -738,7 +751,7 @@ export default function SuccessionPanel() {
           <a
             href={`/api/succession-cases/export?format=pdf&${new URLSearchParams({
               ...(fStatus ? { status: fStatus } : {}),
-              ...(fFilterPdv?.id ? { concessionnaireId: fFilterPdv.id } : {}),
+              ...(fFilterClient?.id ? { lonaciClientId: fFilterClient.id } : {}),
               ...(fDecisionType ? { decisionType: fDecisionType } : {}),
               ...(fDateFrom ? { dateFrom: new Date(fDateFrom).toISOString() } : {}),
               ...(fDateTo ? { dateTo: new Date(fDateTo).toISOString() } : {}),
@@ -810,7 +823,7 @@ export default function SuccessionPanel() {
                   Ouvrir un dossier décès & succession
                 </h3>
                 <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
-                  Concessionnaire, date du décès, acte scanné et commentaire initial.
+                  Client Lonaci, date du décès, acte scanné et commentaire initial.
                 </p>
               </div>
               <button
@@ -830,40 +843,39 @@ export default function SuccessionPanel() {
               <div className="grid gap-3">
                 <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">Informations dossier</p>
-                  <ConcessionnaireSearchPicker
+                  <ClientSearchPicker
                     key={`succession-create-${createOpen}`}
-                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire (ACTIF) *</span>}
-                    selected={createFormPdv}
+                    label={<span className="text-xs font-medium text-slate-700">Client Lonaci *</span>}
+                    selected={createFormClient}
                     onSelectedChange={(v) => {
-                      setCreateFormPdv(v);
-                      setConcId(v?.id ?? "");
-                      if (v) setManualConcIdOpen(false);
+                      setCreateFormClient(v);
+                      setClientId(v?.id ?? "");
+                      if (v) setManualClientIdOpen(false);
                     }}
-                    statutActifOnly
-                    inscriptionFinaliseeOnly
+                    filter="linkedPdv"
                     inputClassName={fieldClass}
-                    searchPlaceholder="Rechercher (code, nom…)"
+                    searchPlaceholder="Rechercher un client (nom, code, CNI…)"
                   />
                   <button
                     type="button"
                     onClick={() => {
-                      setManualConcIdOpen((v) => !v);
-                      setCreateFormPdv(null);
+                      setManualClientIdOpen((v) => !v);
+                      setCreateFormClient(null);
                     }}
                     className="w-fit text-[11px] font-medium text-cyan-700 underline underline-offset-2 opacity-90 hover:opacity-100"
                   >
-                    {manualConcIdOpen ? "Masquer la saisie manuelle" : "Saisie manuelle (coller un ID)"}
+                    {manualClientIdOpen ? "Masquer la saisie manuelle" : "Saisie manuelle (coller un ID)"}
                   </button>
-                  {manualConcIdOpen ? (
+                  {manualClientIdOpen ? (
                     <input
-                      value={concId}
+                      value={clientId}
                       onChange={(e) => {
-                        setConcId(e.target.value);
-                        setCreateFormPdv(null);
+                        setClientId(e.target.value);
+                        setCreateFormClient(null);
                       }}
-                      placeholder="Coller l’ID concessionnaire"
+                      placeholder="Coller l’ID client Lonaci"
                       className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200"
-                      aria-label="ID concessionnaire (saisie libre)"
+                      aria-label="ID client Lonaci (saisie libre)"
                     />
                   ) : null}
                 </section>

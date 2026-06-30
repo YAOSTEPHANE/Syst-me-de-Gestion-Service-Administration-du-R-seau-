@@ -1,16 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { badRequest, conflict, forbidden, serverError } from "@/lib/api/error-responses";
+import { badRequest, conflict, forbidden, notFound, serverError } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { userHasNationalScope } from "@/lib/lonaci/access";
+import { canReadClient } from "@/lib/lonaci/access";
+import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
+import { resolveListAgenceFilter } from "@/lib/lonaci/access";
 import { CONTRAT_OPERATION_TYPES, DOSSIER_STATUSES, DOSSIER_TYPES } from "@/lib/lonaci/constants";
 import { createDossier, ensureDossierIndexes, listDossiers } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const createSchema = z.object({
   type: z.enum(DOSSIER_TYPES),
-  concessionnaireId: z.string().min(1),
+  lonaciClientId: z.string().min(1),
   payload: z.object({
     produitCode: z.string().min(1),
     operationType: z.enum(CONTRAT_OPERATION_TYPES),
@@ -43,13 +46,16 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureDossierIndexes();
-  const scopeAgenceId = userHasNationalScope(auth.user) ? undefined : auth.user.agenceId;
+  const scopeResult = resolveListAgenceFilter(auth.user, undefined);
+  const agenceRestriction = scopeResult.ok
+    ? { agenceId: scopeResult.agenceId, agenceIds: scopeResult.agenceIds }
+    : {};
   const result = await listDossiers(
     parsed.data.page,
     parsed.data.pageSize,
     parsed.data.status,
     parsed.data.type,
-    scopeAgenceId,
+    agenceRestriction,
     parsed.data.q,
     parsed.data.concessionnaireId,
     parsed.data.sortField,
@@ -69,11 +75,26 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
+
+  const client = await findLonaciClientById(parsed.data.lonaciClientId);
+  if (!client) {
+    return notFound("Client introuvable.", "CLIENT_NOT_FOUND");
+  }
+  if (!canReadClient(auth.user, client)) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+  if (!isClientStatutEligibleForContrat(client.statut)) {
+    if (client.statut === "EN_ATTENTE_N1" || client.statut === "REJETE") {
+      return conflict("Validation N1 requise avant dossier.", "CLIENT_INSCRIPTION_PENDING");
+    }
+    return conflict("Client bloque.", "CLIENT_BLOQUE");
+  }
+
   await ensureDossierIndexes();
   try {
     const dossier = await createDossier({
       type: parsed.data.type,
-      concessionnaireId: parsed.data.concessionnaireId,
+      lonaciClientId: parsed.data.lonaciClientId,
       payload: {
         produitCode: parsed.data.payload.produitCode.trim().toUpperCase(),
         operationType: parsed.data.payload.operationType,
@@ -87,18 +108,18 @@ export async function POST(request: NextRequest) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "ACTIVE_CONTRACT_EXISTS") {
       return conflict(
-        "Un contrat actif existe deja pour ce produit et ce concessionnaire.",
+        "Un contrat actif existe deja pour ce produit et ce client.",
         "ACTIVE_CONTRACT_EXISTS",
       );
     }
-    if (code === "CONCESSIONNAIRE_BLOQUE") {
-      return conflict("Concessionnaire bloque (resilie ou decede).", "CONCESSIONNAIRE_BLOQUE");
+    if (code === "DOSSIER_CLIENT_REQUIRED" || code === "PARTY_REQUIRED") {
+      return badRequest("Un client Lonaci est requis pour ouvrir un dossier.", "DOSSIER_CLIENT_REQUIRED");
     }
-    if (code === "CONCESSIONNAIRE_INSCRIPTION_PENDING") {
-      return conflict(
-        "Inscription non finalisee : validation N1 requise.",
-        "CONCESSIONNAIRE_INSCRIPTION_PENDING",
-      );
+    if (code === "CLIENT_INSCRIPTION_PENDING") {
+      return conflict("Validation N1 client requise.", "CLIENT_INSCRIPTION_PENDING");
+    }
+    if (code === "CLIENT_BLOQUE" || code === "CLIENT_NOT_FOUND") {
+      return conflict("Client non eligible.", code);
     }
     if (code === "PRODUIT_INVALID") {
       return badRequest("Produit invalide.", "PRODUIT_INVALID");

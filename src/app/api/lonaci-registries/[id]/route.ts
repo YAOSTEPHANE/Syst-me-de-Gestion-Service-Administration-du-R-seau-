@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { forbidden } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { ensureRegistryIndexes, softDeleteRegistry, updateRegistry } from "@/lib/lonaci/lonaci-registries";
+import {
+  ensureRegistryIndexes,
+  findRegistryById,
+  softDeleteRegistry,
+  updateRegistry,
+  userCanAccessRegistry,
+} from "@/lib/lonaci/lonaci-registries";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const patchSchema = z.object({
@@ -28,6 +35,14 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   }
 
   await ensureRegistryIndexes();
+  const existing = await findRegistryById(id);
+  if (!existing) {
+    return NextResponse.json({ message: "Entree introuvable" }, { status: 404 });
+  }
+  if (!userCanAccessRegistry(auth.user, existing)) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+
   const updated = await updateRegistry(id, {
     ...parsed.data,
     actorId: auth.user._id ?? "",
@@ -59,6 +74,14 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
   const { id } = await context.params;
   await ensureRegistryIndexes();
+  const existing = await findRegistryById(id);
+  if (!existing) {
+    return NextResponse.json({ message: "Entree introuvable" }, { status: 404 });
+  }
+  if (!userCanAccessRegistry(auth.user, existing)) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+
   const deleted = await softDeleteRegistry(id, auth.user._id ?? "");
   if (!deleted) {
     return NextResponse.json({ message: "Entree introuvable" }, { status: 404 });

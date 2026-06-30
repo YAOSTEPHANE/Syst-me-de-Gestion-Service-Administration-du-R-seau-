@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
-  concessionnaireListScopeAgenceId,
   ensureConcessionnaireIndexes,
   getConcessionnairesPanelStats,
 } from "@/lib/lonaci/concessionnaires";
@@ -32,12 +32,12 @@ export async function GET(request: NextRequest) {
     parsed.data.includeDeleted === "true" && auth.user.role === "CHEF_SERVICE";
 
   await ensureConcessionnaireIndexes();
-  const scope = concessionnaireListScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
 
   const stats = await getConcessionnairesPanelStats({
     q: parsed.data.q,
-    agenceId: parsed.data.agenceId,
-    scopeAgenceId: scope,
+    ...listAgenceScopeFields(agenceScope),
     includeDeleted,
     statut: undefined,
     statutBancarisation: undefined,

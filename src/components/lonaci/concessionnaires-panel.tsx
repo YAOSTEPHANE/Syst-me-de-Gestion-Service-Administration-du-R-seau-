@@ -1,6 +1,10 @@
 "use client";
 
 import ConcessionnaireFicheModal from "@/components/lonaci/concessionnaire-fiche-modal";
+import ClientSearchPicker, {
+  pickAgenceIdFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import type { ConcessionnairesMapPointsResponse } from "@/lib/lonaci/concessionnaires-map-types";
 import Image from "next/image";
@@ -425,6 +429,7 @@ export default function ConcessionnairesPanel() {
   /** Heure affichée après chargement réussi — évite l’écart SSR/client (new Date() au rendu). */
   const [lastSyncLabel, setLastSyncLabel] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [promotionClient, setPromotionClient] = useState<ClientPickerRow | null>(null);
   const createFormRef = useRef<HTMLFormElement>(null);
   const [ficheModalId, setFicheModalId] = useState<string | null>(null);
   const [ficheModalTab, setFicheModalTab] = useState<FicheModalTab>("fiche");
@@ -569,6 +574,7 @@ export default function ConcessionnairesPanel() {
 
   useEffect(() => {
     if (createOpen) return;
+    setPromotionClient(null);
     setPhotoPreview((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -584,12 +590,40 @@ export default function ConcessionnairesPanel() {
     if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
   }, [produitsAutorises]);
 
+  function applyPromotionClient(row: ClientPickerRow | null) {
+    setPromotionClient(row);
+    if (!row) return;
+    const full = (row.nomComplet || row.raisonSociale || "").trim();
+    if (full) {
+      const parts = full.split(/\s+/).filter(Boolean);
+      if (parts.length === 1) {
+        setPrenom(parts[0]!);
+        setNom(parts[0]!);
+      } else {
+        setNom(parts[parts.length - 1]!);
+        setPrenom(parts.slice(0, -1).join(" "));
+      }
+    }
+    const agenceFromClient = pickAgenceIdFromClient(
+      row,
+      agencesActives.map((a) => a.id),
+    );
+    if (agenceFromClient) setAgenceId(agenceFromClient);
+    if (row.produitsAutorises?.length) {
+      setProduitsAutorises(row.produitsAutorises.map((c) => c.trim().toUpperCase()).filter(Boolean));
+    }
+    setCniNumero((row.cniNumero ?? "").trim());
+    setTel((row.telephone ?? "").trim());
+  }
+
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setCreating(true);
     try {
-      if (nom.trim().length < 2 || prenom.trim().length < 2) {
-        throw new Error("Le nom et le prénom sont obligatoires (2 caractères minimum chacun).");
+      if (!promotionClient?.id?.trim()) {
+        throw new Error(
+          "Sélectionnez un client Lonaci ayant terminé son parcours (statut actif, caution payée).",
+        );
       }
       if (!agenceId.trim()) {
         throw new Error("L’agence de rattachement est obligatoire.");
@@ -602,10 +636,6 @@ export default function ConcessionnairesPanel() {
       if (bancarisation === "BANCARISE" && !compteBancaire.trim()) {
         throw new Error("Le numéro de compte est obligatoire pour passer au statut BANCARISÉ.");
       }
-      const cni = cniNumero.trim();
-      if (cni.length > 0 && cni.length < 4) {
-        throw new Error("Numéro CNI : au moins 4 caractères si renseigné.");
-      }
       const ct = codeTerminal.trim();
       const cc = codeConcessionnaire.trim();
       if (ct.length > 64 || cc.length > 64) {
@@ -613,24 +643,14 @@ export default function ConcessionnairesPanel() {
       }
 
       const body: Record<string, unknown> = {
-        nom: nom.trim(),
-        prenom: prenom.trim(),
-        nomComplet: `${prenom.trim()} ${nom.trim()}`.trim(),
+        sourceLonaciClientId: promotionClient.id.trim(),
         codeTerminal: ct || null,
         codeConcessionnaire: cc || null,
-        cniNumero: cni || null,
-        email: null,
-        telephonePrincipal: tel.trim() || null,
-        telephoneSecondaire: telSecondary.trim() || null,
-        ville: null,
         agenceId: agenceId.trim(),
         produitsAutorises,
         statutBancarisation: bancarisation,
         compteBancaire: compteBancaire.trim() || null,
         observations: observations.trim() || null,
-        adresse: null,
-        codePostal: null,
-        notesInternes: null,
         gps: { lat: la, lng: lo },
       };
       const res = await fetch("/api/concessionnaires", {
@@ -1239,7 +1259,7 @@ export default function ConcessionnairesPanel() {
                   Nouveau concessionnaire
                 </h3>
                 <p className="mt-0.5 text-xs text-slate-600">
-                  Parcours d&apos;inscription : dossier en cours → pièces & checklist → N1 (code PDV) → caution payée → actif.
+                  Promotion d&apos;un client Lonaci (parcours terminé, statut actif) en point de vente.
                 </p>
               </div>
               <button
@@ -1315,20 +1335,38 @@ export default function ConcessionnairesPanel() {
                     </div>
                   </section>
 
+                  <section className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3 shadow-sm">
+                    <ClientSearchPicker
+                      label={
+                        <span className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
+                          Client Lonaci source *
+                        </span>
+                      }
+                      selected={promotionClient}
+                      onSelectedChange={applyPromotionClient}
+                      filter="promotion"
+                      searchPlaceholder="Client actif éligible à la promotion PDV…"
+                      disabled={creating}
+                    />
+                    <p className="mt-2 text-[11px] text-slate-600">
+                      Seuls les clients au statut actif (caution payée), non encore promus, sont proposés.
+                    </p>
+                  </section>
+
                   <section className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Identité</p>
+                    <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Identité (depuis le client)</p>
                     <div className="grid gap-1.5 sm:grid-cols-2">
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Prénom *</span>
-                        <input required value={prenom} onChange={(e) => setPrenom(e.target.value)} className={inputClass} />
+                        <span className="text-xs font-medium text-slate-700">Prénom</span>
+                        <input readOnly value={prenom} className={`${inputClass} bg-slate-50`} />
                       </label>
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Nom *</span>
-                        <input required value={nom} onChange={(e) => setNom(e.target.value)} className={inputClass} />
+                        <span className="text-xs font-medium text-slate-700">Nom</span>
+                        <input readOnly value={nom} className={`${inputClass} bg-slate-50`} />
                       </label>
                       <label className="grid gap-1 sm:col-span-2">
-                        <span className="text-xs font-medium text-slate-700">Numéro CNI *</span>
-                        <input required value={cniNumero} onChange={(e) => setCniNumero(e.target.value)} className={inputClass} />
+                        <span className="text-xs font-medium text-slate-700">Numéro CNI</span>
+                        <input readOnly value={cniNumero} className={`${inputClass} bg-slate-50`} />
                       </label>
                       <label className="grid gap-1">
                         <span className="text-xs font-medium text-slate-700">Code terminal</span>

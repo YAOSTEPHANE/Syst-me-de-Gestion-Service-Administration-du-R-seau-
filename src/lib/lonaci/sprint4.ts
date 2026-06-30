@@ -35,6 +35,7 @@ import {
 import { listContratsAllMatching, type ListContratsParams } from "@/lib/lonaci/contracts";
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, listAgenceIdsZoneAbidjan, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -949,6 +950,7 @@ export async function listPdvIntegrations(input: {
   page: number;
   pageSize: number;
   agenceId?: string;
+  agenceIds?: string[];
   produitCode?: string;
   status?: "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
   dateFrom?: Date;
@@ -958,7 +960,11 @@ export async function listPdvIntegrations(input: {
   const skip = (input.page - 1) * input.pageSize;
   const col = db.collection<StoredPdvIntegration>(PDV_INTEGRATIONS_COLLECTION);
   const filter: Record<string, unknown> = { deletedAt: null };
-  if (input.agenceId) filter.agenceId = input.agenceId;
+  const agenceMongo = restrictionToMongoAgenceFilter({
+    agenceId: input.agenceId,
+    agenceIds: input.agenceIds,
+  });
+  if (agenceMongo) filter.agenceId = agenceMongo;
   if (input.produitCode) filter.produitCode = input.produitCode.toUpperCase();
   if (input.status) filter.status = input.status;
   if (input.dateFrom || input.dateTo) {

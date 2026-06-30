@@ -1,10 +1,10 @@
 "use client";
 
-import ConcessionnaireSearchPicker, {
-  pickAgenceIdFromConcessionnaire,
-  pickProduitCodeFromConcessionnaire,
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  pickAgenceIdFromClient,
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -46,7 +46,7 @@ async function downloadAgrementsExcelTemplate() {
     "dateReception",
     "referenceOfficielle",
     "agenceId",
-    "concessionnaireId",
+    "lonaciClientId",
     "observations",
     "documentPdfName",
   ];
@@ -55,7 +55,7 @@ async function downloadAgrementsExcelTemplate() {
     dateReception: new Date().toISOString(),
     referenceOfficielle: "AGR-2026-001",
     agenceId: "ID_AGENCE",
-    concessionnaireId: "ID_CONCESSIONNAIRE",
+    lonaciClientId: "ID_CLIENT_LONACI",
     observations: "Exemple import agrement",
     documentPdfName: "obligatoire-via-formulaire.pdf",
   };
@@ -71,7 +71,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
     dateReception: (raw.dateReception as string | null) ?? null,
     referenceOfficielle: (raw.referenceOfficielle as string | null) ?? null,
     agenceId: (raw.agenceId as string | null) ?? null,
-    concessionnaireId: (raw.concessionnaireId as string | null) ?? null,
+    lonaciClientId: (raw.lonaciClientId as string | null) ?? (raw.concessionnaireId as string | null) ?? null,
     observations: (raw.observations as string | null) ?? null,
   });
   const lower = file.name.toLowerCase();
@@ -99,7 +99,7 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
         "[a-z0-9\\-_/]{3,80}",
       ),
       agenceId: captureByAliases(source, ["agence id", "id agence"], "[a-z0-9]{8,}"),
-      concessionnaireId: captureByAliases(source, ["concessionnaire id", "pdv id", "id pdv"], "[a-z0-9]{8,}"),
+      lonaciClientId: captureByAliases(source, ["client id", "id client", "lonaci client"], "[a-z0-9]{8,}"),
       observations: captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}"),
     });
     const json = JSON.stringify([row]);
@@ -139,7 +139,7 @@ export default function AgrementsPanel() {
   const [dateReception, setDateReception] = useState("");
   const [referenceOfficielle, setReferenceOfficielle] = useState("");
   const [agenceId, setAgenceId] = useState("");
-  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [createClient, setCreateClient] = useState<ClientPickerRow | null>(null);
   const [observations, setObservations] = useState("");
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
@@ -201,7 +201,7 @@ export default function AgrementsPanel() {
       form.set("dateReception", new Date(dateReception).toISOString());
       form.set("referenceOfficielle", referenceOfficielle.trim());
       form.set("agenceId", agenceId.trim());
-      form.set("concessionnaireId", createPdv?.id?.trim() ?? "");
+      form.set("lonaciClientId", createClient?.id?.trim() ?? "");
       form.set("observations", observations.trim());
       form.set("document", pdfFile);
       const res = await fetch("/api/agrements", { method: "POST", credentials: "include", body: form });
@@ -213,7 +213,7 @@ export default function AgrementsPanel() {
       setDateReception("");
       setReferenceOfficielle("");
       setAgenceId("");
-      setCreatePdv(null);
+      setCreateClient(null);
       setObservations("");
       setPdfFile(null);
       setCreateOpen(false);
@@ -306,7 +306,7 @@ export default function AgrementsPanel() {
     setDateReception("");
     setReferenceOfficielle("");
     setAgenceId("");
-    setCreatePdv(null);
+    setCreateClient(null);
     setObservations("");
     setPdfFile(null);
   }
@@ -660,27 +660,22 @@ export default function AgrementsPanel() {
                     </select>
                   </label>
 
-                  <ConcessionnaireSearchPicker
+                  <ClientSearchPicker
                     key={`agrement-create-${createOpen}`}
-                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire</span>}
-                    selected={createPdv}
+                    label={<span className="text-xs font-medium text-slate-700">Client Lonaci</span>}
+                    selected={createClient}
                     onSelectedChange={(r) => {
-                      setCreatePdv(r);
+                      setCreateClient(r);
                       const codes = produits.filter((p) => p.actif).map((p) => p.code);
-                      const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                      const picked = pickProduitCodeFromClient(r, codes);
                       if (picked) setProduitCode(picked);
                       const agIds = agences.filter((a) => a.actif && a.id).map((a) => a.id);
-                      const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                      const pickedAg = pickAgenceIdFromClient(r, agIds);
                       if (pickedAg) setAgenceId(pickedAg);
                     }}
-                    statutActifOnly
-                    inscriptionFinaliseeOnly
-                    listExtraParams={{
-                      ...(agenceId.trim() ? { agenceId: agenceId.trim() } : {}),
-                      ...(produitCode.trim() ? { produitCode: produitCode.trim().toUpperCase() } : {}),
-                    }}
+                    filter="contrat"
                     inputClassName={inputClass}
-                    searchPlaceholder="Rechercher (code, nom…)"
+                    searchPlaceholder="Rechercher un client (nom, code, CNI…)"
                   />
                     </div>
                   </section>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { GRATTAGE_CONTRAT_STATUTS } from "@/lib/lonaci/constants";
 import {
@@ -10,12 +11,6 @@ import {
   listGrattageContrats,
 } from "@/lib/lonaci/grattage-contrats";
 import { GRATTAGE_CONTRAT_ROLES } from "@/lib/lonaci/grattage-access";
-
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) return undefined;
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -42,9 +37,14 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureGrattageContratIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const data = await listGrattageContrats({
-    ...parsed.data,
-    scopeAgenceId: listScopeAgenceId(auth.user),
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    concessionnaireId: parsed.data.concessionnaireId,
+    statut: parsed.data.statut,
+    ...listAgenceScopeFields(agenceScope),
   });
   return NextResponse.json(data, { status: 200 });
 }

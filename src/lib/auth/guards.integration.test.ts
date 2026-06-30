@@ -62,7 +62,11 @@ function makeBaseUser(overrides?: Record<string, unknown>) {
 describe("requireApiAuth module authorization", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    getSessionFromRequestMock.mockResolvedValue({ sub: "u1", sessionId: "s1" });
+    getSessionFromRequestMock.mockImplementation(async () => {
+      const user = await findUserByIdMock("u1");
+      if (!user) return null;
+      return { sub: user._id ?? "u1", sessionId: "s1", role: user.role };
+    });
     clearCurrentSessionMock.mockResolvedValue(undefined);
     setUserCurrentSessionMock.mockResolvedValue(undefined);
     touchSessionActivityMock.mockResolvedValue(undefined);

@@ -25,6 +25,7 @@ const listSchema = z.object({
     .enum(["DOSSIER_RECU", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "RESILIE", "REJETEE"])
     .optional(),
   concessionnaireId: z.string().optional(),
+  lonaciClientId: z.string().optional(),
   produitCode: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
@@ -44,11 +45,16 @@ export async function GET(request: NextRequest) {
   await ensureResiliationIndexes();
   const dateFrom = parsed.data.dateFrom?.trim() ? new Date(parsed.data.dateFrom) : undefined;
   const dateTo = parsed.data.dateTo?.trim() ? new Date(parsed.data.dateTo) : undefined;
+  const { listFilterConcessionnaireId } = await import("@/lib/lonaci/client-party-resolve");
+  const concessionnaireFilter = await listFilterConcessionnaireId({
+    lonaciClientId: parsed.data.lonaciClientId,
+    concessionnaireId: parsed.data.concessionnaireId,
+  });
   const result = await listResiliations({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     statut: parsed.data.statut as ResiliationStatus | undefined,
-    concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
+    concessionnaireId: concessionnaireFilter,
     produitCode: parsed.data.produitCode?.trim() || undefined,
     dateFrom: dateFrom && !Number.isNaN(dateFrom.getTime()) ? dateFrom : undefined,
     dateTo: dateTo && !Number.isNaN(dateTo.getTime()) ? dateTo : undefined,
@@ -63,17 +69,41 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   const form = await request.formData();
-  const concessionnaireId = String(form.get("concessionnaireId") ?? "").trim();
+  const lonaciClientId = String(form.get("lonaciClientId") ?? "").trim();
+  const concessionnaireIdLegacy = String(form.get("concessionnaireId") ?? "").trim();
   const produitCode = String(form.get("produitCode") ?? "").trim();
   const dateReceptionRaw = String(form.get("dateReception") ?? "").trim();
   const motif = String(form.get("motif") ?? "").trim();
   const commentaire = String(form.get("commentaire") ?? "").trim();
-  if (!concessionnaireId || !produitCode || !dateReceptionRaw || !motif) {
+  if ((!lonaciClientId && !concessionnaireIdLegacy) || !produitCode || !dateReceptionRaw || !motif) {
     return badRequest("Champs obligatoires manquants.", "MISSING_REQUIRED_FIELDS");
   }
   const dateReception = new Date(dateReceptionRaw);
   if (Number.isNaN(dateReception.getTime())) {
     return badRequest("Date de réception invalide.", "INVALID_DATE_RECEPTION");
+  }
+
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  let concessionnaireId: string;
+  try {
+    const party = await resolveFormPartyIds({
+      lonaciClientId: lonaciClientId || null,
+      concessionnaireId: concessionnaireIdLegacy || null,
+      requirePdv: true,
+    });
+    if (!party.concessionnaireId) {
+      return badRequest("Client sans point de vente associé.", "CLIENT_NOT_PROMOTED");
+    }
+    concessionnaireId = party.concessionnaireId;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    if (code === "CLIENT_NOT_PROMOTED" || code === "CLIENT_REQUIRED") {
+      return badRequest("Sélectionnez un client lié à un point de vente.", "CLIENT_NOT_PROMOTED");
+    }
+    return badRequest("Client invalide.", "CLIENT_INVALID");
   }
 
   await ensureResiliationIndexes();

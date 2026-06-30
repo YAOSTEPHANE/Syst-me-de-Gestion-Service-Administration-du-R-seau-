@@ -9,40 +9,44 @@ import {
   ensureSuccessionIndexes,
   listSuccessionCases,
 } from "@/lib/lonaci/succession";
+import { concessionnaireListAgenceRestriction } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
-import type { UserDocument } from "@/lib/lonaci/types";
 import {
   MAX_SUCCESSION_FILE_BYTES,
   saveSuccessionActeDeces,
   SUCCESSION_ALLOWED_MIME,
 } from "@/lib/storage/succession-files";
 
-const createSchema = z.object({
-  concessionnaireId: z.string().min(1),
-  dateDeces: z.string().datetime().nullable().optional(),
-  comment: z.string().max(5000).nullable().optional(),
-});
+const createSchema = z
+  .object({
+    concessionnaireId: z.string().min(1).optional(),
+    lonaciClientId: z.string().min(1).optional(),
+    dateDeces: z.string().datetime().nullable().optional(),
+    comment: z.string().max(5000).nullable().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const client = (data.lonaciClientId ?? "").trim();
+    const pdv = (data.concessionnaireId ?? "").trim();
+    if (!client && !pdv) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Client Lonaci requis.",
+        path: ["lonaciClientId"],
+      });
+    }
+  });
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(["OUVERT", "CLOTURE"]).optional(),
   concessionnaireId: z.string().optional(),
+  lonaciClientId: z.string().optional(),
   decisionType: z.enum(["TRANSFERT", "RESILIATION"]).optional(),
   statutMetier: z.enum(SUCCESSION_STATUTS_METIER).optional(),
   dateFrom: z.string().datetime().optional(),
   dateTo: z.string().datetime().optional(),
 });
-
-function listScopeAgenceId(user: UserDocument): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) {
-    return user.agenceId;
-  }
-  return undefined;
-}
 
 export async function GET(request: NextRequest) {
   const rateLimitResponse = await enforceRateLimit(request, {
@@ -63,14 +67,19 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureSuccessionIndexes();
-  const scope = listScopeAgenceId(auth.user);
+  const agenceRestriction = concessionnaireListAgenceRestriction(auth.user);
+  const { listFilterConcessionnaireId } = await import("@/lib/lonaci/client-party-resolve");
+  const concessionnaireFilter = await listFilterConcessionnaireId({
+    lonaciClientId: parsed.data.lonaciClientId,
+    concessionnaireId: parsed.data.concessionnaireId,
+  });
   const result = await listSuccessionCases(
     parsed.data.page,
     parsed.data.pageSize,
-    scope,
+    agenceRestriction,
     parsed.data.status,
     {
-      concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
+      concessionnaireId: concessionnaireFilter,
       decisionType: parsed.data.decisionType,
       statutMetier: parsed.data.statutMetier,
       dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
@@ -99,6 +108,7 @@ export async function POST(request: NextRequest) {
   }
   const parsed = createSchema.safeParse({
     concessionnaireId: form.get("concessionnaireId"),
+    lonaciClientId: form.get("lonaciClientId"),
     dateDeces: (() => {
       const v = form.get("dateDeces");
       return typeof v === "string" && v.trim().length > 0 ? v : null;
@@ -107,6 +117,25 @@ export async function POST(request: NextRequest) {
   });
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
+  }
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  let concessionnaireId: string;
+  try {
+    const party = await resolveFormPartyIds({
+      lonaciClientId: (parsed.data.lonaciClientId ?? "").trim() || null,
+      concessionnaireId: (parsed.data.concessionnaireId ?? "").trim() || null,
+      requirePdv: true,
+    });
+    if (!party.concessionnaireId) {
+      return badRequest("Client sans point de vente associé.", "CLIENT_NOT_PROMOTED");
+    }
+    concessionnaireId = party.concessionnaireId;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    return badRequest("Sélectionnez un client lié à un point de vente.", "CLIENT_NOT_PROMOTED");
   }
   const acte = form.get("acteDeces");
   if (!(acte instanceof File)) {
@@ -124,13 +153,13 @@ export async function POST(request: NextRequest) {
   }
   const rawFilename = acte.name || "acte-deces";
   const bytes = Buffer.from(await acte.arrayBuffer());
-  const storageCaseId = `declaration-${parsed.data.concessionnaireId}-${Date.now()}`;
+  const storageCaseId = `declaration-${concessionnaireId}-${Date.now()}`;
   const storedRelativePath = await saveSuccessionActeDeces(storageCaseId, rawFilename, bytes);
 
   await ensureSuccessionIndexes();
   try {
     const doc = await createSuccessionCase({
-      concessionnaireId: parsed.data.concessionnaireId,
+      concessionnaireId,
       dateDeces: parsed.data.dateDeces ? new Date(parsed.data.dateDeces) : null,
       comment: parsed.data.comment ?? null,
       acteDeces: {

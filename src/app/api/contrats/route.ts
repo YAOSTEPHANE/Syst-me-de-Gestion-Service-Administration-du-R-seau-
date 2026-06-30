@@ -5,12 +5,12 @@ import { ObjectId } from "mongodb";
 import { apiError, badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
-import { isStatutFicheGelee } from "@/lib/lonaci/access";
+import { isStatutFicheGelee, resolveListAgenceFilter } from "@/lib/lonaci/access";
+import { restrictionToMongoAgenceFilter, restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
 import {
   findContratById,
   hasActiveContractForParty,
   listContrats,
-  listScopeAgenceIdForContratsList,
 } from "@/lib/lonaci/contracts";
 import { contratMatchesParty, type ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
 import {
@@ -105,17 +105,30 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
-  const scopeAgenceId = listScopeAgenceIdForContratsList(auth.user);
+  const agenceScope = resolveListAgenceFilter(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+  const agenceRestriction = {
+    agenceId: agenceScope.agenceId,
+    agenceIds: agenceScope.agenceIds,
+  };
+  const agenceWhere = restrictionToPrismaAgenceWhere(agenceRestriction);
+  const mongoAgenceFilter = restrictionToMongoAgenceFilter(agenceRestriction);
+  const agenceIdForList =
+    agenceRestriction.agenceIds && agenceRestriction.agenceIds.length > 1
+      ? undefined
+      : agenceRestriction.agenceId ?? agenceRestriction.agenceIds?.[0];
   let allowedConcessionnaireIds: string[] | null = null;
   let allowedLonaciClientIds: string[] | null = null;
-  if (scopeAgenceId) {
+  if (Object.keys(agenceWhere).length > 0) {
     const [scopedPdv, scopedClients] = await Promise.all([
       prisma.concessionnaire.findMany({
-        where: { deletedAt: null, agenceId: scopeAgenceId },
+        where: { deletedAt: null, ...agenceWhere },
         select: { id: true },
       }),
       prisma.lonaciClient.findMany({
-        where: { deletedAt: null, agenceId: scopeAgenceId },
+        where: { deletedAt: null, ...agenceWhere },
         select: { id: true },
       }),
     ]);
@@ -156,8 +169,6 @@ export async function GET(request: NextRequest) {
       if (!Number.isNaN(t)) dateEffetTo = new Date(t);
     }
   }
-
-  const agenceIdForList = scopeAgenceId ?? parsed.data.agenceId ?? undefined;
 
   const result = await listContrats({
     page: parsed.data.page,
@@ -297,7 +308,7 @@ export async function GET(request: NextRequest) {
     deletedAt: null,
     type: "CONTRAT_ACTUALISATION",
   };
-  if (parsed.data.agenceId) dossierFilter.agenceId = parsed.data.agenceId;
+  if (mongoAgenceFilter) dossierFilter.agenceId = mongoAgenceFilter;
   if (parsed.data.concessionnaireId) dossierFilter.concessionnaireId = parsed.data.concessionnaireId;
   if (parsed.data.produitCode) dossierFilter["payload.produitCode"] = parsed.data.produitCode.trim().toUpperCase();
 
@@ -347,10 +358,8 @@ export async function GET(request: NextRequest) {
     type: "CONTRAT_ACTUALISATION",
     status: "VALIDE_N2",
   };
-  if (scopeAgenceId) {
-    toSignFilter.agenceId = scopeAgenceId;
-  } else if (parsed.data.agenceId?.trim()) {
-    toSignFilter.agenceId = parsed.data.agenceId.trim();
+  if (mongoAgenceFilter) {
+    toSignFilter.agenceId = mongoAgenceFilter;
   }
   if (parsed.data.concessionnaireId?.trim()) {
     toSignFilter.concessionnaireId = parsed.data.concessionnaireId.trim();

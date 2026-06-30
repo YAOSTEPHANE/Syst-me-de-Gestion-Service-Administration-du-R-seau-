@@ -6,7 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import type { ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
-import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee } from "@/lib/lonaci/access";
+import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee, resolveListAgenceFilter } from "@/lib/lonaci/access";
 import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
 const REF_COUNTER_ID = "contrat_ref";
@@ -542,12 +542,9 @@ export type ContratListRow = {
 };
 
 /** Vue nationale (chef de service sans agence) vs périmètre agence fixé — aligné export CSV contrats. */
-export function listScopeAgenceIdForContratsList(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) return user.agenceId;
-  return undefined;
+export function listScopeAgenceIdForContratsList(user: UserDocument): string | undefined {
+  const result = resolveListAgenceFilter(user, undefined);
+  return result.ok ? result.agenceId : undefined;
 }
 
 export type ListContratsParams = {

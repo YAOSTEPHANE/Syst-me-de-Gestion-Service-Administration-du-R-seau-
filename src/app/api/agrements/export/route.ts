@@ -3,6 +3,7 @@ import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { ensureAgrementsIndexes, listAgrements } from "@/lib/lonaci/agrements";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 
@@ -30,10 +31,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
   await ensureAgrementsIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listAgrements({
     page: 1,
     pageSize: 20000,
-    agenceId: parsed.data.agenceId?.trim() || undefined,
+    ...listAgenceScopeFields(agenceScope),
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,

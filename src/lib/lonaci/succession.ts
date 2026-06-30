@@ -18,6 +18,7 @@ import type { SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib
 import { successionStatutMetierFields } from "@/lib/lonaci/succession-statut-metier";
 import type { SuccessionStatutMetier } from "@/lib/lonaci/succession-statut-metier";
 import { successionStaleAlertResetFields } from "@/lib/lonaci/succession-stale-alerts";
+import { restrictionToMongoAgenceFilter, type ListAgenceRestriction } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -580,7 +581,7 @@ export async function findSuccessionCaseById(id: string): Promise<SuccessionCase
 export async function listSuccessionCases(
   page: number,
   pageSize: number,
-  scopeAgenceId: string | null | undefined,
+  agenceRestriction: ListAgenceRestriction,
   status?: SuccessionCaseDocument["status"],
   filters?: {
     concessionnaireId?: string;
@@ -592,7 +593,8 @@ export async function listSuccessionCases(
 ) {
   const db = await getDatabase();
   const filter: Record<string, unknown> = { deletedAt: null };
-  if (scopeAgenceId) filter.agenceId = scopeAgenceId;
+  const agenceMongo = restrictionToMongoAgenceFilter(agenceRestriction);
+  if (agenceMongo) filter.agenceId = agenceMongo;
   if (status) filter.status = status;
   if (filters?.concessionnaireId) filter.concessionnaireId = filters.concessionnaireId;
   if (filters?.decisionType) filter["decision.type"] = filters.decisionType;

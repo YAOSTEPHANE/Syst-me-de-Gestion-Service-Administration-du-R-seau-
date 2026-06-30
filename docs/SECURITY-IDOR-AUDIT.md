@@ -29,7 +29,8 @@ Inventaire des endpoints qui acceptent un identifiant (dossier, PDV, pièce join
 | `GET /api/concessionnaires/[id]` (+ pièces, audit) | OK | Contrôles périmètre dans les handlers. |
 | `POST /api/notifications/[id]/read` | OK | `markNotificationRead` filtre sur `userId` Mongo. |
 | `GET /api/signatures/dossier/[token]` | OK | Accès **public** par design (secret dans l’URL) + rate limit. |
-| Listes filtrables (contrats, PDV, etc.) | À surveiller | Vérifier que l’UI n’envoie pas d’`agenceId` arbitraire et que le backend applique le scope utilisateur (plusieurs routes fixent le périmètre côté serveur). |
+| `PATCH/DELETE /api/lonaci-registries/[id]` | **Corrigé** | `findRegistryById` + `userCanAccessRegistry` avant mutation. |
+| Listes filtrables (contrats, registres, bancarisation, cessions, agréments, PDV, rapports, attestations, grattage, clients, etc.) | **Corrigé** | `resolveListAgenceFilter` / `requireListAgenceScope` impose le périmètre agence ; paramètre `agenceId` arbitraire refusé (403). |
 
 ## Actions recommandées (hors correctifs déjà faits)
 
@@ -43,7 +44,10 @@ Inventaire des endpoints qui acceptent un identifiant (dossier, PDV, pièce join
 - `src/app/api/agrements/[id]/document/route.ts`
 - `src/app/api/cessions/[id]/attachments/[attachmentId]/route.ts`
 - `src/app/api/resiliations/[id]/attachments/[attachmentId]/route.ts`
-- `src/lib/lonaci/access.ts` — `canReadCessionScopeForUser`
+- `src/lib/lonaci/access.ts` — `canReadCessionScopeForUser`, `resolveListAgenceFilter`
+- `src/lib/api/list-agence-scope.ts` — `requireListAgenceScope`
+- `src/lib/lonaci/lonaci-registries.ts` — `findRegistryById`, `userCanAccessRegistry`
+- `src/app/api/lonaci-registries/[id]/route.ts`
 - `src/lib/lonaci/cessions.ts` — `getCessionAttachmentWithScope`
 - `src/lib/lonaci/resiliations.ts` — `getResiliationAttachmentWithConcessionnaire`
 - `src/lib/lonaci/agrements.ts` — métadonnées `agenceId` / `concessionnaireId` sur `getAgrementDocumentMeta`

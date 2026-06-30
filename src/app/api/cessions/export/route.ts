@@ -2,12 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
   buildCessionsExportFiltersSummary,
   renderCessionsListPdf,
 } from "@/lib/lonaci/cessions-export";
 import { ensureCessionIndexes, listCessionsForExport } from "@/lib/lonaci/cessions";
-import { concessionnaireListScopeAgenceId } from "@/lib/lonaci/concessionnaires";
 import { listAgences } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -49,9 +49,10 @@ export async function GET(request: NextRequest) {
 
   await ensureCessionIndexes();
 
-  const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
-  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
-  const agenceId = scopeAgenceId ?? requestedAgenceId;
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const scopeFields = listAgenceScopeFields(agenceScope);
+  const agenceId = scopeFields.scopeAgenceId ?? scopeFields.scopeAgenceIds?.[0];
   const dateFrom = parseFilterDate(parsed.data.dateFrom, false);
   const dateTo = parseFilterDate(parsed.data.dateTo, true);
 
@@ -63,8 +64,7 @@ export async function GET(request: NextRequest) {
     kind,
     statut,
     produitCode,
-    agenceId,
-    scopeAgenceId,
+    ...scopeFields,
     dateFrom,
     dateTo,
   });

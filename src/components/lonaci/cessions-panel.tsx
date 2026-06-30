@@ -1,10 +1,10 @@
 "use client";
 
-import ConcessionnaireSearchPicker, {
-  pickAgenceIdFromConcessionnaire,
-  pickProduitCodeFromConcessionnaire,
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  pickAgenceIdFromClient,
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import Link from "next/link";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
@@ -221,9 +221,9 @@ export default function CessionsPanel() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [kind, setKind] = useState<CessionKind>("CESSION");
 
-  const [cedantPdv, setCedantPdv] = useState<ConcessionnairePickerRow | null>(null);
-  const [beneficiairePdv, setBeneficiairePdv] = useState<ConcessionnairePickerRow | null>(null);
-  const [delocPdv, setDelocPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [cedantClient, setCedantClient] = useState<ClientPickerRow | null>(null);
+  const [beneficiaireClient, setBeneficiaireClient] = useState<ClientPickerRow | null>(null);
+  const [delocClient, setDelocClient] = useState<ClientPickerRow | null>(null);
   const [produitCode, setProduitCode] = useState("");
   const [oldAdresse, setOldAdresse] = useState("");
   const [oldAgenceId, setOldAgenceId] = useState("");
@@ -396,9 +396,9 @@ export default function CessionsPanel() {
 
   function closeCreate() {
     setCreateOpen(false);
-    setDelocPdv(null);
-    setCedantPdv(null);
-    setBeneficiairePdv(null);
+    setDelocClient(null);
+    setCedantClient(null);
+    setBeneficiaireClient(null);
     setProduitCode("");
     setOldAdresse("");
     setOldAgenceId("");
@@ -418,8 +418,8 @@ export default function CessionsPanel() {
     setCreateError(null);
     try {
       if (kind === "CESSION" || kind === "CESSION_DELOCALISATION") {
-        if (!cedantPdv?.id || !beneficiairePdv?.id) {
-          setCreateError("Sélectionnez le cédant et le bénéficiaire (cessionnaire).");
+        if (!cedantClient?.id || !beneficiaireClient?.id) {
+          setCreateError("Sélectionnez le cédant et le bénéficiaire (client).");
           setCreating(false);
           return;
         }
@@ -430,8 +430,8 @@ export default function CessionsPanel() {
         }
       }
       if (kind === "DELOCALISATION") {
-        if (!delocPdv?.id) {
-          setCreateError("Sélectionnez le concessionnaire concerné.");
+        if (!delocClient?.id) {
+          setCreateError("Sélectionnez le client concerné.");
           setCreating(false);
           return;
         }
@@ -446,16 +446,16 @@ export default function CessionsPanel() {
         setCreating(false);
         return;
       }
-      if (kind === "CESSION_DELOCALISATION" && cedantPdv) {
+      if (kind === "CESSION_DELOCALISATION" && cedantClient) {
         const agIds = agences.map((a) => a.id);
-        const pickedAg = pickAgenceIdFromConcessionnaire(cedantPdv, agIds);
+        const pickedAg = pickAgenceIdFromClient(cedantClient, agIds);
         if (pickedAg && !oldAgenceId) setOldAgenceId(pickedAg);
       }
       const form = new FormData();
       form.set("kind", kind);
-      form.set("concessionnaireId", delocPdv?.id ?? "");
-      form.set("cedantId", cedantPdv?.id ?? "");
-      form.set("beneficiaireId", beneficiairePdv?.id ?? "");
+      form.set("lonaciClientId", delocClient?.id ?? "");
+      form.set("cedantLonaciClientId", cedantClient?.id ?? "");
+      form.set("beneficiaireLonaciClientId", beneficiaireClient?.id ?? "");
       form.set("produitCode", produitCode);
       form.set("oldAdresse", oldAdresse);
       form.set("oldAgenceId", oldAgenceId);
@@ -1194,7 +1194,7 @@ export default function CessionsPanel() {
                 <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
                   {kind === "CESSION"
                     ? "Cédant, bénéficiaire, produit, motif, documents joints."
-                    : "Concessionnaire, ancienne/nouvelle agence, nouvelles coordonnées GPS, motif."}
+                    : "Client, ancienne/nouvelle agence, nouvelles coordonnées GPS, motif."}
                 </p>
               </div>
               <button type="button" onClick={closeCreate} disabled={creating} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">×</button>
@@ -1210,41 +1210,39 @@ export default function CessionsPanel() {
                     <p className="text-[10px] leading-snug text-indigo-900/80">
                       Après création : compléter la checklist 5.2 et générer l&apos;acte 5.1 depuis la référence du dossier.
                     </p>
-                    <ConcessionnaireSearchPicker
+                    <ClientSearchPicker
                       key={`cession-cedant-${createOpen}`}
-                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire cédant *</span>}
-                      selected={cedantPdv}
+                      label={<span className="text-xs font-medium text-slate-700">Client cédant *</span>}
+                      selected={cedantClient}
                       onSelectedChange={(r) => {
-                        setCedantPdv(r);
+                        setCedantClient(r);
                         const codes = produits.map((p) => p.code);
-                        const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                        const picked = pickProduitCodeFromClient(r, codes);
                         if (picked) setProduitCode(picked);
                         if (kind === "CESSION_DELOCALISATION" && r) {
                           const agIds = agences.map((a) => a.id);
-                          const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                          const pickedAg = pickAgenceIdFromClient(r, agIds);
                           if (pickedAg) setOldAgenceId(pickedAg);
                         }
                       }}
-                      statutActifOnly
-                      inscriptionFinaliseeOnly
+                      filter="linkedPdv"
                       inputClassName={inputClass}
                       disabled={refLoading}
-                      searchPlaceholder="Rechercher (code, nom…)"
+                      searchPlaceholder="Rechercher un client…"
                     />
                     <div className="grid gap-1">
-                      <ConcessionnaireSearchPicker
+                      <ClientSearchPicker
                         key={`cession-benef-${createOpen}`}
-                        label={<span className="text-xs font-medium text-slate-700">Concessionnaire bénéficiaire *</span>}
-                        selected={beneficiairePdv}
-                        onSelectedChange={setBeneficiairePdv}
-                        statutActifOnly
-                        inscriptionFinaliseeOnly
+                        label={<span className="text-xs font-medium text-slate-700">Client bénéficiaire *</span>}
+                        selected={beneficiaireClient}
+                        onSelectedChange={setBeneficiaireClient}
+                        filter="linkedPdv"
                         inputClassName={inputClass}
                         disabled={refLoading}
-                        searchPlaceholder="Rechercher (code, nom…)"
+                        searchPlaceholder="Rechercher un client…"
                       />
                       <span className="text-[11px] text-slate-500">
-                        Bénéficiaire absent ? <Link href="/concessionnaires" className="underline">Créer un concessionnaire</Link>.
+                        Bénéficiaire absent ? <Link href="/concessionnaires" className="underline">Créer un client / PDV</Link>.
                       </span>
                     </div>
                     <label className="grid gap-1">
@@ -1266,29 +1264,28 @@ export default function CessionsPanel() {
                         : "Informations délocalisation (6.1)"}
                     </p>
                     {kind === "DELOCALISATION" ? (
-                      <ConcessionnaireSearchPicker
-                        key={`deloc-pdv-${createOpen}`}
-                        label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné *</span>}
-                        selected={delocPdv}
+                      <ClientSearchPicker
+                        key={`deloc-client-${createOpen}`}
+                        label={<span className="text-xs font-medium text-slate-700">Client Lonaci *</span>}
+                        selected={delocClient}
                         onSelectedChange={(r) => {
-                          setDelocPdv(r);
+                          setDelocClient(r);
                           if (!r) {
                             setOldAgenceId("");
                             setProduitCode("");
                             return;
                           }
                           const agIds = agences.map((a) => a.id);
-                          const pickedAg = pickAgenceIdFromConcessionnaire(r, agIds);
+                          const pickedAg = pickAgenceIdFromClient(r, agIds);
                           if (pickedAg) setOldAgenceId(pickedAg);
                           const codes = produits.map((p) => p.code);
-                          const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                          const picked = pickProduitCodeFromClient(r, codes);
                           if (picked) setProduitCode(picked);
                         }}
-                        statutActifOnly
-                        inscriptionFinaliseeOnly
+                        filter="linkedPdv"
                         inputClassName={inputClass}
                         disabled={refLoading}
-                        searchPlaceholder="Rechercher (code, nom…)"
+                        searchPlaceholder="Rechercher un client…"
                       />
                     ) : null}
                     {kind === "DELOCALISATION" ? (

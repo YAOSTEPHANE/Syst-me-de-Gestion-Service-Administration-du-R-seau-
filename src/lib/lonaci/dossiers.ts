@@ -12,11 +12,6 @@ import type {
 import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole, sendCriticalEmailToUserId } from "@/lib/lonaci/critical-email";
-import {
-  assertConcessionnaireOperationnel,
-  canReadConcessionnaire,
-  isStatutFicheGelee,
-} from "@/lib/lonaci/access";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import {
   ensureChecklistForDossierProduits,
@@ -35,6 +30,7 @@ import {
 import { findContratById, hasActiveContractForParty } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
@@ -47,6 +43,10 @@ import {
   mergeChecklistStatutPatch,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
+import {
+  restrictionToMongoAgenceFilter,
+  type ListAgenceRestriction,
+} from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "dossiers";
@@ -115,6 +115,9 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
   if (lonaciClientId && concessionnaireId) {
     throw new Error("PARTY_AMBIGUOUS");
   }
+  if (concessionnaireId) {
+    throw new Error("DOSSIER_CLIENT_REQUIRED");
+  }
 
   let agenceId: string | null = null;
   let party: ContratPartyRef;
@@ -122,21 +125,18 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
     party = { kind: "client", lonaciClientId };
     await assertDossierPartyReadable(party, input.actor);
     const client = await findLonaciClientById(lonaciClientId);
-    agenceId = client?.agenceId ?? null;
+    if (!client) {
+      throw new Error("CLIENT_NOT_FOUND");
+    }
+    if (!isClientStatutEligibleForContrat(client.statut)) {
+      if (client.statut === "EN_ATTENTE_N1" || client.statut === "REJETE") {
+        throw new Error("CLIENT_INSCRIPTION_PENDING");
+      }
+      throw new Error("CLIENT_BLOQUE");
+    }
+    agenceId = client.agenceId ?? null;
   } else {
-    party = { kind: "concessionnaire", concessionnaireId: concessionnaireId! };
-    const concessionnaire = await findConcessionnaireById(concessionnaireId!);
-    if (!concessionnaire || concessionnaire.deletedAt) {
-      throw new Error("CONCESSIONNAIRE_NOT_FOUND");
-    }
-    if (!canReadConcessionnaire(input.actor, concessionnaire)) {
-      throw new Error("AGENCE_FORBIDDEN");
-    }
-    if (isStatutFicheGelee(concessionnaire.statut)) {
-      throw new Error("CONCESSIONNAIRE_BLOQUE");
-    }
-    assertConcessionnaireOperationnel(concessionnaire);
-    agenceId = concessionnaire.agenceId ?? null;
+    throw new Error("PARTY_REQUIRED");
   }
 
   if (input.type === "CONTRAT_ACTUALISATION") {
@@ -155,10 +155,7 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
         throw new Error("ACTIVE_CONTRACT_EXISTS");
       }
     }
-    const partyProduits =
-      party.kind === "client"
-        ? ((await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [])
-        : ((await findConcessionnaireById(party.concessionnaireId))?.produitsAutorises ?? []);
+    const partyProduits = (await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [];
     if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
       throw new Error("PRODUIT_NOT_ALLOWED");
     }
@@ -182,7 +179,7 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
     type: input.type,
     reference,
     status: initialStatus,
-    concessionnaireId,
+    concessionnaireId: null,
     lonaciClientId,
     agenceId,
     payload: input.payload,
@@ -638,7 +635,7 @@ export async function listDossiers(
   pageSize: number,
   status: DossierStatus | undefined,
   type: DossierType | undefined,
-  scopeAgenceId: string | null | undefined,
+  agenceRestriction: ListAgenceRestriction,
   q?: string,
   concessionnaireId?: string,
   sortField: "updatedAt" | "reference" | "status" = "updatedAt",
@@ -648,7 +645,8 @@ export async function listDossiers(
   const filter: Record<string, unknown> = { deletedAt: null };
   if (status) filter.status = status;
   if (type) filter.type = type;
-  if (scopeAgenceId) filter.agenceId = scopeAgenceId;
+  const agenceMongo = restrictionToMongoAgenceFilter(agenceRestriction);
+  if (agenceMongo) filter.agenceId = agenceMongo;
   if (concessionnaireId?.trim()) filter.concessionnaireId = concessionnaireId.trim();
   if (q?.trim()) {
     const escaped = q

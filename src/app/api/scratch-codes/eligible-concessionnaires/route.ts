@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureGprGrattageIndexes, listEligibleConcessionnairesForProduct } from "@/lib/lonaci/gpr-grattage";
 import { GRATTAGE_API_ROLES } from "@/lib/lonaci/grattage-access";
@@ -22,9 +23,13 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureGprGrattageIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const scopeFields = listAgenceScopeFields(agenceScope);
   const items = await listEligibleConcessionnairesForProduct({
     produitCode: parsed.data.produitCode,
-    agenceId: parsed.data.agenceId,
+    agenceId: scopeFields.agenceId ?? scopeFields.scopeAgenceId,
+    agenceIds: scopeFields.agenceIds ?? scopeFields.scopeAgenceIds,
     q: parsed.data.q,
     limit: parsed.data.limit,
   });

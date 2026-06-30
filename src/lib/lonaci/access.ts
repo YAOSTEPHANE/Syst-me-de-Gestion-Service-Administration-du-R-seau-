@@ -274,6 +274,55 @@ export function canCreateConcessionnaireForAgence(
   return false;
 }
 
+export type ListAgenceFilterResult =
+  | { ok: true; agenceId?: string; agenceIds?: string[] }
+  | { ok: false; code: "AGENCE_FORBIDDEN" };
+
+/**
+ * Résout le filtre `agenceId` pour les listes API : un utilisateur scopé ne peut pas
+ * élargir son périmètre via un paramètre de requête arbitraire.
+ */
+export function resolveListAgenceFilter(
+  user: UserDocument,
+  requestedAgenceId?: string | null,
+): ListAgenceFilterResult {
+  const requested = requestedAgenceId?.trim() || undefined;
+
+  if (userHasNationalScope(user)) {
+    return { ok: true, agenceId: requested };
+  }
+
+  const autorisations = (user.agencesAutorisees ?? []).map((a) => a.trim()).filter(Boolean);
+  if (autorisations.length > 0) {
+    if (!requested) {
+      if (autorisations.length === 1) {
+        return { ok: true, agenceId: autorisations[0] };
+      }
+      if (user.agenceId?.trim()) {
+        return { ok: true, agenceId: user.agenceId.trim() };
+      }
+      return { ok: true, agenceIds: autorisations };
+    }
+    const allowed = new Set(autorisations);
+    if (user.agenceId?.trim()) {
+      allowed.add(user.agenceId.trim());
+    }
+    if (!allowed.has(requested)) {
+      return { ok: false, code: "AGENCE_FORBIDDEN" };
+    }
+    return { ok: true, agenceId: requested };
+  }
+
+  if (user.agenceId?.trim()) {
+    if (requested && requested !== user.agenceId.trim()) {
+      return { ok: false, code: "AGENCE_FORBIDDEN" };
+    }
+    return { ok: true, agenceId: user.agenceId.trim() };
+  }
+
+  return { ok: true, agenceId: requested };
+}
+
 export function enforcedAgenceIdOnCreate(user: UserDocument, requestedAgenceId: string | null): string | null {
   if (user.role === "AGENT" || user.role === "CHEF_SECTION") {
     if (user.agenceId) {

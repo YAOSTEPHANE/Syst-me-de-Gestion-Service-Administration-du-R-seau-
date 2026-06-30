@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { GRATTAGE_CONTRAT_STATUTS } from "@/lib/lonaci/constants";
 import {
@@ -9,12 +10,6 @@ import {
   listGrattageContratsForExport,
 } from "@/lib/lonaci/grattage-contrats";
 import { GRATTAGE_CONTRAT_ROLES } from "@/lib/lonaci/grattage-access";
-
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) return undefined;
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
 
 const querySchema = z.object({
   format: z.enum(["pdf"]).default("pdf"),
@@ -34,11 +29,12 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureGrattageContratIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const rows = await listGrattageContratsForExport({
-    agenceId: parsed.data.agenceId,
     concessionnaireId: parsed.data.concessionnaireId,
     statut: parsed.data.statut,
-    scopeAgenceId: listScopeAgenceId(auth.user),
+    ...listAgenceScopeFields(agenceScope),
   });
 
   const buffer = await buildGrattageContratsPdfBuffer(rows);

@@ -760,14 +760,14 @@ export default function DossiersPanel() {
           <h2 className="mt-1 text-2xl font-semibold text-slate-900">Gestion des contrats — dossiers</h2>
           <p className="mt-1 max-w-3xl text-xs text-slate-600">
             Checklist documents par produit, décharges provisoire et définitive, génération du contrat puis circuit
-            de validation en 4 niveaux ; à la finalisation par le Chef de Service, le concessionnaire devient actif.
+            de validation en 4 niveaux ; à la finalisation par le Chef de Service, le client devient concessionnaire actif.
           </p>
         </div>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Recherche ref/statut/type/concessionnaire"
+            placeholder="Recherche ref/statut/type/client"
             className={`w-full lg:w-72 ${fieldClass}`}
           />
           <select

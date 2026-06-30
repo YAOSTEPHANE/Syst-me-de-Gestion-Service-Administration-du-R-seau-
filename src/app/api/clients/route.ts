@@ -7,6 +7,7 @@ import {
   buildClientAgenceReadScopeWhere,
   canCreateConcessionnaireForAgence,
   enforcedAgenceIdOnCreate,
+  resolveListAgenceFilter,
 } from "@/lib/lonaci/access";
 import { CLIENT_STATUTS } from "@/lib/lonaci/client-constants";
 import {
@@ -72,6 +73,8 @@ const listQuerySchema = z.object({
   statut: z.enum(CLIENT_STATUTS).optional(),
   eligibleForCaution: z.enum(["true", "false"]).optional(),
   eligibleForContrat: z.enum(["true", "false"]).optional(),
+  eligibleForPromotion: z.enum(["true", "false"]).optional(),
+  linkedToConcessionnaire: z.enum(["true", "false"]).optional(),
   agenceId: z.string().optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
 });
@@ -119,6 +122,15 @@ export async function GET(request: NextRequest) {
   const includeDeleted =
     parsed.data.includeDeleted === "true" && auth.user.role === "CHEF_SERVICE";
 
+  const agenceScope = resolveListAgenceFilter(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) {
+    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  }
+  const clientAgenceFilter =
+    agenceScope.agenceIds && agenceScope.agenceIds.length > 1
+      ? undefined
+      : agenceScope.agenceId;
+
   const readerScope = await buildClientAgenceReadScopeWhere(auth.user);
   let scopeJson = "";
   try {
@@ -156,7 +168,9 @@ export async function GET(request: NextRequest) {
       statut: parsed.data.statut,
       eligibleForCaution: parsed.data.eligibleForCaution === "true",
       eligibleForContrat: parsed.data.eligibleForContrat === "true",
-      agenceId: parsed.data.agenceId,
+      eligibleForPromotion: parsed.data.eligibleForPromotion === "true",
+      linkedToConcessionnaire: parsed.data.linkedToConcessionnaire === "true",
+      agenceId: clientAgenceFilter,
       readerScope,
       includeDeleted,
     });

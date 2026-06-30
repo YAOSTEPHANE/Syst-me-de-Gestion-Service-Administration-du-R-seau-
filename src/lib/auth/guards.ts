@@ -113,6 +113,18 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
     return { error: NextResponse.json({ message: "Compte inactif ou inexistant" }, { status: 403 }) };
   }
 
+  if (session.role !== user.role) {
+    return {
+      error: NextResponse.json(
+        {
+          message: "Session invalide. Veuillez vous reconnecter.",
+          code: "SESSION_ROLE_MISMATCH",
+        },
+        { status: 401 },
+      ),
+    };
+  }
+
   if (!user.currentSessionId) {
     if (process.env.NODE_ENV !== "production") {
       logger.warn("Session id missing in DB, resync", {

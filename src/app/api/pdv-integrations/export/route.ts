@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
 import { LONACI_ROLES, PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
@@ -30,10 +31,12 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
   await ensureSprint4Indexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listPdvIntegrations({
     page: 1,
     pageSize: 20000,
-    agenceId: parsed.data.agenceId?.trim() || undefined,
+    ...listAgenceScopeFields(agenceScope),
     produitCode: parsed.data.produitCode?.trim() || undefined,
     status: parsed.data.status,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,

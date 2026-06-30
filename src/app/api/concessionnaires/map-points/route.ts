@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
 import {
-  concessionnaireListScopeAgenceId,
   ensureConcessionnaireIndexes,
   getConcessionnairesMapPoints,
 } from "@/lib/lonaci/concessionnaires";
@@ -36,12 +36,12 @@ export async function GET(request: NextRequest) {
     parsed.data.includeDeleted === "true" && auth.user.role === "CHEF_SERVICE";
 
   await ensureConcessionnaireIndexes();
-  const scope = concessionnaireListScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
 
   const payload = await getConcessionnairesMapPoints({
     q: parsed.data.q,
-    agenceId: parsed.data.agenceId,
-    scopeAgenceId: scope,
+    ...listAgenceScopeFields(agenceScope),
     includeDeleted,
     statut: parsed.data.statut,
     statutBancarisation: parsed.data.statutBancarisation,

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { createPdvIntegration, ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
 import { PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -39,10 +40,12 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureSprint4Indexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listPdvIntegrations({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
-    agenceId: parsed.data.agenceId?.trim() || undefined,
+    ...listAgenceScopeFields(agenceScope),
     produitCode: parsed.data.produitCode?.trim() || undefined,
     status: parsed.data.status,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,

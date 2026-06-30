@@ -3,8 +3,8 @@ import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
-  attestationsListScopeAgenceId,
   createDemandeAttestationDomiciliation,
   ensureAttestationsDomiciliationIndexes,
   listDemandesAttestationsDomiciliation,
@@ -16,6 +16,7 @@ const listSchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   type: z.enum(["ATTESTATION_REVENU", "DOMICILIATION_PRODUIT"]).optional(),
   concessionnaireId: z.string().optional(),
+  lonaciClientId: z.string().optional(),
   produitCode: z.string().optional(),
   statut: z.enum(["DEMANDE_RECUE", "TRANSMIS", "FINALISE", "VALIDE", "ENVOYE_CLIENT"]).optional(),
   agenceId: z.string().optional(),
@@ -26,6 +27,7 @@ const listSchema = z.object({
 const createSchema = z.object({
   type: z.enum(["ATTESTATION_REVENU", "DOMICILIATION_PRODUIT"]),
   concessionnaireId: z.string().trim().min(1).nullable().optional(),
+  lonaciClientId: z.string().trim().min(1).nullable().optional(),
   produitCode: z.string().trim().min(1).nullable().optional(),
   dateDemande: z.string().datetime(),
   observations: z.string().trim().max(4000).nullable().optional(),
@@ -41,19 +43,22 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
-  const scopeAgenceId = attestationsListScopeAgenceId(auth.user);
-  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
-  const agenceId = scopeAgenceId ?? requestedAgenceId;
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const { listFilterConcessionnaireId } = await import("@/lib/lonaci/client-party-resolve");
+  const concessionnaireFilter = await listFilterConcessionnaireId({
+    lonaciClientId: parsed.data.lonaciClientId,
+    concessionnaireId: parsed.data.concessionnaireId,
+  });
 
   const result = await listDemandesAttestationsDomiciliation({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     type: parsed.data.type,
-    concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
+    concessionnaireId: concessionnaireFilter,
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
-    agenceId,
-    scopeAgenceId,
+    ...listAgenceScopeFields(agenceScope),
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
     dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
   });
@@ -75,9 +80,28 @@ export async function POST(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  let partyConcessionnaireId: string | null = null;
+  const clientId = (parsed.data.lonaciClientId ?? "").trim() || null;
+  const legacyPdv = (parsed.data.concessionnaireId ?? "").trim() || null;
+  if (clientId || legacyPdv) {
+    try {
+      const party = await resolveFormPartyIds({
+        lonaciClientId: clientId,
+        concessionnaireId: legacyPdv,
+      });
+      partyConcessionnaireId = party.concessionnaireId;
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "UNKNOWN";
+      if (code === "CLIENT_NOT_FOUND") {
+        return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+      }
+      return badRequest("Client invalide.", "CLIENT_INVALID");
+    }
+  }
   const created = await createDemandeAttestationDomiciliation({
     type: parsed.data.type,
-    concessionnaireId: parsed.data.concessionnaireId ?? null,
+    concessionnaireId: partyConcessionnaireId,
     produitCode: parsed.data.produitCode ?? null,
     dateDemande,
     observations: parsed.data.observations ?? null,

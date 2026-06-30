@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { mergeProductChecklistTemplates } from "@/lib/lonaci/produit-document-checklist";
 import type { ProduitDocument, ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
@@ -48,20 +48,15 @@ export default function ProduitSelectedPiecesChecklist({
     return mergeProductChecklistTemplates(selectedProduitCodes, toProduitDocuments(produits));
   }, [selectedProduitCodes, produits]);
 
+  const itemIdsKey = useMemo(() => items.map((i) => i.id).sort().join("|"), [items]);
+
   const [internalFourniIds, setInternalFourniIds] = useState<Set<string>>(new Set());
+  const [prunedForKey, setPrunedForKey] = useState(itemIdsKey);
   const isControlled = value !== undefined;
   const fourniIds = isControlled ? value : internalFourniIds;
 
-  const updateFourniIds = (updater: (prev: Set<string>) => Set<string>) => {
-    if (isControlled && onChange) {
-      onChange(updater(new Set(value)));
-      return;
-    }
-    setInternalFourniIds(updater);
-  };
-
-  useEffect(() => {
-    if (isControlled) return;
+  if (!isControlled && prunedForKey !== itemIdsKey) {
+    setPrunedForKey(itemIdsKey);
     const validIds = new Set(items.map((i) => i.id));
     setInternalFourniIds((prev) => {
       const next = new Set<string>();
@@ -70,7 +65,15 @@ export default function ProduitSelectedPiecesChecklist({
       }
       return next;
     });
-  }, [items, isControlled]);
+  }
+
+  const updateFourniIds = (updater: (prev: Set<string>) => Set<string>) => {
+    if (isControlled && onChange) {
+      onChange(updater(new Set(value)));
+      return;
+    }
+    setInternalFourniIds(updater);
+  };
 
   if (!selectedProduitCodes.length) return null;
 

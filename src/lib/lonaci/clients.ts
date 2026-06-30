@@ -101,6 +101,10 @@ export function buildClientListWhere(params: {
   eligibleForCaution?: boolean;
   /** Clients éligibles contrat : dossier en cours ou actif. */
   eligibleForContrat?: boolean;
+  /** Clients éligibles promotion PDV (parcours terminé, statut ACTIF). */
+  eligibleForPromotion?: boolean;
+  /** Clients déjà promus en PDV (lien sourceLonaciClientId). */
+  linkedToConcessionnaire?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -119,7 +123,9 @@ export function buildClientListWhere(params: {
     parts.push({ agenceId: params.agenceId });
   }
 
-  if (params.eligibleForCaution || params.eligibleForContrat) {
+  if (params.eligibleForPromotion) {
+    parts.push({ statut: "ACTIF" });
+  } else if (params.eligibleForCaution || params.eligibleForContrat) {
     parts.push({ statut: { in: ["DOSSIER_EN_COURS", "ACTIF"] } });
   } else if (params.statut) {
     parts.push({ statut: params.statut });
@@ -159,6 +165,8 @@ export async function searchClients(params: {
   statut?: ClientStatut;
   eligibleForCaution?: boolean;
   eligibleForContrat?: boolean;
+  eligibleForPromotion?: boolean;
+  linkedToConcessionnaire?: boolean;
   agenceId?: string;
   readerScope: Prisma.LonaciClientWhereInput;
   includeDeleted: boolean;
@@ -168,10 +176,44 @@ export async function searchClients(params: {
     statut: params.statut,
     eligibleForCaution: params.eligibleForCaution,
     eligibleForContrat: params.eligibleForContrat,
+    eligibleForPromotion: params.eligibleForPromotion,
+    linkedToConcessionnaire: params.linkedToConcessionnaire,
     agenceId: params.agenceId,
     readerScope: params.readerScope,
     includeDeleted: params.includeDeleted,
   });
+
+  let promotionExcludeIds: string[] | null = null;
+  let linkedIncludeIds: string[] | null = null;
+  if (params.eligibleForPromotion) {
+    const promoted = await prisma.concessionnaire.findMany({
+      where: { deletedAt: null, sourceLonaciClientId: { not: null } },
+      select: { sourceLonaciClientId: true },
+    });
+    promotionExcludeIds = promoted
+      .map((r) => r.sourceLonaciClientId?.trim())
+      .filter((id): id is string => Boolean(id));
+  }
+  if (params.linkedToConcessionnaire) {
+    const promoted = await prisma.concessionnaire.findMany({
+      where: { deletedAt: null, sourceLonaciClientId: { not: null } },
+      select: { sourceLonaciClientId: true },
+    });
+    linkedIncludeIds = promoted
+      .map((r) => r.sourceLonaciClientId?.trim())
+      .filter((id): id is string => Boolean(id));
+  }
+
+  let finalWhere: Prisma.LonaciClientWhereInput = where;
+  if (promotionExcludeIds && promotionExcludeIds.length > 0) {
+    finalWhere = { AND: [finalWhere, { id: { notIn: promotionExcludeIds } }] };
+  }
+  if (params.linkedToConcessionnaire) {
+    finalWhere =
+      linkedIncludeIds && linkedIncludeIds.length > 0
+        ? { AND: [finalWhere, { id: { in: linkedIncludeIds } }] }
+        : { AND: [finalWhere, { id: { in: ["__none__"] } }] };
+  }
 
   let whereJson = "";
   try {
@@ -196,9 +238,9 @@ export async function searchClients(params: {
 
   const skip = (params.page - 1) * params.pageSize;
   const [total, rows] = await Promise.all([
-    prisma.lonaciClient.count({ where }),
+    prisma.lonaciClient.count({ where: finalWhere }),
     prisma.lonaciClient.findMany({
-      where,
+      where: finalWhere,
       orderBy: { updatedAt: "desc" },
       skip,
       take: params.pageSize,

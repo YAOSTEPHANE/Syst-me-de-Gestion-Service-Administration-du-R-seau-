@@ -1,5 +1,6 @@
 "use client";
 
+import ClientSearchPicker, { type ClientPickerRow } from "@/components/lonaci/client-search-picker";
 import { useCallback, useEffect, useState } from "react";
 
 import { LONACI_AGENCES } from "@/components/lonaci/lonaci-nav";
@@ -51,7 +52,7 @@ export default function RegistryModulePanel({
   const [filterAgence, setFilterAgence] = useState("");
 
   const [titre, setTitre] = useState("");
-  const [concessionnaireId, setConcessionnaireId] = useState("");
+  const [createClient, setCreateClient] = useState<ClientPickerRow | null>(null);
   const [agenceId, setAgenceId] = useState("");
   const [statut, setStatut] = useState(defaultStatut);
   const [commentaire, setCommentaire] = useState("");
@@ -101,7 +102,7 @@ export default function RegistryModulePanel({
         body: JSON.stringify({
           module,
           titre: titre.trim(),
-          concessionnaireId: concessionnaireId.trim() || null,
+          lonaciClientId: createClient?.id?.trim() || null,
           agenceId: agenceId.trim() || null,
           statut,
           commentaire: commentaire.trim() || null,
@@ -109,7 +110,7 @@ export default function RegistryModulePanel({
       });
       if (!res.ok) throw new Error();
       setTitre("");
-      setConcessionnaireId("");
+      setCreateClient(null);
       setAgenceId("");
       setCommentaire("");
       setStatut(defaultStatut);
@@ -263,15 +264,15 @@ export default function RegistryModulePanel({
               className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
           </label>
-          <label className="block text-sm">
-            <span className="text-slate-600">ID concessionnaire (optionnel)</span>
-            <input
-              value={concessionnaireId}
-              onChange={(e) => setConcessionnaireId(e.target.value)}
-              placeholder="ObjectId Mongo"
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900"
+          <div className="sm:col-span-2">
+            <ClientSearchPicker
+              label={<span className="text-slate-600">Client Lonaci (optionnel)</span>}
+              selected={createClient}
+              onSelectedChange={setCreateClient}
+              filter="contrat"
+              searchPlaceholder="Rechercher un client…"
             />
-          </label>
+          </div>
           <label className="block text-sm">
             <span className="text-slate-600">Agence</span>
             <select

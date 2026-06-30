@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
   attachAgrementDocument,
   createAgrement,
@@ -30,10 +31,12 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureAgrementsIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listAgrements({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
-    agenceId: parsed.data.agenceId?.trim() || undefined,
+    ...listAgenceScopeFields(agenceScope),
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
@@ -51,6 +54,7 @@ export async function POST(request: NextRequest) {
   const referenceOfficielle = String(form.get("referenceOfficielle") ?? "").trim();
   const agenceIdRaw = String(form.get("agenceId") ?? "").trim();
   const concessionnaireIdRaw = String(form.get("concessionnaireId") ?? "").trim();
+  const lonaciClientIdRaw = String(form.get("lonaciClientId") ?? "").trim();
   const observationsRaw = String(form.get("observations") ?? "").trim();
   const file = form.get("document");
 
@@ -71,13 +75,29 @@ export async function POST(request: NextRequest) {
     return badRequest("Document trop volumineux.", "FILE_TOO_LARGE");
   }
 
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  let partyConcessionnaireId: string | null = null;
+  try {
+    const party = await resolveFormPartyIds({
+      lonaciClientId: lonaciClientIdRaw || null,
+      concessionnaireId: concessionnaireIdRaw || null,
+    });
+    partyConcessionnaireId = party.concessionnaireId;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    return badRequest("Client invalide.", "CLIENT_INVALID");
+  }
+
   await ensureAgrementsIndexes();
   const created = await createAgrement({
     produitCode,
     dateReception,
     referenceOfficielle,
     agenceId: agenceIdRaw || null,
-    concessionnaireId: concessionnaireIdRaw || null,
+    concessionnaireId: partyConcessionnaireId,
     observations: observationsRaw || null,
     documentFilename: file.name || "agrement.pdf",
     documentMimeType: file.type,

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { BANCARISATION_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
-import { concessionnaireListScopeAgenceId, searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
+import { searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const querySchema = z.object({
@@ -66,13 +67,15 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
 
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+
   const result = await searchConcessionnaires({
     page: 1,
     pageSize: 5000,
     statutBancarisation: parsed.data.statutBancarisation,
-    agenceId: parsed.data.agenceId,
     produitCode: parsed.data.produitCode,
-    scopeAgenceId: concessionnaireListScopeAgenceId(auth.user),
+    ...listAgenceScopeFields(agenceScope),
     includeDeleted: false,
   });
 

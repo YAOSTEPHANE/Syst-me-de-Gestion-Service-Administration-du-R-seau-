@@ -7,6 +7,7 @@ import {
 } from "@/lib/lonaci/concessionnaires";
 import type { AttestationDomiciliationStatus, AttestationDomiciliationType } from "@/lib/lonaci/constants";
 import { getDatabase } from "@/lib/mongodb";
+import type { UserDocument } from "@/lib/lonaci/types";
 import { prisma } from "@/lib/prisma";
 
 const COLLECTION = "attestations_domiciliation";
@@ -37,10 +38,7 @@ interface DemandeStored {
   deletedAt: Date | null;
 }
 
-export function attestationsListScopeAgenceId(user: {
-  agenceId: string | null;
-  role: string;
-}): string | undefined {
+export function attestationsListScopeAgenceId(user: UserDocument): string | undefined {
   return concessionnaireListScopeAgenceId(user);
 }
 
@@ -252,6 +250,7 @@ export type AttestationsDomiciliationListFilters = {
   statut?: AttestationDomiciliationStatus;
   agenceId?: string;
   scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
   dateFrom?: Date;
   dateTo?: Date;
 };
@@ -273,14 +272,32 @@ function buildAttestationsDomiciliationFilterBase(
   return filter;
 }
 
+async function concessionnaireIdsForAgences(agenceIds: string[]): Promise<string[]> {
+  const ids = agenceIds.map((id) => id.trim()).filter(Boolean);
+  if (ids.length === 0) return [];
+  const rows = await prisma.concessionnaire.findMany({
+    where: { deletedAt: null, agenceId: { in: ids } },
+    select: { id: true },
+  });
+  return rows.map((r) => r.id);
+}
+
 async function applyAgenceScopeToFilter(
   filter: Record<string, unknown>,
   input: AttestationsDomiciliationListFilters,
 ): Promise<void> {
-  const agenceId = (input.agenceId ?? input.scopeAgenceId)?.trim();
-  if (!agenceId) return;
+  const agenceIds =
+    input.scopeAgenceIds && input.scopeAgenceIds.length > 0
+      ? input.scopeAgenceIds
+      : (input.agenceId ?? input.scopeAgenceId)?.trim()
+        ? [(input.agenceId ?? input.scopeAgenceId)!.trim()]
+        : [];
+  if (agenceIds.length === 0) return;
 
-  const pdvIds = await concessionnaireIdsForAgence(agenceId);
+  const pdvIds =
+    agenceIds.length === 1
+      ? await concessionnaireIdsForAgence(agenceIds[0]!)
+      : await concessionnaireIdsForAgences(agenceIds);
 
   if (input.concessionnaireId) {
     const allowed = pdvIds.includes(input.concessionnaireId);
@@ -288,8 +305,11 @@ async function applyAgenceScopeToFilter(
     return;
   }
 
+  const agenceMongo =
+    agenceIds.length === 1 ? agenceIds[0] : { $in: agenceIds };
+
   filter.$or = [
-    { agenceId },
+    { agenceId: agenceMongo },
     { concessionnaireId: { $in: pdvIds.length ? pdvIds : ["__none__"] } },
   ];
 }

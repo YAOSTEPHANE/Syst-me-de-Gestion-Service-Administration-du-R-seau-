@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import PDFDocument from "pdfkit";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
 import { ensureConcessionnaireIndexes, searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -14,14 +15,6 @@ const querySchema = z.object({
   agenceId: z.string().optional(),
   produitCode: z.string().optional(),
 });
-
-function listScopeAgenceId(user: { agenceId: string | null; role: string }): string | undefined {
-  if (user.role === "CHEF_SERVICE" && user.agenceId === null) {
-    return undefined;
-  }
-  if (user.agenceId) return user.agenceId;
-  return undefined;
-}
 
 function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]) {
   const header = [
@@ -108,16 +101,16 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureConcessionnaireIndexes();
-  const scope = listScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await searchConcessionnaires({
     page: 1,
     pageSize: 5000,
     q: parsed.data.q,
     statut: parsed.data.statut,
     statutBancarisation: parsed.data.statutBancarisation,
-    agenceId: parsed.data.agenceId,
     produitCode: parsed.data.produitCode,
-    scopeAgenceId: scope,
+    ...listAgenceScopeFields(agenceScope),
     includeDeleted: false,
   });
 

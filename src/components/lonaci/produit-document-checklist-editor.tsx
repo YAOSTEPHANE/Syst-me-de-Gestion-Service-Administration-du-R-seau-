@@ -8,7 +8,7 @@ import {
   computeChecklistProgress,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
   switch (statut) {
@@ -19,6 +19,14 @@ function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
     case "EN_ATTENTE":
       return "bg-amber-100 text-amber-900 border-amber-200";
   }
+}
+
+function buildStatutMap(checklist: DossierDocumentChecklistPayload): Record<string, DossierDocumentChecklistStatut> {
+  const map: Record<string, DossierDocumentChecklistStatut> = {};
+  for (const e of checklist.entries) {
+    map[e.itemId] = e.statut;
+  }
+  return map;
 }
 
 type Props = {
@@ -40,15 +48,17 @@ export default function ProduitDocumentChecklistEditor({
   title = "Checklist documents",
   hint = "Marquez chaque pièce : Fourni, Manquant ou En attente. Les pièces obligatoires doivent être « Fourni » pour un dossier complet.",
 }: Props) {
-  const [localStatuts, setLocalStatuts] = useState<Record<string, DossierDocumentChecklistStatut>>({});
+  const checklistVersion = useMemo(
+    () => checklist.entries.map((e) => `${e.itemId}:${e.statut}:${e.libelle}`).join("|"),
+    [checklist.entries],
+  );
+  const [syncedVersion, setSyncedVersion] = useState(checklistVersion);
+  const [localStatuts, setLocalStatuts] = useState(() => buildStatutMap(checklist));
 
-  useEffect(() => {
-    const map: Record<string, DossierDocumentChecklistStatut> = {};
-    for (const e of checklist.entries) {
-      map[e.itemId] = e.statut;
-    }
-    setLocalStatuts(map);
-  }, [checklist]);
+  if (syncedVersion !== checklistVersion) {
+    setSyncedVersion(checklistVersion);
+    setLocalStatuts(buildStatutMap(checklist));
+  }
 
   const progress = useMemo(() => {
     if (!checklist.entries.length) {

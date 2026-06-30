@@ -1,9 +1,9 @@
 "use client";
 
-import ConcessionnaireSearchPicker, {
-  pickProduitCodeFromConcessionnaire,
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -140,7 +140,7 @@ export default function AttestationsDomiciliationPanel() {
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   const [filterType, setFilterType] = useState<"" | DemandeType>("ATTESTATION_REVENU");
-  const [filterPdv, setFilterPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [filterClient, setFilterClient] = useState<ClientPickerRow | null>(null);
   const [filterStatut, setFilterStatut] = useState<"" | DemandeStatut>("");
   const [filterDateFrom, setFilterDateFrom] = useState("");
   const [filterDateTo, setFilterDateTo] = useState("");
@@ -152,7 +152,7 @@ export default function AttestationsDomiciliationPanel() {
   const [referentialsError, setReferentialsError] = useState<string | null>(null);
 
   const [type, setType] = useState<DemandeType>("ATTESTATION_REVENU");
-  const [createPdv, setCreatePdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [createClient, setCreateClient] = useState<ClientPickerRow | null>(null);
   const [produitCode, setProduitCode] = useState("");
   const [dateDemande, setDateDemande] = useState("");
   const [observations, setObservations] = useState("");
@@ -161,13 +161,13 @@ export default function AttestationsDomiciliationPanel() {
   const listQueryParams = useMemo(() => {
     const params = new URLSearchParams();
     if (filterType) params.set("type", filterType);
-    if (filterPdv?.id) params.set("concessionnaireId", filterPdv.id);
+    if (filterClient?.id) params.set("lonaciClientId", filterClient.id);
     if (filterStatut) params.set("statut", filterStatut);
     if (filterDateFrom) params.set("dateFrom", new Date(`${filterDateFrom}T00:00:00`).toISOString());
     if (filterDateTo) params.set("dateTo", new Date(`${filterDateTo}T23:59:59.999`).toISOString());
     if (filterAgenceId) params.set("agenceId", filterAgenceId);
     return params;
-  }, [filterType, filterPdv?.id, filterStatut, filterDateFrom, filterDateTo, filterAgenceId]);
+  }, [filterType, filterClient?.id, filterStatut, filterDateFrom, filterDateTo, filterAgenceId]);
 
   async function loadIndicators() {
     setIndicatorsLoading(true);
@@ -233,7 +233,7 @@ export default function AttestationsDomiciliationPanel() {
     try {
       const payload = {
         type,
-        concessionnaireId: createPdv?.id ?? null,
+        lonaciClientId: createClient?.id ?? null,
         produitCode: produitCode.trim() ? produitCode.trim().toUpperCase() : null,
         dateDemande: new Date(dateDemande).toISOString(),
         observations: observations.trim() ? observations.trim() : null,
@@ -380,7 +380,7 @@ export default function AttestationsDomiciliationPanel() {
 
   function resetCreateFields() {
     setType("ATTESTATION_REVENU");
-    setCreatePdv(null);
+    setCreateClient(null);
     setProduitCode("");
     setDateDemande("");
     setObservations("");
@@ -694,13 +694,14 @@ export default function AttestationsDomiciliationPanel() {
           </option>
         </select>
         <div className="min-w-0">
-          <ConcessionnaireSearchPicker
-            label={<span className="sr-only">Filtre concessionnaire</span>}
-            selected={filterPdv}
-            onSelectedChange={setFilterPdv}
+          <ClientSearchPicker
+            label={<span className="sr-only">Client (filtre)</span>}
+            selected={filterClient}
+            onSelectedChange={setFilterClient}
+            filter="linkedPdv"
             inputClassName={inputClassXs}
             showClearLink
-            searchPlaceholder="Filtrer par PDV…"
+            searchPlaceholder="Filtrer par client…"
           />
         </div>
         <select
@@ -941,20 +942,19 @@ export default function AttestationsDomiciliationPanel() {
                     </select>
                   </label>
 
-                  <ConcessionnaireSearchPicker
+                  <ClientSearchPicker
                     key={`attestation-create-${createOpen}`}
-                    label={<span className="text-xs font-medium text-slate-700">Concessionnaire concerné</span>}
-                    selected={createPdv}
+                    label={<span className="text-xs font-medium text-slate-700">Client Lonaci</span>}
+                    selected={createClient}
                     onSelectedChange={(r) => {
-                      setCreatePdv(r);
+                      setCreateClient(r);
                       const codes = produits.filter((p) => p.actif).map((p) => p.code);
-                      const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                      const picked = pickProduitCodeFromClient(r, codes);
                       if (picked) setProduitCode(picked);
                     }}
-                    statutActifOnly
-                    inscriptionFinaliseeOnly
+                    filter="linkedPdv"
                     inputClassName={inputClass}
-                    searchPlaceholder="Rechercher (code, nom…)"
+                    searchPlaceholder="Rechercher un client…"
                   />
 
                   <label className="grid gap-1 sm:col-span-2">

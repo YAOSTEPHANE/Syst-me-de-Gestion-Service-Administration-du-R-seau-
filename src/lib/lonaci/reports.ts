@@ -1,4 +1,5 @@
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { countSuccessionStaleAlerts } from "@/lib/lonaci/succession-stale-alerts";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -80,26 +81,31 @@ export async function buildReportSummary(
   period: ReportPeriod,
   agenceId?: string | null,
   topAgences = 0,
+  agenceIds?: string[],
 ): Promise<ReportSummary> {
   const db = await getDatabase();
   const { from, to, label } = windowForPeriod(period);
   const scopedAgenceId = agenceId?.trim() || null;
+  const mongoAgenceFilter = restrictionToMongoAgenceFilter({
+    agenceId: scopedAgenceId ?? undefined,
+    agenceIds,
+  });
   const thr = await getResolvedAlertThresholds();
   const today = new Date();
   const cautionDueThreshold = new Date(today);
   cautionDueThreshold.setDate(today.getDate() - thr.cautionOverdueDays);
   let scopedConcessionnaireIds: string[] | null = null;
-  if (scopedAgenceId) {
+  if (mongoAgenceFilter) {
     const rows = await db
       .collection<{ _id: unknown }>("concessionnaires")
-      .find({ deletedAt: null, agenceId: scopedAgenceId })
+      .find({ deletedAt: null, agenceId: mongoAgenceFilter })
       .project({ _id: 1 })
       .toArray();
     scopedConcessionnaireIds = rows.map((r) => String(r._id));
   }
 
   const dossiersMatch: Record<string, unknown> = { deletedAt: null };
-  if (scopedAgenceId) dossiersMatch.agenceId = scopedAgenceId;
+  if (mongoAgenceFilter) dossiersMatch.agenceId = mongoAgenceFilter;
 
   const contratsMatchBase: Record<string, unknown> = { deletedAt: null };
   if (scopedConcessionnaireIds) {
@@ -111,13 +117,13 @@ export async function buildReportSummary(
   }
 
   const concessionnairesMatch: Record<string, unknown> = { deletedAt: null };
-  if (scopedAgenceId) concessionnairesMatch.agenceId = scopedAgenceId;
+  if (mongoAgenceFilter) concessionnairesMatch.agenceId = mongoAgenceFilter;
 
   const successionMatch: Record<string, unknown> = { deletedAt: null };
-  if (scopedAgenceId) successionMatch.agenceId = scopedAgenceId;
+  if (mongoAgenceFilter) successionMatch.agenceId = mongoAgenceFilter;
 
   const pdvIntegrationsMatch: Record<string, unknown> = { deletedAt: null, status: { $ne: "FINALISE" } };
-  if (scopedAgenceId) pdvIntegrationsMatch.agenceId = scopedAgenceId;
+  if (mongoAgenceFilter) pdvIntegrationsMatch.agenceId = mongoAgenceFilter;
   const windowDurationMs = Math.max(0, to.getTime() - from.getTime());
   const previousFrom = new Date(from.getTime() - windowDurationMs);
   const previousTo = from;
@@ -191,7 +197,7 @@ export async function buildReportSummary(
       dueDate: { $lte: cautionDueThreshold },
     }),
     db.collection("succession_cases").countDocuments({ ...successionMatch, status: "OUVERT" }),
-    countSuccessionStaleAlerts(scopedAgenceId),
+    countSuccessionStaleAlerts(scopedAgenceId, agenceIds),
     db.collection("pdv_integrations").countDocuments(pdvIntegrationsMatch),
     db
       .collection("contrats")
@@ -270,7 +276,7 @@ export async function buildReportSummary(
     .slice(0, 10);
 
   let agenceComparatif: AgenceComparisonRow[] | undefined;
-  if (!scopedAgenceId && topAgences > 0) {
+  if (!mongoAgenceFilter && topAgences > 0) {
     const [agencesRows, dossiersTotalByAgence, dossiersCreatedByAgence, concessionnairesByAgence, successionByAgence, pdvByAgence] =
       await Promise.all([
         db

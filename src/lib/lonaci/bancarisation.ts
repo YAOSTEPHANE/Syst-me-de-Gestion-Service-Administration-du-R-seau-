@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 import { Prisma } from "@prisma/client";
 
+import { restrictionToMongoAgenceFilter, restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
 import { type BancarisationStatut } from "@/lib/lonaci/constants";
 import {
   emptyBancarisationStatutCounts,
@@ -124,11 +125,15 @@ export async function listBancarisationRequests(input: {
   statut?: BancarisationStatut;
   agenceId?: string;
   scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
 }) {
   const col = await getBancarisationRequestsCollection();
   const where: Record<string, unknown> = {};
-  if (input.scopeAgenceId) where.agenceId = input.scopeAgenceId;
-  else if (input.agenceId) where.agenceId = input.agenceId;
+  const agenceFilter = restrictionToMongoAgenceFilter({
+    agenceId: input.scopeAgenceId ?? input.agenceId,
+    agenceIds: input.scopeAgenceIds,
+  });
+  if (agenceFilter) where.agenceId = agenceFilter;
   if (input.status) where.status = input.status;
   if (input.statut) where.nouveauStatut = input.statut;
 
@@ -149,10 +154,17 @@ export async function findBancarisationRequestById(id: string) {
 
 const BANCARISATION_PENDING_STATUSES = ["SOUMIS", "VALIDE_N1", "VALIDE_N2"] as const;
 
-export async function countBancarisationRequestsByStatus(scopeAgenceId?: string | null) {
+export async function countBancarisationRequestsByStatus(
+  scopeAgenceId?: string | null,
+  scopeAgenceIds?: string[],
+) {
   const col = await getBancarisationRequestsCollection();
   const match: Record<string, unknown> = {};
-  if (scopeAgenceId?.trim()) match.agenceId = scopeAgenceId.trim();
+  const agenceFilter = restrictionToMongoAgenceFilter({
+    agenceId: scopeAgenceId ?? undefined,
+    agenceIds: scopeAgenceIds,
+  });
+  if (agenceFilter) match.agenceId = agenceFilter;
   const rows = await col
     .aggregate<{ _id: string; c: number }>([{ $match: match }, { $group: { _id: "$status", c: { $sum: 1 } } }])
     .toArray();
@@ -283,9 +295,15 @@ export async function validateBancarisationRequest(input: {
   return mapRequest(updated);
 }
 
-export async function bancarisationCountersByAgenceProduit(scopeAgenceId?: string) {
-  const where: Prisma.ConcessionnaireWhereInput = { deletedAt: null };
-  if (scopeAgenceId) where.agenceId = scopeAgenceId;
+export async function bancarisationCountersByAgenceProduit(
+  scopeAgenceId?: string,
+  scopeAgenceIds?: string[],
+) {
+  const agenceWhere = restrictionToPrismaAgenceWhere({
+    agenceId: scopeAgenceId,
+    agenceIds: scopeAgenceIds,
+  });
+  const where: Prisma.ConcessionnaireWhereInput = { deletedAt: null, ...agenceWhere };
   const rows = await prisma.concessionnaire.findMany({
     where,
     select: {

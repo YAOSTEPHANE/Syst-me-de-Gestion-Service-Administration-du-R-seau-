@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
-  attestationsListScopeAgenceId,
   ensureAttestationsDomiciliationIndexes,
   getAttestationsDomiciliationDashboardIndicators,
 } from "@/lib/lonaci/attestations-domiciliation";
@@ -32,16 +32,14 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
-  const scopeAgenceId = attestationsListScopeAgenceId(auth.user);
-  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
-  const agenceId = scopeAgenceId ?? requestedAgenceId;
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
 
   const indicators = await getAttestationsDomiciliationDashboardIndicators({
     type: parsed.data.type,
     concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
-    agenceId,
-    scopeAgenceId,
+    ...listAgenceScopeFields(agenceScope),
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
     dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
   });

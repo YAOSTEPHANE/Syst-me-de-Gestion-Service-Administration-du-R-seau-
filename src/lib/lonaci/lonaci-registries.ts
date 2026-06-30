@@ -1,5 +1,7 @@
 import { ObjectId } from "mongodb";
 
+import { userMatchesAgence } from "@/lib/lonaci/access";
+import type { UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { escapeRegexLiteral } from "@/lib/security/escape-regex";
 
@@ -75,7 +77,7 @@ export async function listRegistries(
   module: RegistryModule,
   page: number,
   pageSize: number,
-  filters?: { q?: string; statut?: string; agenceId?: string },
+  filters?: { q?: string; statut?: string; agenceId?: string; agenceIds?: string[] },
 ) {
   const db = await getDatabase();
   const qRaw = filters?.q?.trim();
@@ -84,7 +86,12 @@ export async function listRegistries(
   const agenceId = filters?.agenceId?.trim();
   const filter: Record<string, unknown> = { module, deletedAt: null };
   if (statut) filter.statut = statut;
-  if (agenceId) filter.agenceId = agenceId;
+  if (filters?.agenceIds && filters.agenceIds.length > 0) {
+    filter.agenceId =
+      filters.agenceIds.length === 1 ? filters.agenceIds[0] : { $in: filters.agenceIds };
+  } else if (agenceId) {
+    filter.agenceId = agenceId;
+  }
   if (q) {
     const safe = escapeRegexLiteral(q);
     filter.$or = [
@@ -137,6 +144,20 @@ export async function createRegistry(input: {
   };
   const r = await db.collection(COLLECTION).insertOne(doc);
   return mapDoc({ ...doc, _id: r.insertedId } as Stored);
+}
+
+export async function findRegistryById(id: string): Promise<LonaciRegistryDocument | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<Stored>(COLLECTION).findOne({
+    _id: new ObjectId(id),
+    deletedAt: null,
+  });
+  return row ? mapDoc(row) : null;
+}
+
+export function userCanAccessRegistry(user: UserDocument, registry: LonaciRegistryDocument): boolean {
+  return userMatchesAgence(user, registry.agenceId);
 }
 
 export async function updateRegistry(

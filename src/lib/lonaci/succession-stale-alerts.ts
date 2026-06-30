@@ -3,6 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { SUCCESSION_STEP_LABELS, SUCCESSION_STEPS, type SuccessionStep } from "@/lib/lonaci/constants";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
@@ -124,7 +125,10 @@ function mapStaleRow(row: StoredSuccession, thresholdDays: number): SuccessionSt
 /**
  * Dossiers succession ouverts sans action depuis N jours après la déclaration (seuil paramétrable, défaut 30).
  */
-export async function listSuccessionStaleAlerts(agenceId?: string | null): Promise<SuccessionStaleAlertRow[]> {
+export async function listSuccessionStaleAlerts(
+  agenceId?: string | null,
+  agenceIds?: string[],
+): Promise<SuccessionStaleAlertRow[]> {
   const thr = await getResolvedAlertThresholds();
   const thresholdDays = thr.successionStaleDays;
   const db = await getDatabase();
@@ -134,8 +138,12 @@ export async function listSuccessionStaleAlerts(agenceId?: string | null): Promi
     deletedAt: null,
     updatedAt: { $lte: prefilter },
   };
-  if (agenceId?.trim()) {
-    filter.agenceId = agenceId.trim();
+  const agenceFilter = restrictionToMongoAgenceFilter({
+    agenceId: agenceId?.trim() || undefined,
+    agenceIds,
+  });
+  if (agenceFilter) {
+    filter.agenceId = agenceFilter;
   }
   const rows = await db
     .collection<StoredSuccession>(COLLECTION)
@@ -149,8 +157,11 @@ export async function listSuccessionStaleAlerts(agenceId?: string | null): Promi
     .map((row) => mapStaleRow(row, thresholdDays));
 }
 
-export async function countSuccessionStaleAlerts(agenceId?: string | null): Promise<number> {
-  const items = await listSuccessionStaleAlerts(agenceId);
+export async function countSuccessionStaleAlerts(
+  agenceId?: string | null,
+  agenceIds?: string[],
+): Promise<number> {
+  const items = await listSuccessionStaleAlerts(agenceId, agenceIds);
   return items.length;
 }
 

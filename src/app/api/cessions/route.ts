@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
   createCession,
   ensureCessionIndexes,
@@ -12,7 +13,6 @@ import {
   type CessionStatus,
   addCessionAttachment,
 } from "@/lib/lonaci/cessions";
-import { concessionnaireListScopeAgenceId } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
   CESSION_ALLOWED_MIME,
@@ -95,15 +95,15 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureCessionIndexes();
-  const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listCessions({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     kind: parsed.data.kind as CessionKind | undefined,
     statut: parsed.data.statut as CessionStatus | undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
-    agenceId: parsed.data.agenceId?.trim() || undefined,
-    scopeAgenceId,
+    ...listAgenceScopeFields(agenceScope),
     dateFrom: parseFilterDate(parsed.data.dateFrom, false),
     dateTo: parseFilterDate(parsed.data.dateTo, true),
   });
@@ -115,11 +115,48 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   const form = await request.formData();
+  const kind = String(form.get("kind") ?? "CESSION").trim();
+
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  async function pdv(clientKey: string, legacyKey: string, required: boolean): Promise<string> {
+    const party = await resolveFormPartyIds({
+      lonaciClientId: String(form.get(clientKey) ?? "").trim() || null,
+      concessionnaireId: String(form.get(legacyKey) ?? "").trim() || null,
+      requirePdv: required,
+    });
+    if (required && !party.concessionnaireId) {
+      throw new Error(party.lonaciClientId ? "CLIENT_NOT_PROMOTED" : "CLIENT_REQUIRED");
+    }
+    return party.concessionnaireId ?? "";
+  }
+
+  let concessionnaireId = "";
+  let cedantId = "";
+  let beneficiaireId = "";
+  try {
+    if (kind === "DELOCALISATION" || kind === "CESSION_DELOCALISATION") {
+      concessionnaireId = await pdv("lonaciClientId", "concessionnaireId", kind === "DELOCALISATION");
+    }
+    if (kind === "CESSION" || kind === "CESSION_DELOCALISATION") {
+      cedantId = await pdv("cedantLonaciClientId", "cedantId", true);
+      beneficiaireId = await pdv("beneficiaireLonaciClientId", "beneficiaireId", true);
+    }
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    if (code === "CLIENT_NOT_PROMOTED" || code === "CLIENT_REQUIRED") {
+      return badRequest("Sélectionnez un client lié à un point de vente.", "CLIENT_NOT_PROMOTED");
+    }
+    return badRequest("Client invalide.", "CLIENT_INVALID");
+  }
+
   const parsedCreate = createFormSchema.safeParse({
-    kind: String(form.get("kind") ?? "CESSION").trim(),
-    concessionnaireId: String(form.get("concessionnaireId") ?? "").trim(),
-    cedantId: String(form.get("cedantId") ?? "").trim(),
-    beneficiaireId: String(form.get("beneficiaireId") ?? "").trim(),
+    kind,
+    concessionnaireId,
+    cedantId,
+    beneficiaireId,
     produitCode: String(form.get("produitCode") ?? "").trim(),
     oldAdresse: String(form.get("oldAdresse") ?? "").trim(),
     oldAgenceId: String(form.get("oldAgenceId") ?? "").trim(),
@@ -134,11 +171,12 @@ export async function POST(request: NextRequest) {
   if (!parsedCreate.success) {
     return zodBadRequest(parsedCreate.error);
   }
+  const parsedData = parsedCreate.data;
   const {
-    kind,
-    concessionnaireId,
-    cedantId,
-    beneficiaireId,
+    kind: cessionKind,
+    concessionnaireId: resolvedConcessionnaireId,
+    cedantId: resolvedCedantId,
+    beneficiaireId: resolvedBeneficiaireId,
     produitCode,
     oldAdresse,
     oldAgenceId,
@@ -149,14 +187,14 @@ export async function POST(request: NextRequest) {
     dateDemande: dateDemandeRaw,
     motif,
     commentaire,
-  } = parsedCreate.data;
+  } = parsedData;
   const dateDemande = new Date(dateDemandeRaw);
   if (Number.isNaN(dateDemande.getTime())) {
     return badRequest("Date de demande invalide.", "INVALID_DATE_DEMANDE");
   }
   const newGpsLat = Number(newGpsLatRaw);
   const newGpsLng = Number(newGpsLngRaw);
-  const needsGps = kind === "DELOCALISATION" || kind === "CESSION_DELOCALISATION";
+  const needsGps = cessionKind === "DELOCALISATION" || cessionKind === "CESSION_DELOCALISATION";
   const newGps =
     needsGps && Number.isFinite(newGpsLat) && Number.isFinite(newGpsLng)
       ? { lat: newGpsLat, lng: newGpsLng }
@@ -168,10 +206,10 @@ export async function POST(request: NextRequest) {
   await ensureCessionIndexes();
   try {
     const created = await createCession({
-      kind,
-      concessionnaireId: concessionnaireId || null,
-      cedantId: cedantId || null,
-      beneficiaireId: beneficiaireId || null,
+      kind: cessionKind,
+      concessionnaireId: resolvedConcessionnaireId || null,
+      cedantId: resolvedCedantId || null,
+      beneficiaireId: resolvedBeneficiaireId || null,
       produitCode: produitCode || null,
       oldAdresse: oldAdresse || null,
       oldAgenceId: oldAgenceId || null,

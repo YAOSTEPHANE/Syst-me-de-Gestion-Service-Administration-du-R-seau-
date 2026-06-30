@@ -3,10 +3,10 @@ import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import {
-  attestationsListScopeAgenceId,
   ensureAttestationsDomiciliationIndexes,
   listDemandesAttestationsDomiciliation,
 } from "@/lib/lonaci/attestations-domiciliation";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getAttestationDomiciliationStatutLabel, LONACI_ROLES } from "@/lib/lonaci/constants";
 
@@ -35,9 +35,8 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureAttestationsDomiciliationIndexes();
-  const scopeAgenceId = attestationsListScopeAgenceId(auth.user);
-  const requestedAgenceId = parsed.data.agenceId?.trim() || undefined;
-  const agenceId = scopeAgenceId ?? requestedAgenceId;
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
 
   const result = await listDemandesAttestationsDomiciliation({
     page: 1,
@@ -46,8 +45,7 @@ export async function GET(request: NextRequest) {
     concessionnaireId: parsed.data.concessionnaireId?.trim() || undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
-    agenceId,
-    scopeAgenceId,
+    ...listAgenceScopeFields(agenceScope),
     dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
     dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
   });

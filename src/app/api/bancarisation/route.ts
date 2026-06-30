@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { badRequest, forbidden, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { type BancarisationStatut, BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
 import {
@@ -13,7 +14,7 @@ import {
   listBancarisationRequests,
   sanitizeBancarisationRequestPublic,
 } from "@/lib/lonaci/bancarisation";
-import { concessionnaireListScopeAgenceId, findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { addPieceJointe } from "@/lib/lonaci/concessionnaires";
 import { listAgences } from "@/lib/lonaci/referentials";
 import type { PieceJointeKind } from "@/lib/lonaci/types";
@@ -43,19 +44,21 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
-  const scopeAgenceId = concessionnaireListScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const scopeFields = listAgenceScopeFields(agenceScope);
   const [requests, counters, agences, allStatusCounts] = await Promise.all([
     listBancarisationRequests({
       page: parsed.data.page,
       pageSize: parsed.data.pageSize,
       status: parsed.data.status,
       statut: parsed.data.statut,
-      agenceId: parsed.data.agenceId,
-      scopeAgenceId,
+      scopeAgenceId: scopeFields.scopeAgenceId,
+      scopeAgenceIds: scopeFields.scopeAgenceIds,
     }),
-    bancarisationCountersByAgenceProduit(scopeAgenceId),
+    bancarisationCountersByAgenceProduit(scopeFields.scopeAgenceId, scopeFields.scopeAgenceIds),
     listAgences(),
-    countBancarisationRequestsByStatus(scopeAgenceId),
+    countBancarisationRequestsByStatus(scopeFields.scopeAgenceId, scopeFields.scopeAgenceIds),
   ]);
   const agenceLabelById = Object.fromEntries(agences.map((a) => [a._id ?? "", `${a.code} - ${a.libelle}`]));
 
@@ -79,7 +82,8 @@ export async function POST(request: NextRequest) {
   if ("error" in auth) return auth.error;
 
   const form = await request.formData();
-  const concessionnaireId = String(form.get("concessionnaireId") ?? "").trim();
+  const lonaciClientIdRaw = String(form.get("lonaciClientId") ?? "").trim();
+  const concessionnaireIdLegacy = String(form.get("concessionnaireId") ?? "").trim();
   const nouveauStatut = String(form.get("nouveauStatut") ?? "").trim() as BancarisationStatut;
   const compteBancaireRaw = String(form.get("compteBancaire") ?? "").trim();
   const banqueRaw = String(form.get("banqueEtablissement") ?? "").trim();
@@ -87,8 +91,8 @@ export async function POST(request: NextRequest) {
   const produitCodeRaw = String(form.get("produitCode") ?? "").trim();
   const file = form.get("file");
 
-  if (!concessionnaireId) {
-    return badRequest("Concessionnaire requis.", "CONCESSIONNAIRE_REQUIRED");
+  if (!lonaciClientIdRaw && !concessionnaireIdLegacy) {
+    return badRequest("Client requis.", "CLIENT_REQUIRED");
   }
   if (!statutValues.has(nouveauStatut)) {
     return badRequest("Nouveau statut invalide.", "INVALID_NEW_STATUS");
@@ -112,6 +116,26 @@ export async function POST(request: NextRequest) {
   const mimeType = file.type || "application/octet-stream";
   if (!ALLOWED_PIECE_MIME[mimeType]) {
     return badRequest("Type MIME non autorise", "INVALID_MIME_TYPE");
+  }
+
+  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
+  let concessionnaireId: string;
+  try {
+    const party = await resolveFormPartyIds({
+      lonaciClientId: lonaciClientIdRaw || null,
+      concessionnaireId: concessionnaireIdLegacy || null,
+      requirePdv: true,
+    });
+    if (!party.concessionnaireId) {
+      return badRequest("Client sans point de vente associé.", "CLIENT_NOT_PROMOTED");
+    }
+    concessionnaireId = party.concessionnaireId;
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return notFound("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    return badRequest("Sélectionnez un client lié à un point de vente.", "CLIENT_NOT_PROMOTED");
   }
 
   const concessionnaire = await findConcessionnaireById(concessionnaireId);

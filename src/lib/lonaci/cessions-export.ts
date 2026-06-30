@@ -5,6 +5,7 @@ import PDFDocument from "pdfkit";
 import { cessionOperationDisplayStatutFields } from "@/lib/lonaci/cession-operation-statut-metier";
 import { parseDocumentChecklistForKind } from "@/lib/lonaci/cession-dossier-checklist";
 import { formatAgenceLibelle, loadAgenceLibelleMap, type AgenceLibelleDoc } from "@/lib/lonaci/zones-abidjan";
+import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -30,7 +31,9 @@ export type CessionsListFilters = {
   statut?: CessionStatus;
   produitCode?: string;
   agenceId?: string;
+  agenceIds?: string[];
   scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
   dateFrom?: Date;
   dateTo?: Date;
 };
@@ -74,9 +77,24 @@ export async function buildCessionsMongoFilter(
     filter.dateDemande = range;
   }
 
-  const agenceId = (input.scopeAgenceId ?? input.agenceId)?.trim();
-  if (agenceId) {
-    const pdvIds = await concessionnaireIdsForAgence(agenceId);
+  const scopeIds =
+    input.scopeAgenceIds && input.scopeAgenceIds.length > 0
+      ? input.scopeAgenceIds
+      : input.agenceIds && input.agenceIds.length > 0
+        ? input.agenceIds
+        : undefined;
+  const singleAgenceId = (input.scopeAgenceId ?? input.agenceId)?.trim();
+  const agenceMongoFilter = scopeIds
+    ? restrictionToMongoAgenceFilter({ agenceIds: scopeIds })
+    : singleAgenceId
+      ? singleAgenceId
+      : undefined;
+
+  if (agenceMongoFilter) {
+    const agenceIds =
+      typeof agenceMongoFilter === "string" ? [agenceMongoFilter] : agenceMongoFilter.$in;
+    const pdvIdSets = await Promise.all(agenceIds.map((id) => concessionnaireIdsForAgence(id)));
+    const pdvIds = [...new Set(pdvIdSets.flat())];
     const inList = pdvIds.length ? pdvIds : ["__none__"];
     filter.$or = [{ cedantId: { $in: inList } }, { concessionnaireId: { $in: inList } }];
   }

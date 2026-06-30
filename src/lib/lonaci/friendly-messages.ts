@@ -34,6 +34,13 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     CHECKLIST_INCOMPLETE: "Toutes les pièces obligatoires doivent être marquées comme fournies.",
     DOSSIER_CHECKLIST_INCOMPLETE:
       "Soumission impossible : la checklist documents du dossier est incomplète. Marquez tous les documents obligatoires comme « Fourni ».",
+    DOSSIER_CLIENT_REQUIRED:
+      "Un dossier doit être ouvert sur un client Lonaci avant toute promotion en point de vente.",
+    CLIENT_PARCOURS_INCOMPLET:
+      "Le client doit terminer son parcours (validation N1, caution payée, statut actif) avant de devenir concessionnaire.",
+    CLIENT_ALREADY_PROMOTED: "Ce client est déjà rattaché à un point de vente.",
+    CLIENT_NOT_PROMOTED: "Ce client n’est pas encore rattaché à un point de vente.",
+    CLIENT_NOT_FOUND: "Client Lonaci introuvable.",
     PHOTO_REQUIRED: "Une photo d'identité est obligatoire avant soumission.",
     NOM_REQUIRED: "Le nom est obligatoire.",
     PRENOM_REQUIRED: "Le prénom est obligatoire.",

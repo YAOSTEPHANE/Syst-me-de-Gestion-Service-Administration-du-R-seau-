@@ -1,10 +1,9 @@
 "use client";
 
-import ConcessionnaireSearchPicker, {
-  pickProduitCodeFromConcessionnaire,
-  pickProduitCodesFromConcessionnaire,
-  type ConcessionnairePickerRow,
-} from "@/components/lonaci/concessionnaire-search-picker";
+import ClientSearchPicker, {
+  pickProduitCodeFromClient,
+  type ClientPickerRow,
+} from "@/components/lonaci/client-search-picker";
 import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -65,6 +64,28 @@ function syncStateStyle(state: "PENDING" | "SUCCESS" | "FAILED") {
   return "border-amber-300 bg-amber-100 text-amber-900";
 }
 
+function pickProduitCodesFromClient(
+  row: ClientPickerRow | null,
+  availableProduitCodes: readonly string[],
+): string[] {
+  if (!row || !availableProduitCodes.length) return [];
+  const order = (row.produitsAutorises ?? [])
+    .map((c) => String(c).trim())
+    .filter(Boolean);
+  if (!order.length) return [];
+  const byUpper = new Map(availableProduitCodes.map((c) => [c.trim().toUpperCase(), c]));
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of order) {
+    const hit = byUpper.get(raw.toUpperCase());
+    if (hit !== undefined && !seen.has(hit)) {
+      seen.add(hit);
+      out.push(hit);
+    }
+  }
+  return out;
+}
+
 export default function GprModulePage() {
   const [produits, setProduits] = useState<RefProduit[]>([]);
   const [concessionnaires, setConcessionnaires] = useState<RefConcessionnaire[]>([]);
@@ -76,7 +97,7 @@ export default function GprModulePage() {
   const [scratchItems, setScratchItems] = useState<ScratchItem[]>([]);
   const [loadingData, setLoadingData] = useState(true);
 
-  const [gprPdv, setGprPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [gprClient, setGprClient] = useState<ClientPickerRow | null>(null);
   const [gprProducts, setGprProducts] = useState<string[]>([]);
   const [gprDate, setGprDate] = useState("");
   const [creatingGpr, setCreatingGpr] = useState(false);
@@ -84,7 +105,7 @@ export default function GprModulePage() {
 
   const [lotId, setLotId] = useState("");
   const [lotCodes, setLotCodes] = useState("100");
-  const [lotPdv, setLotPdv] = useState<ConcessionnairePickerRow | null>(null);
+  const [lotClient, setLotClient] = useState<ClientPickerRow | null>(null);
   const [lotProduitCode, setLotProduitCode] = useState("");
   const [creatingLot, setCreatingLot] = useState(false);
   const [createLotOpen, setCreateLotOpen] = useState(false);
@@ -162,8 +183,8 @@ export default function GprModulePage() {
 
   async function onCreateGpr(e: FormEvent) {
     e.preventDefault();
-    if (!gprPdv?.id) {
-      setError("Sélectionnez un concessionnaire.");
+    if (!gprClient?.id) {
+      setError("Sélectionnez un client.");
       return;
     }
     setCreatingGpr(true);
@@ -174,14 +195,14 @@ export default function GprModulePage() {
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          concessionnaireId: gprPdv.id,
+          lonaciClientId: gprClient.id,
           produitsActifs: gprProducts,
           dateEnregistrement: new Date(gprDate).toISOString(),
         }),
       });
       if (!response.ok) throw new Error("Création GPR impossible");
       setGprProducts([]);
-      setGprPdv(null);
+      setGprClient(null);
       await loadData();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
@@ -231,8 +252,8 @@ export default function GprModulePage() {
 
   async function onCreateLot(e: FormEvent) {
     e.preventDefault();
-    if (!lotPdv?.id) {
-      setError("Sélectionnez un concessionnaire pour le lot.");
+    if (!lotClient?.id) {
+      setError("Sélectionnez un client pour le lot.");
       return;
     }
     setCreatingLot(true);
@@ -245,14 +266,14 @@ export default function GprModulePage() {
         body: JSON.stringify({
           lotId: lotId.trim() ? lotId.trim() : undefined,
           nombreCodes: Number(lotCodes),
-          concessionnaireId: lotPdv.id,
+          lonaciClientId: lotClient.id,
           produitCode: lotProduitCode,
         }),
       });
       if (!response.ok) throw new Error("Création du lot impossible");
       setLotId("");
       setLotCodes("100");
-      setLotPdv(null);
+      setLotClient(null);
       setLotProduitCode("");
       setCreateLotOpen(false);
       await loadData();
@@ -335,18 +356,19 @@ export default function GprModulePage() {
         </div>
         <form onSubmit={onCreateGpr} className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 sm:grid-cols-2 xl:grid-cols-4">
           <div className="min-w-0">
-            <ConcessionnaireSearchPicker
-              label={<span className="text-[10px] font-medium text-slate-600">Concessionnaire *</span>}
-              selected={gprPdv}
+            <ClientSearchPicker
+              label={<span className="text-[10px] font-medium text-slate-600">Client Lonaci *</span>}
+              selected={gprClient}
               onSelectedChange={(r) => {
-                setGprPdv(r);
+                setGprClient(r);
                 const codes = produits.map((p) => p.code);
-                const next = r ? pickProduitCodesFromConcessionnaire(r, codes) : [];
+                const next = r ? pickProduitCodesFromClient(r, codes) : [];
                 setGprProducts(next);
               }}
+              filter="linkedPdv"
               inputClassName="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
               disabled={loadingRef}
-              searchPlaceholder="Rechercher un PDV…"
+              searchPlaceholder="Rechercher un client…"
             />
           </div>
           <select
@@ -491,7 +513,7 @@ export default function GprModulePage() {
                     Créer un lot de codes grattage
                   </h3>
                   <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
-                    Identifiant, volume de codes, concessionnaire cible et produit.
+                    Identifiant, volume de codes, client cible et produit.
                   </p>
                 </div>
                 <button
@@ -532,23 +554,24 @@ export default function GprModulePage() {
                     </div>
                   </section>
                   <section className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50/60 p-3 sm:grid-cols-2">
-                    <ConcessionnaireSearchPicker
+                    <ClientSearchPicker
                       key={`scratch-lot-${createLotOpen}`}
-                      label={<span className="text-xs font-medium text-slate-700">Concessionnaire *</span>}
-                      selected={lotPdv}
+                      label={<span className="text-xs font-medium text-slate-700">Client Lonaci *</span>}
+                      selected={lotClient}
                       onSelectedChange={(r) => {
-                        setLotPdv(r);
+                        setLotClient(r);
                         if (!r) {
                           setLotProduitCode("");
                           return;
                         }
                         const codes = produits.map((p) => p.code);
-                        const picked = pickProduitCodeFromConcessionnaire(r, codes);
+                        const picked = pickProduitCodeFromClient(r, codes);
                         if (picked) setLotProduitCode(picked);
                       }}
+                      filter="linkedPdv"
                       inputClassName="rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900 outline-none ring-indigo-400/40 transition focus:ring-2"
                       disabled={loadingRef}
-                      searchPlaceholder="Rechercher un PDV…"
+                      searchPlaceholder="Rechercher un client…"
                     />
                     <label className="grid gap-1">
                       <span className="text-xs font-medium text-slate-700">Produit *</span>

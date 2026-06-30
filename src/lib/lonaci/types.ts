@@ -170,6 +170,7 @@ export interface ConcessionnaireDocument {
   ville: string | null;
   codePostal: string | null;
   agenceId: string | null;
+  sourceLonaciClientId?: string | null;
   produitsAutorises: string[];
   statut: ConcessionnaireStatut;
   statutBancarisation: BancarisationStatut;

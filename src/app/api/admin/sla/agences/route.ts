@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getAgenceSlaSnapshot } from "@/lib/lonaci/dashboard-stats";
 
@@ -20,8 +21,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ message: "Parametres invalides", issues: parsed.error.issues }, { status: 400 });
   }
 
-  const all = await getAgenceSlaSnapshot(parsed.data.agenceId);
-  const filtered = parsed.data.status === "OVERDUE" ? all.filter((row) => row.overdueTotal > 0) : all;
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+
+  const all = await getAgenceSlaSnapshot(agenceScope.agenceId);
+  const allowedAgenceIds =
+    agenceScope.agenceIds && agenceScope.agenceIds.length > 0
+      ? new Set(agenceScope.agenceIds)
+      : null;
+  const scoped = allowedAgenceIds
+    ? all.filter((row) => row.agenceId && allowedAgenceIds.has(row.agenceId))
+    : all;
+  const filtered = parsed.data.status === "OVERDUE" ? scoped.filter((row) => row.overdueTotal > 0) : scoped;
   const total = filtered.length;
   const page = parsed.data.page;
   const pageSize = parsed.data.pageSize;

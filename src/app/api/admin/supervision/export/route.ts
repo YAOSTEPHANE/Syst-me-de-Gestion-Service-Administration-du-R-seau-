@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import PDFDocument from "pdfkit";
 import { z } from "zod";
 
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { listUnifiedAuditLogs } from "@/lib/lonaci/audit-logs";
 import { getDossierValidationSnapshot } from "@/lib/lonaci/dashboard-stats";
@@ -35,10 +36,14 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureSuccessionIndexes();
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const scopeFields = listAgenceScopeFields(agenceScope);
+
   const [daily, cautionAlerts, successionStale, auditLogs] = await Promise.all([
-    buildReportSummary("daily", parsed.data.agenceId),
-    listCautionAlertsJ10(parsed.data.agenceId),
-    listSuccessionStaleAlerts(parsed.data.agenceId),
+    buildReportSummary("daily", scopeFields.agenceId ?? scopeFields.scopeAgenceId, 0, scopeFields.agenceIds ?? scopeFields.scopeAgenceIds),
+    listCautionAlertsJ10(scopeFields.scopeAgenceId ?? scopeFields.agenceId),
+    listSuccessionStaleAlerts(scopeFields.scopeAgenceId ?? scopeFields.agenceId, scopeFields.scopeAgenceIds ?? scopeFields.agenceIds),
     listUnifiedAuditLogs({
       page: 1,
       pageSize: 500,
@@ -50,12 +55,14 @@ export async function GET(request: NextRequest) {
     }),
   ]);
 
+  const scopeAgenceId = scopeFields.scopeAgenceId ?? scopeFields.agenceId ?? null;
+
   const dossierValidation = await getDossierValidationSnapshot(
     cautionAlerts.length,
     daily.succession.ouverts,
     successionStale.length,
     daily.pdvIntegrations.nonFinalise,
-    parsed.data.agenceId,
+    scopeAgenceId,
   );
 
   const rawSlaRows = [
@@ -106,7 +113,7 @@ export async function GET(request: NextRequest) {
           generatedAt: new Date().toISOString(),
           source: parsed.data.source ?? "ALL",
           status: parsed.data.status ?? "ALL",
-          agenceId: parsed.data.agenceId ?? "ALL",
+          agenceId: scopeAgenceId ?? (scopeFields.scopeAgenceIds?.length ? scopeFields.scopeAgenceIds.join(",") : "ALL"),
           slaStatus: parsed.data.slaStatus,
           query: parsed.data.query ?? "",
         },

@@ -71,6 +71,8 @@ model Concessionnaire {
   ville           String?
   codePostal      String?
   agenceId        String?
+  /** Client Lonaci d'origine (parcours client → promotion PDV). */
+  sourceLonaciClientId String?
   produitsAutorises String[]
   statut          String
   statutBancarisation String?
@@ -101,6 +103,7 @@ model Concessionnaire {
 
   @@map("concessionnaires")
   @@index([agenceId], map: "idx_agence")
+  @@index([sourceLonaciClientId], map: "idx_source_lonaci_client")
   @@index([statut], map: "idx_statut")
   @@index([inscriptionStatut], map: "idx_inscription_statut")
   @@index([statutBancarisation], map: "idx_statut_bancarisation")

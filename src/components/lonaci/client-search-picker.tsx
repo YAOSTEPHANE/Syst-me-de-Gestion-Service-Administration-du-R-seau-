@@ -13,6 +13,8 @@ export type ClientPickerRow = {
   raisonSociale?: string | null;
   agenceId?: string | null;
   produitsAutorises?: string[];
+  cniNumero?: string | null;
+  telephone?: string | null;
 };
 
 export function formatClientPickerLabel(c: ClientPickerRow): string {
@@ -59,6 +61,8 @@ function normalizeItem(raw: Record<string, unknown>): ClientPickerRow | null {
     raisonSociale: (raw.raisonSociale as string | null | undefined) ?? null,
     agenceId: (raw.agenceId as string | null | undefined) ?? null,
     produitsAutorises: Array.isArray(raw.produitsAutorises) ? (raw.produitsAutorises as string[]) : undefined,
+    cniNumero: (raw.cniNumero as string | null | undefined) ?? null,
+    telephone: (raw.telephone as string | null | undefined) ?? null,
   };
 }
 
@@ -75,6 +79,8 @@ export type ClientSearchPickerProps = {
   showClearLink?: boolean;
   searchPlaceholder?: string;
   minQueryLength?: number;
+  /** Filtre API : contrat (défaut), promotion PDV, ou client déjà lié à un PDV. */
+  filter?: "contrat" | "promotion" | "linkedPdv";
 };
 
 export default function ClientSearchPicker({
@@ -87,6 +93,7 @@ export default function ClientSearchPicker({
   showClearLink = true,
   searchPlaceholder = "Nom, code client, CNI, téléphone… (min. 2 caractères)",
   minQueryLength = 2,
+  filter = "contrat",
 }: ClientSearchPickerProps) {
   const inputClass = [defaultInputClass, inputClassName].filter(Boolean).join(" ");
   const [query, setQuery] = useState("");
@@ -126,8 +133,14 @@ export default function ClientSearchPicker({
             page: "1",
             pageSize: "40",
             q,
-            eligibleForContrat: "true",
           });
+          if (filter === "promotion") {
+            params.set("eligibleForPromotion", "true");
+          } else if (filter === "linkedPdv") {
+            params.set("linkedToConcessionnaire", "true");
+          } else {
+            params.set("eligibleForContrat", "true");
+          }
           const res = await fetch(`/api/clients?${params}`, {
             credentials: "include",
             cache: "no-store",
@@ -148,7 +161,7 @@ export default function ClientSearchPicker({
       cancelled = true;
       window.clearTimeout(t);
     };
-  }, [query, selected, minLen]);
+  }, [query, selected, minLen, filter]);
 
   const selectedLabel = selected ? formatClientPickerLabel(selected) : "";
   const showPanel =

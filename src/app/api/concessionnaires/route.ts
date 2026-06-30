@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { badRequest, forbidden } from "@/lib/api/error-responses";
+import { badRequest, conflict, forbidden } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
   canCreateConcessionnaireForAgence,
   enforcedAgenceIdOnCreate,
@@ -13,13 +14,12 @@ import {
   CONCESSIONNAIRE_STATUTS,
 } from "@/lib/lonaci/constants";
 import {
-  concessionnaireListScopeAgenceId,
-  createConcessionnaire,
   ensureConcessionnaireIndexes,
   sanitizeConcessionnaireListItem,
   sanitizeConcessionnairePublic,
   searchConcessionnaires,
 } from "@/lib/lonaci/concessionnaires";
+import { createConcessionnaireFromClient } from "@/lib/lonaci/client-to-concessionnaire";
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
 
@@ -71,41 +71,11 @@ const createSchema = z
     lat: z.coerce.number().gte(-90).lte(90),
     lng: z.coerce.number().gte(-180).lte(180),
   }),
+  /** Client Lonaci ayant terminé son parcours (statut ACTIF). */
+  sourceLonaciClientId: z.string().min(1),
   observations: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
   notesInternes: z.preprocess(emptyStringToNull, z.union([z.string().max(10000), z.null()]).optional()),
-})
-  .superRefine((data, ctx) => {
-    const nom = (data.nom ?? "").trim();
-    const prenom = (data.prenom ?? "").trim();
-    const complet = (data.nomComplet ?? "").trim();
-    const okNomPrenom = nom.length >= 2 && prenom.length >= 2;
-    const okComplet = complet.length >= 2;
-    if (!okNomPrenom && !okComplet) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Nom et prénom (ou nom complet) obligatoires.",
-        path: ["nom"],
-      });
-    }
-  });
-
-function resolveNomPrenom(data: {
-  nom?: string | null;
-  prenom?: string | null;
-  nomComplet?: string | null;
-}): { nom: string; prenom: string; nomComplet: string } {
-  let nom = (data.nom ?? "").trim();
-  let prenom = (data.prenom ?? "").trim();
-  const complet = (data.nomComplet ?? "").trim();
-  if ((!nom || !prenom) && complet) {
-    const parts = complet.split(/\s+/).filter(Boolean);
-    if (!nom && parts.length) nom = parts[parts.length - 1] ?? "";
-    if (!prenom && parts.length > 1) prenom = parts.slice(0, -1).join(" ");
-    if (!prenom && parts.length === 1) prenom = parts[0] ?? "";
-  }
-  const nomComplet = complet || `${prenom} ${nom}`.trim();
-  return { nom, prenom, nomComplet };
-}
+});
 
 const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -138,7 +108,8 @@ export async function GET(request: NextRequest) {
     parsed.data.includeDeleted === "true" && auth.user.role === "CHEF_SERVICE";
 
   await ensureConcessionnaireIndexes();
-  const scope = concessionnaireListScopeAgenceId(auth.user);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await searchConcessionnaires({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
@@ -147,9 +118,8 @@ export async function GET(request: NextRequest) {
     inscriptionStatut: parsed.data.inscriptionStatut,
     inscriptionFinaliseeOnly: parsed.data.inscriptionFinaliseeOnly === "true",
     statutBancarisation: parsed.data.statutBancarisation,
-    agenceId: parsed.data.agenceId,
     produitCode: parsed.data.produitCode,
-    scopeAgenceId: scope,
+    ...listAgenceScopeFields(agenceScope),
     includeDeleted,
   });
 
@@ -232,33 +202,42 @@ export async function POST(request: NextRequest) {
 
   await ensureConcessionnaireIndexes();
 
-  const identity = resolveNomPrenom(parsed.data);
-  const doc = await createConcessionnaire({
-    nom: identity.nom,
-    prenom: identity.prenom,
-    nomComplet: identity.nomComplet,
-    codeTerminal: parsed.data.codeTerminal ?? null,
-    codeConcessionnaire: parsed.data.codeConcessionnaire ?? null,
-    cniNumero: parsed.data.cniNumero ?? null,
-    photoUrl: parsed.data.photoUrl ?? null,
-    email: parsed.data.email ?? null,
-    telephonePrincipal: parsed.data.telephonePrincipal ?? null,
-    telephoneSecondaire: parsed.data.telephoneSecondaire ?? null,
-    adresse: parsed.data.adresse ?? null,
-    ville: parsed.data.ville ?? null,
-    codePostal: parsed.data.codePostal ?? null,
-    agenceId,
-    agenceCode,
-    produitsAutorises: parsed.data.produitsAutorises.map((code) => code.trim().toUpperCase()),
-    statut: parsed.data.statut,
-    statutBancarisation: parsed.data.statutBancarisation,
-    compteBancaire: parsed.data.compteBancaire ?? null,
-    banqueEtablissement: parsed.data.banqueEtablissement ?? null,
-    gps: parsed.data.gps,
-    observations: parsed.data.observations ?? null,
-    notesInternes: parsed.data.notesInternes ?? null,
-    createdByUserId: auth.user._id ?? "",
-  });
-
-  return NextResponse.json({ concessionnaire: sanitizeConcessionnairePublic(doc) }, { status: 201 });
+  try {
+    const doc = await createConcessionnaireFromClient({
+      sourceLonaciClientId: parsed.data.sourceLonaciClientId.trim(),
+      agenceId,
+      agenceCode,
+      codeTerminal: parsed.data.codeTerminal ?? null,
+      codeConcessionnaire: parsed.data.codeConcessionnaire ?? null,
+      gps: parsed.data.gps,
+      statutBancarisation: parsed.data.statutBancarisation,
+      compteBancaire: parsed.data.compteBancaire ?? null,
+      banqueEtablissement: parsed.data.banqueEtablissement ?? null,
+      observations: parsed.data.observations ?? null,
+      notesInternes: parsed.data.notesInternes ?? null,
+      actor: auth.user,
+    });
+    return NextResponse.json({ concessionnaire: sanitizeConcessionnairePublic(doc) }, { status: 201 });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_NOT_FOUND") {
+      return badRequest("Client introuvable.", "CLIENT_NOT_FOUND");
+    }
+    if (code === "CLIENT_INSCRIPTION_PENDING") {
+      return conflict("Validation N1 client requise.", "CLIENT_INSCRIPTION_PENDING");
+    }
+    if (code === "CLIENT_PARCOURS_INCOMPLET") {
+      return conflict(
+        "Le client doit terminer son parcours (caution payee, statut actif) avant promotion PDV.",
+        "CLIENT_PARCOURS_INCOMPLET",
+      );
+    }
+    if (code === "CLIENT_ALREADY_PROMOTED") {
+      return conflict("Ce client est deja rattache a un concessionnaire.", "CLIENT_ALREADY_PROMOTED");
+    }
+    if (code === "CLIENT_BLOQUE") {
+      return conflict("Client non eligible.", "CLIENT_BLOQUE");
+    }
+    return badRequest("Creation du concessionnaire impossible.", "CONCESSIONNAIRE_CREATE_FAILED");
+  }
 }
