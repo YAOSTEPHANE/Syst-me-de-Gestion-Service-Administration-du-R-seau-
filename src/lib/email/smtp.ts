@@ -3,6 +3,8 @@
  * Variables : SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, EMAIL_FROM
  */
 
+import { sanitizeEmailAddressList, sanitizeEmailHeaderValue } from "@/lib/security/email-headers";
+
 export interface SendEmailResult {
   sent: boolean;
   skippedReason?: string;
@@ -30,6 +32,11 @@ export async function sendSmtpEmail(
   const user = process.env.SMTP_USER?.trim();
   const pass = process.env.SMTP_PASS?.trim();
 
+  const safeTo = sanitizeEmailAddressList(to);
+  if (!safeTo.length) {
+    return { sent: false, skippedReason: "Aucune adresse destinataire valide" };
+  }
+
   try {
     const nodemailer = await import("nodemailer");
     const transporter = nodemailer.createTransport({
@@ -39,12 +46,12 @@ export async function sendSmtpEmail(
       auth: user && pass ? { user, pass } : undefined,
     });
     await transporter.sendMail({
-      from,
-      to: to.join(", "),
-      subject,
+      from: sanitizeEmailHeaderValue(from),
+      to: safeTo.join(", "),
+      subject: sanitizeEmailHeaderValue(subject),
       text,
       attachments: options?.attachments?.map((item) => ({
-        filename: item.filename,
+        filename: sanitizeEmailHeaderValue(item.filename),
         content: item.content,
         contentType: item.contentType,
       })),

@@ -1,5 +1,6 @@
 import { ObjectId } from "mongodb";
 
+import { appendAuditLog } from "@/lib/lonaci/audit";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type {
   DossierDocument,

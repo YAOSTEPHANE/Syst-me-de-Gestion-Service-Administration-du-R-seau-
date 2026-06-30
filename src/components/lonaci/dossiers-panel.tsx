@@ -101,7 +101,7 @@ interface DossierDetailItem {
   concessionnaireId: string | null;
   lonaciClientId?: string | null;
   agenceId: string | null;
-  payload: unknown;
+  payload: Record<string, unknown>;
   history: Array<{ status: DossierStatus; actedByUserId: string; actedAt: string; comment: string | null }>;
   createdAt: string;
   updatedAt: string;
@@ -1477,7 +1477,7 @@ export default function DossiersPanel() {
                   detailItem.status !== "REJETE" ? (
                     <DossierDocumentChecklistBlock
                       dossierId={detailItem.id}
-                      payload={(detailItem.payload ?? {}) as Record<string, unknown>}
+                      payload={detailItem.payload ?? {}}
                       editable={false}
                       canGenererContrat={userMayPatchDossierPayload(meRole)}
                       statutMetier={detailItem.statutMetier}
