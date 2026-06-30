@@ -21,6 +21,13 @@ import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-p
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
+import {
+  extendContratDossierWithProduit,
+  findEditableContratDossierForParty,
+  getDossierProduitCodes,
+  resolveDossierCautionsStatus,
+  ensureChecklistForDossierProduits,
+} from "@/lib/lonaci/dossier-produits";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { canReadClient } from "@/lib/lonaci/access";
@@ -313,6 +320,7 @@ export async function GET(request: NextRequest) {
     .collection<{
       _id: ObjectId;
       reference: string;
+      type: string;
       status: string;
       concessionnaireId: string | null;
       lonaciClientId?: string | null;
@@ -401,36 +409,28 @@ export async function GET(request: NextRequest) {
       dossiers: await Promise.all(
         dossiersRows.map(async (d) => {
           const id = d._id.toHexString();
-          const checklist = parseDocumentChecklistPayload(d.payload ?? {});
-          const hasDocumentChecklist = Boolean(checklist?.entries.length);
-          const produitCode = String(d.payload?.produitCode ?? "").trim().toUpperCase();
-          let cautionPaid = false;
-          let cautionPaymentReference: string | null = null;
-          let dechargeDefinitiveEligible = false;
-          if (produitCode) {
-            const parentContratId =
-              typeof d.payload?.parentContratId === "string" ? d.payload.parentContratId : null;
-            const explicitCautionId =
-              typeof d.payload?.cautionId === "string" ? d.payload.cautionId : null;
-            const caution = await findAssociatedCautionForDossier({
-              concessionnaireId: d.concessionnaireId,
-              lonaciClientId: d.lonaciClientId,
-              produitCode,
-              parentContratId,
-              explicitCautionId,
-            });
-            cautionPaid = caution?.status === "PAYEE";
-            cautionPaymentReference =
-              cautionPaid && caution?.paymentReference?.trim() ? caution.paymentReference.trim() : null;
-            dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
-              hasDocumentChecklist ? checklist! : { entries: [], complet: false },
-              cautionPaid,
-              Boolean(cautionPaymentReference),
-            );
-          }
+          const mapped = {
+            _id: id,
+            type: d.type,
+            status: d.status,
+            concessionnaireId: d.concessionnaireId,
+            lonaciClientId: d.lonaciClientId,
+            payload: d.payload ?? {},
+          };
+          const produitCodes = getDossierProduitCodes(d.payload ?? {});
+          const checklist = await ensureChecklistForDossierProduits(d.payload ?? {}, produitCodes);
+          const hasDocumentChecklist = Boolean(checklist.entries.length);
+          const cautionsStatus = await resolveDossierCautionsStatus(mapped);
+          const cautionPaid = cautionsStatus.allPaid;
+          const cautionPaymentReference = cautionsStatus.primaryPaymentReference;
+          const dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
+            hasDocumentChecklist ? checklist : { entries: [], complet: false },
+            cautionPaid,
+            Boolean(cautionPaymentReference),
+          );
           const statutMetier = resolveContratStatutMetier({
             dossierStatus: d.status,
-            checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+            checklistComplet: hasDocumentChecklist ? checklist.complet : null,
             cautionPaid,
             hasDocumentChecklist,
           });
@@ -442,9 +442,16 @@ export async function GET(request: NextRequest) {
             agenceId: d.agenceId,
             payload: d.payload,
             hasDocumentChecklist,
-            checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
+            checklistComplet: hasDocumentChecklist ? checklist.complet : null,
             cautionPaid,
             cautionPaymentReference,
+            produitCodes,
+            cautionsByProduit: cautionsStatus.links.map((l) => ({
+              produitCode: l.produitCode,
+              cautionPaid: l.status === "PAYEE" && Boolean(l.paymentReference),
+              paymentReference: l.paymentReference,
+              referenceLabel: l.referenceLabel,
+            })),
             dechargeDefinitiveEligible,
             ...contratStatutMetierFields(statutMetier),
             history: d.history.map((h) => ({
@@ -552,31 +559,54 @@ export async function POST(request: NextRequest) {
 
   await ensureDossierIndexes();
   try {
-    const dossier = await createDossier({
-      type: "CONTRAT_ACTUALISATION",
-      concessionnaireId,
-      lonaciClientId,
-      payload: {
-        produitCode: parsed.data.produitCode.trim().toUpperCase(),
-        operationType: parsed.data.operationType,
-        dateOperation: parsed.data.dateOperation,
-        dateEffet: parsed.data.dateOperation,
-        agenceId: parsed.data.agenceId,
-        parentContratId: parsed.data.parentContratId ?? null,
-        observations: parsed.data.observations ?? null,
-      },
-      documentChecklist: parsed.data.documentChecklist,
-      actor: auth.user,
-    });
-    const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
-    let resultDossier = dossier;
+    let resultDossier: Awaited<ReturnType<typeof createDossier>> | null = null;
+    let extended = false;
+    let added = false;
+
+    if (parsed.data.operationType === "NOUVEAU") {
+      const editable = await findEditableContratDossierForParty(party);
+      if (editable?._id) {
+        const extension = await extendContratDossierWithProduit({
+          dossierId: editable._id,
+          produitCode: p,
+          actor: auth.user,
+          documentChecklist: parsed.data.documentChecklist,
+        });
+        resultDossier = extension.dossier;
+        extended = true;
+        added = extension.added;
+      }
+    }
+
+    if (!resultDossier) {
+      resultDossier = await createDossier({
+        type: "CONTRAT_ACTUALISATION",
+        concessionnaireId,
+        lonaciClientId,
+        payload: {
+          produitCode: p,
+          operationType: parsed.data.operationType,
+          dateOperation: parsed.data.dateOperation,
+          dateEffet: parsed.data.dateOperation,
+          agenceId: parsed.data.agenceId,
+          parentContratId: parsed.data.parentContratId ?? null,
+          observations: parsed.data.observations ?? null,
+        },
+        documentChecklist: parsed.data.documentChecklist,
+        actor: auth.user,
+      });
+    }
+
+    const checklist = parseDocumentChecklistPayload(resultDossier.payload ?? {});
     let submitted = false;
     if (checklist?.complet) {
       resultDossier = await transitionDossier(
-        dossier._id ?? "",
+        resultDossier._id ?? "",
         "SOUMIS",
         auth.user,
-        "Soumis à la création après constitution de la checklist.",
+        extended
+          ? "Soumis après enrichissement du dossier existant."
+          : "Soumis à la création après constitution de la checklist.",
       );
       submitted = true;
     }
@@ -585,8 +615,10 @@ export async function POST(request: NextRequest) {
         dossier: resultDossier,
         checklistRequired: Boolean(checklist?.entries.length),
         submitted,
+        extended,
+        added,
       },
-      { status: 201 },
+      { status: extended ? 200 : 201 },
     );
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
@@ -622,6 +654,9 @@ export async function POST(request: NextRequest) {
     }
     if (code === "CONCESSIONNAIRE_NOT_FOUND" || code === "PARTY_REQUIRED") {
       return badRequest("Client ou concessionnaire introuvable.", "PARTY_NOT_FOUND");
+    }
+    if (code === "DOSSIER_NOT_EDITABLE" || code === "DOSSIER_OPERATION_NOT_EXTENDABLE") {
+      return conflict("Le dossier existant n'est pas enrichissable.", code);
     }
     if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
       return conflict(

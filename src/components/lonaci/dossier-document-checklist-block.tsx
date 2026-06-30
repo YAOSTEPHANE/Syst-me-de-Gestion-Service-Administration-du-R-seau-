@@ -71,6 +71,13 @@ function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatc
   };
 }
 
+type CautionByProduitRow = {
+  produitCode: string;
+  cautionPaid: boolean;
+  paymentReference: string | null;
+  referenceLabel: string;
+};
+
 type Props = {
   dossierId: string;
   payload: Record<string, unknown>;
@@ -78,6 +85,7 @@ type Props = {
   /** Permet « Générer le contrat » même en lecture seule (ex. dossier déjà soumis). */
   canGenererContrat?: boolean;
   cautionPaid?: boolean;
+  cautionsByProduit?: CautionByProduitRow[];
   dechargeDefinitiveEligible?: boolean;
   cautionPaymentReference?: string | null;
   dossierStatus?: string;
@@ -114,6 +122,7 @@ export default function DossierDocumentChecklistBlock({
   editable,
   canGenererContrat,
   cautionPaid,
+  cautionsByProduit,
   dechargeDefinitiveEligible,
   cautionPaymentReference,
   dossierStatus,
@@ -263,6 +272,24 @@ export default function DossierDocumentChecklistBlock({
         >
           <p className="font-semibold">{statutMetierLabel}</p>
           {statutMetierDescription ? <p className="mt-0.5 opacity-90">{statutMetierDescription}</p> : null}
+        </div>
+      ) : null}
+      {cautionsByProduit && cautionsByProduit.length > 1 ? (
+        <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2 text-[11px] text-slate-800">
+          <p className="font-semibold text-slate-700">Cautions par produit</p>
+          <ul className="mt-1 space-y-0.5">
+            {cautionsByProduit.map((c) => (
+              <li key={c.produitCode} className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="font-medium">{c.produitCode}</span>
+                <span className={c.cautionPaid ? "text-emerald-700" : "text-amber-800"}>
+                  {c.cautionPaid ? "Payée" : "En attente"}
+                </span>
+                {c.paymentReference ? (
+                  <span className="text-slate-500">réf. {c.paymentReference}</span>
+                ) : null}
+              </li>
+            ))}
+          </ul>
         </div>
       ) : null}
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">

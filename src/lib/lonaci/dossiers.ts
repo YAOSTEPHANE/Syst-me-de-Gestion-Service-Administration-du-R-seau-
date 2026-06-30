@@ -18,6 +18,12 @@ import {
   isStatutFicheGelee,
 } from "@/lib/lonaci/access";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
+import {
+  ensureChecklistForDossierProduits,
+  getDossierProduitCodes,
+  resolveDossierCautionsStatus,
+  serializeDossierProduitPayload,
+} from "@/lib/lonaci/dossier-produits";
 import { parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
 import {
   contratPartyFromDossier,
@@ -37,23 +43,11 @@ import {
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
 import {
-  ensureDossierDocumentChecklist,
   parseDocumentChecklistPayload,
   mergeChecklistStatutPatch,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import { getDatabase } from "@/lib/mongodb";
-
-async function findAssociatedCautionForDossier(
-  ...args: Parameters<
-    (typeof import("@/lib/lonaci/dossier-decharge-provisoire"))["findAssociatedCautionForDossier"]
-  >
-) {
-  const { findAssociatedCautionForDossier: lookup } = await import(
-    "@/lib/lonaci/dossier-decharge-provisoire"
-  );
-  return lookup(...args);
-}
 
 const COLLECTION = "dossiers";
 const COUNTERS = "counters";
@@ -168,15 +162,14 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
     if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
       throw new Error("PRODUIT_NOT_ALLOWED");
     }
-    const checklist = ensureDossierDocumentChecklist(
-      input.payload,
-      produit.documentsChecklist ?? [],
-    );
+    const produitCodes = [produitCode];
+    const checklist = await ensureChecklistForDossierProduits(input.payload, produitCodes);
     const mergedChecklist = input.documentChecklist?.length
       ? mergeChecklistStatutPatch(checklist, input.documentChecklist)
       : checklist;
     input.payload = {
       ...input.payload,
+      ...serializeDossierProduitPayload(produitCodes),
       ...serializeDocumentChecklistPayload(mergedChecklist),
     };
   }
@@ -366,25 +359,12 @@ export async function buildDossierContratStatutMetierFields(
   }
   const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
   const hasDocumentChecklist = Boolean(checklist?.entries.length);
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  let cautionPaid = false;
-  let cautionPaymentReference: string | null = null;
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
+  const cautionPaid = cautionsStatus.allPaid;
+  const cautionPaymentReference = cautionsStatus.primaryPaymentReference;
   let dechargeDefinitiveEligible = false;
-  if (produitCode) {
-    const parentContratId =
-      typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
-    const explicitCautionId =
-      typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
-    const caution = await findAssociatedCautionForDossier({
-      concessionnaireId: dossier.concessionnaireId,
-      lonaciClientId: dossier.lonaciClientId,
-      produitCode,
-      parentContratId,
-      explicitCautionId,
-    });
-    cautionPaid = caution?.status === "PAYEE";
-    cautionPaymentReference =
-      cautionPaid && caution?.paymentReference?.trim() ? caution.paymentReference.trim() : null;
+  if (produitCodes.length) {
     dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
       hasDocumentChecklist ? checklist! : { entries: [], complet: false },
       cautionPaid,
@@ -402,6 +382,13 @@ export async function buildDossierContratStatutMetierFields(
     checklistComplet: hasDocumentChecklist ? checklist!.complet : null,
     cautionPaid,
     cautionPaymentReference,
+    produitCodes,
+    cautionsByProduit: cautionsStatus.links.map((l) => ({
+      produitCode: l.produitCode,
+      cautionPaid: l.status === "PAYEE" && Boolean(l.paymentReference),
+      paymentReference: l.paymentReference,
+      referenceLabel: l.referenceLabel,
+    })),
     dechargeDefinitiveEligible,
     hasContratGenere: Boolean(parseContratGenerePayload(dossier.payload ?? {})),
     contratArchive: Boolean(parseContratGenerePayload(dossier.payload ?? {})?.contratSigneArchive),
@@ -412,13 +399,9 @@ export async function buildDossierContratStatutMetierFields(
 /** Bloque la soumission si la checklist documents du produit n’est pas entièrement « Fourni ». */
 export async function assertDossierContratSubmitAllowed(dossier: DossierDocument): Promise<void> {
   if (dossier.type !== "CONTRAT_ACTUALISATION") return;
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  if (!produitCode) return;
-  const produit = await resolveProduitForContratWorkflow(produitCode);
-  const checklist = ensureDossierDocumentChecklist(
-    dossier.payload ?? {},
-    produit?.documentsChecklist ?? [],
-  );
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  if (!produitCodes.length) return;
+  const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
   if (checklist.entries.length > 0 && !checklist.complet) {
     throw new Error("DOSSIER_CHECKLIST_INCOMPLETE");
   }
@@ -538,7 +521,9 @@ export async function patchContratDossierPayload(
     next.commentaire = patch.commentaire;
   }
   if (patch.produitCode !== undefined) {
-    next.produitCode = String(patch.produitCode).trim().toUpperCase();
+    const code = String(patch.produitCode).trim().toUpperCase();
+    next.produitCode = code;
+    next.produitCodes = [code];
   }
   if (patch.operationType !== undefined) {
     next.operationType = patch.operationType;
@@ -567,7 +552,8 @@ export async function patchContratDossierPayload(
   }
 
   const op = String(next.operationType ?? "");
-  const produitCode = String(next.produitCode ?? "").trim().toUpperCase();
+  const produitCodes = getDossierProduitCodes(next);
+  const produitCode = produitCodes[0] ?? "";
   if (!produitCode) {
     throw new Error("PRODUIT_REQUIRED");
   }
@@ -575,15 +561,19 @@ export async function patchContratDossierPayload(
   if (!produit) {
     throw new Error("PRODUIT_INVALID");
   }
-  if (!produitAutorisePourConcessionnaire(partyProfile.produitsAutorises ?? [], produitCode)) {
-    throw new Error("PRODUIT_NOT_ALLOWED");
+  for (const pcode of produitCodes) {
+    if (!produitAutorisePourConcessionnaire(partyProfile.produitsAutorises ?? [], pcode)) {
+      throw new Error("PRODUIT_NOT_ALLOWED");
+    }
   }
 
   if (op === "NOUVEAU") {
     next.parentContratId = null;
-    const exists = await hasActiveContractForParty(party, produitCode);
-    if (exists) {
-      throw new Error("ACTIVE_CONTRACT_EXISTS");
+    for (const pcode of produitCodes) {
+      const exists = await hasActiveContractForParty(party, pcode);
+      if (exists) {
+        throw new Error("ACTIVE_CONTRACT_EXISTS");
+      }
     }
   } else if (op === "ACTUALISATION") {
     const pid = String(next.parentContratId ?? "").trim();
@@ -603,7 +593,8 @@ export async function patchContratDossierPayload(
     throw new Error("OPERATION_TYPE_INVALID");
   }
 
-  let checklist = ensureDossierDocumentChecklist(next, produit.documentsChecklist ?? []);
+  Object.assign(next, serializeDossierProduitPayload(produitCodes));
+  let checklist = await ensureChecklistForDossierProduits(next, produitCodes);
   if (patch.documentChecklist !== undefined) {
     checklist = mergeChecklistStatutPatch(checklist, patch.documentChecklist);
   }
@@ -685,23 +676,9 @@ export async function listDossiers(
       .filter((row) => row.type === "CONTRAT_ACTUALISATION")
       .map(async (row) => {
         const dossierId = row._id.toHexString();
-        const produitCode = String(row.payload?.produitCode ?? "").trim().toUpperCase();
-        if (!produitCode) {
-          cautionPaidByDossierId.set(dossierId, false);
-          return;
-        }
-        const parentContratId =
-          typeof row.payload?.parentContratId === "string" ? row.payload.parentContratId : null;
-        const explicitCautionId =
-          typeof row.payload?.cautionId === "string" ? row.payload.cautionId : null;
-        const caution = await findAssociatedCautionForDossier({
-          concessionnaireId: row.concessionnaireId,
-          lonaciClientId: row.lonaciClientId,
-          produitCode,
-          parentContratId,
-          explicitCautionId,
-        });
-        cautionPaidByDossierId.set(dossierId, caution?.status === "PAYEE");
+        const mapped = mapDossier(row);
+        const status = await resolveDossierCautionsStatus(mapped);
+        cautionPaidByDossierId.set(dossierId, status.allPaid);
       }),
   );
 

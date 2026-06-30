@@ -145,7 +145,7 @@ model Contrat {
   operationType    String
   status           String
   dateEffet        DateTime
-  dossierId        String   @unique
+  dossierId        String
   createdByUserId  String
   updatedByUserId  String
   createdAt        DateTime @default(now())
@@ -153,6 +153,8 @@ model Contrat {
   deletedAt        DateTime?
 
   @@map("contrats")
+  @@unique([dossierId, produitCode], map: "uniq_dossier_produit")
+  @@index([dossierId], map: "idx_dossier")
   @@index([concessionnaireId, produitCode, status, deletedAt], map: "idx_unique_active_check")
   @@index([lonaciClientId, produitCode, status, deletedAt], map: "idx_client_active_check")
 }

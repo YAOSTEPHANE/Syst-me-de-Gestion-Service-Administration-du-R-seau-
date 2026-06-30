@@ -395,9 +395,26 @@ export async function findContratById(id: string): Promise<ContratDocument | nul
   return row ? mapContrat(row) : null;
 }
 
-export async function findContratByDossierId(dossierId: string): Promise<ContratDocument | null> {
-  const row = await prisma.contrat.findFirst({
+export async function findContratsByDossierId(dossierId: string): Promise<ContratDocument[]> {
+  const rows = await prisma.contrat.findMany({
     where: { dossierId, deletedAt: null },
+    orderBy: { createdAt: "asc" },
+  });
+  return rows.map(mapContrat);
+}
+
+export async function findContratByDossierId(dossierId: string): Promise<ContratDocument | null> {
+  const rows = await findContratsByDossierId(dossierId);
+  return rows[0] ?? null;
+}
+
+export async function findContratByDossierAndProduit(
+  dossierId: string,
+  produitCode: string,
+): Promise<ContratDocument | null> {
+  const pcode = produitCode.trim().toUpperCase();
+  const row = await prisma.contrat.findFirst({
+    where: { dossierId, produitCode: pcode, deletedAt: null },
   });
   return row ? mapContrat(row) : null;
 }

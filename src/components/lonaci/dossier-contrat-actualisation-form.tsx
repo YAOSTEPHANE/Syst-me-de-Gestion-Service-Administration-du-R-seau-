@@ -29,6 +29,13 @@ export type DossierContratActualisationDetail = {
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
+  produitCodes?: string[];
+  cautionsByProduit?: Array<{
+    produitCode: string;
+    cautionPaid: boolean;
+    paymentReference: string | null;
+    referenceLabel: string;
+  }>;
 };
 
 type ContratActifOption = { id: string; reference: string; produitCode: string; status: string };
@@ -36,6 +43,19 @@ type ContratActifOption = { id: string; reference: string; produitCode: string; 
 function strPayload(p: Record<string, unknown>, key: string): string {
   const v = p[key];
   return typeof v === "string" ? v : v != null ? String(v) : "";
+}
+
+function getPayloadProduitCodes(p: Record<string, unknown>): string[] {
+  const raw = p.produitCodes;
+  if (Array.isArray(raw)) {
+    const codes = raw
+      .filter((c): c is string => typeof c === "string")
+      .map((c) => c.trim().toUpperCase())
+      .filter(Boolean);
+    if (codes.length) return [...new Set(codes)];
+  }
+  const single = strPayload(p, "produitCode");
+  return single ? [single.trim().toUpperCase()] : [];
 }
 
 function dateInputFromIso(iso: string): string {
@@ -146,6 +166,8 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
   }, [operationType, parentsActifs]);
 
   const canEdit = userMayPatchDossierPayload(meRole);
+  const produitCodes = getPayloadProduitCodes(p);
+  const multiProduits = produitCodes.length > 1;
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
@@ -215,6 +237,7 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
           statutMetier={dossier.statutMetier}
           statutMetierLabel={dossier.statutMetierLabel}
           statutMetierDescription={dossier.statutMetierDescription}
+          cautionsByProduit={dossier.cautionsByProduit}
           onUpdated={() => {}}
         />
       </div>
@@ -239,14 +262,28 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
         </div>
       ) : null}
       <div className="grid gap-2 sm:grid-cols-2">
+        {multiProduits ? (
+          <div className="sm:col-span-2 rounded-lg border border-cyan-200 bg-cyan-50/60 px-3 py-2">
+            <p className="text-xs font-medium text-cyan-950">Produits du dossier</p>
+            <p className="mt-1 text-[11px] text-cyan-900">{produitCodes.join(" · ")}</p>
+            <p className="mt-1 text-[11px] text-cyan-800/90">
+              Pour ajouter un produit, utilisez la création de contrat : le dossier brouillon existant sera complété
+              automatiquement.
+            </p>
+          </div>
+        ) : null}
         <label className="grid gap-1 sm:col-span-2">
-          <span className="text-xs font-medium text-slate-800">Code produit *</span>
+          <span className="text-xs font-medium text-slate-800">
+            {multiProduits ? "Produit principal (référence)" : "Code produit *"}
+          </span>
           <input
             className={inputClass}
             value={produitCode}
             onChange={(e) => setProduitCode(e.target.value)}
             autoComplete="off"
             spellCheck={false}
+            readOnly={multiProduits}
+            aria-readonly={multiProduits}
           />
         </label>
         <label className="grid gap-1">
@@ -333,6 +370,7 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
         statutMetier={dossier.statutMetier}
         statutMetierLabel={dossier.statutMetierLabel}
         statutMetierDescription={dossier.statutMetierDescription}
+        cautionsByProduit={dossier.cautionsByProduit}
         onUpdated={(patch) =>
           onUpdated({
             ...dossier,

@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const {
   findDossierByIdMock,
   findContratByDossierIdMock,
+  findContratsByDossierIdMock,
   parseContratGenerePayloadMock,
+  parseContratsGeneresPayloadMock,
   prepareContratMock,
   ensureReadyMock,
   hasActiveMock,
@@ -13,7 +15,9 @@ const {
 } = vi.hoisted(() => ({
   findDossierByIdMock: vi.fn(),
   findContratByDossierIdMock: vi.fn(),
+  findContratsByDossierIdMock: vi.fn(),
   parseContratGenerePayloadMock: vi.fn(),
+  parseContratsGeneresPayloadMock: vi.fn(),
   prepareContratMock: vi.fn(),
   ensureReadyMock: vi.fn(),
   hasActiveMock: vi.fn(),
@@ -29,12 +33,14 @@ vi.mock("@/lib/lonaci/dossiers", () => ({
 
 vi.mock("@/lib/lonaci/contracts", () => ({
   findContratByDossierId: findContratByDossierIdMock,
-  hasActiveContractForProduct: hasActiveMock,
+  findContratsByDossierId: findContratsByDossierIdMock,
+  hasActiveContractForParty: hasActiveMock,
   finalizeContratFromDossier: finalizeContratMock,
 }));
 
 vi.mock("@/lib/lonaci/contrat-document", () => ({
   parseContratGenerePayload: parseContratGenerePayloadMock,
+  parseContratsGeneresPayload: parseContratsGeneresPayloadMock,
   prepareContratFromDechargeDefinitive: prepareContratMock,
   ensureContratFinalizationReady: ensureReadyMock,
   archiveContratSigneForDossier: archiveMock,
@@ -53,6 +59,7 @@ const baseDossier = {
   concessionnaireId: "c1",
   payload: {
     produitCode: "LOTO",
+    produitCodes: ["LOTO"],
     operationType: "NOUVEAU",
     dateEffet: new Date().toISOString(),
     contratGenere: { snapshot: true },
@@ -64,7 +71,9 @@ describe("finalizeDossierContratActualisation", () => {
     vi.clearAllMocks();
     findDossierByIdMock.mockImplementation(async () => ({ ...baseDossier }));
     findContratByDossierIdMock.mockResolvedValue(null);
+    findContratsByDossierIdMock.mockResolvedValue([]);
     parseContratGenerePayloadMock.mockReturnValue({ snapshot: true });
+    parseContratsGeneresPayloadMock.mockReturnValue([{ snapshot: true, produitCode: "LOTO" }]);
     prepareContratMock.mockResolvedValue(undefined);
     ensureReadyMock.mockResolvedValue(undefined);
     hasActiveMock.mockResolvedValue(false);

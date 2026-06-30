@@ -7,13 +7,15 @@ import {
   DECHARGE_PROVISOIRE_DISCLAIMER,
   DECHARGE_PROVISOIRE_TITLE,
 } from "@/lib/lonaci/dossier-decharge-constants";
-import { findDossierById } from "@/lib/lonaci/dossiers";
 import { loadDossierContratParty } from "@/lib/lonaci/dossier-contrat-party";
-import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
+import { findDossierById } from "@/lib/lonaci/dossiers";
 import {
-  DOSSIER_CHECKLIST_STATUT_LABELS,
-  ensureDossierDocumentChecklist,
-} from "@/lib/lonaci/produit-document-checklist";
+  ensureChecklistForDossierProduits,
+  getDossierProduitCodes,
+  resolveDossierCautionsStatus,
+} from "@/lib/lonaci/dossier-produits";
+import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
+import { DOSSIER_CHECKLIST_STATUT_LABELS } from "@/lib/lonaci/produit-document-checklist";
 import type { CautionDocument, DossierDocument, DossierDocumentChecklistPayload, DossierStatus } from "@/lib/lonaci/types";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
@@ -48,9 +50,12 @@ export interface DossierDechargeProvisoireView {
   agenceLabel: string;
   produitCode: string;
   produitLibelle: string;
+  produitCodes: string[];
+  produitLibelles: string[];
   documentsFournis: string[];
   documentsManquants: string[];
   caution: DossierDechargeProvisoireCautionInfo | null;
+  cautions: DossierDechargeProvisoireCautionInfo[];
 }
 
 export function dossierEligibleDechargeProvisoire(
@@ -209,9 +214,8 @@ export async function buildDossierDechargeProvisoireView(
     return null;
   }
 
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  const produit = produitCode ? await resolveProduitForContratWorkflow(produitCode) : null;
-  const checklist = ensureDossierDocumentChecklist(dossier.payload ?? {}, produit?.documentsChecklist ?? []);
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
   if (!dossierEligibleDechargeProvisoire(checklist, dossier.status)) {
     return null;
   }
@@ -221,19 +225,26 @@ export async function buildDossierDechargeProvisoireView(
     return null;
   }
 
+  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
   const parentContratId =
     typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
   const explicitCautionId =
     typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
-  const caution = produitCode
-    ? await findAssociatedCautionForDossier({
-        concessionnaireId: dossier.concessionnaireId,
-        lonaciClientId: dossier.lonaciClientId,
-        produitCode,
-        parentContratId,
-        explicitCautionId,
-      })
-    : null;
+  const cautions: DossierDechargeProvisoireCautionInfo[] = [];
+  for (const pcode of produitCodes) {
+    const caution = await findAssociatedCautionForDossier({
+      concessionnaireId: dossier.concessionnaireId,
+      lonaciClientId: dossier.lonaciClientId,
+      produitCode: pcode,
+      parentContratId,
+      explicitCautionId,
+    });
+    if (caution) cautions.push(caution);
+  }
+
+  const produits = await Promise.all(produitCodes.map((code) => resolveProduitForContratWorkflow(code)));
+  const produitLibelles = produitCodes.map((code, i) => produits[i]?.libelle ?? code);
+  const primaryCode = produitCodes[0] ?? "—";
 
   const db = await getDatabase();
   const agenceMap = await loadAgenceLibelleMap(
@@ -255,11 +266,14 @@ export async function buildDossierDechargeProvisoireView(
     codePdv: party.codeLabel,
     cniNumero: party.cniNumero,
     agenceLabel,
-    produitCode: produitCode || "—",
-    produitLibelle: produit?.libelle ?? (produitCode || "—"),
+    produitCode: primaryCode,
+    produitLibelle: produitLibelles[0] ?? primaryCode,
+    produitCodes,
+    produitLibelles,
     documentsFournis,
     documentsManquants,
-    caution,
+    caution: cautions[0] ?? null,
+    cautions,
   };
 }
 

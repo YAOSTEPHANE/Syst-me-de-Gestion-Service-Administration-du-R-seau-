@@ -6,11 +6,14 @@ import PDFDocument from "pdfkit";
 import { loadPartySnapshotForDossier, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { buildDossierDechargeDefinitiveView } from "@/lib/lonaci/dossier-decharge-definitive";
-import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { findDossierById } from "@/lib/lonaci/dossiers";
+import {
+  getDossierProduitCodes,
+  resolveDossierCautionsStatus,
+  ensureChecklistForDossierProduits,
+} from "@/lib/lonaci/dossier-produits";
 import { previewNextContratReference } from "@/lib/lonaci/contracts";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
-import { ensureDossierDocumentChecklist } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocument, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { saveContratArchivePdf } from "@/lib/storage/contrat-files";
@@ -62,7 +65,10 @@ type DossierSignatureRow = {
 };
 
 export function parseContratGenerePayload(payload: Record<string, unknown> | null | undefined): ContratGenerePayload | null {
-  const raw = payload?.contratGenere;
+  return parseContratGenereRecord(payload?.contratGenere);
+}
+
+function parseContratGenereRecord(raw: unknown): ContratGenerePayload | null {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
   const o = raw as Record<string, unknown>;
   const conc = o.concessionnaire;
@@ -105,6 +111,18 @@ export function parseContratGenerePayload(payload: Record<string, unknown> | nul
   };
 }
 
+export function parseContratsGeneresPayload(
+  payload: Record<string, unknown> | null | undefined,
+): ContratGenerePayload[] {
+  const raw = payload?.contratsGeneres;
+  if (Array.isArray(raw)) {
+    const parsed = raw.map((item) => parseContratGenereRecord(item)).filter((x): x is ContratGenerePayload => x !== null);
+    if (parsed.length) return parsed;
+  }
+  const single = parseContratGenerePayload(payload);
+  return single ? [single] : [];
+}
+
 async function loadLatestSignature(dossierId: string): Promise<DossierSignatureRow | null> {
   const db = await getDatabase();
   const row = await db
@@ -119,15 +137,25 @@ async function loadLatestSignature(dossierId: string): Promise<DossierSignatureR
 export async function prepareContratFromDechargeDefinitive(
   dossierId: string,
   actor: UserDocument,
-): Promise<{ dossier: DossierDocument; contratGenere: ContratGenerePayload; created: boolean }> {
+): Promise<{
+  dossier: DossierDocument;
+  contratGenere: ContratGenerePayload;
+  contratsGeneres: ContratGenerePayload[];
+  created: boolean;
+}> {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt || dossier.type !== "CONTRAT_ACTUALISATION") {
     throw new Error("DOSSIER_NOT_FOUND");
   }
 
-  const existing = parseContratGenerePayload(dossier.payload ?? {});
-  if (existing) {
-    return { dossier, contratGenere: existing, created: false };
+  const existingList = parseContratsGeneresPayload(dossier.payload ?? {});
+  if (existingList.length) {
+    return {
+      dossier,
+      contratGenere: existingList[0],
+      contratsGeneres: existingList,
+      created: false,
+    };
   }
 
   const dechargeView = await buildDossierDechargeDefinitiveView(dossierId);
@@ -140,34 +168,44 @@ export async function prepareContratFromDechargeDefinitive(
     throw new Error("PARTY_NOT_FOUND");
   }
 
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
   const operationType = String(dossier.payload?.operationType ?? "NOUVEAU");
   const dateEffetRaw = String(dossier.payload?.dateEffet ?? dossier.payload?.dateOperation ?? "");
   const dateEffet = new Date(dateEffetRaw);
-  if (!produitCode || Number.isNaN(dateEffet.getTime())) {
+  if (!produitCodes.length || Number.isNaN(dateEffet.getTime())) {
     throw new Error("DOSSIER_PAYLOAD_INVALID");
   }
 
-  const produit = await resolveProduitForContratWorkflow(produitCode);
-  const previewRef = await previewNextContratReference(produitCode, dateEffet);
+  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
   const nowIso = new Date().toISOString();
+  const contratsGeneres: ContratGenerePayload[] = [];
 
-  const contratGenere: ContratGenerePayload = {
-    generatedAt: nowIso,
-    generatedByUserId: actor._id ?? "",
-    dechargeDefinitiveValideeLe: nowIso,
-    referenceContratPreview: previewRef,
-    paymentReference: dechargeView.paymentReference,
-    cautionReferenceLabel: dechargeView.cautionReferenceLabel,
-    produitCode,
-    produitLibelle: produit?.libelle ?? produitCode,
-    operationType,
-    dateEffet: dateEffet.toISOString(),
-    concessionnaire: partySnapshot,
-  };
+  for (const produitCode of produitCodes) {
+    const produit = await resolveProduitForContratWorkflow(produitCode);
+    const previewRef = await previewNextContratReference(produitCode, dateEffet);
+    const cautionLink = cautionsStatus.links.find((l) => l.produitCode === produitCode);
+    const paymentReference = cautionLink?.paymentReference ?? dechargeView.paymentReference;
+    contratsGeneres.push({
+      generatedAt: nowIso,
+      generatedByUserId: actor._id ?? "",
+      dechargeDefinitiveValideeLe: nowIso,
+      referenceContratPreview: previewRef,
+      paymentReference,
+      cautionReferenceLabel: cautionLink?.referenceLabel ?? dechargeView.cautionReferenceLabel,
+      produitCode,
+      produitLibelle: produit?.libelle ?? produitCode,
+      operationType,
+      dateEffet: dateEffet.toISOString(),
+      concessionnaire: partySnapshot,
+    });
+  }
 
   const db = await getDatabase();
-  const nextPayload = { ...(dossier.payload ?? {}), contratGenere };
+  const nextPayload = {
+    ...(dossier.payload ?? {}),
+    contratGenere: contratsGeneres[0],
+    contratsGeneres,
+  };
   await db.collection("dossiers").updateOne(
     { _id: new ObjectId(dossierId), deletedAt: null },
     {
@@ -182,23 +220,34 @@ export async function prepareContratFromDechargeDefinitive(
   const updated = await findDossierById(dossierId);
   if (!updated) throw new Error("DOSSIER_NOT_FOUND");
 
-  return { dossier: updated, contratGenere, created: true };
+  return { dossier: updated, contratGenere: contratsGeneres[0], contratsGeneres, created: true };
 }
 
 export async function buildContratDocumentView(
   dossierId: string,
   contratReference?: string,
+  produitCode?: string,
 ): Promise<ContratDocumentView | null> {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt) return null;
 
-  const genere = parseContratGenerePayload(dossier.payload ?? {});
-  if (!genere) return null;
+  const allGeneres = parseContratsGeneresPayload(dossier.payload ?? {});
+  if (!allGeneres.length) return null;
 
-  const checklist = ensureDossierDocumentChecklist(
-    dossier.payload ?? {},
-    (await resolveProduitForContratWorkflow(genere.produitCode))?.documentsChecklist ?? [],
-  );
+  const pcode = produitCode?.trim().toUpperCase();
+  const genere =
+    (pcode ? allGeneres.find((g) => g.produitCode.trim().toUpperCase() === pcode) : null) ??
+    (contratReference?.trim()
+      ? allGeneres.find(
+          (g) =>
+            g.referenceContratPreview === contratReference.trim() ||
+            g.contratSigneArchive?.contratReference === contratReference.trim(),
+        )
+      : null) ??
+    allGeneres[0];
+
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
   const documentsFournis = checklist.entries
     .filter((e) => e.statut === "FOURNI")
     .map((e) => e.libelle);
@@ -342,8 +391,9 @@ export async function archiveContratSigneForDossier(
   dossierId: string,
   contratReference: string,
   actor: UserDocument,
+  produitCode?: string,
 ): Promise<ContratGenerePayload> {
-  const view = await buildContratDocumentView(dossierId, contratReference);
+  const view = await buildContratDocumentView(dossierId, contratReference, produitCode);
   if (!view) throw new Error("CONTRAT_GENERE_MISSING");
   view.finalized = true;
   view.contratReference = contratReference;
@@ -352,21 +402,27 @@ export async function archiveContratSigneForDossier(
   const storedRelativePath = await saveContratArchivePdf(dossierId, contratReference, pdf);
 
   const dossier = await findDossierById(dossierId);
-  const genere = parseContratGenerePayload(dossier?.payload ?? {});
-  if (!genere) throw new Error("CONTRAT_GENERE_MISSING");
+  const allGeneres = parseContratsGeneresPayload(dossier?.payload ?? {});
+  if (!allGeneres.length) throw new Error("CONTRAT_GENERE_MISSING");
 
+  const pcode = (produitCode ?? view.produitCode).trim().toUpperCase();
   const archive = {
     storedRelativePath,
     archivedAt: new Date().toISOString(),
     contratReference,
   };
-  const nextGenere: ContratGenerePayload = { ...genere, contratSigneArchive: archive };
+  const contratsGeneres = allGeneres.map((g) =>
+    g.produitCode.trim().toUpperCase() === pcode ? { ...g, contratSigneArchive: archive } : g,
+  );
+  const nextGenere = contratsGeneres.find((g) => g.produitCode.trim().toUpperCase() === pcode) ?? contratsGeneres[0];
+
   const db = await getDatabase();
   await db.collection("dossiers").updateOne(
     { _id: new ObjectId(dossierId), deletedAt: null },
     {
       $set: {
         "payload.contratGenere": nextGenere,
+        "payload.contratsGeneres": contratsGeneres,
         updatedAt: new Date(),
         updatedByUserId: actor._id ?? "",
       },
@@ -378,24 +434,14 @@ export async function archiveContratSigneForDossier(
 export async function assertDechargeDefinitiveEligible(dossierId: string): Promise<boolean> {
   const dossier = await findDossierById(dossierId);
   if (!dossier) return false;
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  const produit = produitCode ? await resolveProduitForContratWorkflow(produitCode) : null;
-  const checklist = ensureDossierDocumentChecklist(dossier.payload ?? {}, produit?.documentsChecklist ?? []);
-  const parentContratId =
-    typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
-  const explicitCautionId =
-    typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
-  const cautionLink = produitCode
-    ? await findAssociatedCautionForDossier({
-        concessionnaireId: dossier.concessionnaireId,
-        lonaciClientId: dossier.lonaciClientId,
-        produitCode,
-        parentContratId,
-        explicitCautionId,
-      })
-    : null;
-  const paid = cautionLink?.status === "PAYEE" && Boolean(cautionLink.paymentReference);
-  return dossierEligibleDechargeDefinitive(checklist, paid, Boolean(cautionLink?.paymentReference));
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
+  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
+  return dossierEligibleDechargeDefinitive(
+    checklist,
+    cautionsStatus.allPaid,
+    Boolean(cautionsStatus.primaryPaymentReference),
+  );
 }
 
 /** Lance une erreur métier si la finalisation contrat n'est pas autorisée. */

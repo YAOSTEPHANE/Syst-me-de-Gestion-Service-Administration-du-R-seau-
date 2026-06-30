@@ -812,6 +812,8 @@ export default function ContratsPanel() {
         issues?: { path: (string | number)[]; message: string }[];
         checklistRequired?: boolean;
         submitted?: boolean;
+        extended?: boolean;
+        added?: boolean;
       } | null;
       if (!res.ok) {
         const zodDetail = resBody?.issues?.map((i) => `${i.path.join(".")}: ${i.message}`).join(" — ");
@@ -820,11 +822,17 @@ export default function ContratsPanel() {
       setCreateFormError(null);
       setCreateOpen(false);
       setCreateChecklist(null);
-      const successMsg = resBody?.submitted
-        ? "Dossier contrat créé et soumis pour validation N1."
-        : resBody?.checklistRequired
-          ? "Dossier créé en brouillon. Complétez la checklist documents puis soumettez-le."
-          : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
+      const successMsg = resBody?.extended
+        ? resBody.added
+          ? resBody.submitted
+            ? "Produit ajouté au dossier existant et soumis pour validation N1."
+            : "Produit ajouté au dossier existant (brouillon). Complétez la checklist puis soumettez."
+          : "Ce produit est déjà sur le dossier ouvert du client — complétez-le depuis le tableau."
+        : resBody?.submitted
+          ? "Dossier contrat créé et soumis pour validation N1."
+          : resBody?.checklistRequired
+            ? "Dossier créé en brouillon. Complétez la checklist documents puis soumettez-le."
+            : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
       setToast({ type: "success", message: successMsg });
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {

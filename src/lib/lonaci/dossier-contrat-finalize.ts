@@ -7,15 +7,18 @@ import {
 import {
   finalizeContratFromDossier,
   findContratByDossierId,
+  findContratsByDossierId,
   hasActiveContractForParty,
 } from "@/lib/lonaci/contracts";
 import {
   archiveContratSigneForDossier,
   ensureContratFinalizationReady,
   parseContratGenerePayload,
+  parseContratsGeneresPayload,
   prepareContratFromDechargeDefinitive,
 } from "@/lib/lonaci/contrat-document";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import { getDossierProduitCodes } from "@/lib/lonaci/dossier-produits";
 import type { ContratDocument, DossierDocument, UserDocument } from "@/lib/lonaci/types";
 
 export type FinalizeDossierContratErrorCode =
@@ -34,6 +37,7 @@ export type FinalizeDossierContratResult =
       ok: true;
       dossier: DossierDocument;
       contrat: ContratDocument;
+      contrats: ContratDocument[];
       alreadyHadContrat: boolean;
     }
   | {
@@ -44,8 +48,7 @@ export type FinalizeDossierContratResult =
     };
 
 /**
- * Finalise un dossier CONTRAT_ACTUALISATION : contrat et archive avant passage en FINALISE
- * (évite un dossier FINALISE sans contrat si la création échoue).
+ * Finalise un dossier CONTRAT_ACTUALISATION : un contrat par produit du dossier.
  */
 export async function finalizeDossierContratActualisation(input: {
   dossierId: string;
@@ -70,8 +73,15 @@ export async function finalizeDossierContratActualisation(input: {
     };
   }
 
-  const existingContrat = await findContratByDossierId(input.dossierId);
-  if (existingContrat) {
+  const produitCodes = getDossierProduitCodes(before.payload ?? {});
+  const existingContrats = await findContratsByDossierId(input.dossierId);
+  const allProductsHaveContrat =
+    produitCodes.length > 0 &&
+    produitCodes.every((pcode) =>
+      existingContrats.some((c) => c.produitCode.trim().toUpperCase() === pcode),
+    );
+
+  if (allProductsHaveContrat) {
     const dossier = await findDossierById(input.dossierId);
     if (!dossier) {
       return {
@@ -84,12 +94,16 @@ export async function finalizeDossierContratActualisation(input: {
     return {
       ok: true,
       dossier,
-      contrat: existingContrat,
+      contrat: existingContrats[0],
+      contrats: existingContrats,
       alreadyHadContrat: true,
     };
   }
 
-  if (!parseContratGenerePayload(before.payload ?? {})) {
+  const hasPrepared =
+    parseContratsGeneresPayload(before.payload ?? {}).length > 0 ||
+    Boolean(parseContratGenerePayload(before.payload ?? {}));
+  if (!hasPrepared) {
     try {
       await prepareContratFromDechargeDefinitive(input.dossierId, input.actor);
     } catch {
@@ -114,11 +128,10 @@ export async function finalizeDossierContratActualisation(input: {
     };
   }
 
-  const produitCode = String(before.payload.produitCode ?? "").trim().toUpperCase();
   const operationType = String(before.payload.operationType ?? "");
   const dateEffetRaw = String(before.payload.dateEffet ?? "");
   const dateEffet = new Date(dateEffetRaw);
-  if (!produitCode || !operationType || Number.isNaN(dateEffet.getTime())) {
+  if (!produitCodes.length || !operationType || Number.isNaN(dateEffet.getTime())) {
     return {
       ok: false,
       code: "INVALID_PAYLOAD",
@@ -138,28 +151,51 @@ export async function finalizeDossierContratActualisation(input: {
   }
 
   if (operationType === "NOUVEAU") {
-    const hasActive = await hasActiveContractForParty(party, produitCode);
-    if (hasActive) {
-      return {
-        ok: false,
-        code: "ACTIVE_CONTRACT_EXISTS",
-        message: "Un contrat actif existe déjà pour ce produit et ce client.",
-        httpStatus: 409,
-      };
+    for (const pcode of produitCodes) {
+      const hasActive = await hasActiveContractForParty(party, pcode);
+      if (hasActive) {
+        return {
+          ok: false,
+          code: "ACTIVE_CONTRACT_EXISTS",
+          message: "Un contrat actif existe déjà pour ce produit et ce client.",
+          httpStatus: 409,
+        };
+      }
     }
   }
 
-  let contrat: ContratDocument;
+  const contrats: ContratDocument[] = [...existingContrats];
   try {
-    contrat = await finalizeContratFromDossier({
-      dossierId: input.dossierId,
-      concessionnaireId: party.kind === "concessionnaire" ? party.concessionnaireId : null,
-      lonaciClientId: party.kind === "client" ? party.lonaciClientId : null,
-      produitCode,
-      operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
-      dateEffet,
-      actor: input.actor,
-    });
+    for (const produitCode of produitCodes) {
+      if (contrats.some((c) => c.produitCode.trim().toUpperCase() === produitCode)) {
+        continue;
+      }
+      const contrat = await finalizeContratFromDossier({
+        dossierId: input.dossierId,
+        concessionnaireId: party.kind === "concessionnaire" ? party.concessionnaireId : null,
+        lonaciClientId: party.kind === "client" ? party.lonaciClientId : null,
+        produitCode,
+        operationType: operationType === "ACTUALISATION" ? "ACTUALISATION" : "NOUVEAU",
+        dateEffet,
+        actor: input.actor,
+      });
+      contrats.push(contrat);
+      try {
+        await archiveContratSigneForDossier(
+          input.dossierId,
+          contrat.reference,
+          input.actor,
+          produitCode,
+        );
+      } catch {
+        return {
+          ok: false,
+          code: "ARCHIVE_FAILED",
+          message: "Contrat créé mais archivage du PDF signé impossible.",
+          httpStatus: 500,
+        };
+      }
+    }
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_BLOQUE") {
@@ -186,17 +222,6 @@ export async function finalizeDossierContratActualisation(input: {
     };
   }
 
-  try {
-    await archiveContratSigneForDossier(input.dossierId, contrat.reference, input.actor);
-  } catch {
-    return {
-      ok: false,
-      code: "ARCHIVE_FAILED",
-      message: "Contrat créé mais archivage du PDF signé impossible.",
-      httpStatus: 500,
-    };
-  }
-
   if (before.status !== "FINALISE") {
     await transitionDossier(input.dossierId, "FINALISE", input.actor, input.comment ?? null);
   }
@@ -214,7 +239,8 @@ export async function finalizeDossierContratActualisation(input: {
   return {
     ok: true,
     dossier,
-    contrat,
+    contrat: contrats[0],
+    contrats,
     alreadyHadContrat: false,
   };
 }

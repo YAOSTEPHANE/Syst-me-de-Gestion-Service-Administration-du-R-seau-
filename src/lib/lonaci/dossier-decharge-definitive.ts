@@ -8,13 +8,14 @@ import {
   DECHARGE_DEFINITIVE_TITLE,
   dossierEligibleDechargeDefinitive,
 } from "@/lib/lonaci/dossier-decharge-constants";
-import {
-  findAssociatedCautionForDossier,
-} from "@/lib/lonaci/dossier-decharge-provisoire";
 import { loadPartySnapshotForDossier } from "@/lib/lonaci/contrat-party-snapshot";
-import { findDossierById } from "@/lib/lonaci/dossiers";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
-import { ensureDossierDocumentChecklist } from "@/lib/lonaci/produit-document-checklist";
+import { findDossierById } from "@/lib/lonaci/dossiers";
+import {
+  ensureChecklistForDossierProduits,
+  getDossierProduitCodes,
+  resolveDossierCautionsStatus,
+} from "@/lib/lonaci/dossier-produits";
 import type {
   CautionDocument,
   DossierDocument,
@@ -51,6 +52,8 @@ export interface DossierDechargeDefinitiveView {
   agenceLabel: string;
   produitCode: string;
   produitLibelle: string;
+  produitCodes: string[];
+  produitLibelles: string[];
   documentsFournis: string[];
   paymentReference: string;
   cautionMontantFCFA: number;
@@ -89,32 +92,30 @@ export async function buildDossierDechargeDefinitiveView(
     return null;
   }
 
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  const produit = produitCode ? await resolveProduitForContratWorkflow(produitCode) : null;
-  const checklist = ensureDossierDocumentChecklist(dossier.payload ?? {}, produit?.documentsChecklist ?? []);
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
+  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
 
   const partySnapshot = await loadPartySnapshotForDossier(dossier);
   if (!partySnapshot) {
     return null;
   }
 
-  const parentContratId =
-    typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
-  const explicitCautionId =
-    typeof dossier.payload?.cautionId === "string" ? dossier.payload.cautionId : null;
-  const cautionLink = produitCode
-    ? await findAssociatedCautionForDossier({
-        concessionnaireId: dossier.concessionnaireId,
-        lonaciClientId: dossier.lonaciClientId,
-        produitCode,
-        parentContratId,
-        explicitCautionId,
-      })
-    : null;
-  const caution = cautionLink ? await loadPaidCautionRecord(cautionLink.cautionId) : null;
-  const paymentReference = caution?.paymentReference?.trim() ?? "";
+  const paymentReference = cautionsStatus.primaryPaymentReference ?? "";
+  if (
+    !dossierEligibleDechargeDefinitive(checklist, cautionsStatus.allPaid, paymentReference.length > 0)
+  ) {
+    return null;
+  }
 
-  if (!dossierEligibleDechargeDefinitive(checklist, Boolean(caution), paymentReference.length > 0)) {
+  const produits = await Promise.all(
+    produitCodes.map((code) => resolveProduitForContratWorkflow(code)),
+  );
+  const produitLibelles = produitCodes.map((code, i) => produits[i]?.libelle ?? code);
+  const primaryCode = produitCodes[0] ?? "—";
+  const primaryLink = cautionsStatus.links.find((l) => l.produitCode === primaryCode) ?? cautionsStatus.links[0];
+  const caution = primaryLink?.cautionId ? await loadPaidCautionRecord(primaryLink.cautionId) : null;
+  if (!caution) {
     return null;
   }
 
@@ -144,8 +145,10 @@ export async function buildDossierDechargeDefinitiveView(
     adresse: partySnapshot.adresse,
     ville: partySnapshot.ville,
     agenceLabel: partySnapshot.agenceLabel,
-    produitCode: produitCode || "—",
-    produitLibelle: produit?.libelle ?? (produitCode || "—"),
+    produitCode: primaryCode,
+    produitLibelle: produitLibelles[0] ?? primaryCode,
+    produitCodes,
+    produitLibelles,
     documentsFournis,
     paymentReference,
     cautionMontantFCFA: caution!.montant,
