@@ -10,7 +10,7 @@ import {
   userHasConcessionnairesSaisieModule,
 } from "@/lib/lonaci/module-concessionnaires";
 import { clearCurrentSession, findUserById, setUserCurrentSession, touchSessionActivity } from "@/lib/lonaci/users";
-import { logger } from "@/lib/observability/logger";
+import { rbacWorkflowDenialMessage } from "@/lib/lonaci/workflow-separation";
 
 interface GuardOptions {
   roles?: LonaciRole[];
@@ -206,7 +206,16 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   if (resource && action) {
     const r = canRole({ role: user.role, resource, action });
     if (!r.allowed) {
-      return { error: NextResponse.json({ message: "Acces refuse (RBAC)" }, { status: 403 }) };
+      const workflowMsg = rbacWorkflowDenialMessage(user.role, resource, action);
+      return {
+        error: NextResponse.json(
+          {
+            message: workflowMsg ?? "Acces refuse (RBAC)",
+            code: workflowMsg ? "RBAC_WORKFLOW_SEPARATION" : "RBAC_DENIED",
+          },
+          { status: 403 },
+        ),
+      };
     }
   }
 

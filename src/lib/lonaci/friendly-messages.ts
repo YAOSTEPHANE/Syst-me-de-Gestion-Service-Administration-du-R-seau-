@@ -1,6 +1,11 @@
+import { workflowSeparationMessage, WORKFLOW_SEPARATION_MESSAGES } from "@/lib/lonaci/workflow-separation";
+
 export function friendlyErrorMessage(raw: string | null | undefined): string {
   const input = (raw ?? "").toString().trim();
   if (!input) return "Une erreur est survenue.";
+
+  const separationMsg = workflowSeparationMessage(input);
+  if (separationMsg) return separationMsg;
 
   // Heuristique : si c'est déjà une phrase lisible (contient des lettres et pas de code SCREAMING_SNAKE très typé)
   if (/[A-Za-zÀ-ÿ]/.test(input) && !/^[A-Z0-9_]{2,}$/.test(input)) {
@@ -30,7 +35,10 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     CAUTION_EXONERATION_MOTIF_REQUIS: "Motif d'exonération obligatoire (3 caractères minimum).",
     CAUTION_PAYMENT_REFERENCE_REQUISE:
       "Référence de paiement obligatoire pour passer en statut PAYÉE. Régularisez d'abord la fiche provisoire avec la référence d'encaissement.",
-    FORBIDDEN_TRANSITION: "Transition d'inscription non autorisée pour votre profil ou l'état actuel.",
+    FORBIDDEN_TRANSITION: "Transition non autorisée pour votre profil ou l'état actuel du dossier.",
+    ROLE_FORBIDDEN:
+      "Action non autorisée pour votre profil. Vérifiez la séparation des rôles (N1 : chef de section, N2 : assistant CDS, finalisation : chef de service).",
+    ...WORKFLOW_SEPARATION_MESSAGES,
     CHECKLIST_INCOMPLETE: "Toutes les pièces obligatoires doivent être marquées comme fournies.",
     DOSSIER_CHECKLIST_INCOMPLETE:
       "Soumission impossible : la checklist documents du dossier est incomplète. Marquez tous les documents obligatoires comme « Fourni ».",

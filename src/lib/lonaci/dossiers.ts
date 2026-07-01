@@ -49,6 +49,7 @@ import {
   type ListAgenceRestriction,
 } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
+import { dossierTransitionRoleError } from "@/lib/lonaci/workflow-separation";
 
 const COLLECTION = "dossiers";
 const COUNTERS = "counters";
@@ -416,7 +417,7 @@ export async function transitionDossier(
     throw new Error("DOSSIER_NOT_FOUND");
   }
   if (!roleCanDoTransition(actor.role, targetStatus)) {
-    throw new Error("ROLE_FORBIDDEN");
+    throw new Error(dossierTransitionRoleError(actor.role, targetStatus));
   }
   if (!canTransition(dossier.status, targetStatus)) {
     throw new Error("INVALID_TRANSITION");

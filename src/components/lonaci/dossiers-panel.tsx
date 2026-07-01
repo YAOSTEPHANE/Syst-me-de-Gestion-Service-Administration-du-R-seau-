@@ -4,8 +4,12 @@ import DossierContratActualisationForm from "@/components/lonaci/dossier-contrat
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import {
+  hideDossierN1N2ForChefService,
+  listDossierBulkActionsForUi,
+  listDossierTransitionActionsForUi,
   userMayPatchDossierPayload,
   userMayPerformDossierTransition,
+  type DossierTransitionAction,
 } from "@/lib/auth/dossier-transition-rbac";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -26,13 +30,7 @@ type DossierStatus =
   | "FINALISE"
   | "REJETE";
 
-type TransitionAction =
-  | "SUBMIT"
-  | "VALIDATE_N1"
-  | "VALIDATE_N2"
-  | "FINALIZE"
-  | "REJECT"
-  | "RETURN_PREVIOUS";
+type TransitionAction = DossierTransitionAction;
 
 interface BulkTransitionResponse {
   total: number;
@@ -141,24 +139,6 @@ async function fetchDossiers(
   return response.json();
 }
 
-function actionsForStatus(status: DossierStatus): TransitionAction[] {
-  switch (status) {
-    case "BROUILLON":
-      return ["SUBMIT"];
-    case "SOUMIS":
-      return ["VALIDATE_N1", "REJECT", "RETURN_PREVIOUS"];
-    case "VALIDE_N1":
-      return ["VALIDATE_N2", "REJECT", "RETURN_PREVIOUS"];
-    case "VALIDE_N2":
-      return ["FINALIZE", "REJECT", "RETURN_PREVIOUS"];
-    case "REJETE":
-      // Autorise une resoumission après rejet.
-      return ["SUBMIT"];
-    default:
-      return [];
-  }
-}
-
 function actionLabel(action: TransitionAction): string {
   switch (action) {
     case "SUBMIT":
@@ -177,7 +157,7 @@ function actionLabel(action: TransitionAction): string {
 }
 
 function hideN1N2ForAdmin(role: string | null, action: TransitionAction): boolean {
-  return role === "CHEF_SERVICE" && (action === "VALIDATE_N1" || action === "VALIDATE_N2");
+  return hideDossierN1N2ForChefService(role, action);
 }
 
 function actionLabelFromRaw(action: string): string {
@@ -485,16 +465,21 @@ export default function DossiersPanel() {
     }
   }, [bulkReplayCommentOverride, meReplayKey]);
 
+  const bulkActionsForUi = useMemo(
+    () => listDossierBulkActionsForUi(meRole, statusFilter === "ALL" ? null : statusFilter),
+    [meRole, statusFilter],
+  );
+
   useEffect(() => {
-    if (hideN1N2ForAdmin(meRole, bulkAction)) {
-      setBulkAction("SUBMIT");
+    if (!bulkActionsForUi.includes(bulkAction)) {
+      setBulkAction(bulkActionsForUi[0] ?? "SUBMIT");
     }
     if (bulkLogsActionFilter === "VALIDATE_N1" || bulkLogsActionFilter === "VALIDATE_N2") {
       if (meRole === "CHEF_SERVICE") {
         setBulkLogsActionFilter("ALL");
       }
     }
-  }, [bulkAction, bulkLogsActionFilter, meRole]);
+  }, [bulkAction, bulkActionsForUi, bulkLogsActionFilter, meRole]);
 
   useEffect(() => {
     void load();
@@ -838,9 +823,7 @@ export default function DossiersPanel() {
           aria-label="Action en lot"
           className={fieldClass}
         >
-          {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
-            .filter((action) => !hideN1N2ForAdmin(meRole, action))
-            .map((action) => (
+          {bulkActionsForUi.map((action) => (
               <option key={action} value={action}>
                 {actionLabel(action)}
               </option>
@@ -1236,10 +1219,7 @@ export default function DossiersPanel() {
                   <td className="px-3 py-2.5">{new Date(item.updatedAt).toLocaleString()}</td>
                   <td className="px-3 py-2.5">
                     <div className="flex flex-wrap gap-2">
-                      {actionsForStatus(item.status)
-                        .filter((action) => userMayPerformDossierTransition(meRole, action))
-                        .filter((action) => !hideN1N2ForAdmin(meRole, action))
-                        .map((action) => {
+                      {listDossierTransitionActionsForUi(meRole, item.status).map((action) => {
                           const submitBlocked =
                             action === "SUBMIT" && dossierSubmitBlockedByChecklist(item);
                           return (
@@ -1265,9 +1245,7 @@ export default function DossiersPanel() {
                           </button>
                           );
                         })}
-                      {actionsForStatus(item.status)
-                        .filter((a) => userMayPerformDossierTransition(meRole, a))
-                        .filter((a) => !hideN1N2ForAdmin(meRole, a)).length === 0 ? (
+                      {listDossierTransitionActionsForUi(meRole, item.status).length === 0 ? (
                         <span className="text-xs text-slate-400">Aucune action</span>
                       ) : null}
                       <button

@@ -61,8 +61,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "CONCESSIONNAIRE_NOT_FOUND") {
       return notFound("Non trouve", "CONCESSIONNAIRE_NOT_FOUND");
     }
-    if (code === "FORBIDDEN_TRANSITION") {
-      return forbidden("Transition non autorisee", "FORBIDDEN_TRANSITION");
+    if (code === "FORBIDDEN_TRANSITION" || code.startsWith("INSCRIPTION_") || code.startsWith("DOSSIER_")) {
+      return forbidden(friendlyErrorMessage(code), code);
     }
     const clientCodes = new Set([
       "NOM_REQUIRED",

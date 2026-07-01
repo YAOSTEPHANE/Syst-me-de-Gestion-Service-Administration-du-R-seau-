@@ -1,5 +1,6 @@
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { UserDocument } from "@/lib/lonaci/types";
 
 export type DossierBulkTransitionAction =
@@ -45,7 +46,6 @@ function toTargetStatus(action: DossierBulkTransitionAction) {
 }
 
 export function dossierBulkErrorMessage(code: string): string {
-  if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN") return "Accès refusé.";
   if (code === "CONCESSIONNAIRE_BLOQUE") return "Concessionnaire bloqué.";
   if (code === "ACTIVE_CONTRACT_EXISTS") return "Un contrat actif existe déjà.";
   if (code === "INVALID_TRANSITION") return "Transition de statut invalide.";
@@ -53,7 +53,7 @@ export function dossierBulkErrorMessage(code: string): string {
   if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
     return "Soumission impossible : checklist documents incomplète (tous les documents obligatoires doivent être « Fourni »).";
   }
-  return "Transition impossible.";
+  return friendlyErrorMessage(code);
 }
 
 export async function executeDossierBulkTransition(input: {

@@ -1,6 +1,14 @@
 "use client";
 
-import { userMayPerformDossierTransition } from "@/lib/auth/dossier-transition-rbac";
+import {
+  hideDossierN1N2ForChefService,
+  listDossierTransitionActionsForUi,
+  userCanApproveDossierAtEtape,
+  userCanPerformDossierTransitionAtEtape,
+  userMayPerformDossierTransition,
+  userMayPatchDossierPayload,
+  type DossierTransitionAction,
+} from "@/lib/auth/dossier-transition-rbac";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import {
@@ -292,16 +300,9 @@ function workflowPrimaryAction(etape: string): {
   }
 }
 
-/** Au moins une action de la modale « Décision dossier » est autorisée pour ce rôle à cette étape. */
-function userCanOpenDossierDecisionModal(role: string | null, etape: string): boolean {
-  const primary = workflowPrimaryAction(etape);
-  if (primary && userMayPerformDossierTransition(role, primary.action)) return true;
-  const intermediate = etape === "SOUMIS" || etape === "VALIDE_N1" || etape === "VALIDE_N2";
-  if (intermediate) {
-    if (userMayPerformDossierTransition(role, "REJECT")) return true;
-    if (userMayPerformDossierTransition(role, "RETURN_PREVIOUS")) return true;
-  }
-  return false;
+/** Au moins une action workflow pertinente à l'étape métier courante. */
+function userCanOpenDossierDecisionModal(role: string | null, etape: string | null | undefined): boolean {
+  return listDossierTransitionActionsForUi(role, etape).length > 0;
 }
 
 const inputClass =
@@ -1167,15 +1168,13 @@ export default function ContratsPanel() {
   }
 
   const decisionPrimary = workflowPrimaryAction(decisionEtape);
-  const decisionIntermediateStep =
-    decisionEtape === "SOUMIS" || decisionEtape === "VALIDE_N1" || decisionEtape === "VALIDE_N2";
   const hideN1N2ForAdmin =
     meRole === "CHEF_SERVICE" &&
-    (decisionPrimary?.action === "VALIDATE_N1" || decisionPrimary?.action === "VALIDATE_N2");
-  const mayApprouverDossier =
-    decisionPrimary !== null && !hideN1N2ForAdmin && userMayPerformDossierTransition(meRole, decisionPrimary.action);
-  const mayRejectDossier = userMayPerformDossierTransition(meRole, "REJECT");
-  const mayReturnDossier = userMayPerformDossierTransition(meRole, "RETURN_PREVIOUS");
+    decisionPrimary !== null &&
+    hideDossierN1N2ForChefService(meRole, decisionPrimary.action as DossierTransitionAction);
+  const mayApprouverDossier = userCanApproveDossierAtEtape(meRole, decisionEtape);
+  const mayRejectDossier = userCanPerformDossierTransitionAtEtape(meRole, decisionEtape, "REJECT");
+  const mayReturnDossier = userCanPerformDossierTransitionAtEtape(meRole, decisionEtape, "RETURN_PREVIOUS");
 
   const contractsKpis = useMemo(() => {
     if (!chartsData) {
@@ -1678,13 +1677,14 @@ export default function ContratsPanel() {
                 </thead>
                 <tbody>
                   {contratsListe.map((c) => {
-                    const etape = c.dossierEtape ?? "FINALISE";
+                    const etape = c.dossierEtape ?? null;
                     const statutLabel = c.statutMetierLabel ?? c.status;
                     const statutDescription = c.statutMetierDescription ?? "";
                     const statutBadgeClass = c.statutMetier
                       ? contratStatutMetierBadgeClass(c.statutMetier)
                       : "bg-slate-200 text-slate-800";
-                    const workflowPrimary = workflowPrimaryAction(etape);
+                    const workflowPrimary = etape ? workflowPrimaryAction(etape) : null;
+                    const canApproveDossier = userCanApproveDossierAtEtape(meRole, etape);
                     const canDecideDossier = userCanOpenDossierDecisionModal(meRole, etape);
                     return (
                       <tr key={c.id} className="border-b border-slate-100 align-top transition-colors duration-150 hover:bg-cyan-50/60">
@@ -1766,11 +1766,21 @@ export default function ContratsPanel() {
                               <button
                                 type="button"
                                 disabled={dossierActionBusyId === c.dossierId}
-                                title={workflowPrimary?.label ?? "Workflow dossier"}
-                                onClick={() => openDecision(c.dossierId, etape)}
+                                title={
+                                  canApproveDossier && workflowPrimary
+                                    ? workflowPrimary.label
+                                    : "Rejeter ou retourner pour correction"
+                                }
+                                onClick={() => openDecision(c.dossierId, etape ?? "")}
                                 className="inline-flex min-w-[110px] items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition-transform duration-150 hover:scale-[1.02] hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
                               >
-                                {dossierActionBusyId === c.dossierId ? "..." : "Valider"}
+                                {dossierActionBusyId === c.dossierId
+                                  ? "..."
+                                  : canApproveDossier && workflowPrimary
+                                    ? workflowPrimary.action === "FINALIZE"
+                                      ? "Finaliser"
+                                      : "Valider"
+                                    : "Décision"}
                               </button>
                             ) : null}
                             {meRole === "CHEF_SERVICE" ? (
@@ -2124,6 +2134,13 @@ export default function ContratsPanel() {
                         !mayApprouverDossier
                       }
                       onClick={() => void decideApprouver()}
+                      title={
+                        hideN1N2ForAdmin && decisionPrimary
+                          ? decisionPrimary.action === "VALIDATE_N1"
+                            ? "Validation N1 réservée au chef de section."
+                            : "Validation N2 réservée à l'assistant(e) chef(fe) de service."
+                          : undefined
+                      }
                       className="rounded-lg border border-sky-600 bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-sky-700 hover:bg-sky-700 disabled:opacity-60"
                     >
                       Approuver
@@ -2132,8 +2149,7 @@ export default function ContratsPanel() {
                       type="button"
                       disabled={
                         dossierActionBusyId === decisionDossierId ||
-                        !mayRejectDossier ||
-                        !decisionIntermediateStep
+                        !mayRejectDossier
                       }
                       onClick={() => void decideRejeter()}
                       className="rounded-lg border border-rose-600 bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-rose-700 hover:bg-rose-700 disabled:opacity-60"
@@ -2144,8 +2160,7 @@ export default function ContratsPanel() {
                       type="button"
                       disabled={
                         dossierActionBusyId === decisionDossierId ||
-                        !mayReturnDossier ||
-                        !decisionIntermediateStep
+                        !mayReturnDossier
                       }
                       onClick={() => void decideRetourner()}
                       className="rounded-lg border border-amber-600 bg-amber-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition-transform duration-150 hover:scale-[1.01] hover:border-amber-700 hover:bg-amber-700 disabled:opacity-60"

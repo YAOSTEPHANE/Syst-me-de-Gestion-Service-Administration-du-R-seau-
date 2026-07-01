@@ -18,6 +18,7 @@ import type {
   UserDocument,
 } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import { inscriptionTransitionRoleError } from "@/lib/lonaci/workflow-separation";
 import {
   findConcessionnaireById,
   nextCodePdvForAgence,
@@ -186,14 +187,14 @@ function canTransition(
     return (
       current === "SOUMIS" &&
       target === "DOSSIER_EN_COURS" &&
-      ["CHEF_SECTION", "CHEF_SERVICE"].includes(role)
+      role === "CHEF_SECTION"
     );
   }
   if (action === "REJECT") {
     return (
       current === "SOUMIS" &&
       target === "REJETE" &&
-      ["CHEF_SECTION", "CHEF_SERVICE"].includes(role)
+      role === "CHEF_SECTION"
     );
   }
   if (action === "RETURN_TO_DRAFT") {
@@ -235,6 +236,9 @@ export async function transitionConcessionnaireInscription(input: {
   }
 
   if (!canTransition(current, target, input.action, input.actor.role)) {
+    if (input.action === "VALIDATE_N1" || input.action === "REJECT") {
+      throw new Error(inscriptionTransitionRoleError(input.action, input.actor.role, current));
+    }
     throw new Error("FORBIDDEN_TRANSITION");
   }
 

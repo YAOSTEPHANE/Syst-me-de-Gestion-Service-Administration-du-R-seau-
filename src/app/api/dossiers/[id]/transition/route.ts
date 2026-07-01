@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { isWorkflowSeparationError } from "@/lib/lonaci/workflow-separation";
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { requireApiAuth } from "@/lib/auth/guards";
@@ -108,8 +110,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ dossier }, { status: 200 });
     } catch (error) {
       const code = error instanceof Error ? error.message : "UNKNOWN";
-      if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN") {
-        return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
+      if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN" || isWorkflowSeparationError(code)) {
+        return NextResponse.json(
+          { message: friendlyErrorMessage(code), code },
+          { status: 403 },
+        );
       }
       if (code === "INVALID_TRANSITION") {
         return NextResponse.json({ message: "Transition de statut invalide." }, { status: 409 });
@@ -139,8 +144,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ dossier }, { status: 200 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
-    if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN") {
-      return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
+    if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN" || isWorkflowSeparationError(code)) {
+      return NextResponse.json(
+        { message: friendlyErrorMessage(code), code },
+        { status: 403 },
+      );
     }
     if (code === "CONCESSIONNAIRE_BLOQUE") {
       return NextResponse.json({ message: "Concessionnaire bloque." }, { status: 409 });

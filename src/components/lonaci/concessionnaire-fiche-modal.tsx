@@ -527,8 +527,7 @@ export default function ConcessionnaireFicheModal({
     Boolean(detail?.codePdv?.trim()) &&
     Boolean(detail?.inscriptionValideN1At);
   const canSubmitInscription = inscriptionEditable;
-  const canValidateN1 =
-    (me?.role === "CHEF_SECTION" || me?.role === "CHEF_SERVICE") && inscriptionStatut === "SOUMIS";
+  const canValidateN1 = me?.role === "CHEF_SECTION" && inscriptionStatut === "SOUMIS";
 
   async function downloadCautionPdf(kind: "provisoire" | "definitive") {
     if (!concessionnaireId) return;
@@ -926,6 +925,11 @@ export default function ConcessionnaireFicheModal({
                       >
                         Reprendre le dossier
                       </button>
+                    ) : null}
+                    {me?.role === "CHEF_SERVICE" && inscriptionStatut === "SOUMIS" ? (
+                      <p className="mt-2 text-xs text-slate-600">
+                        Validation N1 inscription réservée au chef de section (séparation des rôles).
+                      </p>
                     ) : null}
                     {canValidateN1 ? (
                       <>
