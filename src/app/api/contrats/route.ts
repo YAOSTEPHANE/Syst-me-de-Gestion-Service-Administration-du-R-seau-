@@ -17,6 +17,7 @@ import {
   contratStatutMetierFields,
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
+import { parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
@@ -291,6 +292,7 @@ export async function GET(request: NextRequest) {
         cautionPaid,
         hasDocumentChecklist,
       });
+      const contratGenere = parseContratGenerePayload(meta?.payload ?? {});
       return {
         ...c,
         dateDepot: depot.toISOString(),
@@ -300,6 +302,8 @@ export async function GET(request: NextRequest) {
         cautionPaid,
         cautionPaymentReference,
         dechargeDefinitiveEligible,
+        hasContratGenere: Boolean(contratGenere),
+        contratArchive: Boolean(contratGenere?.contratSigneArchive),
         ...contratStatutMetierFields(statutMetier),
       };
     }),

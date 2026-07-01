@@ -16,6 +16,8 @@ interface GuardOptions {
   roles?: LonaciRole[];
   agenceId?: string;
   produitCode?: string;
+  /** Force le contrôle module (ex. PDF dossier via /api/contrats → DOSSIERS). */
+  moduleKey?: string | null;
   rbac?: {
     resource: RbacResource;
     action: RbacAction;
@@ -271,7 +273,8 @@ export async function requireApiAuth(request: NextRequest, options?: GuardOption
   // Contrôle de module autorisé (si liste de modules non vide).
   // CHEF_SERVICE / AUDITEUR : périmètre global (fiches rôle) — ne pas bloquer pour une liste
   // de modules incomplète saisie côté admin.
-  const moduleKey = inferModuleKeyFromPath(request.nextUrl.pathname);
+  const moduleKey =
+    options?.moduleKey !== undefined ? options.moduleKey : inferModuleKeyFromPath(request.nextUrl.pathname);
   if (
     moduleKey &&
     user.role !== "CHEF_SERVICE" &&

@@ -1,7 +1,6 @@
 import "server-only";
 
-import { canReadClient, canReadConcessionnaire } from "@/lib/lonaci/access";
-import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
+import { canReadClientDirectory, canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import type { ContratDocument, DossierDocument, UserDocument } from "@/lib/lonaci/types";
@@ -83,14 +82,8 @@ export async function assertDossierPartyReadable(
     if (!client || client.deletedAt) {
       throw new Error("CLIENT_NOT_FOUND");
     }
-    if (!canReadClient(actor, client)) {
+    if (!(await canReadClientDirectory(actor, client))) {
       throw new Error("AGENCE_FORBIDDEN");
-    }
-    if (!isClientStatutEligibleForContrat(client.statut)) {
-      if (client.statut === "EN_ATTENTE_N1" || client.statut === "REJETE") {
-        throw new Error("CLIENT_INSCRIPTION_PENDING");
-      }
-      throw new Error("CLIENT_BLOQUE");
     }
     return;
   }

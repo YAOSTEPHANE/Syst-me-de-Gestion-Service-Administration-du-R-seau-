@@ -25,7 +25,7 @@ import ClientSearchPicker, {
 import ProduitDocumentChecklistEditor from "@/components/lonaci/produit-document-checklist-editor";
 import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
-import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
+import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import {
   buildChecklistFromTemplate,
@@ -113,6 +113,8 @@ interface ContratListeItem {
   cautionPaid?: boolean;
   dechargeDefinitiveEligible?: boolean;
   cautionPaymentReference?: string | null;
+  hasContratGenere?: boolean;
+  contratArchive?: boolean;
 }
 
 interface ToSignRow {
@@ -303,6 +305,14 @@ function workflowPrimaryAction(etape: string): {
 /** Au moins une action workflow pertinente à l'étape métier courante. */
 function userCanOpenDossierDecisionModal(role: string | null, etape: string | null | undefined): boolean {
   return listDossierTransitionActionsForUi(role, etape).length > 0;
+}
+
+function dossierRecapPdfUrl(dossierId: string): string {
+  return `/api/contrats/${encodeURIComponent(dossierId)}/export?view=1`;
+}
+
+function contratOfficielPdfUrl(dossierId: string): string {
+  return `/api/contrats/${encodeURIComponent(dossierId)}/contrat/pdf?view=1`;
 }
 
 const inputClass =
@@ -1051,6 +1061,28 @@ export default function ContratsPanel() {
     setViewContrat(null);
   }
 
+  async function openDossierRecapPdf(dossierId: string, reference: string) {
+    try {
+      await openLonaciPdfInTab(dossierRecapPdfUrl(dossierId));
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
+      });
+    }
+  }
+
+  async function openContratOfficielPdf(dossierId: string, reference: string) {
+    try {
+      await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId));
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."),
+      });
+    }
+  }
+
   async function openChecklistModal(contrat: ContratListeItem) {
     setChecklistModalContrat(contrat);
     setChecklistModalPayload(null);
@@ -1462,14 +1494,20 @@ export default function ContratsPanel() {
                           >
                             Dossiers
                           </Link>
-                          <a
-                            href={`/api/contrats/${encodeURIComponent(row.dossierId)}/export`}
+                          <button
+                            type="button"
+                            onClick={() => void openDossierRecapPdf(row.dossierId, row.reference)}
                             className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
-                            target="_blank"
-                            rel="noopener noreferrer"
                           >
-                            PDF
-                          </a>
+                            Récap.
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void openContratOfficielPdf(row.dossierId, row.reference)}
+                            className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
+                          >
+                            Contrat
+                          </button>
                           <button
                             type="button"
                             onClick={() => void generateClientSignatureLink(row.dossierId)}
@@ -1757,6 +1795,28 @@ export default function ContratsPanel() {
                             ) : null}
                             <button
                               type="button"
+                              onClick={() => void openDossierRecapPdf(c.dossierId, c.reference)}
+                              title="Récapitulatif dossier (historique validations)"
+                              className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-indigo-800 shadow-sm transition hover:bg-indigo-100"
+                            >
+                              Récap.
+                            </button>
+                            {c.hasContratGenere ? (
+                              <button
+                                type="button"
+                                onClick={() => void openContratOfficielPdf(c.dossierId, c.reference)}
+                                title={
+                                  c.contratArchive
+                                    ? "Contrat signé archivé (PDF)"
+                                    : "Projet de contrat (PDF)"
+                                }
+                                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-slate-900"
+                              >
+                                Contrat
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
                               onClick={() => openViewContrat(c)}
                               className="inline-flex items-center justify-center rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-slate-700 shadow-sm transition hover:border-slate-400 hover:bg-slate-50"
                             >
@@ -2036,20 +2096,33 @@ export default function ContratsPanel() {
                 <p className="text-sm text-slate-900">{labelDossierEtape(viewContrat.dossierEtape ?? "FINALISE")}</p>
               </div>
             </div>
-            <div className="flex items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
-              <button
-                type="button"
-                onClick={() =>
-                  window.open(
-                    `/api/contrats/${encodeURIComponent(viewContrat.dossierId)}/export`,
-                    "_blank",
-                    "noopener,noreferrer",
-                  )
-                }
-                className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
-              >
-                Ouvrir le PDF
-              </button>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() =>
+                    void openDossierRecapPdf(viewContrat.dossierId, viewContrat.reference)
+                  }
+                  className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+                >
+                  Récap. dossier
+                </button>
+                {viewContrat.hasContratGenere ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void openContratOfficielPdf(viewContrat.dossierId, viewContrat.reference)
+                    }
+                    className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900"
+                  >
+                    {viewContrat.contratArchive ? "Contrat archivé (PDF)" : "Contrat (PDF)"}
+                  </button>
+                ) : (
+                  <span className="self-center text-xs text-slate-500">
+                    Contrat PDF disponible après génération (checklist / décharge définitive).
+                  </span>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={closeViewContrat}

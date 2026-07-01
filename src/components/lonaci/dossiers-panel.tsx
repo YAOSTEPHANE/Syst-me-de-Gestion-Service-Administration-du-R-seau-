@@ -21,6 +21,7 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { formatDossierOperationLabel, formatDossierTypeDetail } from "@/lib/lonaci/dossier-labels";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
 
 type DossierStatus =
   | "BROUILLON"
@@ -76,6 +77,18 @@ interface DossierItem {
   statutMetierDescription?: string;
 }
 
+function dossierHasContratGenere(payload?: Record<string, unknown>): boolean {
+  return Boolean(payload?.contratGenere && typeof payload.contratGenere === "object");
+}
+
+function dossierRecapPdfUrl(dossierId: string): string {
+  return `/api/contrats/${encodeURIComponent(dossierId)}/export?view=1`;
+}
+
+function contratOfficielPdfUrl(dossierId: string): string {
+  return `/api/contrats/${encodeURIComponent(dossierId)}/contrat/pdf?view=1`;
+}
+
 function dossierSubmitBlockedByChecklist(item: DossierItem): boolean {
   return (
     item.type === "CONTRAT_ACTUALISATION" &&
@@ -106,6 +119,8 @@ interface DossierDetailItem {
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
+  hasContratGenere?: boolean;
+  contratArchive?: boolean;
 }
 
 type SortField = "updatedAt" | "reference" | "status";
@@ -367,6 +382,28 @@ export default function DossiersPanel() {
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
+    }
+  }
+
+  async function openDossierRecapPdf(dossierId: string) {
+    try {
+      await openLonaciPdfInTab(dossierRecapPdfUrl(dossierId));
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
+      });
+    }
+  }
+
+  async function openContratOfficielPdf(dossierId: string) {
+    try {
+      await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId));
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."),
+      });
     }
   }
 
@@ -1257,17 +1294,20 @@ export default function DossiersPanel() {
                       </button>
                       <button
                         type="button"
-                        onClick={() =>
-                          window.open(
-                            `/api/contrats/${encodeURIComponent(item.id)}/export`,
-                            "_blank",
-                            "noopener,noreferrer",
-                          )
-                        }
+                        onClick={() => void openDossierRecapPdf(item.id)}
                         className="rounded-lg border border-emerald-600 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50"
                       >
-                        PDF récap.
+                        Récap.
                       </button>
+                      {dossierHasContratGenere(item.payload) ? (
+                        <button
+                          type="button"
+                          onClick={() => void openContratOfficielPdf(item.id)}
+                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-900"
+                        >
+                          Contrat
+                        </button>
+                      ) : null}
                     </div>
                   </td>
                 </tr>
@@ -1422,6 +1462,28 @@ export default function DossiersPanel() {
                     </p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Créé le:</span> {new Date(detailItem.createdAt).toLocaleString("fr-FR")}</p>
                     <p className="text-xs text-slate-700"><span className="font-semibold">Mis à jour:</span> {new Date(detailItem.updatedAt).toLocaleString("fr-FR")}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => void openDossierRecapPdf(detailItem.id)}
+                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
+                    >
+                      Récap. dossier (PDF)
+                    </button>
+                    {detailItem.hasContratGenere || dossierHasContratGenere(detailItem.payload) ? (
+                      <button
+                        type="button"
+                        onClick={() => void openContratOfficielPdf(detailItem.id)}
+                        className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900"
+                      >
+                        {detailItem.contratArchive ? "Contrat archivé (PDF)" : "Contrat (PDF)"}
+                      </button>
+                    ) : (
+                      <span className="self-center text-xs text-slate-500">
+                        Contrat PDF après génération (décharge définitive).
+                      </span>
+                    )}
                   </div>
                   {detailItem.type === "CONTRAT_ACTUALISATION" &&
                   (detailItem.status === "BROUILLON" || detailItem.status === "REJETE") ? (

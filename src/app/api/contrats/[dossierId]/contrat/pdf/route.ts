@@ -17,6 +17,8 @@ interface RouteContext {
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
     roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    moduleKey: "DOSSIERS",
+    rbac: { resource: "DOSSIERS", action: "READ" },
   });
   if ("error" in auth) {
     return auth.error;
@@ -34,8 +36,15 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
   try {
     await assertDossierPartyReadable(party, auth.user);
-  } catch {
-    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
+  } catch (error) {
+    const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "AGENCE_FORBIDDEN") {
+      return NextResponse.json({ message: "Acces refuse pour cette agence.", code }, { status: 403 });
+    }
+    if (code === "CLIENT_NOT_FOUND" || code === "CONCESSIONNAIRE_NOT_FOUND") {
+      return NextResponse.json({ message: "Titulaire du dossier introuvable.", code }, { status: 404 });
+    }
+    return NextResponse.json({ message: "Acces refuse.", code }, { status: 403 });
   }
 
   const genere = parseContratGenerePayload(dossier.payload ?? {});
@@ -65,11 +74,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
       },
     });
     const filename = `contrat-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
+    const viewInline = request.nextUrl.searchParams.get("view") === "1";
     return new NextResponse(webStream, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${filename}"`,
+        "Content-Disposition": viewInline
+          ? `inline; filename="${filename}"`
+          : `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
     });
@@ -81,11 +93,14 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
   const pdf = await renderContratDocumentPdf(view);
   const filename = `contrat-brouillon-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
+  const viewInline = request.nextUrl.searchParams.get("view") === "1";
   return new NextResponse(new Uint8Array(pdf), {
     status: 200,
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Content-Disposition": viewInline
+        ? `inline; filename="${filename}"`
+        : `attachment; filename="${filename}"`,
       "Cache-Control": "no-store",
     },
   });

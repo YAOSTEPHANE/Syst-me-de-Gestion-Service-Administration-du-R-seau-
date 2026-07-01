@@ -109,6 +109,48 @@ describe("requireApiAuth module authorization", () => {
     }
   });
 
+  it("autorise le PDF contrat dossier avec le module DOSSIERS seul (validateurs métier)", async () => {
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "CHEF_SECTION",
+        modulesAutorises: ["DOSSIERS"],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/contrats/d1/contrat/pdf");
+    const result = await requireApiAuth(req, {
+      roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+      moduleKey: "DOSSIERS",
+      rbac: { resource: "DOSSIERS", action: "READ" },
+    });
+
+    expect("error" in result).toBe(false);
+  });
+
+  it("refuse le PDF contrat dossier sans module DOSSIERS", async () => {
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "ASSIST_CDS",
+        modulesAutorises: ["REPORTS"],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/contrats/d1/contrat/pdf");
+    const result = await requireApiAuth(req, {
+      roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+      moduleKey: "DOSSIERS",
+      rbac: { resource: "DOSSIERS", action: "READ" },
+    });
+
+    expect("error" in result).toBe(true);
+    if ("error" in result) {
+      assert(result.error);
+      expect(result.error.status).toBe(403);
+    } else {
+      throw new Error("Expected module denial");
+    }
+  });
+
   it("autorise CHEF_SERVICE sur /api/contrats même sans le module CONTRATS (liste partielle)", async () => {
     findUserByIdMock.mockResolvedValue(
       makeBaseUser({

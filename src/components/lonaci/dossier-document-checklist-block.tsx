@@ -1,7 +1,7 @@
 "use client";
 
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
-import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
+import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
@@ -102,6 +102,14 @@ async function triggerPdfDownload(url: string, filename: string, setError: (msg:
     await downloadLonaciPdf(url, filename);
   } catch (err) {
     setError(friendlyErrorMessage(err instanceof Error ? err.message : "Téléchargement impossible."));
+  }
+}
+
+async function triggerPdfView(url: string, setError: (msg: string) => void) {
+  try {
+    await openLonaciPdfInTab(url);
+  } catch (err) {
+    setError(friendlyErrorMessage(err instanceof Error ? err.message : "Ouverture PDF impossible."));
   }
 }
 
@@ -368,11 +376,7 @@ export default function DossierDocumentChecklistBlock({
                 <button
                   type="button"
                   onClick={() =>
-                    void triggerPdfDownload(
-                      `/api/contrats/${dossierId}/contrat/pdf`,
-                      `contrat-${dossierId}.pdf`,
-                      setError,
-                    )
+                    void triggerPdfView(`/api/contrats/${dossierId}/contrat/pdf?view=1`, setError)
                   }
                   className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-slate-900"
                 >
