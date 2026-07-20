@@ -45,15 +45,13 @@ function normalizeToken(value: string): string {
 }
 
 const createSchema = z.object({
+  code: z.string().trim().min(1).max(64),
   nomComplet: z.string().min(2).max(200),
   raisonSociale: z.preprocess(
     emptyStringToNull,
     z.union([z.string().min(2).max(300), z.null()]).optional(),
   ),
-  cniNumero: z.preprocess(
-    emptyStringToNull,
-    z.union([z.string().min(4).max(64), z.null()]).optional(),
-  ),
+  cniNumero: z.string().trim().min(4).max(64),
   nomContact: z.preprocess(emptyStringToNull, z.union([z.string().min(2).max(200), z.null()]).optional()),
   email: z.preprocess(emptyStringToNull, z.union([z.string().email(), z.null()]).optional()),
   telephone: z.preprocess(emptyStringToNull, z.union([z.string().min(6).max(32), z.null()]).optional()),
@@ -270,24 +268,55 @@ export async function POST(request: NextRequest) {
       ? parsed.data.raisonSociale.trim()
       : null) ?? parsed.data.nomComplet.trim();
 
-  const row = await createClient(
-    {
-      nomComplet: parsed.data.nomComplet.trim(),
-      raisonSociale,
-      cniNumero: parsed.data.cniNumero ?? null,
-      nomContact: parsed.data.nomContact ?? null,
-      email: parsed.data.email ?? null,
-      telephone: parsed.data.telephone ?? null,
-      adresse: parsed.data.adresse ?? null,
-      ville: parsed.data.ville ?? null,
-      codePostal: parsed.data.codePostal ?? null,
-      agenceId,
-      produitsAutorises,
-      documentChecklist: parsed.data.documentChecklist,
-      notes: parsed.data.notes ?? null,
-    },
-    auth.user,
-  );
+  try {
+    const row = await createClient(
+      {
+        code: parsed.data.code,
+        agenceCode,
+        nomComplet: parsed.data.nomComplet.trim(),
+        raisonSociale,
+        cniNumero: parsed.data.cniNumero.trim(),
+        nomContact: parsed.data.nomContact ?? null,
+        email: parsed.data.email ?? null,
+        telephone: parsed.data.telephone ?? null,
+        adresse: parsed.data.adresse ?? null,
+        ville: parsed.data.ville ?? null,
+        codePostal: parsed.data.codePostal ?? null,
+        agenceId,
+        produitsAutorises,
+        documentChecklist: parsed.data.documentChecklist,
+        notes: parsed.data.notes ?? null,
+      },
+      auth.user,
+    );
 
-  return NextResponse.json({ client: sanitizeClientPublic(row) }, { status: 201 });
+    return NextResponse.json({ client: sanitizeClientPublic(row) }, { status: 201 });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "";
+    if (message === "CLIENT_IDENTIFIANT_REQUIS") {
+      return badRequest("Le numéro CNI (identifiant client) est obligatoire à la création.", "CLIENT_IDENTIFIANT_REQUIS");
+    }
+    if (message === "CLIENT_CODE_INVALID") {
+      return badRequest(
+        "Format d’identifiant client invalide (lettres, chiffres, tirets ; 1 à 32 caractères après le code agence).",
+        "CLIENT_CODE_INVALID",
+      );
+    }
+    if (message === "CLIENT_CODE_AGENCE_MISMATCH") {
+      return badRequest(
+        "L’identifiant saisi ne correspond pas à l’agence de rattachement sélectionnée.",
+        "CLIENT_CODE_AGENCE_MISMATCH",
+      );
+    }
+    if (message === "CLIENT_CODE_DEJA_UTILISE") {
+      return badRequest(
+        "Cet identifiant client est déjà utilisé dans cette zone. Choisissez un autre code.",
+        "CLIENT_CODE_DEJA_UTILISE",
+      );
+    }
+    if (message.includes("E11000")) {
+      return badRequest("Cet identifiant client existe déjà dans cette zone.", "CLIENT_CODE_DEJA_UTILISE");
+    }
+    throw err;
+  }
 }

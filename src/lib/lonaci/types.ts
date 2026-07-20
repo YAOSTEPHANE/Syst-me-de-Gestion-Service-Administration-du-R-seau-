@@ -93,6 +93,8 @@ export interface ProduitDocumentChecklistItem {
   libelle: string;
   /** Défaut : obligatoire. */
   obligatoire?: boolean;
+  /** Pièce rattachée à l’annexe contrat (et non au seul dossier). */
+  annexe?: boolean;
 }
 
 export type DossierDocumentChecklistStatut = "FOURNI" | "MANQUANT" | "EN_ATTENTE";
@@ -102,6 +104,8 @@ export interface DossierDocumentChecklistEntry {
   libelle: string;
   obligatoire: boolean;
   statut: DossierDocumentChecklistStatut;
+  /** Document annexe associé au contrat (référentiel produit). */
+  annexe?: boolean;
 }
 
 export interface DossierDocumentChecklistPayload {
@@ -117,6 +121,8 @@ export interface ProduitDocument {
   prix?: number;
   /** Documents obligatoires configurés pour la constitution de dossier. */
   documentsChecklist?: ProduitDocumentChecklistItem[];
+  /** Documents annexes associés au contrat (génération annexe PDF). */
+  documentsAnnexe?: ProduitDocumentChecklistItem[];
   actif: boolean;
   createdAt: Date;
   updatedAt: Date;
@@ -254,6 +260,8 @@ export interface DossierDocument {
 export interface ContratDocument {
   _id?: string;
   reference: string;
+  /** Référence de l’annexe associée au contrat. */
+  annexeReference?: string | null;
   concessionnaireId: string | null;
   lonaciClientId?: string | null;
   produitCode: string;

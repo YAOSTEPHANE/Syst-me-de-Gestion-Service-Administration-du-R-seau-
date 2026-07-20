@@ -1,7 +1,11 @@
 import type { Prisma } from "@prisma/client";
 
 import { appendAuditLog } from "@/lib/lonaci/audit";
-import { CLIENT_CODE_PREFIX, CLIENT_STATUTS, type ClientStatut } from "@/lib/lonaci/client-constants";
+import {
+  CLIENT_STATUTS,
+  normalizeClientCodeForAgence,
+  type ClientStatut,
+} from "@/lib/lonaci/client-constants";
 import { patchDocumentChecklistStatuts } from "@/lib/lonaci/concessionnaire-inscription";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
 import {
@@ -11,11 +15,11 @@ import {
   mergeProductChecklistTemplates,
 } from "@/lib/lonaci/produit-document-checklist";
 import { listProduits } from "@/lib/lonaci/referentials";
+import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
+import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import type { DossierDocumentChecklistPayload, ProduitDocument, UserDocument } from "@/lib/lonaci/types";
 import { userDisplayName } from "@/lib/lonaci/types";
-
-const CLIENT_REF_COUNTER_ID = "client_ref";
 
 /** Fiches client actives (non désactivées) : Prisma Mongo ne matche pas `null` si la clé `deletedAt` est absente. */
 export const lonaciClientNotDeletedWhere: Prisma.LonaciClientWhereInput = {
@@ -85,13 +89,10 @@ function checklistToPrismaJson(checklist: DossierDocumentChecklistPayload | null
   return (checklist ?? null) as unknown as import("@prisma/client").Prisma.InputJsonValue;
 }
 
-export async function allocateClientCode(): Promise<string> {
-  const row = await prisma.counter.upsert({
-    where: { id: CLIENT_REF_COUNTER_ID },
-    create: { id: CLIENT_REF_COUNTER_ID, seq: 1 },
-    update: { seq: { increment: 1 } },
+export async function findClientByAgenceAndCode(agenceId: string, code: string) {
+  return prisma.lonaciClient.findFirst({
+    where: { agenceId, code },
   });
-  return `${CLIENT_CODE_PREFIX}-${String(row.seq).padStart(6, "0")}`;
 }
 
 export function buildClientListWhere(params: {
@@ -263,11 +264,22 @@ export async function searchClients(params: {
   }).catch(() => {});
   // #endregion
 
+  const db = await getDatabase();
+  const agenceMap = await loadAgenceLibelleMap(
+    db,
+    rows.map((row) => row.agenceId),
+  );
+
   return {
     total,
     page: params.page,
     pageSize: params.pageSize,
-    items: rows.map(sanitizeClientListItem),
+    items: rows.map((doc) => ({
+      ...sanitizeClientListItem(doc),
+      agenceInscriptionLabel: doc.agenceId
+        ? formatAgenceLibelle(agenceMap.get(doc.agenceId), doc.agenceId)
+        : "Sans agence",
+    })),
   };
 }
 
@@ -368,6 +380,8 @@ export async function findClientById(id: string) {
 
 export async function createClient(
   input: {
+    code: string;
+    agenceCode: string;
     nomComplet: string;
     raisonSociale: string;
     cniNumero: string | null;
@@ -384,8 +398,22 @@ export async function createClient(
   },
   actor: UserDocument,
 ) {
+  const cniNumero = input.cniNumero?.trim() ?? "";
+  if (cniNumero.length < 4) {
+    throw new Error("CLIENT_IDENTIFIANT_REQUIS");
+  }
+
+  if (!input.agenceId?.trim()) {
+    throw new Error("AGENCE_REQUIRED");
+  }
+
+  const code = normalizeClientCodeForAgence(input.code, input.agenceCode);
+  const duplicate = await findClientByAgenceAndCode(input.agenceId, code);
+  if (duplicate) {
+    throw new Error("CLIENT_CODE_DEJA_UTILISE");
+  }
+
   const now = new Date();
-  const code = await allocateClientCode();
   const statut = initialClientStatutOnCreate();
   const produits = await listProduits();
   let documentChecklist = buildClientDocumentChecklistForProducts(
@@ -402,7 +430,7 @@ export async function createClient(
       code,
       raisonSociale: input.raisonSociale.trim(),
       nomComplet: input.nomComplet.trim(),
-      cniNumero: input.cniNumero,
+      cniNumero,
       nomContact: input.nomContact,
       email: input.email,
       telephone: input.telephone,

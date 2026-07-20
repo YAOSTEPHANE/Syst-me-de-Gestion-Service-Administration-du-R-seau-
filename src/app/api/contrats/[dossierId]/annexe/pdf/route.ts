@@ -3,9 +3,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import {
-  buildContratDocumentView,
+  buildAnnexeDocumentView,
   parseContratsGeneresPayload,
-  renderContratDocumentPdf,
+  renderAnnexeDocumentPdf,
 } from "@/lib/lonaci/contrat-document";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { createContratArchiveReadStream } from "@/lib/storage/contrat-files";
@@ -67,10 +67,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
     );
   }
 
-  const archivePath = genere.contratSigneArchive?.storedRelativePath?.trim();
+  const archivePath = genere.annexeSigneArchive?.storedRelativePath?.trim();
   const ref =
-    genere.contratSigneArchive?.contratReference?.trim() ||
-    genere.referenceContratPreview ||
+    genere.annexeSigneArchive?.annexeReference?.trim() ||
+    genere.referenceAnnexePreview ||
     dossier.reference;
 
   if (archivePath) {
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         stream.on("error", (err) => controller.error(err));
       },
     });
-    const filename = `contrat-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
+    const filename = `annexe-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
     const viewInline = request.nextUrl.searchParams.get("view") === "1";
     return new NextResponse(webStream, {
       status: 200,
@@ -99,12 +99,12 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
   }
 
-  const view = await buildContratDocumentView(dossierId, undefined, genere.produitCode);
+  const view = await buildAnnexeDocumentView(dossierId, undefined, genere.produitCode);
   if (!view) {
-    return NextResponse.json({ message: "Vue contrat indisponible." }, { status: 500 });
+    return NextResponse.json({ message: "Vue annexe indisponible." }, { status: 500 });
   }
-  const pdf = await renderContratDocumentPdf(view);
-  const filename = `contrat-brouillon-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
+  const pdf = await renderAnnexeDocumentPdf(view);
+  const filename = `annexe-brouillon-${ref.replace(/[^\w-]+/g, "_")}.pdf`;
   const viewInline = request.nextUrl.searchParams.get("view") === "1";
   return new NextResponse(new Uint8Array(pdf), {
     status: 200,

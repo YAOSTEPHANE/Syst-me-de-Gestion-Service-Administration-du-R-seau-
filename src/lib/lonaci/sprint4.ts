@@ -250,6 +250,7 @@ export async function createCaution(input: {
   } else {
     const client = await findLonaciClientById(lonaciClientId!);
     if (!client) throw new Error("CLIENT_NOT_FOUND");
+    if (!client.cniNumero?.trim()) throw new Error("CLIENT_IDENTIFIANT_MANQUANT");
     if (client.statut === "INACTIF") throw new Error("CLIENT_INACTIF");
     if (!isClientStatutEligibleForCaution(client.statut)) {
       if (client.statut === "EN_ATTENTE_N1") throw new Error("CLIENT_EN_ATTENTE_N1");

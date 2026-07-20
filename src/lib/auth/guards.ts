@@ -11,6 +11,7 @@ import {
 } from "@/lib/lonaci/module-concessionnaires";
 import { clearCurrentSession, findUserById, setUserCurrentSession, touchSessionActivity } from "@/lib/lonaci/users";
 import { rbacWorkflowDenialMessage } from "@/lib/lonaci/workflow-separation";
+import { logger } from "@/lib/observability/logger";
 
 interface GuardOptions {
   roles?: LonaciRole[];

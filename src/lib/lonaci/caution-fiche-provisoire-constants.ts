@@ -1,6 +1,8 @@
 /** Libellés fiche provisoire caution (client + serveur). */
 export const CAUTION_FICHE_PROVISOIRE_TITLE = "FICHE PROVISOIRE DE PAIEMENT DE CAUTION";
 export const CAUTION_FICHE_EN_ATTENTE_MENTION = "EN ATTENTE DE PAIEMENT";
+/** Agence de rattachement du client / concessionnaire à l'inscription. */
+export const CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL = "Agence d'inscription";
 
 export interface LonaciCautionBankReferences {
   banque: string;

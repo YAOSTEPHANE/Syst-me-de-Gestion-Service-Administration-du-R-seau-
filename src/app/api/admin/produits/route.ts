@@ -22,6 +22,7 @@ const createProduitSchema = z.object({
   /** Prix caution en FCFA (entier ≥ 0). */
   prix: z.coerce.number().int().min(0).max(999_999_999_999),
   documentsChecklist: z.array(checklistItemSchema).max(50).optional(),
+  documentsAnnexe: z.array(checklistItemSchema).max(50).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -53,6 +54,10 @@ export async function POST(request: NextRequest) {
       documentsChecklist:
         parsed.data.documentsChecklist !== undefined
           ? normalizeChecklistTemplate(parsed.data.documentsChecklist)
+          : undefined,
+      documentsAnnexe:
+        parsed.data.documentsAnnexe !== undefined
+          ? normalizeChecklistTemplate(parsed.data.documentsAnnexe)
           : undefined,
     });
     return NextResponse.json({ produit }, { status: 201 });

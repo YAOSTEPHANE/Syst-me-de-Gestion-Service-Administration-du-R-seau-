@@ -46,6 +46,7 @@ type ProduitPiecesEditorProps = {
   onChange: (items: ProduitPieceDraft[]) => void;
   disabled?: boolean;
   compact?: boolean;
+  helpText?: string;
 };
 
 export default function ProduitPiecesEditor({
@@ -53,6 +54,7 @@ export default function ProduitPiecesEditor({
   onChange,
   disabled = false,
   compact = false,
+  helpText = "Ces pièces alimentent automatiquement les checklists (inscription concessionnaire, dossiers, cessions, résiliations…).",
 }: ProduitPiecesEditorProps) {
   function updateAt(index: number, patch: Partial<ProduitPieceDraft>) {
     onChange(items.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -71,10 +73,7 @@ export default function ProduitPiecesEditor({
 
   return (
     <div className={compact ? "space-y-2" : "space-y-3"}>
-      <p className="text-[11px] text-slate-600">
-        Ces pièces alimentent automatiquement les checklists (inscription concessionnaire, dossiers,
-        cessions, résiliations…).
-      </p>
+      <p className="text-[11px] text-slate-600">{helpText}</p>
       {items.length === 0 ? (
         <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-center text-xs text-slate-500">
           Aucune pièce configurée pour ce produit.

@@ -9,6 +9,7 @@ import {
   CAUTION_FICHE_DEFINITIVE_TITLE,
   CAUTION_FICHE_PAYEE_MENTION,
 } from "@/lib/lonaci/caution-fiche-definitive-constants";
+import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import {
   type CautionEncaissementMode,
   type CautionPaymentMode,
@@ -263,7 +264,7 @@ export async function renderCautionFicheDefinitivePdf(view: CautionFicheDefiniti
     if (view.clientCode) drawFieldRow(doc, "Code client", view.clientCode);
     if (view.contratId) drawFieldRow(doc, "Contrat", view.contratId);
     drawFieldRow(doc, "Produit", view.produitLibelle ? `${view.produitCode} — ${view.produitLibelle}` : view.produitCode);
-    drawFieldRow(doc, "Agence", view.agenceLabel);
+    drawFieldRow(doc, CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL, view.agenceLabel);
     drawFieldRow(doc, "Montant payé (FCFA)", view.montantFCFA.toLocaleString("fr-FR"));
     drawFieldRow(
       doc,

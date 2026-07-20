@@ -26,6 +26,7 @@ import ProduitDocumentChecklistEditor from "@/components/lonaci/produit-document
 import DossierDocumentChecklistBlock from "@/components/lonaci/dossier-document-checklist-block";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
+import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import {
   buildChecklistFromTemplate,
@@ -81,6 +82,17 @@ function checklistToApiPatch(checklist: DossierDocumentChecklistPayload | null) 
   return checklist.entries.map((e) => ({ itemId: e.itemId, statut: e.statut }));
 }
 
+function uniqueOrderedProduitCodes(selected: string[]): string[] {
+  const map = new Map<string, string>();
+  for (const raw of selected) {
+    const trimmed = raw.trim();
+    const key = trimmed.toUpperCase();
+    if (!key) continue;
+    if (!map.has(key)) map.set(key, trimmed);
+  }
+  return [...map.values()];
+}
+
 interface ContratActif {
   id: string;
   reference: string;
@@ -115,6 +127,19 @@ interface ContratListeItem {
   cautionPaymentReference?: string | null;
   hasContratGenere?: boolean;
   contratArchive?: boolean;
+  annexeArchive?: boolean;
+  annexeReference?: string | null;
+  documentsAnnexeAttendus?: string[];
+  contratsParProduit?: Array<{
+    produitCode: string;
+    produitLibelle: string;
+    referenceContratPreview: string;
+    referenceAnnexePreview: string;
+    documentsAnnexeAttendus?: string[];
+    hasContratGenere: boolean;
+    contratArchive: boolean;
+    annexeArchive: boolean;
+  }>;
 }
 
 interface ToSignRow {
@@ -122,6 +147,7 @@ interface ToSignRow {
   reference: string;
   concessionnaireId: string;
   produitCode: string;
+  produitCodes?: string[];
   dateOperation: string;
   updatedAt: string;
 }
@@ -311,8 +337,15 @@ function dossierRecapPdfUrl(dossierId: string): string {
   return `/api/contrats/${encodeURIComponent(dossierId)}/export?view=1`;
 }
 
-function contratOfficielPdfUrl(dossierId: string): string {
-  return `/api/contrats/${encodeURIComponent(dossierId)}/contrat/pdf?view=1`;
+function contratOfficielPdfUrl(dossierId: string, produitCode?: string): string {
+  const q = new URLSearchParams({ view: "1" });
+  if (produitCode?.trim()) q.set("produitCode", produitCode.trim().toUpperCase());
+  return `/api/contrats/${encodeURIComponent(dossierId)}/contrat/pdf?${q}`;
+}
+
+function annexeOfficiellePdfUrl(dossierId: string, produitCode: string): string {
+  const q = new URLSearchParams({ view: "1", produitCode: produitCode.trim().toUpperCase() });
+  return `/api/contrats/${encodeURIComponent(dossierId)}/annexe/pdf?${q}`;
 }
 
 const inputClass =
@@ -343,6 +376,7 @@ export default function ContratsPanel() {
 
   const [formAgenceId, setFormAgenceId] = useState("");
   const [produitCode, setProduitCode] = useState("");
+  const [selectedProduitCodes, setSelectedProduitCodes] = useState<string[]>([]);
   const [dateOperation, setDateOperation] = useState("");
   const [operationType, setOperationType] = useState<OperationType>("NOUVEAU");
   const [parentContratId, setParentContratId] = useState("");
@@ -408,6 +442,10 @@ export default function ContratsPanel() {
   const [checklistModalPaymentRef, setChecklistModalPaymentRef] = useState<string | null | undefined>();
   const [checklistModalHasContratGenere, setChecklistModalHasContratGenere] = useState<boolean | undefined>();
   const [checklistModalContratArchive, setChecklistModalContratArchive] = useState<boolean | undefined>();
+  const [checklistModalAnnexeArchive, setChecklistModalAnnexeArchive] = useState<boolean | undefined>();
+  const [checklistModalContratsParProduit, setChecklistModalContratsParProduit] = useState<
+    ContratListeItem["contratsParProduit"]
+  >(undefined);
   const [checklistModalLoading, setChecklistModalLoading] = useState(false);
 
   useEffect(() => {
@@ -453,6 +491,21 @@ export default function ContratsPanel() {
     () => [...produits].sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" })),
     [produits],
   );
+
+  const produitsPourSelect = useMemo(() => {
+    if (!selectedClient) return produitsTries;
+    const autorises = selectedClient.produitsAutorises ?? [];
+    if (!autorises.length) return produitsTries;
+    return produitsTries.filter((p) => produitAutorisePourConcessionnaire(autorises, p.code));
+  }, [produitsTries, selectedClient]);
+
+  const createProduitCodes = useMemo(() => {
+    if (operationType === "ACTUALISATION") {
+      const single = produitCode.trim();
+      return single ? [single.toUpperCase()] : [];
+    }
+    return uniqueOrderedProduitCodes(selectedProduitCodes).map((c) => c.toUpperCase());
+  }, [operationType, produitCode, selectedProduitCodes]);
 
   useEffect(() => {
     const t = window.setTimeout(() => setListRefDebounced(listRefQuery.trim()), 400);
@@ -660,6 +713,7 @@ export default function ContratsPanel() {
     setOperationType("NOUVEAU");
     setParentContratId("");
     setProduitCode("");
+    setSelectedProduitCodes([]);
     if (!prefillLonaciClientId) {
       setSelectedClient(null);
       setFormAgenceId("");
@@ -730,22 +784,25 @@ export default function ContratsPanel() {
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
-    if (!createOpen || !produitCode.trim()) {
+    if (!createOpen || createProduitCodes.length === 0) {
       setCreateChecklist(null);
       return;
     }
-    const template = mergeProductChecklistTemplates(
-      [produitCode.trim().toUpperCase()],
-      produitsToDocumentRows(produits),
-    );
+    const template = mergeProductChecklistTemplates(createProduitCodes, produitsToDocumentRows(produits));
     setCreateChecklist((prev) => buildChecklistFromTemplate(template, prev?.entries ?? null));
-  }, [createOpen, produitCode, produits]);
+  }, [createOpen, createProduitCodes, produits]);
 
   useEffect(() => {
-    if (!selectedClient || !produitCode) return;
+    if (!selectedClient) return;
     const allowed = selectedClient.produitsAutorises ?? [];
-    if (!produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
-  }, [selectedClient, produitCode]);
+    if (operationType === "ACTUALISATION") {
+      if (produitCode && !produitAutorisePourConcessionnaire(allowed, produitCode)) setProduitCode("");
+      return;
+    }
+    setSelectedProduitCodes((prev) =>
+      prev.filter((code) => !allowed.length || produitAutorisePourConcessionnaire(allowed, code)),
+    );
+  }, [selectedClient, produitCode, operationType]);
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
@@ -768,14 +825,20 @@ export default function ContratsPanel() {
       fail("L’agence doit correspondre au rattachement du client sélectionné.");
       return;
     }
-    if (!produitCode.trim()) {
-      fail("Sélectionnez un produit.");
+    if (!createProduitCodes.length) {
+      fail(
+        operationType === "ACTUALISATION"
+          ? "Sélectionnez un produit."
+          : "Cochez au moins un produit (un contrat et une annexe seront générés par produit).",
+      );
       return;
     }
     const autorises = selectedClient.produitsAutorises ?? [];
-    if (!produitAutorisePourConcessionnaire(autorises, produitCode)) {
-      fail("Ce produit n’est pas autorisé pour ce client.");
-      return;
+    for (const code of createProduitCodes) {
+      if (!produitAutorisePourConcessionnaire(autorises, code)) {
+        fail(`Le produit ${code} n’est pas autorisé pour ce client.`);
+        return;
+      }
     }
     if (operationType === "ACTUALISATION" && !parentContratId.trim()) {
       fail("Sélectionnez le contrat d’origine (actif).");
@@ -799,13 +862,15 @@ export default function ContratsPanel() {
       const body: Record<string, unknown> = {
         lonaciClientId: selectedClient.id,
         agenceId: formAgenceId.trim(),
-        produitCode: produitCode.trim().toUpperCase(),
         operationType,
         dateOperation: d.toISOString(),
         observations: observations.trim() || null,
       };
       if (operationType === "ACTUALISATION") {
+        body.produitCode = createProduitCodes[0];
         body.parentContratId = parentContratId.trim();
+      } else {
+        body.produitCodes = createProduitCodes;
       }
       const checklistPatch = checklistToApiPatch(createChecklist);
       if (checklistPatch) {
@@ -836,14 +901,14 @@ export default function ContratsPanel() {
       const successMsg = resBody?.extended
         ? resBody.added
           ? resBody.submitted
-            ? "Produit ajouté au dossier existant et soumis pour validation N1."
-            : "Produit ajouté au dossier existant (brouillon). Complétez la checklist puis soumettez."
-          : "Ce produit est déjà sur le dossier ouvert du client — complétez-le depuis le tableau."
+            ? `Produit(s) ajouté(s) au dossier existant et soumis pour validation N1 (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""} au total).`
+            : "Produit(s) ajouté(s) au dossier existant (brouillon). Complétez la checklist puis soumettez."
+          : "Ces produits sont déjà sur le dossier ouvert du client — complétez-le depuis le tableau."
         : resBody?.submitted
-          ? "Dossier contrat créé et soumis pour validation N1."
+          ? `Dossier contrat créé (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""} — un contrat et une annexe par produit) et soumis pour validation N1.`
           : resBody?.checklistRequired
-            ? "Dossier créé en brouillon. Complétez la checklist documents puis soumettez-le."
-            : "Dossier contrat créé en brouillon. Soumettez-le depuis le tableau pour lancer la validation.";
+            ? `Dossier créé en brouillon pour ${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}. Complétez la checklist documents puis soumettez-le.`
+            : `Dossier contrat créé en brouillon (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}). Soumettez-le depuis le tableau pour lancer la validation.`;
       setToast({ type: "success", message: successMsg });
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
@@ -1072,13 +1137,24 @@ export default function ContratsPanel() {
     }
   }
 
-  async function openContratOfficielPdf(dossierId: string, reference: string) {
+  async function openContratOfficielPdf(dossierId: string, produitCode?: string) {
     try {
-      await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId));
+      await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId, produitCode));
     } catch (err) {
       setToast({
         type: "error",
         message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."),
+      });
+    }
+  }
+
+  async function openAnnexeOfficiellePdf(dossierId: string, produitCode: string) {
+    try {
+      await openLonaciPdfInTab(annexeOfficiellePdfUrl(dossierId, produitCode));
+    } catch (err) {
+      setToast({
+        type: "error",
+        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF annexe indisponible."),
       });
     }
   }
@@ -1104,6 +1180,8 @@ export default function ContratsPanel() {
           cautionPaymentReference?: string | null;
           hasContratGenere?: boolean;
           contratArchive?: boolean;
+          annexeArchive?: boolean;
+          contratsParProduit?: ContratListeItem["contratsParProduit"];
         };
       } | null;
       if (!res.ok || !body?.dossier) {
@@ -1124,6 +1202,8 @@ export default function ContratsPanel() {
       setChecklistModalPaymentRef(body.dossier.cautionPaymentReference ?? null);
       setChecklistModalHasContratGenere(body.dossier.hasContratGenere);
       setChecklistModalContratArchive(body.dossier.contratArchive);
+      setChecklistModalAnnexeArchive(body.dossier.annexeArchive);
+      setChecklistModalContratsParProduit(body.dossier.contratsParProduit);
     } catch {
       setToast({ type: "error", message: "Erreur réseau lors du chargement de la checklist." });
       setChecklistModalContrat(null);
@@ -1140,6 +1220,8 @@ export default function ContratsPanel() {
     setChecklistModalPaymentRef(undefined);
     setChecklistModalHasContratGenere(undefined);
     setChecklistModalContratArchive(undefined);
+    setChecklistModalAnnexeArchive(undefined);
+    setChecklistModalContratsParProduit(undefined);
   }
 
   function syncContratChecklistInList(dossierId: string, patch: { payload: Record<string, unknown> }) {
@@ -1478,10 +1560,29 @@ export default function ContratsPanel() {
                   </tr>
                 </thead>
                 <tbody>
-                  {signingQueue.map((row) => (
+                  {signingQueue.map((row) => {
+                    const codes =
+                      row.produitCodes && row.produitCodes.length > 0
+                        ? row.produitCodes
+                        : row.produitCode
+                          ? [row.produitCode]
+                          : [];
+                    return (
                     <tr key={row.dossierId} className="border-b border-violet-100/80">
                       <td className="px-3 py-2 font-mono text-xs text-violet-950">{row.reference}</td>
-                      <td className="px-3 py-2 font-mono text-xs">{row.produitCode || "—"}</td>
+                      <td className="px-3 py-2 text-xs">
+                        {codes.length ? (
+                          <div className="flex flex-col gap-1">
+                            {codes.map((code) => (
+                              <span key={code} className="font-mono text-xs text-violet-950">
+                                {code}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
                       <td className="whitespace-nowrap px-3 py-2 text-xs">{formatShortDate(row.dateOperation)}</td>
                       <td className="whitespace-nowrap px-3 py-2 text-xs">
                         {new Date(row.updatedAt).toLocaleString("fr-FR")}
@@ -1501,13 +1602,24 @@ export default function ContratsPanel() {
                           >
                             Récap.
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => void openContratOfficielPdf(row.dossierId, row.reference)}
-                            className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
-                          >
-                            Contrat
-                          </button>
+                          {codes.map((code) => (
+                            <span key={`${row.dossierId}-${code}-docs`} className="inline-flex gap-1">
+                              <button
+                                type="button"
+                                onClick={() => void openContratOfficielPdf(row.dossierId, code)}
+                                className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
+                              >
+                                Contrat {code}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void openAnnexeOfficiellePdf(row.dossierId, code)}
+                                className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
+                              >
+                                Annexe {code}
+                              </button>
+                            </span>
+                          ))}
                           <button
                             type="button"
                             onClick={() => void generateClientSignatureLink(row.dossierId)}
@@ -1519,7 +1631,8 @@ export default function ContratsPanel() {
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             )}
@@ -1727,7 +1840,20 @@ export default function ContratsPanel() {
                     return (
                       <tr key={c.id} className="border-b border-slate-100 align-top transition-colors duration-150 hover:bg-cyan-50/60">
                         <td className="px-3 py-2.5 font-mono text-xs text-slate-900 sm:px-4" title={c.reference}>
-                          {c.reference}
+                          <div>{c.reference}</div>
+                          {c.annexeReference ? (
+                            <div className="mt-0.5 font-sans text-[10px] text-violet-800" title="Annexe associée">
+                              Annexe : <span className="font-mono">{c.annexeReference}</span>
+                            </div>
+                          ) : null}
+                          {(c.documentsAnnexeAttendus?.length ?? 0) > 0 ? (
+                            <div
+                              className="mt-0.5 font-sans text-[10px] text-slate-500"
+                              title={c.documentsAnnexeAttendus!.join(", ")}
+                            >
+                              {c.documentsAnnexeAttendus!.length} doc. annexe
+                            </div>
+                          ) : null}
                         </td>
                         <td className="px-3 py-2.5 text-slate-800 sm:px-4" title={c.nomPdv || "—"}>
                           {c.nomPdv || "—"}
@@ -1793,6 +1919,50 @@ export default function ContratsPanel() {
                                 Décharge
                               </button>
                             ) : null}
+                            {c.dechargeDefinitiveEligible ? (
+                              <button
+                                type="button"
+                                title={COURRIER_COMPTABILITE_TITLE}
+                                onClick={() =>
+                                  void downloadLonaciPdf(
+                                    `/api/dossiers/${c.dossierId}/courrier-comptabilite/pdf`,
+                                    `courrier-comptabilite-${c.reference}.pdf`,
+                                  ).catch((err) =>
+                                    setToast({
+                                      type: "error",
+                                      message: friendlyErrorMessage(
+                                        err instanceof Error ? err.message : "Téléchargement impossible.",
+                                      ),
+                                    }),
+                                  )
+                                }
+                                className="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-blue-900 shadow-sm transition hover:bg-blue-100"
+                              >
+                                Courrier compta.
+                              </button>
+                            ) : null}
+                            {c.dossierEtape === "FINALISE" && c.hasContratGenere ? (
+                              <button
+                                type="button"
+                                title="Fiche de décharge — remise du contrat au client"
+                                onClick={() =>
+                                  void downloadLonaciPdf(
+                                    `/api/dossiers/${c.dossierId}/decharge-contrat/pdf?produitCode=${encodeURIComponent(c.produitCode)}`,
+                                    `decharge-contrat-client-${c.reference}.pdf`,
+                                  ).catch((err) =>
+                                    setToast({
+                                      type: "error",
+                                      message: friendlyErrorMessage(
+                                        err instanceof Error ? err.message : "Téléchargement impossible.",
+                                      ),
+                                    }),
+                                  )
+                                }
+                                className="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-blue-900 shadow-sm transition hover:bg-blue-100"
+                              >
+                                Décharge client
+                              </button>
+                            ) : null}
                             <button
                               type="button"
                               onClick={() => void openDossierRecapPdf(c.dossierId, c.reference)}
@@ -1802,18 +1972,32 @@ export default function ContratsPanel() {
                               Récap.
                             </button>
                             {c.hasContratGenere ? (
-                              <button
-                                type="button"
-                                onClick={() => void openContratOfficielPdf(c.dossierId, c.reference)}
-                                title={
-                                  c.contratArchive
-                                    ? "Contrat signé archivé (PDF)"
-                                    : "Projet de contrat (PDF)"
-                                }
-                                className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-slate-900"
-                              >
-                                Contrat
-                              </button>
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => void openContratOfficielPdf(c.dossierId, c.produitCode)}
+                                  title={
+                                    c.contratArchive
+                                      ? `Contrat ${c.produitCode} signé archivé (PDF)`
+                                      : `Projet de contrat ${c.produitCode} (PDF)`
+                                  }
+                                  className="inline-flex items-center justify-center rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-slate-900"
+                                >
+                                  Contrat
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void openAnnexeOfficiellePdf(c.dossierId, c.produitCode)}
+                                  title={
+                                    c.annexeArchive
+                                      ? `Annexe ${c.produitCode} archivée (PDF)`
+                                      : `Projet d’annexe ${c.produitCode} (PDF)`
+                                  }
+                                  className="inline-flex items-center justify-center rounded-lg border border-indigo-700 bg-indigo-700 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:bg-indigo-800"
+                                >
+                                  Annexe
+                                </button>
+                              </>
                             ) : null}
                             <button
                               type="button"
@@ -2002,6 +2186,8 @@ export default function ContratsPanel() {
                 dossierStatus={checklistModalDossierStatus}
                 hasContratGenere={checklistModalHasContratGenere}
                 contratArchive={checklistModalContratArchive}
+                annexeArchive={checklistModalAnnexeArchive}
+                contratsParProduit={checklistModalContratsParProduit}
                 statutMetier={checklistModalStatutMetier}
                 statutMetierLabel={checklistModalStatutLabel}
                 statutMetierDescription={checklistModalStatutDescription}
@@ -2025,6 +2211,12 @@ export default function ContratsPanel() {
                   }
                   if (patch.contratArchive !== undefined) {
                     setChecklistModalContratArchive(patch.contratArchive);
+                  }
+                  if (patch.annexeArchive !== undefined) {
+                    setChecklistModalAnnexeArchive(patch.annexeArchive);
+                  }
+                  if (patch.contratsParProduit !== undefined) {
+                    setChecklistModalContratsParProduit(patch.contratsParProduit);
                   }
                   syncContratChecklistInList(checklistModalContrat.dossierId, patch);
                   setListReloadTick((n) => n + 1);
@@ -2111,7 +2303,7 @@ export default function ContratsPanel() {
                   <button
                     type="button"
                     onClick={() =>
-                      void openContratOfficielPdf(viewContrat.dossierId, viewContrat.reference)
+                      void openContratOfficielPdf(viewContrat.dossierId, viewContrat.produitCode)
                     }
                     className="rounded-lg border border-slate-700 bg-slate-800 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-900"
                   >
@@ -2122,6 +2314,31 @@ export default function ContratsPanel() {
                     Contrat PDF disponible après génération (checklist / décharge définitive).
                   </span>
                 )}
+                {viewContrat.dossierEtape === "FINALISE" && viewContrat.hasContratGenere ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void downloadLonaciPdf(
+                        `/api/dossiers/${viewContrat.dossierId}/decharge-contrat/pdf${
+                          viewContrat.produitCode
+                            ? `?produitCode=${encodeURIComponent(viewContrat.produitCode)}`
+                            : ""
+                        }`,
+                        `decharge-contrat-client-${viewContrat.reference}.pdf`,
+                      ).catch((err) =>
+                        setToast({
+                          type: "error",
+                          message: friendlyErrorMessage(
+                            err instanceof Error ? err.message : "Téléchargement impossible.",
+                          ),
+                        }),
+                      )
+                    }
+                    className="rounded-lg border border-blue-600 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-blue-100"
+                  >
+                    Décharge client (PDF)
+                  </button>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -2282,6 +2499,9 @@ export default function ContratsPanel() {
                 <h3 id="nouveau-contrat-title" className="text-lg font-semibold text-slate-900">
                   Nouveau contrat
                 </h3>
+                <p className="mt-0.5 text-xs text-slate-600">
+                  Un contrat et une annexe par produit — plusieurs produits possibles sur le même dossier client.
+                </p>
               </div>
               <button
                 type="button"
@@ -2324,15 +2544,21 @@ export default function ContratsPanel() {
                         const agIds = agencesTriees.map((a) => a.id);
                         const pickedAg = pickAgenceIdFromClient(row, agIds);
                         setFormAgenceId(pickedAg || (row ? "" : ""));
-                        const allCodes = produitsTries.map((p) => p.code);
-                        const pool =
-                          row && (row.produitsAutorises ?? []).length > 0
-                            ? allCodes.filter((code) =>
-                                produitAutorisePourConcessionnaire(row.produitsAutorises ?? [], code),
-                              )
-                            : allCodes;
-                        const picked = pickProduitCodeFromClient(row, pool);
-                        if (picked) setProduitCode(picked);
+                        const pool = produitsTries
+                          .filter((p) =>
+                            !row || !(row.produitsAutorises ?? []).length
+                              ? true
+                              : produitAutorisePourConcessionnaire(row.produitsAutorises ?? [], p.code),
+                          )
+                          .map((p) => p.code);
+                        if (operationType === "NOUVEAU") {
+                          setSelectedProduitCodes(uniqueOrderedProduitCodes(pool));
+                          setProduitCode(pool[0] ?? "");
+                        } else {
+                          const picked = pickProduitCodeFromClient(row, pool);
+                          setProduitCode(picked || "");
+                          setSelectedProduitCodes(picked ? [picked] : []);
+                        }
                       }}
                       inputClassName={inputClass}
                     />
@@ -2344,29 +2570,90 @@ export default function ContratsPanel() {
                     </p>
                     <div className="grid gap-2.5 sm:grid-cols-2">
                       <label className="grid gap-1 sm:col-span-2">
-                        <span className="text-xs font-medium text-slate-700">Sélection du produit *</span>
-                        <select
-                          required
-                          value={produitCode}
-                          onChange={(e) => setProduitCode(e.target.value)}
-                          className={inputClass}
-                          disabled={refLoading}
-                        >
-                          <option value="">{refLoading ? "Chargement des produits…" : "— Choisir un produit —"}</option>
-                          {produitsTries.map((p) => {
-                            const code = p.code;
-                            const label = p.libelle;
-                            const ok =
-                              !selectedClient ||
-                              produitAutorisePourConcessionnaire(selectedClient.produitsAutorises ?? [], code);
-                            return (
-                              <option key={code} value={code} disabled={!ok}>
-                                {label}
-                                {!ok ? " (non autorisé pour ce client)" : ""}
+                        <span className="text-xs font-medium text-slate-700">
+                          {operationType === "ACTUALISATION"
+                            ? "Sélection du produit *"
+                            : "Produit(s) — un contrat et une annexe par ligne *"}
+                        </span>
+                        {operationType === "ACTUALISATION" ? (
+                          <select
+                            required
+                            value={produitCode}
+                            onChange={(e) => setProduitCode(e.target.value)}
+                            className={inputClass}
+                            disabled={refLoading}
+                          >
+                            <option value="">{refLoading ? "Chargement des produits…" : "— Choisir un produit —"}</option>
+                            {produitsPourSelect.map((p) => (
+                              <option key={p.code} value={p.code}>
+                                {p.libelle}
                               </option>
-                            );
-                          })}
-                        </select>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-2">
+                            <div className="mb-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                disabled={refLoading || produitsPourSelect.length === 0}
+                                onClick={() =>
+                                  setSelectedProduitCodes(produitsPourSelect.map((p) => p.code))
+                                }
+                                className="rounded border border-indigo-300 bg-white px-2 py-1 text-[11px] font-medium text-indigo-800 hover:bg-indigo-50 disabled:opacity-50"
+                              >
+                                Tout cocher
+                              </button>
+                              <button
+                                type="button"
+                                disabled={selectedProduitCodes.length === 0}
+                                onClick={() => setSelectedProduitCodes([])}
+                                className="rounded border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                              >
+                                Tout décocher
+                              </button>
+                            </div>
+                            <div className="grid gap-1.5 sm:grid-cols-2">
+                              {produitsPourSelect.map((p) => {
+                                const ku = p.code.trim().toUpperCase();
+                                const checked = selectedProduitCodes.some(
+                                  (c) => c.trim().toUpperCase() === ku,
+                                );
+                                return (
+                                  <label
+                                    key={p.code}
+                                    className="flex cursor-pointer items-start gap-2 rounded border border-slate-200 bg-white px-2 py-1.5 text-sm hover:border-indigo-300"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={() => {
+                                        setSelectedProduitCodes((prev) => {
+                                          if (checked) {
+                                            return prev.filter((c) => c.trim().toUpperCase() !== ku);
+                                          }
+                                          return uniqueOrderedProduitCodes([...prev, p.code]);
+                                        });
+                                      }}
+                                      className="mt-0.5"
+                                    />
+                                    <span>
+                                      <span className="font-mono text-xs text-slate-800">{p.code}</span>
+                                      <span className="mt-0.5 block text-xs text-slate-600">{p.libelle}</span>
+                                    </span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {selectedProduitCodes.length > 0 ? (
+                              <p className="mt-2 text-[11px] text-indigo-900">
+                                {selectedProduitCodes.length} produit
+                                {selectedProduitCodes.length > 1 ? "s" : ""} sélectionné
+                                {selectedProduitCodes.length > 1 ? "s" : ""} → autant de contrats et d’annexes à
+                                finaliser.
+                              </p>
+                            ) : null}
+                          </div>
+                        )}
                         {refError ? <span className="text-[11px] text-rose-700">{refError}</span> : null}
                         {!selectedClient ? (
                           <span className="text-[11px] text-slate-500">
@@ -2416,7 +2703,13 @@ export default function ContratsPanel() {
                         <span className="text-xs font-medium text-slate-700">Type *</span>
                         <select
                           value={operationType}
-                          onChange={(e) => setOperationType(e.target.value as OperationType)}
+                          onChange={(e) => {
+                            const next = e.target.value as OperationType;
+                            setOperationType(next);
+                            if (next === "ACTUALISATION" && selectedProduitCodes[0]) {
+                              setProduitCode(selectedProduitCodes[0]!);
+                            }
+                          }}
                           className={inputClass}
                         >
                           <option value="NOUVEAU">NOUVEAU CONTRAT</option>
@@ -2426,7 +2719,7 @@ export default function ContratsPanel() {
                     </div>
                   </section>
 
-                  {produitCode.trim() ? (
+                  {createProduitCodes.length > 0 ? (
                     <section className="rounded-xl border border-emerald-200/80 bg-white p-2.5 shadow-sm">
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
                         Documents du produit
@@ -2436,8 +2729,8 @@ export default function ContratsPanel() {
                           checklist={createChecklist}
                           editable
                           onChange={setCreateChecklist}
-                          title="Pièces à fournir pour ce contrat"
-                          hint="Liste issue du référentiel produit — marquez chaque pièce Fourni, Manquant ou En attente."
+                          title="Pièces à fournir pour ce(s) contrat(s)"
+                          hint={`Liste fusionnée des pièces des ${createProduitCodes.length} produit(s) — marquez chaque pièce Fourni, Manquant ou En attente.`}
                         />
                       ) : (
                         <p className="text-xs text-slate-500">Préparation de la checklist…</p>

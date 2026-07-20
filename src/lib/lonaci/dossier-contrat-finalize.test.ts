@@ -11,6 +11,7 @@ const {
   hasActiveMock,
   finalizeContratMock,
   archiveMock,
+  archiveAnnexeMock,
   transitionDossierMock,
 } = vi.hoisted(() => ({
   findDossierByIdMock: vi.fn(),
@@ -23,6 +24,7 @@ const {
   hasActiveMock: vi.fn(),
   finalizeContratMock: vi.fn(),
   archiveMock: vi.fn(),
+  archiveAnnexeMock: vi.fn(),
   transitionDossierMock: vi.fn(),
 }));
 
@@ -38,13 +40,18 @@ vi.mock("@/lib/lonaci/contracts", () => ({
   finalizeContratFromDossier: finalizeContratMock,
 }));
 
-vi.mock("@/lib/lonaci/contrat-document", () => ({
-  parseContratGenerePayload: parseContratGenerePayloadMock,
-  parseContratsGeneresPayload: parseContratsGeneresPayloadMock,
-  prepareContratFromDechargeDefinitive: prepareContratMock,
-  ensureContratFinalizationReady: ensureReadyMock,
-  archiveContratSigneForDossier: archiveMock,
-}));
+vi.mock("@/lib/lonaci/contrat-document", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/lonaci/contrat-document")>();
+  return {
+    ...actual,
+    parseContratGenerePayload: parseContratGenerePayloadMock,
+    parseContratsGeneresPayload: parseContratsGeneresPayloadMock,
+    prepareContratFromDechargeDefinitive: prepareContratMock,
+    ensureContratFinalizationReady: ensureReadyMock,
+    archiveContratSigneForDossier: archiveMock,
+    archiveAnnexeSigneForDossier: archiveAnnexeMock,
+  };
+});
 
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import type { UserDocument } from "@/lib/lonaci/types";
@@ -79,6 +86,7 @@ describe("finalizeDossierContratActualisation", () => {
     hasActiveMock.mockResolvedValue(false);
     finalizeContratMock.mockResolvedValue({ id: "ct1", reference: "REF-1" });
     archiveMock.mockResolvedValue(undefined);
+    archiveAnnexeMock.mockResolvedValue(undefined);
     transitionDossierMock.mockResolvedValue({});
   });
 
@@ -89,7 +97,10 @@ describe("finalizeDossierContratActualisation", () => {
       return { id: "ct1", reference: "REF-1" };
     });
     archiveMock.mockImplementation(async () => {
-      order.push("archive");
+      order.push("archive-contrat");
+    });
+    archiveAnnexeMock.mockImplementation(async () => {
+      order.push("archive-annexe");
     });
     transitionDossierMock.mockImplementation(async () => {
       order.push("transition");
@@ -102,7 +113,7 @@ describe("finalizeDossierContratActualisation", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(order).toEqual(["contrat", "archive", "transition"]);
+    expect(order).toEqual(["contrat", "archive-contrat", "archive-annexe", "transition"]);
   });
 
   it("ne finalise pas le dossier si la création du contrat échoue", async () => {

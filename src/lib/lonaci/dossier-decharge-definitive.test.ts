@@ -4,6 +4,8 @@ import {
   DECHARGE_DEFINITIVE_MENTION,
   DECHARGE_DEFINITIVE_TITLE,
   dossierEligibleDechargeDefinitive,
+  DECHARGE_CONTRAT_TITLE,
+  dossierEligibleDechargeContratRemise,
 } from "@/lib/lonaci/dossier-decharge-constants";
 
 describe("dossierEligibleDechargeDefinitive", () => {
@@ -21,5 +23,17 @@ describe("dossierEligibleDechargeDefinitive", () => {
   it("expose les libellés officiels de la décharge définitive", () => {
     expect(DECHARGE_DEFINITIVE_TITLE).toBe("DÉCHARGE DÉFINITIVE — DOSSIER COMPLET");
     expect(DECHARGE_DEFINITIVE_MENTION).toBe("DOSSIER COMPLET");
+  });
+});
+
+describe("dossierEligibleDechargeContratRemise", () => {
+  it("exige dossier finalisé et contrat généré", () => {
+    expect(dossierEligibleDechargeContratRemise("FINALISE", true)).toBe(true);
+    expect(dossierEligibleDechargeContratRemise("VALIDE_N2", true)).toBe(false);
+    expect(dossierEligibleDechargeContratRemise("FINALISE", false)).toBe(false);
+  });
+
+  it("expose le titre de la fiche remise client", () => {
+    expect(DECHARGE_CONTRAT_TITLE).toBe("FICHE DE DÉCHARGE — REMISE DU CONTRAT AU CLIENT");
   });
 });

@@ -18,14 +18,27 @@ import {
   DECHARGE_DEFINITIVE_DESCRIPTION,
   DECHARGE_DEFINITIVE_MENTION,
   DECHARGE_DEFINITIVE_TITLE,
+  DECHARGE_CONTRAT_TITLE,
   DECHARGE_PROVISOIRE_DISCLAIMER,
 } from "@/lib/lonaci/dossier-decharge-constants";
+import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 import {
   CONTRAT_GENERATION_STEPS,
   CONTRAT_GENERATION_SUMMARY,
 } from "@/lib/lonaci/contrat-generation-constants";
 import type { DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { useCallback, useEffect, useMemo, useState } from "react";
+
+type ContratProduitRow = {
+  produitCode: string;
+  produitLibelle: string;
+  referenceContratPreview: string;
+  referenceAnnexePreview: string;
+  documentsAnnexeAttendus?: string[];
+  hasContratGenere: boolean;
+  contratArchive: boolean;
+  annexeArchive: boolean;
+};
 
 type ChecklistDossierPatch = {
   payload: Record<string, unknown>;
@@ -39,6 +52,8 @@ type ChecklistDossierPatch = {
   cautionPaymentReference?: string | null;
   hasContratGenere?: boolean;
   contratArchive?: boolean;
+  annexeArchive?: boolean;
+  contratsParProduit?: ContratProduitRow[];
 };
 
 type DossierApiBody = {
@@ -53,7 +68,52 @@ type DossierApiBody = {
   cautionPaymentReference?: string | null;
   hasContratGenere?: boolean;
   contratArchive?: boolean;
+  annexeArchive?: boolean;
+  contratsParProduit?: ContratProduitRow[];
 };
+
+function parseContratProduitRow(raw: unknown): ContratProduitRow | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const o = raw as Record<string, unknown>;
+  const produitCode = String(o.produitCode ?? "").trim().toUpperCase();
+  if (!produitCode) return null;
+  const referenceContratPreview = String(o.referenceContratPreview ?? "");
+  return {
+    produitCode,
+    produitLibelle: String(o.produitLibelle ?? produitCode),
+    referenceContratPreview,
+    referenceAnnexePreview:
+      typeof o.referenceAnnexePreview === "string" && o.referenceAnnexePreview.trim()
+        ? o.referenceAnnexePreview.trim()
+        : referenceContratPreview.replace(/^CONTRAT-/, "ANNEXE-"),
+    hasContratGenere: true,
+    contratArchive: Boolean(
+      o.contratSigneArchive && typeof o.contratSigneArchive === "object",
+    ),
+    annexeArchive: Boolean(
+      o.annexeSigneArchive && typeof o.annexeSigneArchive === "object",
+    ),
+  };
+}
+
+function contratsParProduitFromPayload(payload: Record<string, unknown>): ContratProduitRow[] {
+  const raw = payload.contratsGeneres;
+  if (Array.isArray(raw)) {
+    return raw.map(parseContratProduitRow).filter((x): x is ContratProduitRow => x !== null);
+  }
+  const single = parseContratProduitRow(payload.contratGenere);
+  return single ? [single] : [];
+}
+
+function contratPdfUrl(dossierId: string, produitCode: string): string {
+  const q = new URLSearchParams({ view: "1", produitCode });
+  return `/api/contrats/${encodeURIComponent(dossierId)}/contrat/pdf?${q}`;
+}
+
+function annexePdfUrl(dossierId: string, produitCode: string): string {
+  const q = new URLSearchParams({ view: "1", produitCode });
+  return `/api/contrats/${encodeURIComponent(dossierId)}/annexe/pdf?${q}`;
+}
 
 function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatch {
   return {
@@ -68,6 +128,8 @@ function patchFromDossierResponse(dossier: DossierApiBody): ChecklistDossierPatc
     cautionPaymentReference: dossier.cautionPaymentReference ?? null,
     hasContratGenere: dossier.hasContratGenere,
     contratArchive: dossier.contratArchive,
+    annexeArchive: dossier.annexeArchive,
+    contratsParProduit: dossier.contratsParProduit,
   };
 }
 
@@ -91,6 +153,8 @@ type Props = {
   dossierStatus?: string;
   hasContratGenere?: boolean;
   contratArchive?: boolean;
+  annexeArchive?: boolean;
+  contratsParProduit?: ContratProduitRow[];
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
@@ -136,6 +200,8 @@ export default function DossierDocumentChecklistBlock({
   dossierStatus,
   hasContratGenere: hasContratGenereProp,
   contratArchive,
+  annexeArchive,
+  contratsParProduit: contratsParProduitProp,
   statutMetier,
   statutMetierLabel,
   statutMetierDescription,
@@ -148,8 +214,16 @@ export default function DossierDocumentChecklistBlock({
   const [generatingContrat, setGeneratingContrat] = useState(false);
   const [contratMessage, setContratMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const hasContratGenere = hasContratGenereProp ?? Boolean(
-    payload?.contratGenere && typeof payload.contratGenere === "object",
+  const hasContratGenere =
+    hasContratGenereProp ??
+    (Boolean(payload?.contratGenere && typeof payload.contratGenere === "object") ||
+      contratsParProduitFromPayload(payload).length > 0);
+  const contratsParProduit = useMemo(
+    () =>
+      contratsParProduitProp?.length
+        ? contratsParProduitProp
+        : contratsParProduitFromPayload(payload),
+    [contratsParProduitProp, payload],
   );
   const contratGenere = hasContratGenere && payload?.contratGenere && typeof payload.contratGenere === "object"
     ? (payload.contratGenere as Record<string, unknown>)
@@ -243,8 +317,8 @@ export default function DossierDocumentChecklistBlock({
       onUpdated(patchFromDossierResponse(body.dossier));
       setContratMessage(
         body.submitted
-          ? "Contrat généré et dossier soumis au circuit de validation (4 niveaux)."
-          : "Contrat déjà généré — téléchargeable ci-dessous.",
+          ? "Contrats et annexes générés — dossier soumis au circuit de validation (4 niveaux)."
+          : "Contrats et annexes déjà générés — téléchargeables ci-dessous.",
       );
     } catch {
       setError("Erreur réseau ou serveur.");
@@ -362,6 +436,22 @@ export default function DossierDocumentChecklistBlock({
               >
                 Décharge définitive (PDF)
               </button>
+              {canDownloadDechargeDefinitive ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    void triggerPdfDownload(
+                      `/api/dossiers/${dossierId}/courrier-comptabilite/pdf`,
+                      `courrier-comptabilite-${dossierId}.pdf`,
+                      setError,
+                    )
+                  }
+                  className="rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-900 hover:bg-blue-100"
+                  title={COURRIER_COMPTABILITE_TITLE}
+                >
+                  Courrier comptabilité (PDF)
+                </button>
+              ) : null}
               {showGenererContrat && !hasContratGenere ? (
                 <button
                   type="button"
@@ -372,7 +462,34 @@ export default function DossierDocumentChecklistBlock({
                   {generatingContrat ? "Génération…" : "Générer le contrat"}
                 </button>
               ) : null}
-              {hasContratGenere ? (
+              {hasContratGenere && contratsParProduit.length ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {contratsParProduit.map((row) => (
+                    <div key={row.produitCode} className="flex flex-wrap gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void triggerPdfView(contratPdfUrl(dossierId, row.produitCode), setError)}
+                        className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-slate-900"
+                        title={row.referenceContratPreview}
+                      >
+                        {row.contratArchive
+                          ? `Contrat ${row.produitCode} (archivé)`
+                          : `Contrat ${row.produitCode}`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void triggerPdfView(annexePdfUrl(dossierId, row.produitCode), setError)}
+                        className="rounded-lg border border-indigo-700 bg-indigo-700 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-800"
+                        title={row.referenceAnnexePreview}
+                      >
+                        {row.annexeArchive
+                          ? `Annexe ${row.produitCode} (archivée)`
+                          : `Annexe ${row.produitCode}`}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : hasContratGenere ? (
                 <button
                   type="button"
                   onClick={() =>
@@ -382,6 +499,48 @@ export default function DossierDocumentChecklistBlock({
                 >
                   {contratArchive ? "Contrat archivé (PDF)" : "Contrat (PDF)"}
                 </button>
+              ) : null}
+              {dossierStatus === "FINALISE" && hasContratGenere ? (
+                contratsParProduit.length > 1 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {contratsParProduit.map((row) => (
+                      <button
+                        key={row.produitCode}
+                        type="button"
+                        onClick={() =>
+                          void triggerPdfDownload(
+                            `/api/dossiers/${dossierId}/decharge-contrat/pdf?produitCode=${encodeURIComponent(row.produitCode)}`,
+                            `decharge-contrat-client-${dossierId}-${row.produitCode}.pdf`,
+                            setError,
+                          )
+                        }
+                        className="rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-900 hover:bg-blue-100"
+                        title={`${DECHARGE_CONTRAT_TITLE} — ${row.produitCode}`}
+                      >
+                        Décharge {row.produitCode}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void triggerPdfDownload(
+                        `/api/dossiers/${dossierId}/decharge-contrat/pdf${
+                          contratsParProduit[0]?.produitCode
+                            ? `?produitCode=${encodeURIComponent(contratsParProduit[0].produitCode)}`
+                            : ""
+                        }`,
+                        `decharge-contrat-client-${dossierId}.pdf`,
+                        setError,
+                      )
+                    }
+                    className="rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1 text-[11px] font-semibold text-blue-900 hover:bg-blue-100"
+                    title={`${DECHARGE_CONTRAT_TITLE} — à remettre au client`}
+                  >
+                    Décharge client (PDF)
+                  </button>
+                )
               ) : null}
             </>
           )}
@@ -428,10 +587,18 @@ export default function DossierDocumentChecklistBlock({
           </div>
           {hasContratGenere ? (
             <p className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] text-slate-800">
-              Contrat généré
+              {contratsParProduit.length > 1
+                ? `${contratsParProduit.length} contrats et annexes générés (un par produit)`
+                : "Contrat et annexe générés"}
               {contratReferencePreview ? ` — réf. ${contratReferencePreview}` : ""}
               {dossierStatus ? ` · étape dossier : ${dossierStatus}` : ""}
-              {contratArchive ? " · PDF archivé après validation finale" : ""}
+              {contratArchive && annexeArchive
+                ? " · PDF archivés après validation finale"
+                : contratArchive
+                  ? " · contrat archivé"
+                  : annexeArchive
+                    ? " · annexe archivée"
+                    : ""}
             </p>
           ) : null}
         </div>

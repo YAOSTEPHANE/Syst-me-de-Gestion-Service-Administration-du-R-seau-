@@ -133,6 +133,7 @@ function mapStoredProduit(item: StoredProduitDocument): ProduitDocument {
     ...item,
     _id: item._id.toHexString(),
     documentsChecklist: normalizeChecklistTemplate(item.documentsChecklist),
+    documentsAnnexe: normalizeChecklistTemplate(item.documentsAnnexe),
   };
 }
 
@@ -163,6 +164,7 @@ interface CreateProduitInput {
   /** Prix caution (FCFA), entier ≥ 0. */
   prix: number;
   documentsChecklist?: ProduitDocumentChecklistItem[];
+  documentsAnnexe?: ProduitDocumentChecklistItem[];
 }
 
 function normalizeCode(code: string) {
@@ -196,6 +198,9 @@ export async function createProduit(input: CreateProduitInput): Promise<ProduitD
     actif: true,
     ...(input.documentsChecklist?.length
       ? { documentsChecklist: normalizeChecklistTemplate(input.documentsChecklist) }
+      : {}),
+    ...(input.documentsAnnexe?.length
+      ? { documentsAnnexe: normalizeChecklistTemplate(input.documentsAnnexe) }
       : {}),
     createdAt: now,
     updatedAt: now,
@@ -307,6 +312,7 @@ export interface UpdateProduitInput {
   actif?: boolean;
   code?: string;
   documentsChecklist?: ProduitDocumentChecklistItem[];
+  documentsAnnexe?: ProduitDocumentChecklistItem[];
 }
 
 /**
@@ -338,6 +344,9 @@ export async function updateProduit(id: string, input: UpdateProduitInput): Prom
   }
   if (input.documentsChecklist !== undefined) {
     $set.documentsChecklist = normalizeChecklistTemplate(input.documentsChecklist);
+  }
+  if (input.documentsAnnexe !== undefined) {
+    $set.documentsAnnexe = normalizeChecklistTemplate(input.documentsAnnexe);
   }
 
   try {

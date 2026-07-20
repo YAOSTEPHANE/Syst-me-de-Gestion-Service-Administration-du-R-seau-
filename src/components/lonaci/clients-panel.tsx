@@ -7,6 +7,7 @@ import {
   CLIENT_CODE_PREFIX,
   CLIENT_STATUT_LABELS,
   CLIENT_STATUTS,
+  clientCodePrefixForAgence,
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
 import type { AgenceZoneGeographique, DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
@@ -141,7 +142,7 @@ export default function ClientsPanel() {
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingClientCode, setEditingClientCode] = useState<string | null>(null);
-  /** Affiché après création : identifiant unique auto-généré par le système. */
+  /** Affiché après création : identifiant client saisi pour la zone. */
   const [createdClient, setCreatedClient] = useState<{
     id: string;
     code: string;
@@ -149,6 +150,7 @@ export default function ClientsPanel() {
     statut: string;
   } | null>(null);
   const [form, setForm] = useState({
+    clientCodeSuffix: "",
     nomComplet: "",
     raisonSociale: "",
     cniNumero: "",
@@ -164,6 +166,13 @@ export default function ClientsPanel() {
   });
 
   const agencesActives = useMemo(() => agences.filter((a) => a.actif), [agences]);
+  const selectedAgence = useMemo(
+    () => agencesActives.find((a) => a.id === form.agenceId) ?? null,
+    [agencesActives, form.agenceId],
+  );
+  const clientCodePrefixHint = selectedAgence
+    ? clientCodePrefixForAgence(selectedAgence.code)
+    : `${CLIENT_CODE_PREFIX}-…-`;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const meRbacRole = meRole as LonaciRole;
   const canDeactivate = meRole === "ASSIST_CDS" || meRole === "CHEF_SERVICE";
@@ -286,6 +295,7 @@ export default function ClientsPanel() {
 
   function resetForm() {
     setForm({
+      clientCodeSuffix: "",
       nomComplet: "",
       raisonSociale: "",
       cniNumero: "",
@@ -324,9 +334,15 @@ export default function ClientsPanel() {
       if (!res.ok) throw new Error();
       const data = (await res.json()) as { client: ClientDetail };
       const c = data.client;
+      const agenceCode = agences.find((a) => a.id === c.agenceId)?.code ?? "";
+      const codePrefix = agenceCode ? clientCodePrefixForAgence(agenceCode) : "";
+      const codeUpper = c.code.trim().toUpperCase();
+      const clientCodeSuffix =
+        codePrefix && codeUpper.startsWith(codePrefix) ? codeUpper.slice(codePrefix.length) : codeUpper;
       setEditingId(c.id);
       setEditingClientCode(c.code);
       setForm({
+        clientCodeSuffix,
         nomComplet: c.nomComplet ?? c.raisonSociale,
         raisonSociale:
           c.nomComplet && c.raisonSociale !== c.nomComplet ? c.raisonSociale : "",
@@ -386,14 +402,25 @@ export default function ClientsPanel() {
           setBusyId(null);
           return;
         }
+        if (!form.cniNumero.trim() || form.cniNumero.trim().length < 4) {
+          setError("Le numéro CNI (identifiant client) est obligatoire (au moins 4 caractères).");
+          setBusyId(null);
+          return;
+        }
+        if (!form.clientCodeSuffix.trim()) {
+          setError("Saisissez l’identifiant client pour la zone (unique dans l’agence).");
+          setBusyId(null);
+          return;
+        }
         const res = await fetch("/api/clients", {
           method: "POST",
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            code: form.clientCodeSuffix.trim(),
             nomComplet: form.nomComplet.trim(),
             raisonSociale: form.raisonSociale.trim() || null,
-            cniNumero: form.cniNumero.trim() || null,
+            cniNumero: form.cniNumero.trim(),
             nomContact: form.nomContact.trim() || null,
             email: form.email.trim() || null,
             telephone: form.telephone.trim() || null,
@@ -406,7 +433,10 @@ export default function ClientsPanel() {
             documentChecklist: checklistToApiPatch(clientChecklist),
           }),
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(body?.message ?? "Création impossible.");
+        }
         const data = (await res.json()) as { client: ClientDetail };
         setCreatedClient({
           id: data.client.id,
@@ -420,8 +450,8 @@ export default function ClientsPanel() {
       setModalOpen(false);
       resetForm();
       await load();
-    } catch {
-      setError(editingId ? "Enregistrement impossible." : "Création impossible.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : editingId ? "Enregistrement impossible." : "Création impossible.");
     } finally {
       setBusyId(null);
     }
@@ -597,9 +627,9 @@ export default function ClientsPanel() {
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Clients</h2>
             <p className="mt-1 text-sm text-slate-600">
-              Référentiel des comptes clients et tiers (distinct des concessionnaires PDV). À la création, le
-              système attribue un identifiant unique auto-généré ({CLIENT_CODE_PREFIX}-000001, etc.) — à communiquer au
-              client pour les cautions et le suivi.
+              Référentiel des comptes clients et tiers (distinct des concessionnaires PDV). À la création, saisissez un
+              identifiant unique par zone ({CLIENT_CODE_PREFIX}-AGENCE-…, ex. {CLIENT_CODE_PREFIX}-EDITEC-000042) — à
+              communiquer au client pour les cautions et le suivi.
             </p>
           </div>
           <button
@@ -836,7 +866,7 @@ export default function ClientsPanel() {
                 </p>
                 <div className="rounded-xl border border-emerald-200 bg-emerald-50/80 px-4 py-3 text-center">
                   <p className="text-xs font-semibold uppercase tracking-wide text-emerald-800">
-                    Identifiant client (auto-généré)
+                    Identifiant client (zone)
                   </p>
                   <p className="mt-2 font-mono text-2xl font-bold tracking-wide text-emerald-950">
                     {createdClient.code}
@@ -880,7 +910,7 @@ export default function ClientsPanel() {
                         Identifiant client
                       </p>
                       <p className="mt-0.5 font-mono text-lg font-semibold text-indigo-950">{editingClientCode}</p>
-                      <p className="mt-1 text-xs text-slate-600">Attribué automatiquement à la création — non modifiable.</p>
+                      <p className="mt-1 text-xs text-slate-600">Attribué à la zone à la création — non modifiable.</p>
                     </div>
                   ) : null}
                   {editingId ? (
@@ -922,8 +952,8 @@ export default function ClientsPanel() {
                     Fiche complète — nouveau client
                   </p>
                   <p className="text-xs text-slate-600">
-                    L’identifiant unique ({CLIENT_CODE_PREFIX}-000001, …) est attribué automatiquement à
-                    l’enregistrement. Statut initial :{" "}
+                    Saisissez un identifiant unique dans votre zone (format {CLIENT_CODE_PREFIX}-code agence-suffixe).
+                    Statut initial :{" "}
                     <span className="font-medium text-sky-900">{CLIENT_STATUT_LABELS.EN_ATTENTE_N1}</span> pour tous
                     les rôles — le Chef de section valide (N1), puis le dossier passe en{" "}
                     <span className="font-medium text-amber-900">{CLIENT_STATUT_LABELS.DOSSIER_EN_COURS}</span> avant la
@@ -949,6 +979,34 @@ export default function ClientsPanel() {
                     </select>
                   </label>
                   <label className="block text-sm">
+                    <span className="text-slate-600">
+                      Identifiant client (zone) <span className="text-rose-600">*</span>
+                    </span>
+                    <div className="mt-1 flex rounded border border-slate-300 bg-white text-sm focus-within:ring-2 focus-within:ring-indigo-500">
+                      <span className="shrink-0 border-r border-slate-200 bg-slate-50 px-3 py-2 font-mono text-xs text-slate-600">
+                        {clientCodePrefixHint}
+                      </span>
+                      <input
+                        required
+                        disabled={!form.agenceId}
+                        value={form.clientCodeSuffix}
+                        onChange={(e) =>
+                          setForm((f) => ({
+                            ...f,
+                            clientCodeSuffix: e.target.value.toUpperCase().replace(/[^A-Z0-9_-]/g, ""),
+                          }))
+                        }
+                        placeholder={form.agenceId ? "000042" : "Choisir une agence d’abord"}
+                        className="min-w-0 flex-1 rounded-r border-0 bg-transparent px-3 py-2 font-mono focus:outline-none disabled:bg-slate-50 disabled:text-slate-400"
+                        autoComplete="off"
+                        aria-label="Suffixe identifiant client unique dans la zone"
+                      />
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Saisie manuelle : l’identifiant ne doit pas déjà exister dans cette agence.
+                    </p>
+                  </label>
+                  <label className="block text-sm">
                     <span className="text-slate-600">Nom complet *</span>
                     <input
                       required
@@ -968,11 +1026,13 @@ export default function ClientsPanel() {
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Numéro de CNI</span>
+                    <span className="text-slate-600">Identifiant client (N° CNI) *</span>
                     <input
+                      required
+                      minLength={4}
                       value={form.cniNumero}
                       onChange={(e) => setForm((f) => ({ ...f, cniNumero: e.target.value }))}
-                      placeholder="Carte nationale d’identité"
+                      placeholder="Numéro de carte nationale d’identité"
                       className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
                       autoComplete="off"
                     />
@@ -1061,7 +1121,7 @@ export default function ClientsPanel() {
                     />
                   </label>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Numéro de CNI</span>
+                    <span className="text-slate-600">Identifiant client (N° CNI)</span>
                     <input
                       value={form.cniNumero}
                       onChange={(e) => setForm((f) => ({ ...f, cniNumero: e.target.value }))}

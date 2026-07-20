@@ -4,6 +4,8 @@ import {
   CAUTION_FICHE_DEFINITIVE_TITLE,
   CAUTION_FICHE_PAYEE_MENTION,
 } from "@/lib/lonaci/caution-fiche-definitive-constants";
+import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 
 export interface CautionFicheDefinitiveModalData {
   cautionId: string;
@@ -77,6 +79,7 @@ export function CautionFicheDefinitiveModal({
   onClose: () => void;
 }) {
   const pdfUrl = `/api/cautions/${encodeURIComponent(slip.cautionId)}/fiche-definitive/pdf`;
+  const courrierUrl = `/api/cautions/${encodeURIComponent(slip.cautionId)}/courrier-comptabilite/pdf`;
   const qrUrl = `/api/cautions/${encodeURIComponent(slip.cautionId)}/fiche-definitive/qr`;
 
   return (
@@ -109,7 +112,7 @@ export function CautionFicheDefinitiveModal({
             {slip.clientCode ? <FicheRow label="Code client" value={slip.clientCode} mono /> : null}
             {slip.contratId?.trim() ? <FicheRow label="Contrat" value={slip.contratId} mono /> : null}
             <FicheRow label="Produit" value={slip.produitLibelle ? `${slip.produitCode} — ${slip.produitLibelle}` : slip.produitCode} mono />
-            <FicheRow label="Agence" value={slip.agenceLabel} />
+            <FicheRow label={CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL} value={slip.agenceLabel} />
             <FicheRow label="Montant paye (FCFA)" value={slip.montantFCFA.toLocaleString("fr-FR")} strong accent />
             <FicheRow label="Date de paiement" value={new Date(slip.datePaiement).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} />
             <FicheRow label="Mode de paiement" value={slip.modeLibelle} />
@@ -135,6 +138,13 @@ export function CautionFicheDefinitiveModal({
           </p>
           <div className="mt-6 flex flex-wrap justify-end gap-2 print:hidden">
             <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Fermer</button>
+            <a
+              href={courrierUrl}
+              title={COURRIER_COMPTABILITE_TITLE}
+              className="rounded-lg border border-blue-600 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100"
+            >
+              Courrier comptabilité
+            </a>
             <a href={pdfUrl} className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50">Telecharger PDF</a>
             <button type="button" onClick={() => window.print()} className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">Imprimer</button>
           </div>

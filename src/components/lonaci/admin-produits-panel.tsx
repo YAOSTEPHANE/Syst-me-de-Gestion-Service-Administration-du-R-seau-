@@ -16,6 +16,7 @@ interface ProduitRow {
   prix?: number;
   actif: boolean;
   documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+  documentsAnnexe?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
 }
 
 export default function AdminProduitsPanel() {
@@ -38,7 +39,10 @@ export default function AdminProduitsPanel() {
   const [showCreatePieces, setShowCreatePieces] = useState(false);
   const [piecesModalProduit, setPiecesModalProduit] = useState<ProduitRow | null>(null);
   const [piecesModalItems, setPiecesModalItems] = useState<ProduitPieceDraft[]>([]);
+  const [annexeModalProduit, setAnnexeModalProduit] = useState<ProduitRow | null>(null);
+  const [annexeModalItems, setAnnexeModalItems] = useState<ProduitPieceDraft[]>([]);
   const [savingPiecesId, setSavingPiecesId] = useState<string | null>(null);
+  const [savingAnnexeId, setSavingAnnexeId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
@@ -106,6 +110,48 @@ export default function AdminProduitsPanel() {
   function closePiecesModal() {
     setPiecesModalProduit(null);
     setPiecesModalItems([]);
+  }
+
+  function openAnnexeModal(p: ProduitRow) {
+    setError(null);
+    setSuccess(null);
+    setAnnexeModalProduit(p);
+    setAnnexeModalItems(piecesFromStored(p.documentsAnnexe));
+  }
+
+  function closeAnnexeModal() {
+    setAnnexeModalProduit(null);
+    setAnnexeModalItems([]);
+  }
+
+  async function saveAnnexeModal(e: FormEvent) {
+    e.preventDefault();
+    if (!annexeModalProduit) return;
+    setError(null);
+    setSuccess(null);
+    setSavingAnnexeId(annexeModalProduit._id);
+    try {
+      const res = await fetch(`/api/admin/produits/${annexeModalProduit._id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ documentsAnnexe: piecesToApiPayload(annexeModalItems) }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
+      if (!res.ok || !body?.produit) {
+        setError(body?.message ?? "Enregistrement des documents annexe impossible.");
+        return;
+      }
+      setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
+      setSuccess(
+        `Documents annexe du produit « ${body.produit.code} » enregistrés (${body.produit.documentsAnnexe?.length ?? 0}).`,
+      );
+      closeAnnexeModal();
+    } catch {
+      setError("Erreur réseau ou serveur.");
+    } finally {
+      setSavingAnnexeId(null);
+    }
   }
 
   async function savePiecesModal(e: FormEvent) {
@@ -667,6 +713,19 @@ export default function AdminProduitsPanel() {
                         >
                           Gérer les pièces
                         </button>
+                        <span className="text-[11px] text-slate-600">
+                          {(p.documentsAnnexe?.length ?? 0) === 0
+                            ? "Aucun doc. annexe"
+                            : `${p.documentsAnnexe!.length} doc. annexe`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => openAnnexeModal(p)}
+                          disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
+                          className="w-fit rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100 disabled:opacity-50"
+                        >
+                          Docs annexe contrat
+                        </button>
                       </div>
                     </td>
                     <td className="px-3 py-2">
@@ -752,6 +811,47 @@ export default function AdminProduitsPanel() {
                   className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
                 >
                   {savingPiecesId === piecesModalProduit._id ? "Enregistrement…" : "Enregistrer les pièces"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {annexeModalProduit ? (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
+          role="dialog"
+          aria-modal
+          aria-labelledby="produit-annexe-modal-title"
+        >
+          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+            <h4 id="produit-annexe-modal-title" className="text-base font-semibold text-slate-900">
+              Documents annexe au contrat — {annexeModalProduit.code}
+            </h4>
+            <p className="mt-1 text-xs text-slate-600">{annexeModalProduit.libelle}</p>
+            <form onSubmit={(e) => void saveAnnexeModal(e)} className="mt-4 space-y-3">
+              <ProduitPiecesEditor
+                items={annexeModalItems}
+                onChange={setAnnexeModalItems}
+                disabled={savingAnnexeId === annexeModalProduit._id}
+                helpText="Ces documents sont associés à l’annexe du contrat (PDF annexe et checklist dossier). Marquez-les comme fournis avant la génération du contrat."
+              />
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
+                <button
+                  type="button"
+                  disabled={savingAnnexeId === annexeModalProduit._id}
+                  onClick={closeAnnexeModal}
+                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingAnnexeId === annexeModalProduit._id}
+                  className="rounded-lg border border-violet-600 bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
+                >
+                  {savingAnnexeId === annexeModalProduit._id ? "Enregistrement…" : "Enregistrer les documents annexe"}
                 </button>
               </div>
             </form>

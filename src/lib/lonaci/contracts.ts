@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import type { ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
+import { referenceAnnexeFromContrat } from "@/lib/lonaci/contrat-document";
 import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee, resolveListAgenceFilter } from "@/lib/lonaci/access";
 import { updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 
@@ -14,6 +15,7 @@ const REF_COUNTER_ID = "contrat_ref";
 function mapContrat(row: {
   id: string;
   reference: string;
+  annexeReference: string | null;
   concessionnaireId: string | null;
   lonaciClientId: string | null;
   produitCode: string;
@@ -30,6 +32,7 @@ function mapContrat(row: {
   return {
     _id: row.id,
     reference: row.reference,
+    annexeReference: row.annexeReference,
     concessionnaireId: row.concessionnaireId,
     lonaciClientId: row.lonaciClientId,
     produitCode: row.produitCode,
@@ -320,9 +323,11 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
   }
 
   const reference = await nextContratReference(produitCodeNormalized, input.dateEffet);
+  const annexeReference = referenceAnnexeFromContrat(reference) || null;
   const created = await prisma.contrat.create({
     data: {
       reference,
+      annexeReference,
       concessionnaireId,
       lonaciClientId,
       produitCode: produitCodeNormalized,
@@ -530,6 +535,7 @@ export async function updateContratById(input: {
 export type ContratListRow = {
   id: string;
   reference: string;
+  annexeReference?: string | null;
   concessionnaireId: string | null;
   lonaciClientId: string | null;
   produitCode: string;
@@ -574,6 +580,7 @@ export type ListContratsParams = {
 function mapPrismaContratToListRow(item: {
   id: string;
   reference: string;
+  annexeReference?: string | null;
   concessionnaireId: string | null;
   lonaciClientId: string | null;
   produitCode: string;
@@ -587,6 +594,7 @@ function mapPrismaContratToListRow(item: {
   return {
     id: item.id,
     reference: item.reference,
+    annexeReference: item.annexeReference ?? null,
     concessionnaireId: item.concessionnaireId,
     lonaciClientId: item.lonaciClientId,
     produitCode: item.produitCode,

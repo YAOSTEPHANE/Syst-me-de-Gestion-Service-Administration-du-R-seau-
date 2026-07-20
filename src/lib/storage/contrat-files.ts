@@ -9,10 +9,23 @@ export async function saveContratArchivePdf(
   contratReference: string,
   buffer: Buffer,
 ): Promise<string> {
+  const safeRef = contratReference.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  return saveContratPdfFile(dossierId, `${safeRef}_signe.pdf`, buffer);
+}
+
+export async function saveAnnexeArchivePdf(
+  dossierId: string,
+  annexeReference: string,
+  buffer: Buffer,
+): Promise<string> {
+  const safeRef = annexeReference.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+  return saveContratPdfFile(dossierId, `${safeRef}_annexe_signe.pdf`, buffer);
+}
+
+async function saveContratPdfFile(dossierId: string, filename: string, buffer: Buffer): Promise<string> {
   const dir = path.join(ROOT, dossierId);
   await mkdir(dir, { recursive: true });
-  const safeRef = contratReference.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
-  const relative = path.join(dossierId, `${safeRef}_signe.pdf`).replace(/\\/g, "/");
+  const relative = path.join(dossierId, filename).replace(/\\/g, "/");
   await writeFile(path.join(ROOT, relative), buffer);
   return relative;
 }

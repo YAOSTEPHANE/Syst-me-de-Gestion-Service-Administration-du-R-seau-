@@ -14,19 +14,38 @@ import {
 } from "@/lib/lonaci/dossier-produits";
 import { previewNextContratReference } from "@/lib/lonaci/contracts";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
-import type { DossierDocument, UserDocument } from "@/lib/lonaci/types";
+import {
+  mergeProductAnnexeTemplates,
+  mergeProductChecklistTemplates,
+} from "@/lib/lonaci/produit-document-checklist";
+import { listProduits } from "@/lib/lonaci/referentials";
+import type { DossierDocument, DossierDocumentChecklistPayload, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
-import { saveContratArchivePdf } from "@/lib/storage/contrat-files";
+import { saveAnnexeArchivePdf, saveContratArchivePdf } from "@/lib/storage/contrat-files";
 
 export const CONTRAT_OFFICIEL_TITLE = "CONTRAT DE CONCESSION — LONACI";
+export const CONTRAT_ANNEXE_TITLE = "ANNEXE AU CONTRAT DE CONCESSION — LONACI";
 
 export type ContratGenereConcessionnaireSnapshot = ContratPartySnapshot;
+
+export interface ContratArchiveMeta {
+  storedRelativePath: string;
+  archivedAt: string;
+  contratReference: string;
+}
+
+export interface AnnexeArchiveMeta {
+  storedRelativePath: string;
+  archivedAt: string;
+  annexeReference: string;
+}
 
 export interface ContratGenerePayload {
   generatedAt: string;
   generatedByUserId: string;
   dechargeDefinitiveValideeLe: string;
   referenceContratPreview: string;
+  referenceAnnexePreview: string;
   paymentReference: string;
   cautionReferenceLabel: string;
   produitCode: string;
@@ -34,11 +53,22 @@ export interface ContratGenerePayload {
   operationType: string;
   dateEffet: string;
   concessionnaire: ContratGenereConcessionnaireSnapshot;
-  contratSigneArchive?: {
-    storedRelativePath: string;
-    archivedAt: string;
-    contratReference: string;
-  };
+  contratSigneArchive?: ContratArchiveMeta;
+  annexeSigneArchive?: AnnexeArchiveMeta;
+  /** Libellés des documents annexe attendus pour ce contrat (référentiel produit). */
+  documentsAnnexeAttendus?: string[];
+}
+
+export interface AnnexeDocumentView extends ContratDocumentView {
+  annexeReference: string;
+  contratParentReference: string;
+}
+
+export function referenceAnnexeFromContrat(referenceContrat: string): string {
+  const ref = referenceContrat.trim();
+  if (!ref) return "";
+  if (ref.startsWith("CONTRAT-")) return `ANNEXE-${ref.slice("CONTRAT-".length)}`;
+  return `ANNEXE-${ref}`;
 }
 
 export interface ContratDocumentView {
@@ -53,6 +83,8 @@ export interface ContratDocumentView {
   cautionReferenceLabel: string;
   concessionnaire: ContratGenereConcessionnaireSnapshot;
   documentsFournis: string[];
+  /** Documents annexe associés au contrat (pièces marquées fournies). */
+  documentsAnnexeAssocies: string[];
   signedAt: Date | null;
   signerName: string | null;
   finalized: boolean;
@@ -75,11 +107,17 @@ function parseContratGenereRecord(raw: unknown): ContratGenerePayload | null {
   if (!conc || typeof conc !== "object" || Array.isArray(conc)) return null;
   const c = conc as Record<string, unknown>;
   if (typeof o.paymentReference !== "string" || !o.paymentReference.trim()) return null;
+  const referenceContratPreview = String(o.referenceContratPreview ?? "");
+  const referenceAnnexePreview =
+    typeof o.referenceAnnexePreview === "string" && o.referenceAnnexePreview.trim()
+      ? o.referenceAnnexePreview.trim()
+      : referenceAnnexeFromContrat(referenceContratPreview);
   return {
     generatedAt: String(o.generatedAt ?? ""),
     generatedByUserId: String(o.generatedByUserId ?? ""),
     dechargeDefinitiveValideeLe: String(o.dechargeDefinitiveValideeLe ?? ""),
-    referenceContratPreview: String(o.referenceContratPreview ?? ""),
+    referenceContratPreview,
+    referenceAnnexePreview,
     paymentReference: o.paymentReference.trim(),
     cautionReferenceLabel: String(o.cautionReferenceLabel ?? ""),
     produitCode: String(o.produitCode ?? ""),
@@ -108,6 +146,17 @@ function parseContratGenereRecord(raw: unknown): ContratGenerePayload | null {
             contratReference: String((o.contratSigneArchive as Record<string, unknown>).contratReference ?? ""),
           }
         : undefined,
+    annexeSigneArchive:
+      o.annexeSigneArchive && typeof o.annexeSigneArchive === "object" && !Array.isArray(o.annexeSigneArchive)
+        ? {
+            storedRelativePath: String((o.annexeSigneArchive as Record<string, unknown>).storedRelativePath ?? ""),
+            archivedAt: String((o.annexeSigneArchive as Record<string, unknown>).archivedAt ?? ""),
+            annexeReference: String((o.annexeSigneArchive as Record<string, unknown>).annexeReference ?? ""),
+          }
+        : undefined,
+    documentsAnnexeAttendus: Array.isArray(o.documentsAnnexeAttendus)
+      ? o.documentsAnnexeAttendus.map((x) => String(x).trim()).filter(Boolean)
+      : undefined,
   };
 }
 
@@ -132,6 +181,27 @@ async function loadLatestSignature(dossierId: string): Promise<DossierSignatureR
     .limit(1)
     .next();
   return row ?? null;
+}
+
+async function resolveDocumentListsForProduit(
+  checklist: DossierDocumentChecklistPayload,
+  produitCode: string,
+): Promise<{ documentsFournis: string[]; documentsAnnexeAssocies: string[] }> {
+  const produits = await listProduits();
+  const pcode = produitCode.trim().toUpperCase();
+  const dossierIds = new Set(mergeProductChecklistTemplates([pcode], produits).map((i) => i.id));
+  const annexeIds = new Set(mergeProductAnnexeTemplates([pcode], produits).map((i) => i.id));
+  const documentsFournis: string[] = [];
+  const documentsAnnexeAssocies: string[] = [];
+  for (const entry of checklist.entries) {
+    if (entry.statut !== "FOURNI") continue;
+    if (entry.annexe || annexeIds.has(entry.itemId)) {
+      if (annexeIds.has(entry.itemId)) documentsAnnexeAssocies.push(entry.libelle);
+    } else if (dossierIds.has(entry.itemId)) {
+      documentsFournis.push(entry.libelle);
+    }
+  }
+  return { documentsFournis, documentsAnnexeAssocies };
 }
 
 export async function prepareContratFromDechargeDefinitive(
@@ -179,9 +249,11 @@ export async function prepareContratFromDechargeDefinitive(
   const cautionsStatus = await resolveDossierCautionsStatus(dossier);
   const nowIso = new Date().toISOString();
   const contratsGeneres: ContratGenerePayload[] = [];
+  const allProduits = await listProduits();
 
   for (const produitCode of produitCodes) {
     const produit = await resolveProduitForContratWorkflow(produitCode);
+    const documentsAnnexeAttendus = mergeProductAnnexeTemplates([produitCode], allProduits).map((i) => i.libelle);
     const previewRef = await previewNextContratReference(produitCode, dateEffet);
     const cautionLink = cautionsStatus.links.find((l) => l.produitCode === produitCode);
     const paymentReference = cautionLink?.paymentReference ?? dechargeView.paymentReference;
@@ -190,6 +262,7 @@ export async function prepareContratFromDechargeDefinitive(
       generatedByUserId: actor._id ?? "",
       dechargeDefinitiveValideeLe: nowIso,
       referenceContratPreview: previewRef,
+      referenceAnnexePreview: referenceAnnexeFromContrat(previewRef),
       paymentReference,
       cautionReferenceLabel: cautionLink?.referenceLabel ?? dechargeView.cautionReferenceLabel,
       produitCode,
@@ -197,6 +270,7 @@ export async function prepareContratFromDechargeDefinitive(
       operationType,
       dateEffet: dateEffet.toISOString(),
       concessionnaire: partySnapshot,
+      documentsAnnexeAttendus,
     });
   }
 
@@ -248,9 +322,10 @@ export async function buildContratDocumentView(
 
   const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
   const checklist = await ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes);
-  const documentsFournis = checklist.entries
-    .filter((e) => e.statut === "FOURNI")
-    .map((e) => e.libelle);
+  const { documentsFournis, documentsAnnexeAssocies } = await resolveDocumentListsForProduit(
+    checklist,
+    genere.produitCode,
+  );
 
   const signature = await loadLatestSignature(dossierId);
   const ref = contratReference?.trim() || genere.contratSigneArchive?.contratReference || genere.referenceContratPreview;
@@ -267,6 +342,7 @@ export async function buildContratDocumentView(
     cautionReferenceLabel: genere.cautionReferenceLabel,
     concessionnaire: genere.concessionnaire,
     documentsFournis,
+    documentsAnnexeAssocies,
     signedAt: signature?.signedAt ?? null,
     signerName: signature?.signerName ?? null,
     finalized: dossier.status === "FINALISE",
@@ -363,6 +439,16 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
       for (const d of view.documentsFournis) doc.text(`• ${d}`);
     }
 
+    doc.moveDown(0.5);
+    doc.fontSize(10).fillColor("#111827").text("Documents annexe associés au contrat", { underline: true });
+    doc.moveDown(0.35);
+    if (!view.documentsAnnexeAssocies.length) {
+      doc.fontSize(9).fillColor("#6b7280").text("— (configurer dans le référentiel produit)");
+    } else {
+      doc.fontSize(9).fillColor("#374151");
+      for (const d of view.documentsAnnexeAssocies) doc.text(`• ${d}`);
+    }
+
     if (view.signedAt && view.signerName) {
       doc.moveDown(0.8);
       drawField(
@@ -385,6 +471,237 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
 
     doc.end();
   });
+}
+
+function drawAnnexeHeader(doc: InstanceType<typeof PDFDocument>, finalized: boolean) {
+  const x = doc.page.margins.left;
+  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const topY = doc.page.margins.top;
+  const bandH = 52;
+  doc.save();
+  doc.rect(x, topY, w, bandH).fill("#1e3a5f");
+  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
+  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
+  doc.fontSize(7).text("Document officiel — annexe contrat", x + 14, topY + 38);
+  doc.restore();
+  doc.y = topY + bandH + 14;
+  doc.fillColor("#111827").fontSize(13).text(CONTRAT_ANNEXE_TITLE, { align: "center" });
+  doc.moveDown(0.35);
+  doc
+    .fontSize(10)
+    .fillColor(finalized ? "#047857" : "#6b7280")
+    .text(finalized ? "ANNEXE SIGNÉE ET ARCHIVÉE" : "PROJET D’ANNEXE — EN CIRCUIT DE VALIDATION", {
+      align: "center",
+      underline: finalized,
+    });
+  doc.moveDown(0.8);
+}
+
+export async function buildAnnexeDocumentView(
+  dossierId: string,
+  annexeReference?: string,
+  produitCode?: string,
+): Promise<AnnexeDocumentView | null> {
+  const view = await buildContratDocumentView(dossierId, undefined, produitCode);
+  if (!view) return null;
+
+  const dossier = await findDossierById(dossierId);
+  const allGeneres = parseContratsGeneresPayload(dossier?.payload ?? {});
+  const pcode = (produitCode ?? view.produitCode).trim().toUpperCase();
+  const genere =
+    allGeneres.find((g) => g.produitCode.trim().toUpperCase() === pcode) ?? allGeneres[0];
+  if (!genere) return null;
+
+  const annexeRef =
+    annexeReference?.trim() ||
+    genere.annexeSigneArchive?.annexeReference ||
+    genere.referenceAnnexePreview;
+
+  return {
+    ...view,
+    annexeReference: annexeRef,
+    contratParentReference:
+      genere.contratSigneArchive?.contratReference || genere.referenceContratPreview,
+  };
+}
+
+export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: "A4", margin: 48 });
+    const chunks: Buffer[] = [];
+    doc.on("data", (c: Buffer) => chunks.push(c));
+    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("error", reject);
+
+    drawAnnexeHeader(doc, view.finalized);
+    doc.fontSize(9).fillColor("#374151").text(`Réf. annexe : ${view.annexeReference}`, { align: "center" });
+    doc.text(`Contrat parent : ${view.contratParentReference}`, { align: "center" });
+    doc.text(`Réf. dossier : ${view.dossierReference}`, { align: "center" });
+    doc.moveDown(0.8);
+
+    doc.fontSize(10).fillColor("#111827").text("Produit concerné", { underline: true });
+    doc.moveDown(0.4);
+    drawField(doc, "Produit", `${view.produitCode} — ${view.produitLibelle}`);
+    drawField(doc, "Type d’opération", view.operationType);
+    drawField(
+      doc,
+      "Date d’effet",
+      view.dateEffet.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" }),
+    );
+    drawField(doc, "Réf. caution", view.cautionReferenceLabel);
+    drawField(doc, "Réf. paiement caution", view.paymentReference);
+
+    doc.moveDown(0.3);
+    doc.fontSize(10).text("Titulaire", { underline: true });
+    doc.moveDown(0.4);
+    drawField(doc, "Nom complet", view.concessionnaire.nomComplet);
+    drawField(doc, "Raison sociale", view.concessionnaire.raisonSociale);
+    drawField(doc, "Code PDV", view.concessionnaire.codePdv);
+    drawField(doc, "Agence", view.concessionnaire.agenceLabel);
+
+    doc.moveDown(0.3);
+    doc.fontSize(10).text("Documents annexe associés", { underline: true });
+    doc.moveDown(0.35);
+    if (!view.documentsAnnexeAssocies.length) {
+      doc.fontSize(9).fillColor("#6b7280").text("—");
+    } else {
+      doc.fontSize(9).fillColor("#374151");
+      for (const d of view.documentsAnnexeAssocies) doc.text(`• ${d}`);
+    }
+
+    doc.moveDown(0.3);
+    doc.fontSize(10).text("Autres pièces du dossier (hors annexe)", { underline: true });
+    doc.moveDown(0.35);
+    if (!view.documentsFournis.length) {
+      doc.fontSize(9).fillColor("#6b7280").text("—");
+    } else {
+      doc.fontSize(9).fillColor("#374151");
+      for (const d of view.documentsFournis) doc.text(`• ${d}`);
+    }
+
+    if (view.signedAt && view.signerName) {
+      doc.moveDown(0.8);
+      drawField(
+        doc,
+        "Signature électronique",
+        `${view.signerName} — ${view.signedAt.toLocaleString("fr-FR")}`,
+      );
+    }
+
+    doc.moveDown(1);
+    doc
+      .fontSize(8)
+      .fillColor("#6b7280")
+      .text(
+        view.finalized
+          ? "Annexe archivée avec le contrat après validation finale (Chef de Service)."
+          : "Cette annexe accompagne le contrat et suit le même circuit de validation à 4 niveaux.",
+        { align: "justify" },
+      );
+
+    doc.end();
+  });
+}
+
+export async function archiveAnnexeSigneForDossier(
+  dossierId: string,
+  annexeReference: string,
+  actor: UserDocument,
+  produitCode?: string,
+): Promise<ContratGenerePayload> {
+  const view = await buildAnnexeDocumentView(dossierId, annexeReference, produitCode);
+  if (!view) throw new Error("CONTRAT_GENERE_MISSING");
+  view.finalized = true;
+  view.annexeReference = annexeReference;
+
+  const pdf = await renderAnnexeDocumentPdf(view);
+  const storedRelativePath = await saveAnnexeArchivePdf(dossierId, annexeReference, pdf);
+
+  const dossier = await findDossierById(dossierId);
+  const allGeneres = parseContratsGeneresPayload(dossier?.payload ?? {});
+  if (!allGeneres.length) throw new Error("CONTRAT_GENERE_MISSING");
+
+  const pcode = (produitCode ?? view.produitCode).trim().toUpperCase();
+  const archive = {
+    storedRelativePath,
+    archivedAt: new Date().toISOString(),
+    annexeReference,
+  };
+  const contratsGeneres = allGeneres.map((g) =>
+    g.produitCode.trim().toUpperCase() === pcode ? { ...g, annexeSigneArchive: archive } : g,
+  );
+  const nextGenere = contratsGeneres.find((g) => g.produitCode.trim().toUpperCase() === pcode) ?? contratsGeneres[0];
+
+  const db = await getDatabase();
+  await db.collection("dossiers").updateOne(
+    { _id: new ObjectId(dossierId), deletedAt: null },
+    {
+      $set: {
+        "payload.contratGenere": nextGenere,
+        "payload.contratsGeneres": contratsGeneres,
+        updatedAt: new Date(),
+        updatedByUserId: actor._id ?? "",
+      },
+    },
+  );
+  return nextGenere;
+}
+
+export interface ContratProduitSummary {
+  produitCode: string;
+  produitLibelle: string;
+  referenceContratPreview: string;
+  referenceAnnexePreview: string;
+  documentsAnnexeAttendus: string[];
+  hasContratGenere: boolean;
+  contratArchive: boolean;
+  annexeArchive: boolean;
+}
+
+export function contratProduitSummaryFromPayload(
+  payload: Record<string, unknown> | null | undefined,
+  produitCode: string,
+): ContratProduitSummary | null {
+  const pcode = produitCode.trim().toUpperCase();
+  const genere = parseContratsGeneresPayload(payload).find(
+    (g) => g.produitCode.trim().toUpperCase() === pcode,
+  );
+  if (!genere) return null;
+  return {
+    produitCode: genere.produitCode,
+    produitLibelle: genere.produitLibelle,
+    referenceContratPreview: genere.referenceContratPreview,
+    referenceAnnexePreview: genere.referenceAnnexePreview,
+    documentsAnnexeAttendus: genere.documentsAnnexeAttendus ?? [],
+    hasContratGenere: true,
+    contratArchive: Boolean(genere.contratSigneArchive),
+    annexeArchive: Boolean(genere.annexeSigneArchive),
+  };
+}
+
+export function summarizeContratsParProduit(
+  payload: Record<string, unknown> | null | undefined,
+): ContratProduitSummary[] {
+  return parseContratsGeneresPayload(payload).map((g) => ({
+    produitCode: g.produitCode,
+    produitLibelle: g.produitLibelle,
+    referenceContratPreview: g.referenceContratPreview,
+    referenceAnnexePreview: g.referenceAnnexePreview,
+    documentsAnnexeAttendus: g.documentsAnnexeAttendus ?? [],
+    hasContratGenere: true,
+    contratArchive: Boolean(g.contratSigneArchive),
+    annexeArchive: Boolean(g.annexeSigneArchive),
+  }));
+}
+
+export function allContratsArchivesComplete(payload: Record<string, unknown> | null | undefined): boolean {
+  const list = parseContratsGeneresPayload(payload);
+  return list.length > 0 && list.every((g) => Boolean(g.contratSigneArchive));
+}
+
+export function allAnnexesArchivesComplete(payload: Record<string, unknown> | null | undefined): boolean {
+  const list = parseContratsGeneresPayload(payload);
+  return list.length > 0 && list.every((g) => Boolean(g.annexeSigneArchive));
 }
 
 export async function archiveContratSigneForDossier(

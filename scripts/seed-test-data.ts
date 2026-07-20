@@ -42,7 +42,7 @@ async function main() {
   execSync("npx tsx scripts/seed-admin.ts", opts);
 
   console.log("\n=== Données de test : PDV-DEMO-*, dossiers, contrats, etc. ===\n");
-  execSync("npx tsx scripts/seed-demo.ts", opts);
+  execSync("npm run seed:demo", opts);
 
   console.log("\nTerminé. Connectez-vous avec ADMIN_EMAIL / ADMIN_PASSWORD (.env.local).");
 }

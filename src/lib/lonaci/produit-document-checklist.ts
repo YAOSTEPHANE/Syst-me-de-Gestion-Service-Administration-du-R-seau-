@@ -44,6 +44,7 @@ export function normalizeChecklistTemplate(
       id,
       libelle,
       obligatoire: raw.obligatoire !== false,
+      ...(raw.annexe === true ? { annexe: true } : {}),
     });
   }
   return out;
@@ -85,6 +86,7 @@ export function buildChecklistFromTemplate(
       libelle: item.libelle,
       obligatoire: item.obligatoire !== false,
       statut: prevStatut && isChecklistStatut(prevStatut) ? prevStatut : "EN_ATTENTE",
+      ...(item.annexe === true ? { annexe: true } : {}),
     };
   });
   return { entries, complet: computeChecklistComplet(entries) };
@@ -110,6 +112,7 @@ export function parseDocumentChecklistPayload(
       libelle,
       obligatoire: r.obligatoire !== false,
       statut,
+      ...(r.annexe === true ? { annexe: true } : {}),
     });
   }
   const complet =
@@ -172,6 +175,36 @@ export function ensureDossierDocumentChecklist(
     };
   }
   return buildChecklistFromTemplate(template, existing.entries);
+}
+
+export function mergeProductAnnexeTemplates(produitCodes: string[], produits: ProduitDocument[]) {
+  const seen = new Set<string>();
+  const merged: ReturnType<typeof normalizeChecklistTemplate> = [];
+  for (const rawCode of produitCodes) {
+    const code = rawCode.trim().toUpperCase();
+    if (!code || code === OTHER_PRODUCT_CODE) continue;
+    const produit = produits.find((p) => p.code.trim().toUpperCase() === code);
+    for (const item of normalizeChecklistTemplate(produit?.documentsAnnexe)) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      merged.push({ ...item, annexe: true });
+    }
+  }
+  return merged;
+}
+
+/** Pièces dossier + documents annexe contrat (union dédupliquée par id). */
+export function mergeProductDossierAndAnnexeTemplates(produitCodes: string[], produits: ProduitDocument[]) {
+  const dossier = mergeProductChecklistTemplates(produitCodes, produits);
+  const annexe = mergeProductAnnexeTemplates(produitCodes, produits);
+  const seen = new Set(dossier.map((item) => item.id));
+  const merged = [...dossier];
+  for (const item of annexe) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+  }
+  return merged;
 }
 
 export function mergeProductChecklistTemplates(produitCodes: string[], produits: ProduitDocument[]) {

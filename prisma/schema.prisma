@@ -142,6 +142,7 @@ model BancarisationRequest {
 model Contrat {
   id               String   @id @default(auto()) @map("_id") @db.ObjectId
   reference        String   @unique
+  annexeReference  String?
   concessionnaireId String?
   lonaciClientId    String?
   produitCode      String
@@ -165,7 +166,7 @@ model Contrat {
 /** Comptes clients / tiers (distinct des concessionnaires PDV). */
 model LonaciClient {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
-  code            String    @unique
+  code            String
   raisonSociale   String
   /** Nom et prénom(s) du client (identité principale). */
   nomComplet      String?
@@ -194,6 +195,7 @@ model LonaciClient {
   deletedAt       DateTime?
 
   @@map("clients")
+  @@unique([agenceId, code], map: "uniq_client_agence_code")
   @@index([agenceId], map: "idx_client_agence")
   @@index([statut], map: "idx_client_statut")
   @@index([deletedAt], map: "idx_client_deleted")

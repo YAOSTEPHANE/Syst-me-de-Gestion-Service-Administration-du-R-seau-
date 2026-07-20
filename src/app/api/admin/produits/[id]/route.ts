@@ -29,6 +29,7 @@ const patchSchema = z
     actif: z.boolean().optional(),
     code: z.string().min(2).max(32).optional(),
     documentsChecklist: z.array(checklistItemSchema).max(50).optional(),
+    documentsAnnexe: z.array(checklistItemSchema).max(50).optional(),
   })
   .refine(
     (o) =>
@@ -36,7 +37,8 @@ const patchSchema = z
       o.prix !== undefined ||
       o.actif !== undefined ||
       o.code !== undefined ||
-      o.documentsChecklist !== undefined,
+      o.documentsChecklist !== undefined ||
+      o.documentsAnnexe !== undefined,
     { message: "Au moins un champ est requis" },
   );
 
@@ -80,6 +82,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       documentsChecklist:
         parsed.data.documentsChecklist !== undefined
           ? normalizeChecklistTemplate(parsed.data.documentsChecklist)
+          : undefined,
+      documentsAnnexe:
+        parsed.data.documentsAnnexe !== undefined
+          ? normalizeChecklistTemplate(parsed.data.documentsAnnexe)
           : undefined,
     };
     const produit = await updateProduit(id, patch);

@@ -4,10 +4,12 @@ import { ObjectId } from "mongodb";
 import PDFDocument from "pdfkit";
 
 import {
+  CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL,
   CAUTION_FICHE_EN_ATTENTE_MENTION,
   CAUTION_FICHE_PROVISOIRE_TITLE,
   getLonaciCautionBankReferences,
 } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
@@ -37,6 +39,10 @@ export interface CautionFicheProvisoireView {
   generatedAt: string;
   identiteLabel: string;
   identiteDetail: string;
+  /** Libellé du champ identifiant métier (ex. « Identifiant client » ou « Code PDV »). */
+  identifiantLabel: string;
+  /** Valeur affichée pour l'identifiant (code client CLI-… ou code PDV). */
+  identifiantValue: string | null;
   cniNumero: string | null;
   codePdv: string | null;
   agenceLabel: string;
@@ -102,6 +108,47 @@ export async function findInscriptionCautionForConcessionnaire(
   return { caution: row, cautionId: row._id.toHexString() };
 }
 
+interface CautionPartyInfo {
+  identiteLabel: string;
+  identiteDetail: string;
+  cniNumero: string | null;
+  codePdv: string | null;
+  agenceId: string | null;
+  produitsAutorises: string[];
+}
+
+async function resolveCautionPartyInfo(caution: StoredCaution): Promise<CautionPartyInfo | null> {
+  const pdvId = caution.concessionnaireId?.trim();
+  if (pdvId) {
+    const conc = await findConcessionnaireById(pdvId);
+    if (!conc) return null;
+    return {
+      identiteLabel: "Concessionnaire",
+      identiteDetail: conc.raisonSociale?.trim() || conc.nomComplet || "—",
+      cniNumero: conc.cniNumero,
+      codePdv: conc.codePdv,
+      agenceId: conc.agenceId,
+      produitsAutorises: conc.produitsAutorises ?? [],
+    };
+  }
+
+  const clientId = caution.lonaciClientId?.trim();
+  if (clientId) {
+    const client = await findLonaciClientById(clientId);
+    if (!client) return null;
+    return {
+      identiteLabel: "Client",
+      identiteDetail: client.raisonSociale?.trim() || client.nomComplet?.trim() || "—",
+      cniNumero: client.cniNumero,
+      codePdv: client.code,
+      agenceId: client.agenceId,
+      produitsAutorises: client.produitsAutorises ?? [],
+    };
+  }
+
+  return null;
+}
+
 export async function buildCautionFicheProvisoireView(
   cautionId: string,
 ): Promise<CautionFicheProvisoireView | null> {
@@ -113,15 +160,11 @@ export async function buildCautionFicheProvisoireView(
   });
   if (!caution) return null;
 
-  const pdvId = caution.concessionnaireId?.trim();
-  if (!pdvId) return null;
-
-  const conc = await findConcessionnaireById(pdvId);
-  if (!conc) return null;
+  const party = await resolveCautionPartyInfo(caution);
+  if (!party) return null;
 
   const produits = await listProduits();
-  const codes = conc.produitsAutorises ?? [];
-  let lignes = buildCautionProduitLignes(codes, produits);
+  let lignes = buildCautionProduitLignes(party.produitsAutorises, produits);
   if (!lignes.length && caution.produitCode) {
     const code = caution.produitCode.trim().toUpperCase();
     const p = produits.find((x) => x.code.toUpperCase() === code);
@@ -131,9 +174,9 @@ export async function buildCautionFicheProvisoireView(
     }
   }
 
-  const agenceMap = await loadAgenceLibelleMap(db, conc.agenceId ? [conc.agenceId] : []);
-  const agenceLabel = conc.agenceId
-    ? formatAgenceLibelle(agenceMap.get(conc.agenceId), conc.agenceId)
+  const agenceMap = await loadAgenceLibelleMap(db, party.agenceId ? [party.agenceId] : []);
+  const agenceLabel = party.agenceId
+    ? formatAgenceLibelle(agenceMap.get(party.agenceId), party.agenceId)
     : "Sans agence";
 
   const numeroDossier =
@@ -143,14 +186,18 @@ export async function buildCautionFicheProvisoireView(
       : caution.paymentReference) ||
     "—";
 
+  const isClientParty = party.identiteLabel === "Client";
+
   return {
     cautionId,
     numeroDossier,
     generatedAt: caution.createdAt.toISOString(),
-    identiteLabel: "Concessionnaire",
-    identiteDetail: conc.raisonSociale?.trim() || conc.nomComplet || "—",
-    cniNumero: conc.cniNumero,
-    codePdv: conc.codePdv,
+    identiteLabel: party.identiteLabel,
+    identiteDetail: party.identiteDetail,
+    identifiantLabel: isClientParty ? "Identifiant client" : "Code PDV",
+    identifiantValue: party.codePdv,
+    cniNumero: party.cniNumero,
+    codePdv: party.codePdv,
     agenceLabel,
     produitLignes: lignes,
     montantTotalFCFA: caution.montant,
@@ -226,9 +273,13 @@ export async function renderCautionFicheProvisoirePdf(view: CautionFicheProvisoi
     doc.moveDown(0.8);
 
     drawFieldRow(doc, "Identité", view.identiteDetail);
-    if (view.cniNumero) drawFieldRow(doc, "N° CNI", view.cniNumero);
-    if (view.codePdv) drawFieldRow(doc, "Code PDV", view.codePdv);
-    drawFieldRow(doc, "Agence", view.agenceLabel);
+    drawFieldRow(doc, view.identifiantLabel, view.identifiantValue?.trim() || "—");
+    if (view.identiteLabel === "Client") {
+      drawFieldRow(doc, "N° CNI", view.cniNumero?.trim() || "—");
+    } else if (view.cniNumero?.trim()) {
+      drawFieldRow(doc, "N° CNI", view.cniNumero.trim());
+    }
+    drawFieldRow(doc, CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL, view.agenceLabel);
 
     doc.moveDown(0.3);
     doc.fontSize(10).fillColor("#111827").text("Produit(s) et montant(s) de caution due", { underline: true });

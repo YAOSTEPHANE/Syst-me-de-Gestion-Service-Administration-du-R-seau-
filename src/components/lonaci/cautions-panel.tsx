@@ -19,10 +19,13 @@ import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spread
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
+import { CLIENT_CODE_PREFIX } from "@/lib/lonaci/client-constants";
 import {
   CautionFicheDefinitiveModal,
   type CautionFicheDefinitiveModalData,
 } from "@/components/lonaci/caution-fiche-definitive-modal";
+import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 import { aggregateEtatMensuelLatestMonth } from "@/lib/lonaci/caution-etat-mensuel-display";
 import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
 
@@ -44,6 +47,7 @@ interface ProvisionalSlipData {
   clientLabel: string;
   clientCode: string;
   lonaciClientId: string;
+  agenceInscriptionLabel: string;
   produitCode: string;
   produitLibelle: string;
   cautionId: string;
@@ -59,7 +63,7 @@ function cautionListItemFromProvisionalSlip(slip: ProvisionalSlipData): CautionL
     clientCode: slip.clientCode,
     concessionnaireNom: slip.clientLabel,
     produitCode: slip.produitCode === "—" ? "" : slip.produitCode,
-    agenceLabel: "—",
+    agenceLabel: slip.agenceInscriptionLabel || "Sans agence",
     montant: slip.montantFCFA,
     modeReglement: "PAIEMENT_DIFFERE",
     status: "EN_ATTENTE",
@@ -378,6 +382,7 @@ type LonaciClientSearchHit = {
   raisonSociale: string;
   statut?: string;
   produitsAutorises?: string[];
+  agenceInscriptionLabel?: string;
 };
 
 type ReferentialProduitRow = {
@@ -524,6 +529,7 @@ function provisionalBundleClipboardLines(slips: ProvisionalSlipData[]): string[]
     "Lonaci — Fiche de paiement caution (document unique)",
     `Client: ${head.clientLabel}`,
     `Code client: ${head.clientCode}`,
+    `${CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL}: ${head.agenceInscriptionLabel || "Sans agence"}`,
     `ID client Lonaci: ${head.lonaciClientId || "—"}`,
     `Total FCFA à encaisser: ${total}`,
     `Nombre de cautions / produits: ${slips.length}`,
@@ -602,6 +608,7 @@ export default function CautionsPanel() {
     id: string;
     label: string;
     code: string;
+    agenceInscriptionLabel: string;
     produitsAutorises?: string[];
   } | null>(null);
   const [selectedProduitCodes, setSelectedProduitCodes] = useState<string[]>([]);
@@ -681,16 +688,32 @@ export default function CautionsPanel() {
 
       if (!showActionCell) {
         const label = cautionStatutLabel(row, tab);
-        if (label === "—" && !row.statutMetier) {
+        const courrierHref = row.numeroFicheDefinitive?.trim()
+          ? `/api/cautions/${encodeURIComponent(row.id)}/courrier-comptabilite/pdf`
+          : null;
+        if (label === "—" && !row.statutMetier && !courrierHref) {
           return <span className="text-[11px] text-slate-500">—</span>;
         }
         return (
-          <span
-            title={row.statutMetierDescription ?? undefined}
-            className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cautionStatutMetierBadgeClass(row, tab)}`}
-          >
-            {label}
-          </span>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            {courrierHref ? (
+              <a
+                href={courrierHref}
+                title={COURRIER_COMPTABILITE_TITLE}
+                className="rounded-lg border border-blue-600 bg-blue-50 px-2 py-1 text-[10px] font-semibold text-blue-900 hover:bg-blue-100"
+              >
+                Courrier compta.
+              </a>
+            ) : null}
+            {label !== "—" || row.statutMetier ? (
+              <span
+                title={row.statutMetierDescription ?? undefined}
+                className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${cautionStatutMetierBadgeClass(row, tab)}`}
+              >
+                {label}
+              </span>
+            ) : null}
+          </div>
         );
       }
       return (
@@ -1129,6 +1152,7 @@ export default function CautionsPanel() {
             clientLabel: clientFromPick.label,
             clientCode: clientFromPick.code.trim() || "—",
             lonaciClientId: clientFromPick.id,
+            agenceInscriptionLabel: clientFromPick.agenceInscriptionLabel || "Sans agence",
             produitCode,
             produitLibelle,
             cautionId,
@@ -1502,12 +1526,14 @@ export default function CautionsPanel() {
                     1. Client Lonaci
                   </p>
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
-                    Recherchez un client <strong>actif</strong> du référentiel Clients Lonaci, puis cliquez sur une ligne
-                    pour valider la sélection.
+                    Saisissez l’<strong>identifiant client</strong> (code {CLIENT_CODE_PREFIX}-…), le nom ou le N° CNI,
+                    puis sélectionnez une ligne dans les résultats.
                   </p>
-                  <label className="mb-1 block text-xs font-medium text-slate-700">Recherche client</label>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">
+                    Identifiant client *
+                  </label>
                   <p className="mb-1.5 text-[11px] text-slate-500">
-                    Nom, raison sociale ou code (au moins 2 caractères), puis choix dans les résultats.
+                    Code client, nom, raison sociale ou N° CNI (au moins 2 caractères).
                   </p>
                   <div className="relative mb-3">
                     <input
@@ -1515,7 +1541,7 @@ export default function CautionsPanel() {
                       autoComplete="off"
                       value={clientSearchInput}
                       onChange={(e) => setClientSearchInput(e.target.value)}
-                      placeholder="Ex. Kouassi, SARL Horizon, code client…"
+                      placeholder="Ex. CLI-000042, Kouassi, N° CNI…"
                       className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                       aria-label="Rechercher un client Lonaci"
                     />
@@ -1540,6 +1566,7 @@ export default function CautionsPanel() {
                                 id: hit.id,
                                 label,
                                 code: hit.code,
+                                agenceInscriptionLabel: hit.agenceInscriptionLabel?.trim() || "Sans agence",
                                 produitsAutorises: autorises,
                               });
                               setClientSearchInput(label);
@@ -1563,6 +1590,11 @@ export default function CautionsPanel() {
                   {selectedLonaciClientId.trim() ? (
                     <p className="text-[11px] text-emerald-800">
                       Client sélectionné : <span className="font-semibold">{clientFromPick?.label ?? "—"}</span>
+                      {clientFromPick?.code ? (
+                        <span className="mt-0.5 block font-mono text-slate-700">
+                          Identifiant client : {clientFromPick.code}
+                        </span>
+                      ) : null}
                       {(clientFromPick?.produitsAutorises?.length ?? 0) > 0 ? (
                         <span className="block text-slate-600">
                           Produits autorisés sur la fiche :{" "}
@@ -2021,6 +2053,12 @@ export default function CautionsPanel() {
                   <dt className="text-slate-500">Code client</dt>
                   <dd className="break-all font-mono text-xs font-semibold text-slate-900">
                     {provisionalSlips[0]!.clientCode || "—"}
+                  </dd>
+                </div>
+                <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
+                  <dt className="text-slate-500">{CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL}</dt>
+                  <dd className="text-right text-xs font-semibold text-slate-900">
+                    {provisionalSlips[0]!.agenceInscriptionLabel || "Sans agence"}
                   </dd>
                 </div>
                 <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">

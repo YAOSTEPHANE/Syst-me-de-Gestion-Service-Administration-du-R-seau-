@@ -20,7 +20,13 @@ import {
   resolveDossierCautionsStatus,
   serializeDossierProduitPayload,
 } from "@/lib/lonaci/dossier-produits";
-import { parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
+import {
+  allAnnexesArchivesComplete,
+  allContratsArchivesComplete,
+  parseContratGenerePayload,
+  parseContratsGeneresPayload,
+  summarizeContratsParProduit,
+} from "@/lib/lonaci/contrat-document";
 import {
   contratPartyFromDossier,
   contratMatchesParty,
@@ -142,26 +148,30 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
   }
 
   if (input.type === "CONTRAT_ACTUALISATION") {
-    const produitCode = String(input.payload.produitCode ?? "").trim().toUpperCase();
+    const produitCodes = getDossierProduitCodes(input.payload);
     const operationType = String(input.payload.operationType ?? "");
-    if (!produitCode) {
+    if (!produitCodes.length) {
       throw new Error("PRODUIT_REQUIRED");
     }
-    const produit = await resolveProduitForContratWorkflow(produitCode);
-    if (!produit) {
-      throw new Error("PRODUIT_INVALID");
+    if (operationType === "ACTUALISATION" && produitCodes.length > 1) {
+      throw new Error("PRODUIT_ACTUALISATION_UNIQUE");
     }
-    if (operationType === "NOUVEAU") {
-      const exists = await hasActiveContractForParty(party, produitCode);
-      if (exists) {
-        throw new Error("ACTIVE_CONTRACT_EXISTS");
+    for (const produitCode of produitCodes) {
+      const produit = await resolveProduitForContratWorkflow(produitCode);
+      if (!produit) {
+        throw new Error("PRODUIT_INVALID");
+      }
+      if (operationType === "NOUVEAU") {
+        const exists = await hasActiveContractForParty(party, produitCode);
+        if (exists) {
+          throw new Error("ACTIVE_CONTRACT_EXISTS");
+        }
+      }
+      const partyProduits = (await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [];
+      if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
+        throw new Error("PRODUIT_NOT_ALLOWED");
       }
     }
-    const partyProduits = (await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [];
-    if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
-      throw new Error("PRODUIT_NOT_ALLOWED");
-    }
-    const produitCodes = [produitCode];
     const checklist = await ensureChecklistForDossierProduits(input.payload, produitCodes);
     const mergedChecklist = input.documentChecklist?.length
       ? mergeChecklistStatutPatch(checklist, input.documentChecklist)
@@ -389,8 +399,10 @@ export async function buildDossierContratStatutMetierFields(
       referenceLabel: l.referenceLabel,
     })),
     dechargeDefinitiveEligible,
-    hasContratGenere: Boolean(parseContratGenerePayload(dossier.payload ?? {})),
-    contratArchive: Boolean(parseContratGenerePayload(dossier.payload ?? {})?.contratSigneArchive),
+    hasContratGenere: parseContratsGeneresPayload(dossier.payload ?? {}).length > 0,
+    contratArchive: allContratsArchivesComplete(dossier.payload ?? {}),
+    annexeArchive: allAnnexesArchivesComplete(dossier.payload ?? {}),
+    contratsParProduit: summarizeContratsParProduit(dossier.payload ?? {}),
     ...contratStatutMetierFields(statutMetier),
   };
 }

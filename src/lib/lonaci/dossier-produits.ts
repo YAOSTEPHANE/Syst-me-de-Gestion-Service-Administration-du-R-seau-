@@ -10,7 +10,7 @@ import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit
 import { listProduits } from "@/lib/lonaci/referentials";
 import {
   ensureDossierDocumentChecklist,
-  mergeProductChecklistTemplates,
+  mergeProductDossierAndAnnexeTemplates,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, UserDocument } from "@/lib/lonaci/types";
@@ -130,7 +130,7 @@ export async function ensureChecklistForDossierProduits(
   produitCodes: string[],
 ): Promise<DossierDocumentChecklistPayload> {
   const produits = await listProduits();
-  const template = mergeProductChecklistTemplates(produitCodes, produits);
+  const template = mergeProductDossierAndAnnexeTemplates(produitCodes, produits);
   return ensureDossierDocumentChecklist(payload, template);
 }
 
@@ -250,4 +250,38 @@ export async function extendContratDossierWithProduit(input: {
     throw new Error("DOSSIER_NOT_FOUND");
   }
   return { dossier: updated, added: true };
+}
+
+/** Ajoute plusieurs produits au dossier contrat (ignore ceux déjà présents). */
+export async function extendContratDossierWithProduits(input: {
+  dossierId: string;
+  produitCodes: string[];
+  actor: UserDocument;
+  documentChecklist?: Array<{ itemId: string; statut: "FOURNI" | "MANQUANT" | "EN_ATTENTE" }>;
+}): Promise<{ dossier: DossierDocument; added: string[] }> {
+  const codes = [
+    ...new Set(input.produitCodes.map((c) => c.trim().toUpperCase()).filter(Boolean)),
+  ];
+  if (!codes.length) {
+    const dossier = await loadDossierById(input.dossierId);
+    if (!dossier || dossier.deletedAt) throw new Error("DOSSIER_NOT_FOUND");
+    return { dossier, added: [] };
+  }
+
+  let dossier: DossierDocument | null = null;
+  const added: string[] = [];
+  for (let i = 0; i < codes.length; i++) {
+    const code = codes[i]!;
+    const result = await extendContratDossierWithProduit({
+      dossierId: dossier?._id ?? input.dossierId,
+      produitCode: code,
+      actor: input.actor,
+      documentChecklist: i === codes.length - 1 ? input.documentChecklist : undefined,
+    });
+    dossier = result.dossier;
+    if (result.added) added.push(code);
+  }
+
+  if (!dossier) throw new Error("DOSSIER_NOT_FOUND");
+  return { dossier, added };
 }

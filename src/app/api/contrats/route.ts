@@ -17,17 +17,25 @@ import {
   contratStatutMetierFields,
   resolveContratStatutMetier,
 } from "@/lib/lonaci/contrat-statut-metier";
-import { parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
+import {
+  allAnnexesArchivesComplete,
+  allContratsArchivesComplete,
+  contratProduitSummaryFromPayload,
+  parseContratsGeneresPayload,
+  summarizeContratsParProduit,
+} from "@/lib/lonaci/contrat-document";
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import {
   extendContratDossierWithProduit,
+  extendContratDossierWithProduits,
   findEditableContratDossierForParty,
   getDossierProduitCodes,
   resolveDossierCautionsStatus,
   ensureChecklistForDossierProduits,
+  serializeDossierProduitPayload,
 } from "@/lib/lonaci/dossier-produits";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
@@ -47,7 +55,8 @@ const createSchema = z
     concessionnaireId: z.string().min(1).optional(),
     lonaciClientId: z.string().min(1).optional(),
     agenceId: z.string().min(1),
-    produitCode: z.string().min(1),
+    produitCode: z.string().min(1).optional(),
+    produitCodes: z.array(z.string().min(1)).optional(),
     operationType: z.enum(["NOUVEAU", "ACTUALISATION"]),
     /** ISO 8601 (ex. toISOString()) — le client peut envoyer des dates avec offset ou Z. */
     dateOperation: z.string().refine((s) => !Number.isNaN(Date.parse(s)), { message: "dateOperation invalide" }),
@@ -71,6 +80,28 @@ const createSchema = z
         code: z.ZodIssueCode.custom,
         message: "Preciser un seul rattachement : client ou concessionnaire.",
         path: ["lonaciClientId"],
+      });
+    }
+    const fromArray = (data.produitCodes ?? [])
+      .map((code) => code.trim().toUpperCase())
+      .filter(Boolean);
+    const produitCodes = fromArray.length
+      ? [...new Set(fromArray)]
+      : data.produitCode?.trim()
+        ? [data.produitCode.trim().toUpperCase()]
+        : [];
+    if (!produitCodes.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Au moins un produit est requis.",
+        path: ["produitCode"],
+      });
+    }
+    if (data.operationType === "ACTUALISATION" && produitCodes.length > 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Une actualisation ne porte que sur un seul produit à la fois.",
+        path: ["produitCodes"],
       });
     }
   });
@@ -292,7 +323,8 @@ export async function GET(request: NextRequest) {
         cautionPaid,
         hasDocumentChecklist,
       });
-      const contratGenere = parseContratGenerePayload(meta?.payload ?? {});
+      const contratsGeneres = parseContratsGeneresPayload(meta?.payload ?? {});
+      const produitSummary = contratProduitSummaryFromPayload(meta?.payload ?? {}, c.produitCode);
       return {
         ...c,
         dateDepot: depot.toISOString(),
@@ -302,8 +334,12 @@ export async function GET(request: NextRequest) {
         cautionPaid,
         cautionPaymentReference,
         dechargeDefinitiveEligible,
-        hasContratGenere: Boolean(contratGenere),
-        contratArchive: Boolean(contratGenere?.contratSigneArchive),
+        hasContratGenere: contratsGeneres.length > 0,
+        contratArchive: produitSummary?.contratArchive ?? allContratsArchivesComplete(meta?.payload ?? {}),
+        annexeArchive: produitSummary?.annexeArchive ?? allAnnexesArchivesComplete(meta?.payload ?? {}),
+        annexeReference: c.annexeReference ?? produitSummary?.referenceAnnexePreview ?? null,
+        documentsAnnexeAttendus: produitSummary?.documentsAnnexeAttendus ?? [],
+        contratsParProduit: summarizeContratsParProduit(meta?.payload ?? {}),
         ...contratStatutMetierFields(statutMetier),
       };
     }),
@@ -382,14 +418,18 @@ export async function GET(request: NextRequest) {
     .limit(100)
     .toArray();
 
-  const toSign = toSignDocs.map((d) => ({
-    dossierId: d._id.toHexString(),
-    reference: d.reference,
-    concessionnaireId: d.concessionnaireId,
-    produitCode: String(d.payload.produitCode ?? ""),
-    dateOperation: String(d.payload.dateOperation ?? ""),
-    updatedAt: d.updatedAt.toISOString(),
-  }));
+  const toSign = toSignDocs.map((d) => {
+    const produitCodes = getDossierProduitCodes(d.payload ?? {});
+    return {
+      dossierId: d._id.toHexString(),
+      reference: d.reference,
+      concessionnaireId: d.concessionnaireId,
+      produitCode: produitCodes[0] ?? String(d.payload.produitCode ?? ""),
+      produitCodes,
+      dateOperation: String(d.payload.dateOperation ?? ""),
+      updatedAt: d.updatedAt.toISOString(),
+    };
+  });
 
   const finalisedDossiers = dossiersRows.filter((d) => d.status === "FINALISE");
   const totalsByProduct = new Map<
@@ -504,13 +544,24 @@ export async function POST(request: NextRequest) {
     ? { kind: "client", lonaciClientId }
     : { kind: "concessionnaire", concessionnaireId: concessionnaireId! };
 
+  const fromArray = (parsed.data.produitCodes ?? [])
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
+  const produitCodes = fromArray.length
+    ? [...new Set(fromArray)]
+    : parsed.data.produitCode?.trim()
+      ? [parsed.data.produitCode.trim().toUpperCase()]
+      : [];
+
   if (parsed.data.operationType === "NOUVEAU") {
-    const hasActive = await hasActiveContractForParty(party, parsed.data.produitCode.trim().toUpperCase());
-    if (hasActive) {
-      return conflict(
-        "Un contrat actif existe deja pour ce produit et ce client.",
-        "ACTIVE_CONTRACT_EXISTS",
-      );
+    for (const pcode of produitCodes) {
+      const hasActive = await hasActiveContractForParty(party, pcode);
+      if (hasActive) {
+        return conflict(
+          `Un contrat actif existe deja pour le produit ${pcode} et ce client.`,
+          "ACTIVE_CONTRACT_EXISTS",
+        );
+      }
     }
   }
   if (parsed.data.operationType === "ACTUALISATION") {
@@ -565,9 +616,10 @@ export async function POST(request: NextRequest) {
     produitsAutorises = concessionnaire.produitsAutorises ?? [];
   }
 
-  const p = parsed.data.produitCode.trim().toUpperCase();
-  if (!produitAutorisePourConcessionnaire(produitsAutorises, p)) {
-    return badRequest("Produit non autorise pour ce client.", "PRODUIT_NOT_ALLOWED");
+  for (const pcode of produitCodes) {
+    if (!produitAutorisePourConcessionnaire(produitsAutorises, pcode)) {
+      return badRequest(`Produit non autorise pour ce client : ${pcode}.`, "PRODUIT_NOT_ALLOWED");
+    }
   }
 
   await ensureDossierIndexes();
@@ -579,15 +631,23 @@ export async function POST(request: NextRequest) {
     if (parsed.data.operationType === "NOUVEAU") {
       const editable = await findEditableContratDossierForParty(party);
       if (editable?._id) {
-        const extension = await extendContratDossierWithProduit({
-          dossierId: editable._id,
-          produitCode: p,
-          actor: auth.user,
-          documentChecklist: parsed.data.documentChecklist,
-        });
-        resultDossier = extension.dossier;
-        extended = true;
-        added = extension.added;
+        const existingCodes = getDossierProduitCodes(editable.payload ?? {});
+        const missing = produitCodes.filter((code) => !existingCodes.includes(code));
+        if (missing.length > 0) {
+          const extension = await extendContratDossierWithProduits({
+            dossierId: editable._id,
+            produitCodes: missing,
+            actor: auth.user,
+            documentChecklist: parsed.data.documentChecklist,
+          });
+          resultDossier = extension.dossier;
+          extended = true;
+          added = extension.added.length > 0;
+        } else {
+          resultDossier = editable;
+          extended = true;
+          added = false;
+        }
       }
     }
 
@@ -597,7 +657,7 @@ export async function POST(request: NextRequest) {
         concessionnaireId,
         lonaciClientId,
         payload: {
-          produitCode: p,
+          ...serializeDossierProduitPayload(produitCodes),
           operationType: parsed.data.operationType,
           dateOperation: parsed.data.dateOperation,
           dateEffet: parsed.data.dateOperation,

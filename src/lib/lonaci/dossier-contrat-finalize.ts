@@ -11,11 +11,13 @@ import {
   hasActiveContractForParty,
 } from "@/lib/lonaci/contracts";
 import {
+  archiveAnnexeSigneForDossier,
   archiveContratSigneForDossier,
   ensureContratFinalizationReady,
   parseContratGenerePayload,
   parseContratsGeneresPayload,
   prepareContratFromDechargeDefinitive,
+  referenceAnnexeFromContrat,
 } from "@/lib/lonaci/contrat-document";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { getDossierProduitCodes } from "@/lib/lonaci/dossier-produits";
@@ -184,6 +186,13 @@ export async function finalizeDossierContratActualisation(input: {
         await archiveContratSigneForDossier(
           input.dossierId,
           contrat.reference,
+          input.actor,
+          produitCode,
+        );
+        const annexeRef = referenceAnnexeFromContrat(contrat.reference);
+        await archiveAnnexeSigneForDossier(
+          input.dossierId,
+          annexeRef,
           input.actor,
           produitCode,
         );

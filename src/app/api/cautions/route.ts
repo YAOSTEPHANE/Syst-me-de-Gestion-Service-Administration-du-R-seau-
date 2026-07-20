@@ -163,6 +163,12 @@ export async function POST(request: NextRequest) {
     if (code === "CLIENT_NOT_FOUND") {
       return notFound("Client Lonaci introuvable.", "CLIENT_NOT_FOUND");
     }
+    if (code === "CLIENT_IDENTIFIANT_MANQUANT") {
+      return conflict(
+        "Le client doit avoir un numéro CNI (identifiant) renseigné sur sa fiche avant la constitution d'une caution.",
+        "CLIENT_IDENTIFIANT_MANQUANT",
+      );
+    }
     if (code === "CLIENT_INACTIF") {
       return conflict("Client Lonaci inactif.", "CLIENT_INACTIF");
     }

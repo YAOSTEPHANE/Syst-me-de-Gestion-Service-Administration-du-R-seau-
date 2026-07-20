@@ -49,6 +49,15 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     CLIENT_ALREADY_PROMOTED: "Ce client est déjà rattaché à un point de vente.",
     CLIENT_NOT_PROMOTED: "Ce client n’est pas encore rattaché à un point de vente.",
     CLIENT_NOT_FOUND: "Client Lonaci introuvable.",
+    CLIENT_IDENTIFIANT_MANQUANT:
+      "Le numéro CNI (identifiant) doit être renseigné sur la fiche client avant de constituer une caution.",
+    CLIENT_IDENTIFIANT_REQUIS: "Le numéro CNI (identifiant client) est obligatoire à la création.",
+    CLIENT_CODE_INVALID:
+      "Format d’identifiant client invalide (lettres, chiffres, tirets ; 1 à 32 caractères après le code agence).",
+    CLIENT_CODE_AGENCE_MISMATCH:
+      "L’identifiant saisi ne correspond pas à l’agence de rattachement sélectionnée.",
+    CLIENT_CODE_DEJA_UTILISE:
+      "Cet identifiant client est déjà utilisé dans cette zone. Choisissez un autre code.",
     PHOTO_REQUIRED: "Une photo d'identité est obligatoire avant soumission.",
     NOM_REQUIRED: "Le nom est obligatoire.",
     PRENOM_REQUIRED: "Le prénom est obligatoire.",
