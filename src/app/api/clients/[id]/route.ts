@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { badRequest } from "@/lib/api/error-responses";
 import { canMutateClientCore, canReadClientDirectory } from "@/lib/lonaci/access";
-import { CLIENT_STATUTS } from "@/lib/lonaci/client-constants";
+import { CLIENT_STATUTS, CLIENT_CATEGORIES, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import {
   findClientById,
   sanitizeClientPublic,
@@ -25,6 +26,7 @@ const documentChecklistPatchSchema = z.array(
 
 const patchSchema = z
   .object({
+    categorie: z.enum(CLIENT_CATEGORIES).optional(),
     nomComplet: z.string().min(2).max(200).optional(),
     raisonSociale: z.string().min(2).max(300).optional(),
     cniNumero: z.preprocess(
@@ -126,6 +128,21 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       ? { produitsAutorises: normalizeProduitsAutorises(parsed.data.produitsAutorises) }
       : {}),
   };
+
+  const nextCategorie = normalizeClientCategorie(patch.categorie ?? existing.categorie);
+  const nextNomComplet = (patch.nomComplet ?? existing.nomComplet ?? "").trim();
+  const nextRaisonSociale = (patch.raisonSociale ?? existing.raisonSociale ?? "").trim();
+
+  if (nextCategorie === "ENTREPRISE" && nextRaisonSociale.length < 2) {
+    return badRequest("La raison sociale est obligatoire pour une entreprise.", "CLIENT_RAISON_SOCIALE_REQUISE");
+  }
+  if (nextCategorie === "PARTICULIER" && nextNomComplet.length < 2) {
+    return badRequest("Le nom complet est obligatoire pour un particulier.", "CLIENT_NOM_COMPLET_REQUIS");
+  }
+
+  if (patch.categorie !== undefined) patch.categorie = nextCategorie;
+  if (patch.nomComplet !== undefined) patch.nomComplet = nextNomComplet;
+  if (patch.raisonSociale !== undefined) patch.raisonSociale = nextRaisonSociale;
 
   try {
     const updated = await updateClient(id, patch, auth.user);

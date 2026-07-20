@@ -167,6 +167,8 @@ model Contrat {
 model LonaciClient {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
   code            String
+  /** Particulier ou personne morale (entreprise). */
+  categorie       String    @default("PARTICULIER")
   raisonSociale   String
   /** Nom et prénom(s) du client (identité principale). */
   nomComplet      String?
@@ -198,6 +200,7 @@ model LonaciClient {
   @@unique([agenceId, code], map: "uniq_client_agence_code")
   @@index([agenceId], map: "idx_client_agence")
   @@index([statut], map: "idx_client_statut")
+  @@index([categorie], map: "idx_client_categorie")
   @@index([deletedAt], map: "idx_client_deleted")
   @@index([raisonSociale], map: "idx_client_raison")
   @@index([nomComplet], map: "idx_client_nom_complet")

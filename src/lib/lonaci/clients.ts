@@ -3,7 +3,10 @@ import type { Prisma } from "@prisma/client";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import {
   CLIENT_STATUTS,
+  clientDisplayName,
+  normalizeClientCategorie,
   normalizeClientCodeForAgence,
+  type ClientCategorie,
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
 import { patchDocumentChecklistStatuts } from "@/lib/lonaci/concessionnaire-inscription";
@@ -98,6 +101,7 @@ export async function findClientByAgenceAndCode(agenceId: string, code: string) 
 export function buildClientListWhere(params: {
   q?: string;
   statut?: ClientStatut;
+  categorie?: ClientCategorie;
   /** Clients éligibles caution : dossier en cours ou actif (exclut inactifs). */
   eligibleForCaution?: boolean;
   /** Clients éligibles contrat : dossier en cours ou actif. */
@@ -132,6 +136,10 @@ export function buildClientListWhere(params: {
     parts.push({ statut: params.statut });
   }
 
+  if (params.categorie) {
+    parts.push({ categorie: params.categorie });
+  }
+
   if (params.q && params.q.trim().length > 0) {
     const q = params.q.trim();
     parts.push({
@@ -164,6 +172,7 @@ export async function searchClients(params: {
   pageSize: number;
   q?: string;
   statut?: ClientStatut;
+  categorie?: ClientCategorie;
   eligibleForCaution?: boolean;
   eligibleForContrat?: boolean;
   eligibleForPromotion?: boolean;
@@ -175,6 +184,7 @@ export async function searchClients(params: {
   const where = buildClientListWhere({
     q: params.q,
     statut: params.statut,
+    categorie: params.categorie,
     eligibleForCaution: params.eligibleForCaution,
     eligibleForContrat: params.eligibleForContrat,
     eligibleForPromotion: params.eligibleForPromotion,
@@ -286,6 +296,7 @@ export async function searchClients(params: {
 export function sanitizeClientListItem(doc: {
   id: string;
   code: string;
+  categorie?: string | null;
   raisonSociale: string;
   nomComplet: string | null;
   cniNumero: string | null;
@@ -305,6 +316,7 @@ export function sanitizeClientListItem(doc: {
   return {
     id: doc.id,
     code: doc.code,
+    categorie: normalizeClientCategorie(doc.categorie),
     raisonSociale: doc.raisonSociale,
     nomComplet: doc.nomComplet,
     cniNumero: doc.cniNumero,
@@ -323,6 +335,7 @@ export function sanitizeClientListItem(doc: {
 export function sanitizeClientPublic(doc: {
   id: string;
   code: string;
+  categorie?: string | null;
   raisonSociale: string;
   nomComplet: string | null;
   cniNumero: string | null;
@@ -350,6 +363,7 @@ export function sanitizeClientPublic(doc: {
   return {
     id: doc.id,
     code: doc.code,
+    categorie: normalizeClientCategorie(doc.categorie),
     raisonSociale: doc.raisonSociale,
     nomComplet: doc.nomComplet,
     cniNumero: doc.cniNumero,
@@ -382,6 +396,7 @@ export async function createClient(
   input: {
     code: string;
     agenceCode: string;
+    categorie: ClientCategorie;
     nomComplet: string;
     raisonSociale: string;
     cniNumero: string | null;
@@ -428,6 +443,7 @@ export async function createClient(
   const row = await prisma.lonaciClient.create({
     data: {
       code,
+      categorie: input.categorie,
       raisonSociale: input.raisonSociale.trim(),
       nomComplet: input.nomComplet.trim(),
       cniNumero,
@@ -462,7 +478,7 @@ export async function createClient(
   });
 
   if (statut === "EN_ATTENTE_N1") {
-    const label = row.nomComplet?.trim() || row.raisonSociale;
+    const label = clientDisplayName(row);
     await notifyRoleTargets(
       "CHEF_SECTION",
       "Client en attente validation N1",
@@ -501,6 +517,7 @@ export async function activateClientAfterCautionPaid(clientId: string, actor: Us
 export async function updateClient(
   id: string,
   patch: {
+    categorie?: ClientCategorie;
     nomComplet?: string;
     raisonSociale?: string;
     cniNumero?: string | null;
@@ -551,6 +568,7 @@ export async function updateClient(
     data.documentChecklist = checklistToPrismaJson(checklist);
   }
 
+  if (patch.categorie !== undefined) data.categorie = patch.categorie;
   if (patch.nomComplet !== undefined) data.nomComplet = patch.nomComplet.trim();
   if (patch.raisonSociale !== undefined) data.raisonSociale = patch.raisonSociale.trim();
   if (patch.cniNumero !== undefined) data.cniNumero = patch.cniNumero;

@@ -1,4 +1,31 @@
 /** Statuts du référentiel Clients (module /clients). Fichier dédié pour éviter les soucis de chargement côté client. */
+export const CLIENT_CATEGORIES = ["PARTICULIER", "ENTREPRISE"] as const;
+export type ClientCategorie = (typeof CLIENT_CATEGORIES)[number];
+
+export const CLIENT_CATEGORIE_LABELS: Record<ClientCategorie, string> = {
+  PARTICULIER: "Particulier",
+  ENTREPRISE: "Entreprise",
+};
+
+export function normalizeClientCategorie(value: string | null | undefined): ClientCategorie {
+  const v = (value ?? "").trim().toUpperCase();
+  if (v === "ENTREPRISE") return "ENTREPRISE";
+  return "PARTICULIER";
+}
+
+/** Libellé principal affiché selon la catégorie. */
+export function clientDisplayName(client: {
+  categorie?: string | null;
+  nomComplet?: string | null;
+  raisonSociale: string;
+}): string {
+  const categorie = normalizeClientCategorie(client.categorie);
+  if (categorie === "ENTREPRISE") {
+    return client.raisonSociale.trim() || client.nomComplet?.trim() || "—";
+  }
+  return client.nomComplet?.trim() || client.raisonSociale.trim() || "—";
+}
+
 export const CLIENT_STATUTS = [
   "EN_ATTENTE_N1",
   "REJETE",

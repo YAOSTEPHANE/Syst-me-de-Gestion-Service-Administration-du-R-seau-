@@ -7,7 +7,11 @@ import {
   CLIENT_CODE_PREFIX,
   CLIENT_STATUT_LABELS,
   CLIENT_STATUTS,
+  CLIENT_CATEGORIES,
+  CLIENT_CATEGORIE_LABELS,
+  clientDisplayName,
   clientCodePrefixForAgence,
+  type ClientCategorie,
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
 import type { AgenceZoneGeographique, DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
@@ -23,6 +27,7 @@ import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected
 type ListItem = {
   id: string;
   code: string;
+  categorie: string;
   raisonSociale: string;
   nomComplet: string | null;
   cniNumero: string | null;
@@ -55,6 +60,7 @@ type ProduitRef = {
 type ClientDetail = {
   id: string;
   code: string;
+  categorie: string;
   raisonSociale: string;
   nomComplet: string | null;
   cniNumero: string | null;
@@ -131,6 +137,7 @@ export default function ClientsPanel() {
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState("");
   const [filterStatut, setFilterStatut] = useState("");
+  const [filterCategorie, setFilterCategorie] = useState("");
   const [filterAgence, setFilterAgence] = useState("");
   const [agences, setAgences] = useState<AgenceRef[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
@@ -150,6 +157,7 @@ export default function ClientsPanel() {
     statut: string;
   } | null>(null);
   const [form, setForm] = useState({
+    categorie: "PARTICULIER" as ClientCategorie,
     clientCodeSuffix: "",
     nomComplet: "",
     raisonSociale: "",
@@ -206,6 +214,7 @@ export default function ClientsPanel() {
       });
       if (q.trim()) params.set("q", q.trim());
       if (filterStatut) params.set("statut", filterStatut);
+      if (filterCategorie) params.set("categorie", filterCategorie);
       if (filterAgence) params.set("agenceId", filterAgence);
       const res = await fetch(`/api/clients?${params}`, { credentials: "include", cache: "no-store" });
       // #region agent log
@@ -265,7 +274,7 @@ export default function ClientsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, q, filterStatut, filterAgence]);
+  }, [page, pageSize, q, filterStatut, filterCategorie, filterAgence]);
 
   useEffect(() => {
     void load();
@@ -295,6 +304,7 @@ export default function ClientsPanel() {
 
   function resetForm() {
     setForm({
+      categorie: "PARTICULIER",
       clientCodeSuffix: "",
       nomComplet: "",
       raisonSociale: "",
@@ -343,9 +353,11 @@ export default function ClientsPanel() {
       setEditingClientCode(c.code);
       setForm({
         clientCodeSuffix,
-        nomComplet: c.nomComplet ?? c.raisonSociale,
-        raisonSociale:
-          c.nomComplet && c.raisonSociale !== c.nomComplet ? c.raisonSociale : "",
+        categorie: (CLIENT_CATEGORIES as readonly string[]).includes(c.categorie)
+          ? (c.categorie as ClientCategorie)
+          : "PARTICULIER",
+        nomComplet: c.nomComplet ?? "",
+        raisonSociale: c.raisonSociale ?? "",
         cniNumero: c.cniNumero ?? "",
         nomContact: c.nomContact ?? "",
         email: c.email ?? "",
@@ -369,7 +381,15 @@ export default function ClientsPanel() {
 
   async function saveClient(e: React.FormEvent) {
     e.preventDefault();
-    if (!form.nomComplet.trim()) return;
+    const isEntreprise = form.categorie === "ENTREPRISE";
+    if (isEntreprise && !form.raisonSociale.trim()) {
+      setError("La raison sociale est obligatoire pour une entreprise.");
+      return;
+    }
+    if (!isEntreprise && !form.nomComplet.trim()) {
+      setError("Le nom complet est obligatoire pour un particulier.");
+      return;
+    }
     setBusyId(editingId ?? "new");
     setError(null);
     try {
@@ -379,7 +399,8 @@ export default function ClientsPanel() {
           credentials: "include",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            nomComplet: form.nomComplet.trim(),
+            categorie: form.categorie,
+            nomComplet: form.nomComplet.trim() || null,
             raisonSociale: form.raisonSociale.trim() || form.nomComplet.trim(),
             cniNumero: form.cniNumero.trim() || null,
             nomContact: form.nomContact.trim() || null,
@@ -418,7 +439,8 @@ export default function ClientsPanel() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             code: form.clientCodeSuffix.trim(),
-            nomComplet: form.nomComplet.trim(),
+            categorie: form.categorie,
+            nomComplet: form.nomComplet.trim() || null,
             raisonSociale: form.raisonSociale.trim() || null,
             cniNumero: form.cniNumero.trim(),
             nomContact: form.nomContact.trim() || null,
@@ -441,7 +463,7 @@ export default function ClientsPanel() {
         setCreatedClient({
           id: data.client.id,
           code: data.client.code,
-          nomComplet: data.client.nomComplet?.trim() || data.client.raisonSociale,
+          nomComplet: clientDisplayName(data.client),
           statut: data.client.statut,
         });
         await load();
@@ -548,7 +570,11 @@ export default function ClientsPanel() {
   }
 
   function displayNomPrincipal(row: ListItem): string {
-    return row.nomComplet?.trim() || row.raisonSociale;
+    return clientDisplayName(row);
+  }
+
+  function categorieLabel(categorie: string): string {
+    return CLIENT_CATEGORIE_LABELS[categorie as ClientCategorie] ?? categorie;
   }
 
   function formatProduitsCell(codes: string[]): string {
@@ -645,7 +671,7 @@ export default function ClientsPanel() {
       {error ? <p className="text-sm text-rose-700">{error}</p> : null}
 
       <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
           <input
             value={q}
             onChange={(e) => {
@@ -672,6 +698,22 @@ export default function ClientsPanel() {
             ))}
           </select>
           <select
+            value={filterCategorie}
+            aria-label="Filtrer par catégorie"
+            onChange={(e) => {
+              setPage(1);
+              setFilterCategorie(e.target.value);
+            }}
+            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+          >
+            <option value="">Toutes les catégories</option>
+            {CLIENT_CATEGORIES.map((c) => (
+              <option key={c} value={c}>
+                {CLIENT_CATEGORIE_LABELS[c]}
+              </option>
+            ))}
+          </select>
+          <select
             value={filterAgence}
             aria-label="Filtrer par agence"
             onChange={(e) => {
@@ -693,6 +735,7 @@ export default function ClientsPanel() {
               setPage(1);
               setQ("");
               setFilterStatut("");
+              setFilterCategorie("");
               setFilterAgence("");
             }}
             className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
@@ -731,7 +774,8 @@ export default function ClientsPanel() {
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
                 <th className="py-2 pr-3">Code</th>
-                <th className="py-2 pr-3">Nom complet</th>
+                <th className="py-2 pr-3">Catégorie</th>
+                <th className="py-2 pr-3">Nom / Raison sociale</th>
                 <th className="py-2 pr-3">CNI</th>
                 <th className="py-2 pr-3">Contact</th>
                 <th className="py-2 pr-3">Agence (zone)</th>
@@ -743,13 +787,13 @@ export default function ClientsPanel() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-500">
+                  <td colSpan={9} className="py-6 text-center text-slate-500">
                     Chargement…
                   </td>
                 </tr>
               ) : items.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-6 text-center text-slate-500">
+                  <td colSpan={9} className="py-6 text-center text-slate-500">
                     Aucun client pour ces filtres.
                   </td>
                 </tr>
@@ -757,9 +801,25 @@ export default function ClientsPanel() {
                 items.map((row) => (
                   <tr key={row.id} className="border-b border-slate-100">
                     <td className="py-2 pr-3 font-mono text-xs text-slate-800">{row.code}</td>
+                    <td className="py-2 pr-3">
+                      <span
+                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
+                          row.categorie === "ENTREPRISE"
+                            ? "border-violet-200 bg-violet-50 text-violet-900"
+                            : "border-slate-200 bg-slate-50 text-slate-700"
+                        }`}
+                      >
+                        {categorieLabel(row.categorie)}
+                      </span>
+                    </td>
                     <td className="py-2 pr-3 font-medium text-slate-900">
                       <div>{displayNomPrincipal(row)}</div>
-                      {row.nomComplet && row.raisonSociale !== row.nomComplet ? (
+                      {row.categorie === "ENTREPRISE" && row.nomComplet?.trim() ? (
+                        <div className="text-xs font-normal text-slate-500">Contact : {row.nomComplet}</div>
+                      ) : row.categorie === "PARTICULIER" &&
+                        row.raisonSociale &&
+                        row.nomComplet &&
+                        row.raisonSociale !== row.nomComplet ? (
                         <div className="text-xs font-normal text-slate-500">{row.raisonSociale}</div>
                       ) : null}
                     </td>
@@ -946,6 +1006,24 @@ export default function ClientsPanel() {
                 )
               ) : null}
               {produitsAutorisesFields}
+              <label className="block text-sm">
+                <span className="text-slate-600">Catégorie *</span>
+                <select
+                  required
+                  aria-label="Catégorie du client"
+                  value={form.categorie}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, categorie: e.target.value as ClientCategorie }))
+                  }
+                  className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                >
+                  {CLIENT_CATEGORIES.map((c) => (
+                    <option key={c} value={c}>
+                      {CLIENT_CATEGORIE_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </label>
               {!editingId ? (
                 <div className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50/60 p-3">
                   <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">
@@ -1007,24 +1085,45 @@ export default function ClientsPanel() {
                     </p>
                   </label>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Nom complet *</span>
+                    <span className="text-slate-600">
+                      {form.categorie === "ENTREPRISE" ? "Raison sociale *" : "Nom complet *"}
+                    </span>
                     <input
                       required
-                      value={form.nomComplet}
-                      onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                      value={form.categorie === "ENTREPRISE" ? form.raisonSociale : form.nomComplet}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f.categorie === "ENTREPRISE"
+                            ? { ...f, raisonSociale: e.target.value }
+                            : { ...f, nomComplet: e.target.value },
+                        )
+                      }
                       className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                      autoComplete="name"
+                      autoComplete={form.categorie === "ENTREPRISE" ? "organization" : "name"}
                     />
                   </label>
-                  <label className="block text-sm">
-                    <span className="text-slate-600">Raison sociale / dénomination (optionnel)</span>
-                    <input
-                      value={form.raisonSociale}
-                      onChange={(e) => setForm((f) => ({ ...f, raisonSociale: e.target.value }))}
-                      placeholder="Si personne morale ou enseigne distincte du nom"
-                      className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                    />
-                  </label>
+                  {form.categorie === "ENTREPRISE" ? (
+                    <label className="block text-sm">
+                      <span className="text-slate-600">Nom du contact / représentant (optionnel)</span>
+                      <input
+                        value={form.nomComplet}
+                        onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                        placeholder="Personne à joindre au sein de l’entreprise"
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                        autoComplete="name"
+                      />
+                    </label>
+                  ) : (
+                    <label className="block text-sm">
+                      <span className="text-slate-600">Raison sociale / enseigne (optionnel)</span>
+                      <input
+                        value={form.raisonSociale}
+                        onChange={(e) => setForm((f) => ({ ...f, raisonSociale: e.target.value }))}
+                        placeholder="Si enseigne distincte du nom"
+                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                      />
+                    </label>
+                  )}
                   <label className="block text-sm">
                     <span className="text-slate-600">Identifiant client (N° CNI) *</span>
                     <input
@@ -1111,15 +1210,43 @@ export default function ClientsPanel() {
               ) : (
                 <>
                   <label className="block text-sm">
-                    <span className="text-slate-600">Nom complet *</span>
+                    <span className="text-slate-600">
+                      {form.categorie === "ENTREPRISE" ? "Raison sociale *" : "Nom complet *"}
+                    </span>
                     <input
                       required
-                      value={form.nomComplet}
-                      onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                      value={form.categorie === "ENTREPRISE" ? form.raisonSociale : form.nomComplet}
+                      onChange={(e) =>
+                        setForm((f) =>
+                          f.categorie === "ENTREPRISE"
+                            ? { ...f, raisonSociale: e.target.value }
+                            : { ...f, nomComplet: e.target.value },
+                        )
+                      }
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                      autoComplete="name"
+                      autoComplete={form.categorie === "ENTREPRISE" ? "organization" : "name"}
                     />
                   </label>
+                  {form.categorie === "ENTREPRISE" ? (
+                    <label className="block text-sm">
+                      <span className="text-slate-600">Nom du contact / représentant</span>
+                      <input
+                        value={form.nomComplet}
+                        onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                        className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                        autoComplete="name"
+                      />
+                    </label>
+                  ) : (
+                    <label className="block text-sm">
+                      <span className="text-slate-600">Raison sociale / enseigne (optionnel)</span>
+                      <input
+                        value={form.raisonSociale}
+                        onChange={(e) => setForm((f) => ({ ...f, raisonSociale: e.target.value }))}
+                        className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                      />
+                    </label>
+                  )}
                   <label className="block text-sm">
                     <span className="text-slate-600">Identifiant client (N° CNI)</span>
                     <input

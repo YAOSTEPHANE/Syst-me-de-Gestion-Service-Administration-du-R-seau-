@@ -3,12 +3,14 @@
 import type { ReactNode } from "react";
 import { useCallback, useEffect, useState } from "react";
 
+import { clientDisplayName, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 
 /** Ligne renvoyée par GET /api/clients (champs utiles au métier). */
 export type ClientPickerRow = {
   id: string;
   code: string;
+  categorie?: string | null;
   nomComplet?: string | null;
   raisonSociale?: string | null;
   agenceId?: string | null;
@@ -18,10 +20,16 @@ export type ClientPickerRow = {
 };
 
 export function formatClientPickerLabel(c: ClientPickerRow): string {
-  const name = (c.nomComplet || c.raisonSociale || "").trim();
+  const name = clientDisplayName({
+    categorie: c.categorie,
+    nomComplet: c.nomComplet,
+    raisonSociale: c.raisonSociale ?? "",
+  });
   const code = (c.code || "").trim();
-  if (code && name) return `${code} — ${name}`;
-  return name || code || c.id;
+  const categorie = normalizeClientCategorie(c.categorie);
+  const typeTag = categorie === "ENTREPRISE" ? " [Entreprise]" : "";
+  if (code && name) return `${code} — ${name}${typeTag}`;
+  return `${name || code || c.id}${typeTag}`;
 }
 
 export function pickProduitCodeFromClient(
@@ -57,6 +65,7 @@ function normalizeItem(raw: Record<string, unknown>): ClientPickerRow | null {
   return {
     id,
     code: String(raw.code ?? ""),
+    categorie: (raw.categorie as string | null | undefined) ?? null,
     nomComplet: (raw.nomComplet as string | null | undefined) ?? null,
     raisonSociale: (raw.raisonSociale as string | null | undefined) ?? null,
     agenceId: (raw.agenceId as string | null | undefined) ?? null,
