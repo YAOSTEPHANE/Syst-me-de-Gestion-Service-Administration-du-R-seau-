@@ -36,6 +36,10 @@ describe("POST /api/notifications/[id]/read", () => {
       rbac: { resource: "NOTIFICATIONS", action: "UPDATE" },
     });
     expect(markNotificationReadMock).toHaveBeenCalledWith("notification-1", "user-1");
+    expect(response).toBeDefined();
+    if (!response) {
+      throw new Error("La route doit retourner une réponse.");
+    }
     expect(response.status).toBe(200);
   });
 });
