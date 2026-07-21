@@ -3634,6 +3634,201 @@ body.lonaci-db-no-scroll {
   color: #fdba74;
 }
 
+.lonaci-db-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.lonaci-db-nav-search input:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.lonaci-db-nav-order-toolbar {
+  margin: 0 4px 12px;
+  padding: 9px;
+  border: 1px solid rgba(249, 115, 22, 0.3);
+  border-radius: 10px;
+  background:
+    linear-gradient(145deg, rgba(249, 115, 22, 0.13), rgba(16, 35, 61, 0.92));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.lonaci-db-nav-order-start,
+.lonaci-db-nav-order-cancel,
+.lonaci-db-nav-order-save {
+  min-height: 44px;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.lonaci-db-nav-order-start {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  border: 1px solid rgba(249, 115, 22, 0.48);
+  background: rgba(249, 115, 22, 0.12);
+  color: #fed7aa;
+}
+
+.lonaci-db-nav-order-start:hover {
+  border-color: #fb923c;
+  background: rgba(249, 115, 22, 0.22);
+  color: #fff7ed;
+}
+
+.lonaci-db-nav-order-instructions {
+  margin: 0 0 9px;
+  color: #cbd5e1;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.lonaci-db-nav-order-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.lonaci-db-nav-order-cancel {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+}
+
+.lonaci-db-nav-order-save {
+  border: 1px solid #fb923c;
+  background: #f97316;
+  color: #081426;
+}
+
+.lonaci-db-nav-order-start:disabled,
+.lonaci-db-nav-order-cancel:disabled,
+.lonaci-db-nav-order-save:disabled {
+  cursor: wait;
+  opacity: 0.58;
+}
+
+.lonaci-db-nav-order-entry {
+  position: relative;
+}
+
+.lonaci-db-nav-order-entry--dragging {
+  opacity: 0.5;
+}
+
+.lonaci-db-nav-order-entry--drop-before::before,
+.lonaci-db-nav-order-entry--drop-after::after {
+  position: absolute;
+  z-index: 2;
+  right: 4px;
+  left: 4px;
+  height: 2px;
+  border-radius: 999px;
+  background: #fb923c;
+  box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.16);
+  content: "";
+}
+
+.lonaci-db-nav-order-entry--drop-before::before {
+  top: -1px;
+}
+
+.lonaci-db-nav-order-entry--drop-after::after {
+  bottom: -1px;
+}
+
+.lonaci-db-nav-row--ordering {
+  align-items: stretch;
+  margin: 2px 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.lonaci-db-nav-item.lonaci-db-nav-item-editing {
+  min-width: 0;
+  padding-right: 3px;
+  cursor: default;
+  color: #e2e8f0;
+}
+
+.lonaci-db-nav-item.lonaci-db-nav-item-editing:hover {
+  background: transparent;
+}
+
+.lonaci-db-nav-order-controls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+}
+
+.lonaci-db-nav-drag-handle,
+.lonaci-db-nav-order-button {
+  display: inline-grid;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.lonaci-db-nav-drag-handle {
+  cursor: grab;
+}
+
+.lonaci-db-nav-drag-handle:active {
+  cursor: grabbing;
+}
+
+.lonaci-db-nav-drag-handle:hover,
+.lonaci-db-nav-order-button:hover:not(:disabled) {
+  background: rgba(249, 115, 22, 0.13);
+  color: #fdba74;
+}
+
+.lonaci-db-nav-order-button:disabled,
+.lonaci-db-nav-drag-handle:disabled {
+  cursor: not-allowed;
+  opacity: 0.28;
+}
+
+.lonaci-db-nav-order-start:focus-visible,
+.lonaci-db-nav-order-cancel:focus-visible,
+.lonaci-db-nav-order-save:focus-visible,
+.lonaci-db-nav-drag-handle:focus-visible,
+.lonaci-db-nav-order-button:focus-visible {
+  position: relative;
+  z-index: 3;
+  outline: 2px solid #fb923c;
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px) {
+  .lonaci-db-nav-drag-handle {
+    display: none;
+  }
+
+  .lonaci-db-nav-row--ordering .lonaci-db-nav-item {
+    padding-left: 7px;
+  }
+}
+
 .lonaci-db-sidebar-collapsed .lonaci-db-sidebar {
   width: 74px;
 }

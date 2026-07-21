@@ -25,6 +25,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+import {
+  LONACI_NAV_CATALOG,
+  type KnownNavHref,
+} from "@/lib/lonaci/nav-catalog";
+
 export type LonaciNavItem = {
   href: string;
   label: string;
@@ -35,31 +40,38 @@ export type LonaciNavItem = {
   disabled?: boolean;
 };
 
-export const LONACI_NAV: LonaciNavItem[] = [
-  { href: "/dashboard", label: "Tableau de bord", icon: Gauge, iconColor: "#38bdf8", section: "Principal" },
-  { href: "/clients", label: "Clients", icon: Users, iconColor: "#22d3ee", section: "Parcours" },
-  { href: "/dossiers", label: "Dossiers", icon: FolderKanban, iconColor: "#f472b6", badge: "dossiers" },
-  { href: "/cautions", label: "Cautions", icon: HandCoins, iconColor: "#fbbf24", badge: "cautions" },
-  { href: "/concessionnaires", label: "Concessionnaires", icon: Building2, iconColor: "#fb923c" },
-  { href: "/contrats", label: "Contrats", icon: FileSignature, iconColor: "#818cf8" },
-  { href: "/agrements", label: "Agréments", icon: BadgeCheck, iconColor: "#34d399", badge: "agrements" },
-  { href: "/pdv-integrations", label: "Géolocalisation PDV", icon: MapPinned, iconColor: "#2dd4bf", badge: "pdv" },
-  { href: "/attestations-domiciliation", label: "Attestations & domiciliation", icon: FileCheck2, iconColor: "#4ade80" },
-  { href: "/bancarisation", label: "Bancarisation", icon: Banknote, iconColor: "#86efac", badge: "bancarisation" },
-  { href: "/cessions", label: "Cessions & Déloc.", icon: FileInput, iconColor: "#c084fc", section: "Opérations" },
-  { href: "/resiliations", label: "Résiliations", icon: ReceiptText, iconColor: "#fb7185" },
-  { href: "/succession", label: "Décès et ayants droit", icon: HeartHandshake, iconColor: "#f9a8d4", badge: "succession" },
-  { href: "/gpr", label: "Création de code grattage", icon: Sparkles, iconColor: "#fde047" },
-  { href: "/contrats-grattage", label: "Contrats grattage", icon: ScrollText, iconColor: "#fdba74" },
-  { href: "/dispatcher", label: "Dispatcher codes grattage", icon: ScanLine, iconColor: "#67e8f9", section: "Opérations" },
-  { href: "/registres", label: "Registres", icon: BookOpenText, iconColor: "#93c5fd" },
-  { href: "/carte-pdv", label: "Carte PDV", icon: Map, iconColor: "#5eead4", section: "Pilotage" },
-  { href: "/rapports", label: "Rapports", icon: FileBarChart, iconColor: "#a5b4fc" },
-  { href: "/alertes", label: "Toutes les alertes", icon: AlertTriangle, iconColor: "#f87171" },
-  { href: "/assistant-operations", label: "Assistant opérations", icon: Bot, iconColor: "#d8b4fe" },
-  { href: "/import", label: "Import", icon: Import, iconColor: "#a78bfa", section: "Administration" },
-  { href: "/parametres", label: "Paramètres", icon: Settings, iconColor: "#cbd5e1" },
-];
+type LonaciNavVisual = Pick<LonaciNavItem, "icon" | "iconColor" | "badge" | "disabled">;
+
+const LONACI_NAV_VISUALS: Record<KnownNavHref, LonaciNavVisual> = {
+  "/dashboard": { icon: Gauge, iconColor: "#38bdf8" },
+  "/clients": { icon: Users, iconColor: "#22d3ee" },
+  "/dossiers": { icon: FolderKanban, iconColor: "#f472b6", badge: "dossiers" },
+  "/cautions": { icon: HandCoins, iconColor: "#fbbf24", badge: "cautions" },
+  "/concessionnaires": { icon: Building2, iconColor: "#fb923c" },
+  "/contrats": { icon: FileSignature, iconColor: "#818cf8" },
+  "/agrements": { icon: BadgeCheck, iconColor: "#34d399", badge: "agrements" },
+  "/pdv-integrations": { icon: MapPinned, iconColor: "#2dd4bf", badge: "pdv" },
+  "/attestations-domiciliation": { icon: FileCheck2, iconColor: "#4ade80" },
+  "/bancarisation": { icon: Banknote, iconColor: "#86efac", badge: "bancarisation" },
+  "/cessions": { icon: FileInput, iconColor: "#c084fc" },
+  "/resiliations": { icon: ReceiptText, iconColor: "#fb7185" },
+  "/succession": { icon: HeartHandshake, iconColor: "#f9a8d4", badge: "succession" },
+  "/gpr": { icon: Sparkles, iconColor: "#fde047" },
+  "/contrats-grattage": { icon: ScrollText, iconColor: "#fdba74" },
+  "/dispatcher": { icon: ScanLine, iconColor: "#67e8f9" },
+  "/registres": { icon: BookOpenText, iconColor: "#93c5fd" },
+  "/carte-pdv": { icon: Map, iconColor: "#5eead4" },
+  "/rapports": { icon: FileBarChart, iconColor: "#a5b4fc" },
+  "/alertes": { icon: AlertTriangle, iconColor: "#f87171" },
+  "/assistant-operations": { icon: Bot, iconColor: "#d8b4fe" },
+  "/import": { icon: Import, iconColor: "#a78bfa" },
+  "/parametres": { icon: Settings, iconColor: "#cbd5e1" },
+};
+
+export const LONACI_NAV: LonaciNavItem[] = LONACI_NAV_CATALOG.map((item) => ({
+  ...item,
+  ...LONACI_NAV_VISUALS[item.href],
+}));
 
 export const LONACI_AGENCES = [
   { value: "", label: "Toutes les agences" },

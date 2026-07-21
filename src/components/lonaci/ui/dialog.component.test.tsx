@@ -26,6 +26,19 @@ function DialogHarness({ onClose }: { onClose: () => void }) {
   );
 }
 
+function ControlledDialogHarness() {
+  const [value, setValue] = useState("");
+  return (
+    <Dialog open onOpenChange={() => undefined} title="Créer un client">
+      <input
+        aria-label="Nom du client"
+        value={value}
+        onChange={(event) => setValue(event.target.value)}
+      />
+    </Dialog>
+  );
+}
+
 describe("Dialog", () => {
   it("nomme la fenêtre, place le focus et la ferme avec Échap", async () => {
     const user = userEvent.setup();
@@ -55,5 +68,17 @@ describe("Dialog", () => {
     close.focus();
     await user.tab({ shift: true });
     expect(document.activeElement).toBe(validate);
+  });
+
+  it("conserve le focus dans un champ contrôlé pendant la saisie", async () => {
+    const user = userEvent.setup();
+    render(<ControlledDialogHarness />);
+    const input = await screen.findByLabelText("Nom du client");
+
+    await user.click(input);
+    await user.type(input, "Client 2026");
+
+    expect((input as HTMLInputElement).value).toBe("Client 2026");
+    expect(document.activeElement).toBe(input);
   });
 });

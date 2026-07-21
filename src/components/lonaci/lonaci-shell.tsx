@@ -3,7 +3,10 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  ArrowDown,
+  ArrowUp,
   Bell,
+  GripVertical,
   ChevronLeft,
   ChevronRight,
   LogOut,
@@ -20,8 +23,10 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent,
   type ReactNode,
 } from "react";
+import { toast } from "sonner";
 
 import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
 import {
@@ -38,6 +43,13 @@ import { IconButton } from "@/components/lonaci/ui/button";
 import { canRole, type RbacAction, type RbacResource } from "@/lib/auth/rbac";
 import { LONACI_ROLES, getLonaciRoleLabel, type LonaciRole } from "@/lib/lonaci/constants";
 import { lonaciShellHeader } from "@/lib/lonaci/lonaci-shell-header";
+import {
+  getDefaultMenuOrder,
+  mergeMenuOrder,
+  toMenuOrder,
+  type MenuOrderSection,
+  type ResolvedNavCatalogItem,
+} from "@/lib/lonaci/nav-catalog";
 
 const SIDEBAR_STORAGE_KEY = "lonaci-sidebar-collapsed";
 const SIDEBAR_STORE_EVENT = "lonaci:sidebar-collapsed";
@@ -85,6 +97,123 @@ const NAV_RBAC_RULES: Partial<Record<string, { resource: RbacResource; action: R
   "/rapports": { resource: "REPORTS", action: "READ" },
   "/alertes": { resource: "ALERTS", action: "READ" },
 };
+
+type MenuDropEdge = "before" | "after";
+
+function cloneMenuOrder(order: readonly MenuOrderSection[]): MenuOrderSection[] {
+  return order.map((section) => ({
+    section: section.section,
+    hrefs: [...section.hrefs],
+  }));
+}
+
+function parseMenuOrderResponse(value: unknown): MenuOrderSection[] | null {
+  if (typeof value !== "object" || value === null || !("order" in value)) {
+    return null;
+  }
+  const order = value.order;
+  if (!Array.isArray(order)) return null;
+  const parsed: MenuOrderSection[] = [];
+  for (const entry of order) {
+    const hrefs: unknown =
+      typeof entry === "object" && entry !== null && "hrefs" in entry
+        ? entry.hrefs
+        : null;
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      !("section" in entry) ||
+      typeof entry.section !== "string" ||
+      !Array.isArray(hrefs) ||
+      !hrefs.every((href: unknown): href is string => typeof href === "string")
+    ) {
+      return null;
+    }
+    parsed.push({ section: entry.section, hrefs: [...hrefs] });
+  }
+  return parsed;
+}
+
+function parseApiErrorMessage(value: unknown): string | null {
+  if (
+    typeof value === "object" &&
+    value !== null &&
+    "message" in value &&
+    typeof value.message === "string"
+  ) {
+    return value.message;
+  }
+  return null;
+}
+
+function focusFirstVisible(selector: string): void {
+  const element = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(selector),
+  ).find((candidate) => candidate.getClientRects().length > 0 && !candidate.disabled);
+  element?.focus();
+}
+
+function MenuOrderControls({
+  item,
+  busy,
+  grabbed,
+  canMoveUp,
+  canMoveDown,
+  onMove,
+  onDragStart,
+  onDragEnd,
+}: {
+  item: ResolvedNavCatalogItem<LonaciNavItem>;
+  busy: boolean;
+  grabbed: boolean;
+  canMoveUp: boolean;
+  canMoveDown: boolean;
+  onMove: (href: string, direction: -1 | 1) => void;
+  onDragStart: (event: DragEvent<HTMLButtonElement>, item: ResolvedNavCatalogItem<LonaciNavItem>) => void;
+  onDragEnd: () => void;
+}) {
+  return (
+    <div className="lonaci-db-nav-order-controls" aria-label={`Position de ${item.label}`}>
+      <button
+        type="button"
+        className="lonaci-db-nav-drag-handle"
+        data-menu-order-control={item.href}
+        draggable={!busy}
+        aria-grabbed={grabbed}
+        aria-describedby="lonaci-menu-order-instructions"
+        aria-label={`Déplacer ${item.label} par glisser-déposer dans la section ${item.resolvedSection}`}
+        title="Glisser pour déplacer dans cette section"
+        disabled={busy}
+        onDragStart={(event) => onDragStart(event, item)}
+        onDragEnd={onDragEnd}
+      >
+        <GripVertical size={18} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="lonaci-db-nav-order-button"
+        data-menu-order-control={item.href}
+        aria-label={`Monter ${item.label}`}
+        title="Monter"
+        disabled={busy || !canMoveUp}
+        onClick={() => onMove(item.href, -1)}
+      >
+        <ArrowUp size={16} aria-hidden="true" />
+      </button>
+      <button
+        type="button"
+        className="lonaci-db-nav-order-button"
+        data-menu-order-control={item.href}
+        aria-label={`Descendre ${item.label}`}
+        title="Descendre"
+        disabled={busy || !canMoveDown}
+        onClick={() => onMove(item.href, 1)}
+      >
+        <ArrowDown size={16} aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 function LonaciShellChrome({ children }: { children: ReactNode }) {
   const router = useRouter();
@@ -166,6 +295,20 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const [meUser, setMeUser] = useState<{ role: string; prenom: string; nom: string } | null>(null);
   const [navQuery, setNavQuery] = useState("");
   const [favoriteModuleHrefs, setFavoriteModuleHrefs] = useState<string[]>([]);
+  const [savedMenuOrder, setSavedMenuOrder] = useState<MenuOrderSection[]>(() =>
+    getDefaultMenuOrder(LONACI_NAV),
+  );
+  const [draftMenuOrder, setDraftMenuOrder] = useState<MenuOrderSection[]>(() =>
+    getDefaultMenuOrder(LONACI_NAV),
+  );
+  const [menuOrderLoading, setMenuOrderLoading] = useState(true);
+  const [editingMenuOrder, setEditingMenuOrder] = useState(false);
+  const [savingMenuOrder, setSavingMenuOrder] = useState(false);
+  const [draggedMenuHref, setDraggedMenuHref] = useState<string | null>(null);
+  const [menuDropTarget, setMenuDropTarget] = useState<{
+    href: string;
+    edge: MenuDropEdge;
+  } | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -271,6 +414,37 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   }, [router]);
 
   useEffect(() => {
+    if (!meUser?.role) return;
+    const controller = new AbortController();
+    setMenuOrderLoading(true);
+    void (async () => {
+      try {
+        const response = await fetch("/api/menu-order", {
+          credentials: "include",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        if (!response.ok) throw new Error("Ordre du menu indisponible");
+        const parsed = parseMenuOrderResponse(await response.json());
+        if (!parsed) throw new Error("Réponse d'ordre du menu invalide");
+        const canonical = toMenuOrder(mergeMenuOrder(LONACI_NAV, parsed));
+        setSavedMenuOrder(canonical);
+        setDraftMenuOrder(cloneMenuOrder(canonical));
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Impossible de charger l'ordre global du menu.",
+        );
+      } finally {
+        if (!controller.signal.aborted) setMenuOrderLoading(false);
+      }
+    })();
+    return () => controller.abort();
+  }, [meUser?.role]);
+
+  useEffect(() => {
     try {
       const raw = window.localStorage.getItem(FAVORITE_MODULES_STORAGE_KEY);
       if (!raw) return;
@@ -284,10 +458,19 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
 
   const { title, sub } = lonaciShellHeader(pathname ?? "/", kpi, agenceKey);
 
+  const orderedNavigation = useMemo(
+    () =>
+      mergeMenuOrder(
+        LONACI_NAV,
+        editingMenuOrder ? draftMenuOrder : savedMenuOrder,
+      ),
+    [draftMenuOrder, editingMenuOrder, savedMenuOrder],
+  );
+
   const navItems = useMemo(() => {
     const roleRaw = meUser?.role ?? "";
     const role = LONACI_ROLES.includes(roleRaw as LonaciRole) ? (roleRaw as LonaciRole) : null;
-    const visibleNav = LONACI_NAV.filter((item) => {
+    const visibleNav = orderedNavigation.filter((item) => {
       if (role === "DISPATCHER") {
         return item.href === "/dispatcher" || item.href === "/parametres";
       }
@@ -296,7 +479,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (!rule || !role) return true;
       return canRole({ role, resource: rule.resource, action: rule.action }).allowed;
     });
-    return visibleNav.map((item: LonaciNavItem) => {
+    return visibleNav.map((item) => {
       const active = !item.disabled && isLonaciNavItemActive(pathname ?? "/", item.href);
       let badgeCount: number | null = null;
       if (kpi && item.badge === "dossiers") badgeCount = kpi.workflowQueues.dossiers;
@@ -307,7 +490,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (kpi && item.badge === "bancarisation") badgeCount = kpi.workflowQueues.bancarisation;
       return { item, active, badgeCount };
     });
-  }, [pathname, kpi, meUser?.role]);
+  }, [pathname, kpi, meUser?.role, orderedNavigation]);
 
   const filteredNavItems = useMemo(() => {
     const query = navQuery.trim().toLowerCase();
@@ -316,14 +499,14 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         ? navItems
         : navItems.filter(({ item }) => {
             const inLabel = item.label.toLowerCase().includes(query);
-            const inSection = item.section?.toLowerCase().includes(query) ?? false;
+            const inSection = item.resolvedSection.toLowerCase().includes(query);
             return inLabel || inSection;
           });
 
     let last = "";
     return base.map((entry) => {
-      const showSection = Boolean(entry.item.section && entry.item.section !== last);
-      if (entry.item.section) last = entry.item.section;
+      const showSection = entry.item.resolvedSection !== last;
+      last = entry.item.resolvedSection;
       return { ...entry, showSection };
     });
   }, [navItems, navQuery]);
@@ -348,6 +531,209 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       return next;
     });
   }, []);
+
+  const beginMenuOrderEdit = useCallback(() => {
+    if (
+      meUser?.role !== "CHEF_SERVICE" ||
+      menuOrderLoading ||
+      savingMenuOrder
+    ) return;
+    setNavQuery("");
+    setSidebarCollapsed(false);
+    setDraftMenuOrder(cloneMenuOrder(savedMenuOrder));
+    setEditingMenuOrder(true);
+    window.requestAnimationFrame(() => {
+      focusFirstVisible("[data-menu-order-control]");
+    });
+  }, [
+    meUser?.role,
+    menuOrderLoading,
+    savedMenuOrder,
+    savingMenuOrder,
+    setSidebarCollapsed,
+  ]);
+
+  const cancelMenuOrderEdit = useCallback(() => {
+    if (savingMenuOrder) return;
+    setDraftMenuOrder(cloneMenuOrder(savedMenuOrder));
+    setEditingMenuOrder(false);
+    setDraggedMenuHref(null);
+    setMenuDropTarget(null);
+    window.requestAnimationFrame(() =>
+      focusFirstVisible("[data-menu-order-start]"),
+    );
+  }, [savedMenuOrder, savingMenuOrder]);
+
+  const canMoveMenuItem = useCallback(
+    (href: string, direction: -1 | 1) => {
+      const section = draftMenuOrder.find((entry) => entry.hrefs.includes(href));
+      if (!section) return false;
+      const index = section.hrefs.indexOf(href);
+      return direction === -1 ? index > 0 : index < section.hrefs.length - 1;
+    },
+    [draftMenuOrder],
+  );
+
+  const moveMenuItem = useCallback((href: string, direction: -1 | 1) => {
+    setDraftMenuOrder((current) =>
+      current.map((section) => {
+        const index = section.hrefs.indexOf(href);
+        const nextIndex = index + direction;
+        if (index < 0 || nextIndex < 0 || nextIndex >= section.hrefs.length) {
+          return section;
+        }
+        const hrefs = [...section.hrefs];
+        [hrefs[index], hrefs[nextIndex]] = [hrefs[nextIndex], hrefs[index]];
+        return { ...section, hrefs };
+      }),
+    );
+  }, []);
+
+  const reorderDraggedMenuItem = useCallback(
+    (sourceHref: string, targetHref: string, edge: MenuDropEdge) => {
+      if (sourceHref === targetHref) return;
+      setDraftMenuOrder((current) =>
+        current.map((section) => {
+          if (
+            !section.hrefs.includes(sourceHref) ||
+            !section.hrefs.includes(targetHref)
+          ) {
+            return section;
+          }
+          const hrefs = section.hrefs.filter((href) => href !== sourceHref);
+          const targetIndex = hrefs.indexOf(targetHref);
+          hrefs.splice(targetIndex + (edge === "after" ? 1 : 0), 0, sourceHref);
+          return { ...section, hrefs };
+        }),
+      );
+    },
+    [],
+  );
+
+  const handleMenuDragStart = useCallback(
+    (
+      event: DragEvent<HTMLButtonElement>,
+      item: ResolvedNavCatalogItem<LonaciNavItem>,
+    ) => {
+      if (!editingMenuOrder || savingMenuOrder) {
+        event.preventDefault();
+        return;
+      }
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", item.href);
+      setDraggedMenuHref(item.href);
+    },
+    [editingMenuOrder, savingMenuOrder],
+  );
+
+  const handleMenuDragOver = useCallback(
+    (
+      event: DragEvent<HTMLDivElement>,
+      target: ResolvedNavCatalogItem<LonaciNavItem>,
+    ) => {
+      if (!draggedMenuHref) return;
+      const sourceSection = draftMenuOrder.find((section) =>
+        section.hrefs.includes(draggedMenuHref),
+      );
+      if (
+        !sourceSection ||
+        sourceSection.section !== target.resolvedSection
+      ) {
+        event.dataTransfer.dropEffect = "none";
+        return;
+      }
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      const bounds = event.currentTarget.getBoundingClientRect();
+      const edge: MenuDropEdge =
+        event.clientY < bounds.top + bounds.height / 2 ? "before" : "after";
+      setMenuDropTarget({ href: target.href, edge });
+    },
+    [draftMenuOrder, draggedMenuHref],
+  );
+
+  const handleMenuDrop = useCallback(
+    (
+      event: DragEvent<HTMLDivElement>,
+      target: ResolvedNavCatalogItem<LonaciNavItem>,
+    ) => {
+      if (!draggedMenuHref) return;
+      const sourceSection = draftMenuOrder.find((section) =>
+        section.hrefs.includes(draggedMenuHref),
+      );
+      if (
+        !sourceSection ||
+        sourceSection.section !== target.resolvedSection
+      ) {
+        return;
+      }
+      event.preventDefault();
+      reorderDraggedMenuItem(
+        draggedMenuHref,
+        target.href,
+        menuDropTarget?.href === target.href ? menuDropTarget.edge : "before",
+      );
+      setDraggedMenuHref(null);
+      setMenuDropTarget(null);
+    },
+    [
+      draftMenuOrder,
+      draggedMenuHref,
+      menuDropTarget,
+      reorderDraggedMenuItem,
+    ],
+  );
+
+  const endMenuDrag = useCallback(() => {
+    setDraggedMenuHref(null);
+    setMenuDropTarget(null);
+  }, []);
+
+  const saveMenuOrder = useCallback(async () => {
+    if (meUser?.role !== "CHEF_SERVICE" || savingMenuOrder) return;
+    const previous = cloneMenuOrder(savedMenuOrder);
+    const optimistic = toMenuOrder(mergeMenuOrder(LONACI_NAV, draftMenuOrder));
+    const toastId = toast.loading("Enregistrement de l'ordre global du menu…");
+    setSavingMenuOrder(true);
+    setSavedMenuOrder(optimistic);
+    setDraftMenuOrder(cloneMenuOrder(optimistic));
+    try {
+      const response = await fetch("/api/menu-order", {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ order: optimistic }),
+      });
+      const body: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(
+          parseApiErrorMessage(body) ??
+            "Impossible d'enregistrer l'ordre global du menu.",
+        );
+      }
+      const canonical = parseMenuOrderResponse(body);
+      if (!canonical) throw new Error("Réponse de sauvegarde invalide.");
+      const merged = toMenuOrder(mergeMenuOrder(LONACI_NAV, canonical));
+      setSavedMenuOrder(merged);
+      setDraftMenuOrder(cloneMenuOrder(merged));
+      setEditingMenuOrder(false);
+      toast.success("Ordre global du menu enregistré.", { id: toastId });
+    } catch (error) {
+      setSavedMenuOrder(previous);
+      setDraftMenuOrder(cloneMenuOrder(optimistic));
+      setEditingMenuOrder(true);
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible d'enregistrer l'ordre global du menu.",
+        { id: toastId },
+      );
+    } finally {
+      setSavingMenuOrder(false);
+      setDraggedMenuHref(null);
+      setMenuDropTarget(null);
+    }
+  }, [draftMenuOrder, meUser?.role, savedMenuOrder, savingMenuOrder]);
 
   const handleLogout = useCallback(async () => {
     if (loggingOut) return;
@@ -464,10 +850,55 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                   onChange={(e) => setNavQuery(e.target.value)}
                   placeholder="Rechercher un module..."
                   aria-label="Rechercher un module"
+                  disabled={editingMenuOrder || savingMenuOrder}
                 />
               </div>
             ) : null}
-            {!sidebarCollapsed && favoriteModules.length > 0 ? (
+            {!sidebarCollapsed && meUser?.role === "CHEF_SERVICE" ? (
+              <div className="lonaci-db-nav-order-toolbar">
+                {editingMenuOrder ? (
+                  <>
+                    <p id="lonaci-menu-order-instructions" className="lonaci-db-nav-order-instructions">
+                      Glissez la poignée sur ordinateur, ou utilisez Monter et Descendre. Un module reste dans sa section.
+                    </p>
+                    <div className="lonaci-db-nav-order-actions">
+                      <button
+                        type="button"
+                        className="lonaci-db-nav-order-cancel"
+                        disabled={savingMenuOrder}
+                        onClick={cancelMenuOrderEdit}
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        className="lonaci-db-nav-order-save"
+                        disabled={savingMenuOrder}
+                        aria-busy={savingMenuOrder}
+                        onClick={() => void saveMenuOrder()}
+                      >
+                        {savingMenuOrder ? "Enregistrement…" : "Enregistrer"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="lonaci-db-nav-order-start"
+                    data-menu-order-start
+                    disabled={menuOrderLoading || savingMenuOrder}
+                    onClick={beginMenuOrderEdit}
+                  >
+                    <GripVertical size={16} aria-hidden="true" />
+                    {menuOrderLoading ? "Chargement de l'ordre…" : "Réorganiser le menu"}
+                  </button>
+                )}
+                <span className="lonaci-db-sr-only" aria-live="polite">
+                  {savingMenuOrder ? "Enregistrement de l'ordre du menu en cours." : ""}
+                </span>
+              </div>
+            ) : null}
+            {!sidebarCollapsed && !editingMenuOrder && favoriteModules.length > 0 ? (
               <div className="lonaci-db-nav-shortcuts">
                 <div className="lonaci-db-nav-shortcuts-title">Favoris</div>
                 <div className="lonaci-db-nav-shortcuts-list">
@@ -484,13 +915,44 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               </div>
             ) : null}
             {filteredNavItems.map(({ item, showSection, active, badgeCount }) => (
-              <div key={`${item.href}-${item.label}`}>
-                {!sidebarCollapsed && showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
-                {item.disabled ? (
+              <div
+                key={`${item.href}-${item.label}`}
+                className={[
+                  "lonaci-db-nav-order-entry",
+                  draggedMenuHref === item.href ? "lonaci-db-nav-order-entry--dragging" : "",
+                  menuDropTarget?.href === item.href
+                    ? `lonaci-db-nav-order-entry--drop-${menuDropTarget.edge}`
+                    : "",
+                ].filter(Boolean).join(" ")}
+                onDragOver={editingMenuOrder ? (event) => handleMenuDragOver(event, item) : undefined}
+                onDrop={editingMenuOrder ? (event) => handleMenuDrop(event, item) : undefined}
+              >
+                {!sidebarCollapsed && showSection ? <div className="lonaci-db-nav-section">{item.resolvedSection}</div> : null}
+                {item.disabled && !editingMenuOrder ? (
                   <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled" title={sidebarCollapsed ? item.label : undefined}>
                     <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                     <span className="lonaci-db-nav-label">{item.label}</span>
                   </span>
+                ) : editingMenuOrder ? (
+                  <div className="lonaci-db-nav-row lonaci-db-nav-row--ordering">
+                    <span
+                      className="lonaci-db-nav-item lonaci-db-nav-item-editing"
+                      aria-label={`${item.label}, section ${item.resolvedSection}`}
+                    >
+                      <LonaciNavIcon icon={item.icon} color={item.iconColor} />
+                      <span className="lonaci-db-nav-label">{item.label}</span>
+                    </span>
+                    <MenuOrderControls
+                      item={item}
+                      busy={savingMenuOrder}
+                      grabbed={draggedMenuHref === item.href}
+                      canMoveUp={canMoveMenuItem(item.href, -1)}
+                      canMoveDown={canMoveMenuItem(item.href, 1)}
+                      onMove={moveMenuItem}
+                      onDragStart={handleMenuDragStart}
+                      onDragEnd={endMenuDrag}
+                    />
+                  </div>
                 ) : (
                   <div className="lonaci-db-nav-row">
                     <Link
@@ -678,16 +1140,81 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 onChange={(e) => setNavQuery(e.target.value)}
                 placeholder="Rechercher un module..."
                 aria-label="Rechercher un module"
+                disabled={editingMenuOrder || savingMenuOrder}
               />
             </div>
+            {meUser?.role === "CHEF_SERVICE" ? (
+              <div className="lonaci-db-nav-order-toolbar">
+                {editingMenuOrder ? (
+                  <>
+                    <p className="lonaci-db-nav-order-instructions">
+                      Utilisez Monter et Descendre. Chaque module reste dans sa section.
+                    </p>
+                    <div className="lonaci-db-nav-order-actions">
+                      <button
+                        type="button"
+                        className="lonaci-db-nav-order-cancel"
+                        disabled={savingMenuOrder}
+                        onClick={cancelMenuOrderEdit}
+                      >
+                        Annuler
+                      </button>
+                      <button
+                        type="button"
+                        className="lonaci-db-nav-order-save"
+                        disabled={savingMenuOrder}
+                        aria-busy={savingMenuOrder}
+                        onClick={() => void saveMenuOrder()}
+                      >
+                        {savingMenuOrder ? "Enregistrement…" : "Enregistrer"}
+                      </button>
+                    </div>
+                  </>
+                ) : (
+                  <button
+                    type="button"
+                    className="lonaci-db-nav-order-start"
+                    data-menu-order-start
+                    disabled={menuOrderLoading || savingMenuOrder}
+                    onClick={beginMenuOrderEdit}
+                  >
+                    <GripVertical size={16} aria-hidden="true" />
+                    {menuOrderLoading ? "Chargement de l'ordre…" : "Réorganiser le menu"}
+                  </button>
+                )}
+              </div>
+            ) : null}
             {filteredNavItems.map(({ item, showSection, active, badgeCount }) => (
-              <div key={`mobile-${item.href}-${item.label}`}>
-                {showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
-                {item.disabled ? (
+              <div
+                key={`mobile-${item.href}-${item.label}`}
+                className="lonaci-db-nav-order-entry"
+              >
+                {showSection ? <div className="lonaci-db-nav-section">{item.resolvedSection}</div> : null}
+                {item.disabled && !editingMenuOrder ? (
                   <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled">
                     <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                     <span>{item.label}</span>
                   </span>
+                ) : editingMenuOrder ? (
+                  <div className="lonaci-db-nav-row lonaci-db-nav-row--ordering">
+                    <span
+                      className="lonaci-db-nav-item lonaci-db-nav-item-editing"
+                      aria-label={`${item.label}, section ${item.resolvedSection}`}
+                    >
+                      <LonaciNavIcon icon={item.icon} color={item.iconColor} />
+                      <span>{item.label}</span>
+                    </span>
+                    <MenuOrderControls
+                      item={item}
+                      busy={savingMenuOrder}
+                      grabbed={draggedMenuHref === item.href}
+                      canMoveUp={canMoveMenuItem(item.href, -1)}
+                      canMoveDown={canMoveMenuItem(item.href, 1)}
+                      onMove={moveMenuItem}
+                      onDragStart={handleMenuDragStart}
+                      onDragEnd={endMenuDrag}
+                    />
+                  </div>
                 ) : (
                   <div className="lonaci-db-nav-row">
                     <Link

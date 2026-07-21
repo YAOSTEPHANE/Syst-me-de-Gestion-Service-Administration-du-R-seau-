@@ -51,8 +51,13 @@ export function Dialog({
 }: DialogProps) {
   const mounted = useSyncExternalStore(subscribeToClient, getClientSnapshot, getServerSnapshot);
   const panelRef = useRef<HTMLDivElement>(null);
+  const onOpenChangeRef = useRef(onOpenChange);
   const titleId = useId();
   const descriptionId = useId();
+
+  useEffect(() => {
+    onOpenChangeRef.current = onOpenChange;
+  }, [onOpenChange]);
 
   useEffect(() => {
     if (!open) return;
@@ -70,7 +75,7 @@ export function Dialog({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onOpenChange(false);
+        onOpenChangeRef.current(false);
         return;
       }
       if (event.key !== "Tab" || !panelRef.current) return;
@@ -101,7 +106,7 @@ export function Dialog({
       document.body.style.overflow = previousOverflow;
       previouslyFocused?.focus();
     };
-  }, [open, onOpenChange]);
+  }, [open]);
 
   if (!mounted || !open) return null;
 
