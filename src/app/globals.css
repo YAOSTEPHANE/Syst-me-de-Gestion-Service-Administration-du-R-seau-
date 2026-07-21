@@ -70,7 +70,7 @@ textarea {
 }
 
 :focus-visible {
-  outline: 3px solid color-mix(in srgb, var(--lonaci-focus) 80%, white);
+  outline: 3px solid #60a5fa;
   outline-offset: 2px;
 }
 
@@ -395,6 +395,7 @@ textarea {
   place-items: center;
   overflow-y: auto;
   background: rgba(7, 20, 38, 0.72);
+  -webkit-backdrop-filter: blur(3px);
   backdrop-filter: blur(3px);
 }
 
