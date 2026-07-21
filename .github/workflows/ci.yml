@@ -28,6 +28,7 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
+      - run: npm run test:components
       - run: npm run check:api-routes
       - run: npm run check:api-zod
       - run: npm run audit:deps
