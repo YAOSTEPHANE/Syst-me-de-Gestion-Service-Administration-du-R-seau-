@@ -530,7 +530,7 @@ export default function ConcessionnaireFicheModal({
   }, [open, onClose, saving, deactivating, pieceUploading, inscriptionRejectionOpen]);
 
   const inputClass =
-    "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
+    "min-w-0 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
 
   const gelee = detail ? isFicheGelee(detail.statut) : false;
   const canEditNotesWhenGelee =
@@ -1110,9 +1110,11 @@ export default function ConcessionnaireFicheModal({
                       className={inputClass}
                     />
                   </label>
-                  <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid gap-2 md:grid-cols-2">
                     <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Téléphone principal</span>
+                      <span className="break-words text-xs font-medium leading-tight text-slate-700">
+                        Téléphone principal
+                      </span>
                       <input
                         value={tel}
                         onChange={(e) => setTel(e.target.value)}
@@ -1121,7 +1123,9 @@ export default function ConcessionnaireFicheModal({
                       />
                     </label>
                     <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Téléphone secondaire</span>
+                      <span className="break-words text-xs font-medium leading-tight text-slate-700">
+                        Téléphone secondaire
+                      </span>
                       <input
                         value={telSecondary}
                         onChange={(e) => setTelSecondary(e.target.value)}

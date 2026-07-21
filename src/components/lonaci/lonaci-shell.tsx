@@ -41,7 +41,6 @@ import { lonaciShellHeader } from "@/lib/lonaci/lonaci-shell-header";
 
 const SIDEBAR_STORAGE_KEY = "lonaci-sidebar-collapsed";
 const SIDEBAR_STORE_EVENT = "lonaci:sidebar-collapsed";
-const RECENT_MODULES_STORAGE_KEY = "lonaci:recent-modules";
 const FAVORITE_MODULES_STORAGE_KEY = "lonaci:favorite-modules";
 
 function subscribeSidebarCollapsed(onStoreChange: () => void) {
@@ -166,7 +165,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const [loggingOut, setLoggingOut] = useState(false);
   const [meUser, setMeUser] = useState<{ role: string; prenom: string; nom: string } | null>(null);
   const [navQuery, setNavQuery] = useState("");
-  const [recentModuleHrefs, setRecentModuleHrefs] = useState<string[]>([]);
   const [favoriteModuleHrefs, setFavoriteModuleHrefs] = useState<string[]>([]);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
@@ -274,18 +272,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(RECENT_MODULES_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as unknown;
-      if (!Array.isArray(parsed)) return;
-      setRecentModuleHrefs(parsed.filter((value): value is string => typeof value === "string").slice(0, 6));
-    } catch {
-      // Ignore invalid storage payloads.
-    }
-  }, []);
-
-  useEffect(() => {
-    try {
       const raw = window.localStorage.getItem(FAVORITE_MODULES_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as unknown;
@@ -342,14 +328,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
     });
   }, [navItems, navQuery]);
 
-  const recentModules = useMemo(
-    () =>
-      recentModuleHrefs
-        .map((href) => navItems.find((entry) => entry.item.href === href))
-        .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
-    [navItems, recentModuleHrefs],
-  );
-
   const favoriteModules = useMemo(
     () =>
       favoriteModuleHrefs
@@ -357,18 +335,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry)),
     [navItems, favoriteModuleHrefs],
   );
-
-  const rememberRecentModule = useCallback((href: string) => {
-    setRecentModuleHrefs((prev) => {
-      const next = [href, ...prev.filter((item) => item !== href)].slice(0, 6);
-      try {
-        window.localStorage.setItem(RECENT_MODULES_STORAGE_KEY, JSON.stringify(next));
-      } catch {
-        // Ignore localStorage write errors.
-      }
-      return next;
-    });
-  }, []);
 
   const toggleFavoriteModule = useCallback((href: string) => {
     setFavoriteModuleHrefs((prev) => {
@@ -501,23 +467,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 />
               </div>
             ) : null}
-            {!sidebarCollapsed && recentModules.length > 0 ? (
-              <div className="lonaci-db-nav-shortcuts">
-                <div className="lonaci-db-nav-shortcuts-title">Récents</div>
-                <div className="lonaci-db-nav-shortcuts-list">
-                  {recentModules.slice(0, 4).map(({ item }) => (
-                    <Link
-                      key={`recent-${item.href}`}
-                      href={item.href}
-                      onClick={() => rememberRecentModule(item.href)}
-                      className="lonaci-db-nav-shortcut"
-                    >
-                      {item.label}
-                    </Link>
-                  ))}
-                </div>
-              </div>
-            ) : null}
             {!sidebarCollapsed && favoriteModules.length > 0 ? (
               <div className="lonaci-db-nav-shortcuts">
                 <div className="lonaci-db-nav-shortcuts-title">Favoris</div>
@@ -526,7 +475,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                     <Link
                       key={`favorite-${item.href}`}
                       href={item.href}
-                      onClick={() => rememberRecentModule(item.href)}
                       className="lonaci-db-nav-shortcut lonaci-db-nav-shortcut--favorite"
                     >
                       ★ {item.label}
@@ -550,7 +498,6 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                       className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
                       title={sidebarCollapsed ? item.label : undefined}
                       aria-current={active ? "page" : undefined}
-                      onClick={() => rememberRecentModule(item.href)}
                     >
                       <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                       <span className="lonaci-db-nav-label">{item.label}</span>
@@ -747,10 +694,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                       href={item.href}
                       className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
                       aria-current={active ? "page" : undefined}
-                      onClick={() => {
-                        rememberRecentModule(item.href);
-                        setMobileMenuOpen(false);
-                      }}
+                      onClick={() => setMobileMenuOpen(false)}
                     >
                       <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                       <span>{item.label}</span>

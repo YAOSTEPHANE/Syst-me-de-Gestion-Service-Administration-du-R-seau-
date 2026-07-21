@@ -741,7 +741,7 @@ export default function ConcessionnairesPanel() {
     return s ? `/carte-pdv?${s}` : "/carte-pdv";
   }, [filterAgenceId, q]);
   const inputClass =
-    "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
+    "min-w-0 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
 
   const agencesTriees = useMemo(
     () =>
@@ -1361,10 +1361,12 @@ export default function ConcessionnairesPanel() {
                             />
                           ) : null}
                         </div>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          <div className="rounded-lg border border-cyan-200 bg-cyan-50/50 p-2">
+                        <div className="grid gap-2 md:grid-cols-2">
+                          <div className="min-w-0 rounded-lg border border-cyan-200 bg-cyan-50/50 p-2">
                             <label className="grid gap-1">
-                              <span className="text-xs font-semibold text-cyan-900">Téléphone principal</span>
+                              <span className="break-words text-xs font-semibold leading-tight text-cyan-900">
+                                Téléphone principal
+                              </span>
                               <input
                                 value={tel}
                                 onChange={(e) => setTel(e.target.value)}
@@ -1373,9 +1375,11 @@ export default function ConcessionnairesPanel() {
                               />
                             </label>
                           </div>
-                          <div className="rounded-lg border border-slate-200 bg-slate-50 p-2">
+                          <div className="min-w-0 rounded-lg border border-slate-200 bg-slate-50 p-2">
                             <label className="grid gap-1">
-                              <span className="text-xs font-semibold text-slate-800">Téléphone secondaire</span>
+                              <span className="break-words text-xs font-semibold leading-tight text-slate-800">
+                                Téléphone secondaire
+                              </span>
                               <input
                                 value={telSecondary}
                                 onChange={(e) => setTelSecondary(e.target.value)}
