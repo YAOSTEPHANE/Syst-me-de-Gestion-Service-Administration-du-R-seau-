@@ -24,6 +24,7 @@ vi.mock("@/lib/auth/guards", () => ({
 vi.mock("@/lib/lonaci/dossiers", () => ({
   ensureDossierIndexes: ensureDossierIndexesMock,
   findDossierById: findDossierByIdMock,
+  findVisibleDossierById: findDossierByIdMock,
   transitionDossier: transitionDossierMock,
 }));
 

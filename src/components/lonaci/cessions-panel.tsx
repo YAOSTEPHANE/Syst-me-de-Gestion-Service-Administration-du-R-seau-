@@ -11,17 +11,26 @@ import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CessionChecklistBlock from "@/components/lonaci/cession-checklist-block";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 import { canRole } from "@/lib/auth/rbac";
 import { CESSION_CHECKLIST_ITEMS_SPEC_52 } from "@/lib/lonaci/cession-document-checklist";
-import { DELOCALISATION_CHECKLIST_ITEMS_SPEC_61 } from "@/lib/lonaci/delocalisation-document-checklist";
 import { usesSimplifiedDelocalisationCircuit } from "@/lib/lonaci/cession-dossier-checklist";
 import { CESSION_STATUTS_SPEC_54 } from "@/lib/lonaci/cession-statut-metier";
 import { operationStatutMetierBadgeClass } from "@/lib/lonaci/cession-operation-statut-metier";
 import { DELOCALISATION_STATUTS_SPEC_63 } from "@/lib/lonaci/delocalisation-statut-metier";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
+import { notify } from "@/lib/toast";
+import { FilePlus2, RefreshCw, X } from "lucide-react";
 
 type CessionStatus =
   | "SAISIE_AGENT"
@@ -212,7 +221,6 @@ export default function CessionsPanel() {
   const pageSize = 20;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [meRole, setMeRole] = useState<string | null>(null);
 
@@ -473,10 +481,7 @@ export default function CessionsPanel() {
         throw new Error(b?.message ?? "Création impossible");
       }
       closeCreate();
-      setToast({
-        type: "success",
-        message: `Demande de ${kindLabel(kind).toLowerCase()} créée.`,
-      });
+      notify.success(`Demande de ${kindLabel(kind).toLowerCase()} créée.`);
       await load(1);
     } catch (e) {
       setCreateError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
@@ -506,10 +511,7 @@ export default function CessionsPanel() {
         setDetailChecklistLive(null);
       }
     } catch (e) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
-      });
+      notify.error(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       setDetailId(null);
     } finally {
       setDetailLoading(false);
@@ -553,12 +555,15 @@ export default function CessionsPanel() {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Transition impossible");
       }
-      setToast({ type: "success", message: "Transition appliquée." });
+      setItems((current) => current.filter((item) => item.id !== id));
+      setTotal((current) => Math.max(0, current - 1));
+      if (detailId === id) closeDetail();
+      notify.success("Transition appliquée.");
       await load(page);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -587,15 +592,14 @@ export default function CessionsPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import cessions terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+      notify.success(
+        `Import cessions terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
           data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
         }.`,
-      });
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -617,6 +621,12 @@ export default function CessionsPanel() {
   const canReject = meRbacRole
     ? canRole({ role: meRbacRole, resource: "CESSIONS", action: "REJECT" }).allowed
     : false;
+  const assignedTransitionTarget = (row: CessionItem): CessionStatus | null =>
+    getAssignedWorkflowTarget({
+      workflow: usesSimplifiedDelocalisationCircuit(row.kind) ? "DELOCALISATIONS" : "CESSIONS",
+      role: meRbacRole,
+      status: row.statut,
+    }) as CessionStatus | null;
 
   const concLabelById = useMemo(() => {
     const map = new Map<string, string>();
@@ -627,32 +637,37 @@ export default function CessionsPanel() {
   }, [concessionnaires]);
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-slate-50 via-white to-indigo-50/40 p-6 shadow-sm">
+    <section className="space-y-5 bg-orange-50/20">
       <div className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-indigo-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-20 left-0 h-44 w-44 rounded-full bg-cyan-200/25 blur-3xl" />
-      <div className="relative mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
+      <PageHeader
+        eyebrow="Gestion des réseaux"
+        title="Cessions & délocalisations"
+        description="Pilotage des demandes, contrôles documentaires et actes officiels."
+        actions={<><Button leadingIcon={FilePlus2} onClick={openCreate}>Créer — {kindLabel(kind)}</Button><Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void load()}>Actualiser</Button></>}
+      />
+      <Surface elevated padding="lg">
+      <div className="relative flex flex-wrap items-start justify-between gap-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-indigo-700">Infinitecore Systeme</p>
-          <h2 className="text-2xl font-semibold text-slate-900">Cessions & délocalisations</h2>
           {kind === "CESSION" ? (
             <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
               <p>
-                <span className="font-semibold text-indigo-900">5.1 — Acte de cession :</span> génération d&apos;un
+                <span className="font-semibold text-indigo-900">Acte de cession :</span> génération d&apos;un
                 acte officiel à partir du cédant et du cessionnaire (PDF depuis le dossier).
               </p>
               <p>
-                <span className="font-semibold text-indigo-900">5.2 — Checklist :</span> pièces obligatoires à
+                <span className="font-semibold text-indigo-900">Checklist :</span> pièces obligatoires à
                 compléter par l&apos;agent ({CESSION_CHECKLIST_ITEMS_SPEC_52.length} pièces communes + documents
                 produit le cas échéant).
               </p>
               <p>
-                <span className="font-semibold text-indigo-900">5.3 — Export liste PDF :</span> téléchargement de la
+                <span className="font-semibold text-indigo-900">Export de la liste PDF :</span> téléchargement de la
                 liste filtrée (période, agence, produit, statut) pour rapports mensuels et contrôles terrain — référence,
                 cédant, cessionnaire, date, statut, agence.
               </p>
               <div className="mt-3 rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
-                  5.4 — Statuts de la cession
+                  Statuts de la cession
                 </p>
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full min-w-md text-left text-[11px]">
@@ -680,12 +695,12 @@ export default function CessionsPanel() {
           {kind === "DELOCALISATION" ? (
             <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
               <p>
-                <span className="font-semibold text-cyan-900">6.1 — Délocalisation simple :</span> checklist par
+                <span className="font-semibold text-cyan-900">Délocalisation simple :</span> checklist par
                 produit, GPS obligatoire, validation Chef de Section puis Chef de Service, mise à jour fiche PDV.
               </p>
               <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
                 <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
-                  6.3 — Statuts de la délocalisation
+                  Statuts de la délocalisation
                 </p>
                 <div className="mt-2 overflow-x-auto">
                   <table className="w-full min-w-md text-left text-[11px]">
@@ -713,7 +728,7 @@ export default function CessionsPanel() {
           {kind === "CESSION_DELOCALISATION" ? (
             <div className="mt-3 max-w-2xl text-[11px] leading-snug text-slate-600">
               <p>
-                <span className="font-semibold text-violet-900">6.2 — Cession-délocalisation :</span> checklists
+                <span className="font-semibold text-violet-900">Cession-délocalisation :</span> checklists
                 cession + délocalisation, deux actes PDF, acquéreur en nouvelle zone, cédant archivé.
               </p>
             </div>
@@ -727,8 +742,8 @@ export default function CessionsPanel() {
             aria-label="Type d'opération"
           >
             <option value="CESSION">Cession</option>
-            <option value="DELOCALISATION">Délocalisation (6.1)</option>
-            <option value="CESSION_DELOCALISATION">Cession-délocalisation (6.2)</option>
+            <option value="DELOCALISATION">Délocalisation</option>
+            <option value="CESSION_DELOCALISATION">Cession-délocalisation</option>
           </select>
           <button
             type="button"
@@ -767,8 +782,9 @@ export default function CessionsPanel() {
           </a>
         </div>
       </div>
+      </Surface>
 
-      <div className="relative mb-3 grid gap-2 rounded-xl border border-slate-200/80 bg-white/90 p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-6">
+      <FilterBar filters={<div className="grid w-full gap-2 sm:grid-cols-2 lg:grid-cols-6">
         <select
           aria-label="Filtre statut"
           value={filterStatut}
@@ -839,19 +855,9 @@ export default function CessionsPanel() {
         >
           Réinitialiser filtres
         </button>
-      </div>
+      </div>} />
 
-      {toast ? (
-        <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${toast.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
-          <div className="flex items-center justify-between gap-3">
-            <span>{toast.message}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-xs underline">
-              Fermer
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
+      {error ? <FeedbackState tone="danger" title="Impossible de charger les opérations" description={error} /> : null}
 
       <div className="mb-3 grid gap-3 sm:grid-cols-3">
         <article className="rounded-xl border border-indigo-200 bg-indigo-50/80 p-3">
@@ -870,19 +876,39 @@ export default function CessionsPanel() {
         </article>
       </div>
 
-      <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-        <button type="button" disabled={page <= 1} onClick={() => void load(page - 1)} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">
-          Préc.
-        </button>
-        <button type="button" disabled={page >= totalPages} onClick={() => void load(page + 1)} className="rounded border border-slate-300 px-2 py-1 disabled:opacity-40">
-          Suiv.
-        </button>
-      </div>
+      <div className="flex justify-end"><Pagination page={page} pageCount={totalPages} onPageChange={(next) => void load(next)} label="Pages des cessions" /></div>
 
       {loading ? (
-        <p className="text-sm text-slate-500">Chargement…</p>
+        <Skeleton lines={5} />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <>
+        <div className="grid gap-3 md:hidden">
+          {items.map((row) => (
+            <Surface key={row.id} padding="md" elevated>
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" onClick={() => void openDetail(row.id)} className="font-mono text-sm font-semibold text-orange-700 underline">{row.reference}</button>
+                <StatusBadge tone={row.statut === "VALIDEE_CHEF_SERVICE" ? "success" : row.statut === "REJETEE" ? "danger" : "warning"}>{row.statutMetierLabel}</StatusBadge>
+              </div>
+              <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
+                <div><dt className="text-slate-500">Type</dt><dd className="font-medium">{kindLabel(row.kind)}</dd></div>
+                <div><dt className="text-slate-500">Date</dt><dd className="font-medium">{new Date(row.dateDemande).toLocaleString("fr-FR")}</dd></div>
+                <div><dt className="text-slate-500">{row.kind === "DELOCALISATION" ? "Concessionnaire" : "Cédant"}</dt><dd className="wrap-break-word font-medium">{concLabelById.get((row.kind === "DELOCALISATION" ? row.concessionnaireId : row.cedantId) ?? "") ?? "—"}</dd></div>
+                <div><dt className="text-slate-500">{row.kind === "DELOCALISATION" ? "Nouvelle agence" : "Bénéficiaire"}</dt><dd className="wrap-break-word font-medium">{row.kind === "DELOCALISATION" ? row.newAgenceId ?? "—" : concLabelById.get(row.beneficiaireId ?? "") ?? "—"}</dd></div>
+              </dl>
+              {row.documentChecklist ? <div className="mt-3"><DossierCompletIndicator complet={row.documentChecklist.complet} size="sm" /></div> : null}
+              {row.attachments.length ? <ul className="mt-3 space-y-1 text-xs">{row.attachments.map((a) => <li key={a.id}><a className="text-orange-700 underline" href={`/api/cessions/${row.id}/attachments/${a.id}`} target="_blank" rel="noopener noreferrer">{a.filename}</a></li>)}</ul> : null}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>Voir le dossier</Button>
+                {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}>Valider N1</Button> : null}
+                {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transition(row.id, "VALIDATION_N2")}>Valider N2</Button> : null}
+                {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" && canFinalize ? <Button size="sm" onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}>Finaliser</Button> : null}
+                {assignedTransitionTarget(row) && canReject ? <Button size="sm" variant="danger" onClick={() => void transition(row.id, "REJETEE")}>Rejeter</Button> : null}
+              </div>
+            </Surface>
+          ))}
+          {!items.length ? <FeedbackState title={`Aucune demande de ${kindLabel(kind).toLowerCase()}`} description="Aucune opération ne correspond aux filtres actifs." /> : null}
+        </div>
+        <div className="hidden overflow-x-auto rounded-xl border border-slate-200 md:block">
           <table className="w-full border-collapse text-left text-sm">
             <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
               <tr>
@@ -935,7 +961,7 @@ export default function CessionsPanel() {
                   <td className="px-3 py-2.5 whitespace-nowrap text-xs">{new Date(row.dateDemande).toLocaleString("fr-FR")}</td>
                   <td className="px-3 py-2.5">
                     <span
-                      className={`inline-flex max-w-[11rem] flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${operationStatutMetierBadgeClass(
+                      className={`inline-flex max-w-44 flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${operationStatutMetierBadgeClass(
                         {
                           kind: row.kind,
                           statut: row.statut,
@@ -989,7 +1015,7 @@ export default function CessionsPanel() {
                       <span className="text-xs text-slate-400">—</span>
                     ) : (
                       <div className="flex flex-wrap justify-end gap-1">
-                        {row.statut === "SAISIE_AGENT" && canValidateN1 ? (
+                        {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -999,7 +1025,7 @@ export default function CessionsPanel() {
                             Valider N1
                           </button>
                         ) : null}
-                        {row.statut === "CONTROLE_CHEF_SECTION" &&
+                        {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" &&
                         usesSimplifiedDelocalisationCircuit(row.kind) &&
                         canFinalize ? (
                           <button
@@ -1011,8 +1037,7 @@ export default function CessionsPanel() {
                             Valider (chef de service)
                           </button>
                         ) : null}
-                        {row.statut === "CONTROLE_CHEF_SECTION" &&
-                        !usesSimplifiedDelocalisationCircuit(row.kind) &&
+                        {assignedTransitionTarget(row) === "VALIDATION_N2" &&
                         canValidateN2 ? (
                           <button
                             type="button"
@@ -1023,7 +1048,9 @@ export default function CessionsPanel() {
                             Valider N2
                           </button>
                         ) : null}
-                        {row.statut === "VALIDATION_N2" && canFinalize ? (
+                        {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" &&
+                        !usesSimplifiedDelocalisationCircuit(row.kind) &&
+                        canFinalize ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -1033,7 +1060,7 @@ export default function CessionsPanel() {
                             Valider + transférer
                           </button>
                         ) : null}
-                        {canReject ? (
+                        {assignedTransitionTarget(row) && canReject ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -1044,11 +1071,10 @@ export default function CessionsPanel() {
                           </button>
                         ) : null}
                         {!(
-                          (row.statut === "SAISIE_AGENT" && canValidateN1) ||
-                          (row.statut === "CONTROLE_CHEF_SECTION" &&
-                            (canValidateN2 || (usesSimplifiedDelocalisationCircuit(row.kind) && canFinalize))) ||
-                          (row.statut === "VALIDATION_N2" && canFinalize) ||
-                          canReject
+                          (assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1) ||
+                          (assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2) ||
+                          (assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" && canFinalize) ||
+                          (assignedTransitionTarget(row) && canReject)
                         ) ? (
                           <span className="text-xs text-slate-400">—</span>
                         ) : null}
@@ -1070,13 +1096,14 @@ export default function CessionsPanel() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {detailId ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="cession-detail-title">
           <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeDetail} />
           <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-violet-50 px-4 py-3">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-indigo-50 via-white to-violet-50 px-4 py-3">
               <div>
                 <h3 id="cession-detail-title" className="text-sm font-semibold text-slate-900">
                   Dossier {detailItem?.reference ?? detailId}
@@ -1091,15 +1118,13 @@ export default function CessionsPanel() {
                 {detailItem ? (
                   <p className="mt-1 text-[11px] text-slate-600" title={detailItem.statutMetierDescription}>
                     <span className="font-semibold text-indigo-900">
-                      {detailItem.kind === "DELOCALISATION" ? "Statut 6.3" : "Statut 5.4"} :
+                      Statut :
                     </span>{" "}
                     {detailItem.statutMetierLabel}
                   </p>
                 ) : null}
               </div>
-              <button type="button" onClick={closeDetail} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">
-                ×
-              </button>
+              <IconButton icon={X} label="Fermer le détail du dossier" size="sm" onClick={closeDetail} />
             </div>
             {detailItem && kindHasChecklistColumn(detailItem.kind) && detailChecklistLive ? (
               <div className="shrink-0 border-b border-slate-200 px-4 py-2">
@@ -1119,13 +1144,13 @@ export default function CessionsPanel() {
                 <div className="space-y-3">
                   {detailItem.linkedOperationId ? (
                     <p className="text-[11px] text-violet-800">
-                      Traçabilité 6.2 : <span className="font-mono">{detailItem.linkedOperationId}</span>
+                      Opération liée : <span className="font-mono">{detailItem.linkedOperationId}</span>
                     </p>
                   ) : null}
                   {(detailItem.kind === "CESSION" || detailItem.kind === "CESSION_DELOCALISATION") && (
                     <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                        5.1 — Acte de cession
+                        Acte de cession
                       </p>
                       <a
                         href={`/api/cessions/${encodeURIComponent(detailItem.id)}/acte-cession/pdf`}
@@ -1186,7 +1211,7 @@ export default function CessionsPanel() {
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-cession-title">
           <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeCreate} disabled={creating} />
           <div className="relative z-10 flex max-h-[84vh] w-full max-w-3xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-indigo-50 via-white to-cyan-50 px-4 py-2">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-indigo-50 via-white to-cyan-50 px-4 py-2">
               <div>
                 <h3 id="create-cession-title" className="text-sm font-semibold text-slate-900">
                   {detailItem ? kindLabel(detailItem.kind) : "Dossier"}
@@ -1197,7 +1222,7 @@ export default function CessionsPanel() {
                     : "Client, ancienne/nouvelle agence, nouvelles coordonnées GPS, motif."}
                 </p>
               </div>
-              <button type="button" onClick={closeCreate} disabled={creating} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">×</button>
+              <IconButton icon={X} label="Fermer le formulaire de création" size="sm" onClick={closeCreate} disabled={creating} />
             </div>
             <form id="create-cession-form" noValidate onSubmit={onCreate} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
               {createError ? <p className="mb-2 text-xs text-rose-700">{createError}</p> : null}
@@ -1208,7 +1233,7 @@ export default function CessionsPanel() {
                   <section className="grid gap-2 rounded-xl border border-indigo-200/70 bg-indigo-50/40 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-700">Informations cession</p>
                     <p className="text-[10px] leading-snug text-indigo-900/80">
-                      Après création : compléter la checklist 5.2 et générer l&apos;acte 5.1 depuis la référence du dossier.
+                      Après création : complétez la checklist et générez l&apos;acte depuis la référence du dossier.
                     </p>
                     <ClientSearchPicker
                       key={`cession-cedant-${createOpen}`}
@@ -1260,8 +1285,8 @@ export default function CessionsPanel() {
                   <section className="grid gap-2 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3">
                     <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">
                       {kind === "CESSION_DELOCALISATION"
-                        ? "Nouvelle zone de l'acquéreur (6.2)"
-                        : "Informations délocalisation (6.1)"}
+                        ? "Nouvelle zone de l'acquéreur"
+                        : "Informations de délocalisation"}
                     </p>
                     {kind === "DELOCALISATION" ? (
                       <ClientSearchPicker

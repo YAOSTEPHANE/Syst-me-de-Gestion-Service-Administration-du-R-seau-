@@ -2,11 +2,9 @@ import "server-only";
 
 import {
   contratPartyFromDossier,
-  type ContratPartyRef,
 } from "@/lib/lonaci/dossier-contrat-party";
 import {
   finalizeContratFromDossier,
-  findContratByDossierId,
   findContratsByDossierId,
   hasActiveContractForParty,
 } from "@/lib/lonaci/contracts";
@@ -84,15 +82,10 @@ export async function finalizeDossierContratActualisation(input: {
     );
 
   if (allProductsHaveContrat) {
-    const dossier = await findDossierById(input.dossierId);
-    if (!dossier) {
-      return {
-        ok: false,
-        code: "DOSSIER_NOT_FOUND",
-        message: "Dossier introuvable.",
-        httpStatus: 404,
-      };
-    }
+    const dossier =
+      before.status === "FINALISE"
+        ? before
+        : await transitionDossier(input.dossierId, "FINALISE", input.actor, input.comment ?? null);
     return {
       ok: true,
       dossier,

@@ -27,13 +27,13 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
   await ensureResiliationIndexes();
-  const item = await getResiliationById(id);
+  const item = await getResiliationById(id, auth.user);
   if (!item) {
     return NextResponse.json({ message: "Résiliation introuvable" }, { status: 404 });
   }
@@ -57,7 +57,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const item = await patchResiliationDocumentChecklist({
       id,
       entries: parsed.data.documentChecklist,
-      actorId: auth.user._id ?? "",
+      actor: auth.user,
     });
     return NextResponse.json({ item }, { status: 200 });
   } catch (e) {

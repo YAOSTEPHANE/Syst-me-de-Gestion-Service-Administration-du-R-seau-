@@ -12,7 +12,7 @@ import {
   parseDelocalisationDocumentChecklist,
   patchDelocalisationDocumentChecklistStatuts,
 } from "@/lib/lonaci/delocalisation-document-checklist";
-import { buildChecklistFromTemplate, normalizeChecklistTemplate } from "@/lib/lonaci/produit-document-checklist";
+import { buildChecklistFromTemplate } from "@/lib/lonaci/produit-document-checklist";
 import type {
   DossierDocumentChecklistPayload,
   DossierDocumentChecklistStatut,
@@ -25,7 +25,7 @@ export function usesSimplifiedDelocalisationCircuit(kind: CessionDossierKind): b
   return kind === "DELOCALISATION";
 }
 
-/** Spec 6.2 — fusion des gabarits cession + délocalisation. */
+/** Fusionne les gabarits de cession et de délocalisation. */
 export function mergeCessionDelocalisationChecklistTemplate(
   produitCode: string | null | undefined,
   produits: ProduitDocument[],

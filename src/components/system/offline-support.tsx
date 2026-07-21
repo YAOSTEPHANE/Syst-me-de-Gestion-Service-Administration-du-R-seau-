@@ -94,10 +94,10 @@ export default function OfflineSupport() {
   if (isOnline && queuedCount === 0 && !syncing) return null;
 
   return (
-    <div className="fixed inset-x-0 top-0 z-50">
+    <div className="fixed inset-x-0 top-0 z-50" role="status" aria-live="polite">
       <div
         className={`px-3 py-2 text-center text-xs font-semibold ${
-          isOnline ? "bg-sky-600 text-white" : "bg-amber-500 text-black"
+          isOnline ? "bg-slate-900 text-white" : "bg-orange-500 text-slate-950"
         }`}
       >
         {!isOnline ? "Mode hors connexion actif." : "Connexion retablie."}{" "}
@@ -110,6 +110,8 @@ export default function OfflineSupport() {
           <button
             type="button"
             onClick={() => setShowDetails((v) => !v)}
+            aria-expanded={showDetails}
+            aria-controls="lonaci-offline-details"
             className={`ml-2 rounded border px-2 py-0.5 ${
               isOnline ? "border-white/60 hover:bg-white/10" : "border-black/40 hover:bg-black/10"
             }`}
@@ -119,7 +121,7 @@ export default function OfflineSupport() {
         ) : null}
       </div>
       {showDetails && queuedCount > 0 ? (
-        <div className="max-h-56 overflow-auto border-b border-slate-200 bg-white p-2 text-xs shadow">
+        <div id="lonaci-offline-details" className="max-h-56 overflow-auto border-b border-slate-200 bg-white p-2 text-xs shadow">
           <div className="mb-2 flex items-center justify-between gap-2">
             <span className="font-semibold text-slate-700">Actions en attente</span>
             <div className="flex items-center gap-2">

@@ -32,10 +32,28 @@ import { readDossierChecklistComplet } from "@/lib/lonaci/produit-document-check
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Download, Save, Trash2 } from "lucide-react";
+
+import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 type TabId = "fiche" | "contrats" | "historique" | "pieces";
 const OTHER_PRODUCT_CODE = "AUTRES";
 const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
+
+type FicheConfirmation =
+  | { kind: "deactivate" }
+  | { kind: "remove-piece"; pieceId: string; filename: string };
+
+const INSCRIPTION_TONES: Record<ConcessionnaireInscriptionStatut, Tone> = {
+  DOSSIER_EN_COURS: "warning",
+  SOUMIS: "info",
+  REJETE: "danger",
+  VALIDE: "success",
+};
 
 interface AgenceRef {
   id: string;
@@ -277,14 +295,17 @@ export default function ConcessionnaireFicheModal({
   const [saving, setSaving] = useState(false);
   const [deactivating, setDeactivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<FicheConfirmation | null>(null);
   const [detail, setDetail] = useState<ConcessionnaireDetail | null>(null);
   const [inscriptionCaution, setInscriptionCaution] = useState<InscriptionCautionSummary | null>(null);
   const [cautionPdfBusy, setCautionPdfBusy] = useState<"provisoire" | "definitive" | null>(null);
 
   const [nom, setNom] = useState("");
   const [prenom, setPrenom] = useState("");
-  const [nomComplet, setNomComplet] = useState("");
   const [inscriptionBusy, setInscriptionBusy] = useState(false);
+  const [inscriptionRejectionOpen, setInscriptionRejectionOpen] = useState(false);
+  const [inscriptionRejectionMotif, setInscriptionRejectionMotif] = useState("");
+  const [inscriptionRejectionError, setInscriptionRejectionError] = useState<string | null>(null);
   const [codeTerminal, setCodeTerminal] = useState("");
   const [codeConcessionnaire, setCodeConcessionnaire] = useState("");
   const [cniNumero, setCniNumero] = useState("");
@@ -387,7 +408,6 @@ export default function ConcessionnaireFicheModal({
       setInscriptionCaution(data.inscriptionCaution ?? null);
       setNom(c.nom ?? "");
       setPrenom(c.prenom ?? "");
-      setNomComplet(c.nomComplet ?? "");
       setCodeTerminal(c.codeTerminal ?? "");
       setCodeConcessionnaire(c.codeConcessionnaire ?? "");
       setCniNumero(c.cniNumero ?? "");
@@ -502,12 +522,12 @@ export default function ConcessionnaireFicheModal({
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
-      if (saving || deactivating || pieceUploading) return;
+      if (saving || deactivating || pieceUploading || inscriptionRejectionOpen) return;
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose, saving, deactivating, pieceUploading]);
+  }, [open, onClose, saving, deactivating, pieceUploading, inscriptionRejectionOpen]);
 
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
@@ -585,6 +605,18 @@ export default function ConcessionnaireFicheModal({
     } finally {
       setInscriptionBusy(false);
     }
+  }
+
+  async function confirmInscriptionRejection() {
+    const motif = inscriptionRejectionMotif.trim();
+    if (!motif) {
+      setInscriptionRejectionError("Le motif de rejet est obligatoire.");
+      return;
+    }
+    await runInscriptionTransition("REJECT", motif);
+    setInscriptionRejectionOpen(false);
+    setInscriptionRejectionMotif("");
+    setInscriptionRejectionError(null);
   }
 
   async function onSaveFiche(e: FormEvent) {
@@ -710,10 +742,6 @@ export default function ConcessionnaireFicheModal({
 
   async function onDeactivate() {
     if (!concessionnaireId || !detail || !saisieReferentiel) return;
-    const ok = window.confirm(
-      "Désactiver cette fiche ? Le statut passera à « Inactif ». Aucune suppression définitive : la fiche et l’historique restent consultables.",
-    );
-    if (!ok) return;
     setDeactivating(true);
     setError(null);
     try {
@@ -763,10 +791,6 @@ export default function ConcessionnaireFicheModal({
 
   async function onRemovePiece(pieceId: string) {
     if (!concessionnaireId || !saisieReferentiel) return;
-    const ok = window.confirm(
-      "Retirer cette pièce du dossier ? Le fichier sera supprimé du stockage (la fiche concessionnaire n’est jamais supprimée).",
-    );
-    if (!ok) return;
     setRemovingPieceId(pieceId);
     setError(null);
     try {
@@ -789,24 +813,36 @@ export default function ConcessionnaireFicheModal({
     }
   }
 
+  async function confirmFicheAction() {
+    if (!confirmation) return;
+    const current = confirmation;
+    if (current.kind === "deactivate") {
+      await onDeactivate();
+    } else {
+      await onRemovePiece(current.pieceId);
+    }
+    setConfirmation(null);
+  }
+
   if (!open || !concessionnaireId) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[10050] flex items-center justify-center p-4"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="fiche-concessionnaire-title"
+    <>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !saving && !deactivating && !pieceUploading && !inscriptionRejectionOpen) onClose();
+      }}
+      title="Fiche concessionnaire"
+      description={
+        detail
+          ? `${detail.codePdv ?? "Code PDV après validation N1"} — ${detail.nomComplet}`
+          : "Chargement de la fiche…"
+      }
+      size="lg"
     >
-      <button
-        type="button"
-        className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
-        aria-label="Fermer"
-        disabled={saving || deactivating}
-        onClick={onClose}
-      />
-      <div className="relative z-10 flex max-h-[min(92vh,880px)] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-slate-200 px-5 py-4">
+      <div className="flex min-h-0 flex-col">
+        <div className="flex shrink-0 flex-wrap items-start justify-between gap-3 border-b border-slate-200 pb-4">
           <div className="min-w-0">
             <h3 id="fiche-concessionnaire-title" className="text-lg font-semibold text-slate-900">
               Fiche concessionnaire
@@ -814,9 +850,9 @@ export default function ConcessionnaireFicheModal({
             {detail ? (
               <p className="mt-0.5 text-sm text-slate-600">
                 <span className="font-mono">{detail.codePdv ?? "Code PDV après validation N1"}</span>
-                <span className="ml-2 rounded-full border border-slate-200 bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                <StatusBadge className="ml-2" tone={INSCRIPTION_TONES[detail.inscriptionStatut] ?? "neutral"}>
                   {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[detail.inscriptionStatut]}
-                </span>
+                </StatusBadge>
               </p>
             ) : (
               <p className="mt-0.5 text-sm text-slate-500">Chargement…</p>
@@ -857,14 +893,12 @@ export default function ConcessionnaireFicheModal({
           ))}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        <div className="min-h-0 flex-1 py-4">
           {error ? (
-            <div className="mb-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
-              {error}
-            </div>
+            <FeedbackState className="mb-3" tone="danger" title="Opération impossible" description={error} aria-live="assertive" />
           ) : null}
 
-          {loading ? <p className="text-sm text-slate-600">Chargement de la fiche…</p> : null}
+          {loading ? <FeedbackState title="Chargement de la fiche" description="Récupération des données et statuts…" /> : null}
 
           {!loading && detail && tab === "fiche" ? (
             <form onSubmit={onSaveFiche} className="grid gap-4">
@@ -945,8 +979,9 @@ export default function ConcessionnaireFicheModal({
                           type="button"
                           disabled={inscriptionBusy}
                           onClick={() => {
-                            const motif = window.prompt("Motif de rejet (obligatoire) :");
-                            if (motif?.trim()) void runInscriptionTransition("REJECT", motif.trim());
+                            setInscriptionRejectionMotif("");
+                            setInscriptionRejectionError(null);
+                            setInscriptionRejectionOpen(true);
                           }}
                           className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-1.5 text-xs font-semibold text-rose-900 hover:bg-rose-100 disabled:opacity-50"
                         >
@@ -1242,7 +1277,7 @@ export default function ConcessionnaireFicheModal({
                     ) : null}
                   </label>
                   <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 px-3 py-2.5 text-xs text-slate-700">
-                    <p className="font-semibold text-indigo-900">Bancarisation (8.3)</p>
+                    <p className="font-semibold text-indigo-900">Bancarisation</p>
                     <p className="mt-1 font-medium text-slate-900">
                       {BANCARISATION_STATUT_LABELS[
                         statutBancarisation as keyof typeof BANCARISATION_STATUT_LABELS
@@ -1290,29 +1325,25 @@ export default function ConcessionnaireFicheModal({
               )}
 
               {!readOnlyFiche ? (
-                <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-4">
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="rounded-lg border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-                  >
-                    {saving ? "Enregistrement…" : "Enregistrer les modifications"}
-                  </button>
+                <Surface padding="sm" className="flex flex-wrap items-center gap-3 border-orange-200 bg-orange-50/30">
+                  <Button type="submit" leadingIcon={Save} loading={saving}>
+                    Enregistrer les modifications
+                  </Button>
                   {canDeactivate && !gelee && detail.statut !== "INACTIF" ? (
-                    <button
-                      type="button"
+                    <Button
+                      variant="danger"
+                      leadingIcon={Trash2}
                       disabled={deactivating || saving}
-                      onClick={() => void onDeactivate()}
-                      className="rounded-lg border border-amber-600 bg-white px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-50 disabled:opacity-50"
+                      onClick={() => setConfirmation({ kind: "deactivate" })}
                     >
-                      {deactivating ? "Désactivation…" : "Désactiver la fiche"}
-                    </button>
+                      Désactiver la fiche
+                    </Button>
                   ) : null}
                   <p className="text-xs text-slate-500">
                     Aucune suppression définitive : la désactivation fixe le statut à « Inactif » et conserve
                     l’historique.
                   </p>
-                </div>
+                </Surface>
               ) : null}
 
               <div className="flex flex-wrap gap-3 text-xs">
@@ -1626,19 +1657,23 @@ export default function ConcessionnaireFicheModal({
                           href={`/api/concessionnaires/${concessionnaireId}/pieces/${p.id}`}
                           target="_blank"
                           rel="noreferrer"
-                          className="rounded-lg border border-cyan-600 bg-white px-3 py-1.5 text-xs font-medium text-cyan-700 hover:bg-cyan-50"
+                          className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-orange-300 bg-white px-3 py-2 text-xs font-semibold text-orange-800 hover:bg-orange-50"
                         >
+                          <Download className="h-4 w-4" aria-hidden="true" />
                           Ouvrir / télécharger
                         </a>
                         {!gelee && saisieReferentiel ? (
-                          <button
-                            type="button"
+                          <Button
+                            size="sm"
+                            variant="danger"
+                            leadingIcon={Trash2}
                             disabled={removingPieceId === p.id}
-                            onClick={() => void onRemovePiece(p.id)}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                            onClick={() =>
+                              setConfirmation({ kind: "remove-piece", pieceId: p.id, filename: p.filename })
+                            }
                           >
-                            {removingPieceId === p.id ? "…" : "Retirer"}
-                          </button>
+                            Retirer
+                          </Button>
                         ) : null}
                       </div>
                     </li>
@@ -1649,6 +1684,84 @@ export default function ConcessionnaireFicheModal({
           ) : null}
         </div>
       </div>
-    </div>
+    </Dialog>
+    <ConfirmDialog
+      open={confirmation !== null}
+      onOpenChange={(next) => {
+        if (!next && !deactivating && !removingPieceId) setConfirmation(null);
+      }}
+      title={confirmation?.kind === "deactivate" ? "Désactiver la fiche" : "Retirer la pièce"}
+      message={
+        confirmation?.kind === "deactivate"
+          ? "Le statut passera à « Inactif ». La fiche et son historique resteront consultables."
+          : `Le fichier « ${confirmation?.kind === "remove-piece" ? confirmation.filename : ""} » sera supprimé du stockage.`
+      }
+      confirmLabel={confirmation?.kind === "deactivate" ? "Désactiver" : "Retirer"}
+      destructive
+      pending={deactivating || removingPieceId !== null}
+      onConfirm={confirmFicheAction}
+    />
+    <Dialog
+      open={inscriptionRejectionOpen}
+      onOpenChange={(next) => {
+        if (!next && !inscriptionBusy) {
+          setInscriptionRejectionOpen(false);
+          setInscriptionRejectionMotif("");
+          setInscriptionRejectionError(null);
+        }
+      }}
+      title="Rejeter l’inscription"
+      description="Motif de rejet (obligatoire) :"
+      size="sm"
+      footer={
+        <>
+          <Button
+            variant="secondary"
+            disabled={inscriptionBusy}
+            onClick={() => {
+              setInscriptionRejectionOpen(false);
+              setInscriptionRejectionMotif("");
+              setInscriptionRejectionError(null);
+            }}
+          >
+            Annuler
+          </Button>
+          <Button
+            variant="danger"
+            loading={inscriptionBusy}
+            onClick={() => void confirmInscriptionRejection()}
+          >
+            Rejeter
+          </Button>
+        </>
+      }
+    >
+      <label className="block text-sm">
+        <span className="font-medium text-slate-700">
+          Motif <span className="text-rose-600">*</span>
+        </span>
+        <textarea
+          data-autofocus
+          required
+          rows={4}
+          value={inscriptionRejectionMotif}
+          disabled={inscriptionBusy}
+          onChange={(event) => {
+            setInscriptionRejectionMotif(event.target.value);
+            if (inscriptionRejectionError) setInscriptionRejectionError(null);
+          }}
+          aria-invalid={inscriptionRejectionError ? "true" : undefined}
+          aria-describedby={inscriptionRejectionError ? "inscription-rejection-error" : undefined}
+          className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-rose-500/20 focus:border-rose-400 focus:ring-4 disabled:bg-slate-100"
+          placeholder="Précisez le motif du rejet…"
+        />
+      </label>
+      {inscriptionRejectionError ? (
+        <p id="inscription-rejection-error" className="mt-2 text-sm font-medium text-rose-700" role="alert">
+          {inscriptionRejectionError}
+        </p>
+      ) : null}
+    </Dialog>
+    </>
   );
 }

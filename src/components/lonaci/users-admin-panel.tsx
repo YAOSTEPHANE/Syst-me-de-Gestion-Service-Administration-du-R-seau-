@@ -1,9 +1,36 @@
 "use client";
 
+import {
+  Download,
+  Edit3,
+  KeyRound,
+  LogOut,
+  Mail,
+  MoreHorizontal,
+  Plus,
+  Power,
+  RefreshCw,
+  ShieldCheck,
+  Trash2,
+  UserRound,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { LONACI_ROLES, LONACI_ROLE_LABELS, getLonaciRoleLabel, getLonaciRoleProfile } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { notify } from "@/lib/toast";
 
 interface AdminUser {
   id: string;
@@ -381,7 +408,7 @@ function AgencesAutoriseesMultiPicker({
             multiple
             size={Math.min(9, AGENCE_CODES_HELP.length)}
             aria-label="Choisir une ou plusieurs agences parmi les codes usuels"
-            className={`${inputClassName} min-h-[7.5rem] py-1`}
+            className={`${inputClassName} min-h-30 py-1`}
             value={fromSelect}
             onChange={(e) => {
               const picked = [...e.target.selectedOptions].map((o) => o.value);
@@ -625,7 +652,7 @@ function ProduitsAutorisesMultiPicker({
             multiple
             size={Math.min(6, PRODUITS_FALLBACK.length)}
             aria-label="Choisir un ou plusieurs produits"
-            className={`${inputClassName} min-h-[6rem] py-1`}
+            className={`${inputClassName} min-h-24 py-1`}
             value={fromSelect}
             onChange={(e) => {
               const picked = [...e.target.selectedOptions].map((o) => o.value.toUpperCase());
@@ -803,7 +830,6 @@ export default function UsersAdminPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [confirmTarget, setConfirmTarget] = useState<AdminUser | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<AdminUser | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
@@ -931,40 +957,6 @@ export default function UsersAdminPanel() {
   }, [searchParams]);
 
   useEffect(() => {
-    if (!createOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && busyId !== "create") setCreateOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [createOpen, busyId]);
-
-  useEffect(() => {
-    if (!passwordTarget) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && busyId !== passwordTarget.id) {
-        setPasswordTarget(null);
-        setAdminNewPassword("");
-        setAdminNewPasswordConfirm("");
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [passwordTarget, busyId]);
-
-  useEffect(() => {
-    if (!deleteTarget) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && busyId !== deleteTarget.id) {
-        setDeleteTarget(null);
-        setDeleteConfirmText("");
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleteTarget, busyId]);
-
-  useEffect(() => {
     if (!rowMenuOpenId) return;
 
     const onMouseDown = (event: MouseEvent) => {
@@ -988,7 +980,6 @@ export default function UsersAdminPanel() {
 
   async function toggleActive(u: AdminUser) {
     setBusyId(u.id);
-    setToast(null);
     try {
       const res = await fetch(`/api/admin/users/${u.id}`, {
         method: "PATCH",
@@ -1001,11 +992,11 @@ export default function UsersAdminPanel() {
         throw new Error(body?.message ?? "Mise à jour impossible");
       }
       await load();
-      setToast({ type: "success", message: !u.actif ? "Compte réactivé." : "Compte désactivé." });
+      notify.success(!u.actif ? "Compte réactivé." : "Compte désactivé.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1015,7 +1006,6 @@ export default function UsersAdminPanel() {
     if (!deleteTarget) return;
     const userId = deleteTarget.id;
     setBusyId(userId);
-    setToast(null);
     try {
       const res = await fetch(`/api/admin/users/${userId}`, {
         method: "DELETE",
@@ -1028,11 +1018,11 @@ export default function UsersAdminPanel() {
       await load();
       setDeleteTarget(null);
       setDeleteConfirmText("");
-      setToast({ type: "success", message: "Utilisateur supprimé." });
+      notify.success("Utilisateur supprimé.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1040,7 +1030,6 @@ export default function UsersAdminPanel() {
 
   async function adminResetPassword(userId: string) {
     setBusyId(userId);
-    setToast(null);
     try {
       const res = await fetch(`/api/admin/users/${userId}/reset-password`, {
         method: "POST",
@@ -1048,21 +1037,14 @@ export default function UsersAdminPanel() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
-      const body = (await res.json().catch(() => null)) as
-        | { message?: string; resetToken?: string; mode?: string }
-        | null;
+      const body = (await res.json().catch(() => null)) as { message?: string; mode?: string } | null;
       if (!res.ok) throw new Error(body?.message ?? "Reset impossible");
       await load();
-      setToast({
-        type: "success",
-        message: body?.resetToken
-          ? `Token reset généré (SMTP off): ${body.resetToken}`
-          : body?.message ?? "Lien de reset envoyé.",
-      });
+      notify.success(body?.message ?? "Lien de réinitialisation envoyé.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1079,15 +1061,14 @@ export default function UsersAdminPanel() {
     const pwd = adminNewPassword.trim();
     const pwd2 = adminNewPasswordConfirm.trim();
     if (pwd.length < 8) {
-      setToast({ type: "error", message: "Le mot de passe doit contenir au moins 8 caractères." });
+      notify.error("Le mot de passe doit contenir au moins 8 caractères.");
       return;
     }
     if (pwd !== pwd2) {
-      setToast({ type: "error", message: "La confirmation ne correspond pas au mot de passe." });
+      notify.error("La confirmation ne correspond pas au mot de passe.");
       return;
     }
     setBusyId(passwordTarget.id);
-    setToast(null);
     try {
       const res = await fetch(`/api/admin/users/${encodeURIComponent(passwordTarget.id)}/reset-password`, {
         method: "POST",
@@ -1099,17 +1080,15 @@ export default function UsersAdminPanel() {
       if (!res.ok) throw new Error(body?.message ?? "Mise à jour impossible");
       await load();
       closePasswordModal();
-      setToast({
-        type: "success",
-        message:
-          body?.mode === "direct"
-            ? "Mot de passe mis à jour. L’utilisateur devra se reconnecter."
-            : "Mot de passe mis à jour.",
-      });
+      notify.success(
+        body?.mode === "direct"
+          ? "Mot de passe mis à jour. L’utilisateur devra se reconnecter."
+          : "Mot de passe mis à jour.",
+      );
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1170,7 +1149,6 @@ export default function UsersAdminPanel() {
   async function saveEdit() {
     if (!editTarget) return;
     setBusyId(editTarget.id);
-    setToast(null);
     setError(null);
     try {
       const agenceIdResolved = editAgenceId.trim()
@@ -1218,11 +1196,11 @@ export default function UsersAdminPanel() {
       await load();
       setEditOpen(false);
       setEditTarget(null);
-      setToast({ type: "success", message: "Compte mis à jour." });
+      notify.success("Compte mis à jour.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1230,7 +1208,6 @@ export default function UsersAdminPanel() {
 
   async function createAccount() {
     setBusyId("create");
-    setToast(null);
     try {
       const splitCsv = (v: string) =>
         v
@@ -1291,11 +1268,11 @@ export default function UsersAdminPanel() {
       setCreateAgencesAutoriseesIds([]);
       setCreateAgencesAutoriseesCsv("");
       await load();
-      setToast({ type: "success", message: "Compte utilisateur créé." });
+      notify.success("Compte utilisateur créé.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1303,7 +1280,6 @@ export default function UsersAdminPanel() {
 
   async function forceLogout(userId: string) {
     setBusyId(userId);
-    setToast(null);
     try {
       const res = await fetch(`/api/admin/users/${userId}/force-logout`, {
         method: "POST",
@@ -1315,11 +1291,11 @@ export default function UsersAdminPanel() {
       }
       await load();
       setConfirmTarget(null);
-      setToast({ type: "success", message: "Déconnexion forcée effectuée avec succès." });
+      notify.success("Déconnexion forcée effectuée avec succès.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -1328,7 +1304,6 @@ export default function UsersAdminPanel() {
   async function runBulkAction(action: "FORCE_LOGOUT" | "ACTIVATE" | "DEACTIVATE") {
     if (!selectedIds.length) return;
     setBusyId(`bulk-${action}`);
-    setToast(null);
     try {
       const res = await fetch("/api/admin/users/bulk", {
         method: "POST",
@@ -1342,826 +1317,753 @@ export default function UsersAdminPanel() {
       }
       await load();
       setSelectedIds([]);
-      setToast({ type: "success", message: body?.message ?? "Action de masse exécutée." });
+      notify.success(body?.message ?? "Action de masse exécutée.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
   }
 
-  return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 sm:p-5 md:p-6">
-      <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-300">Administration</p>
-          <h2 className="mt-1 text-2xl font-semibold text-slate-900">Utilisateurs</h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Gestion des comptes et déconnexion forcée de session active.
-          </p>
-        </div>
-        <div className="grid w-full grid-cols-1 gap-2 sm:grid-cols-2 xl:w-auto">
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded-lg border border-cyan-600 bg-cyan-50 px-3 py-2 text-sm text-cyan-700 hover:bg-cyan-100 disabled:opacity-50"
-          >
-            Rafraîchir
-          </button>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            className="rounded-lg border border-emerald-600 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-          >
-            Créer un compte
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              window.open(
-                `/api/admin/users/export?${new URLSearchParams({
-                  status: statusFilter,
-                  ...(roleFilter !== "ALL" ? { role: roleFilter } : {}),
-                  ...(agenceFilter !== "ALL" ? { agenceId: agenceFilter } : {}),
-                  ...(searchQuery.trim() ? { q: searchQuery.trim() } : {}),
-                }).toString()}`,
-                "_blank",
-                "noopener,noreferrer",
-              )
-            }
-            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-center text-sm font-semibold text-rose-700 hover:bg-rose-100"
-          >
-            Export PDF (utilisateurs)
-          </button>
-          <button
-            type="button"
-            onClick={() => window.open("/api/admin/auth-logs/export", "_blank", "noopener,noreferrer")}
-            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-center text-sm font-semibold text-rose-700 hover:bg-rose-100"
-          >
-            Export PDF (journal auth)
-          </button>
-        </div>
-      </div>
+  function renderUserActions(user: AdminUser) {
+    const isOpen = rowMenuOpenId === user.id;
+    const isBusy = busyId === user.id;
+    const fullName = `${user.prenom} ${user.nom}`.trim();
 
-      <div className="mb-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-        <input
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="Recherche nom, email, matricule…"
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 xl:col-span-2"
-        />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIF" | "INACTIF")}
-          aria-label="Filtrer par statut"
-          className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
+    return (
+      <div className="relative inline-flex" data-user-menu-wrap>
+        <Button
+          variant="ghost"
+          size="sm"
+          leadingIcon={MoreHorizontal}
+          disabled={isBusy}
+          aria-haspopup="menu"
+          aria-expanded={isOpen}
+          aria-label={`Actions pour ${fullName}`}
+          onClick={() => setRowMenuOpenId((current) => (current === user.id ? null : user.id))}
         >
-          <option value="ALL">Tous statuts</option>
-          <option value="ACTIF">Actifs</option>
-          <option value="INACTIF">Inactifs</option>
-        </select>
-        <select
-          value={roleFilter}
-          onChange={(e) => setRoleFilter(e.target.value)}
-          aria-label="Filtrer par rôle"
-          className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
-        >
-          <option value="ALL">Tous rôles</option>
-          {ROLE_OPTIONS.map((role) => (
-            <option key={role} value={role}>
-              {LONACI_ROLE_LABELS[role]}
-            </option>
-          ))}
-        </select>
-        <select
-          value={agenceFilter}
-          onChange={(e) => setAgenceFilter(e.target.value)}
-          aria-label="Filtrer par agence"
-          className="rounded-lg border border-slate-300 bg-white px-2 py-2 text-sm text-slate-700"
-        >
-          <option value="ALL">Toutes agences</option>
-          {agences
-            .filter((a) => a.actif)
-            .map((ag) => (
-              <option key={ag.id} value={ag.id}>
-                {ag.code} — {ag.libelle}
-              </option>
-            ))}
-        </select>
-      </div>
-
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-slate-500">{pagination.total} utilisateur(s) • {selectedIds.length} sélectionné(s)</span>
-        <button
-          type="button"
-          disabled={!selectedIds.length || busyId === "bulk-FORCE_LOGOUT"}
-          onClick={() => void runBulkAction("FORCE_LOGOUT")}
-          className="rounded border border-rose-300 bg-rose-50 px-2.5 py-1.5 text-xs text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-        >
-          Forcer déconnexion (lot)
-        </button>
-        <button
-          type="button"
-          disabled={!selectedIds.length || busyId === "bulk-DEACTIVATE"}
-          onClick={() => void runBulkAction("DEACTIVATE")}
-          className="rounded border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-xs text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-        >
-          Désactiver (lot)
-        </button>
-        <button
-          type="button"
-          disabled={!selectedIds.length || busyId === "bulk-ACTIVATE"}
-          onClick={() => void runBulkAction("ACTIVATE")}
-          className="rounded border border-emerald-300 bg-emerald-50 px-2.5 py-1.5 text-xs text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-        >
-          Réactiver (lot)
-        </button>
-        {!!selectedIds.length ? (
-          <button
-            type="button"
-            onClick={() => setSelectedIds([])}
-            className="rounded border border-slate-300 bg-white px-2.5 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+          Actions
+        </Button>
+        {isOpen ? (
+          <div
+            role="menu"
+            aria-label={`Actions pour ${fullName}`}
+            className="absolute right-0 top-full z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 text-left shadow-xl"
           >
-            Effacer la sélection
-          </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                openEdit(user);
+              }}
+            >
+              <Edit3 size={18} aria-hidden="true" />
+              Modifier le compte
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                setPasswordTarget(user);
+                setAdminNewPassword("");
+                setAdminNewPasswordConfirm("");
+              }}
+            >
+              <KeyRound size={18} aria-hidden="true" />
+              Définir le mot de passe
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                void adminResetPassword(user.id);
+              }}
+            >
+              <Mail size={18} aria-hidden="true" />
+              Envoyer un lien de reset
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                setConfirmTarget(user);
+              }}
+            >
+              <LogOut size={18} aria-hidden="true" />
+              Forcer la déconnexion
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-amber-800 hover:bg-amber-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-orange-500"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                void toggleActive(user);
+              }}
+            >
+              <Power size={18} aria-hidden="true" />
+              {user.actif ? "Désactiver le compte" : "Réactiver le compte"}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              className="flex min-h-11 w-full items-center gap-3 rounded-xl px-3 text-sm font-medium text-rose-700 hover:bg-rose-50 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-rose-600"
+              onClick={() => {
+                setRowMenuOpenId(null);
+                setDeleteTarget(user);
+                setDeleteConfirmText("");
+              }}
+            >
+              <Trash2 size={18} aria-hidden="true" />
+              Supprimer l’utilisateur
+            </button>
+          </div>
         ) : null}
       </div>
+    );
+  }
 
-      {loading ? <p className="text-sm text-slate-600">Chargement...</p> : null}
-      {toast ? (
-        <p
-          className={`mb-3 text-sm ${
-            toast.type === "success" ? "text-emerald-300" : "text-rose-300"
-          }`}
-          role="status"
-          aria-live="polite"
-        >
-          {toast.message}
-        </p>
-      ) : null}
-      {error ? <p className="mb-3 text-sm text-rose-600">{error}</p> : null}
-
-      {!loading ? (
-        <div className="overflow-visible rounded-xl border border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-100 text-slate-600">
-                <tr>
-                  <th className="px-3 py-3">
-                    <input
-                      type="checkbox"
-                      aria-label="Sélectionner toute la page"
-                      checked={items.length > 0 && selectedIds.length === items.length}
-                      onChange={(e) => {
-                        if (e.target.checked) setSelectedIds(items.map((u) => u.id));
-                        else setSelectedIds([]);
-                      }}
-                    />
-                  </th>
-                  <th className="px-3 py-3">Utilisateur</th>
-                  <th className="px-3 py-3">Rôle</th>
-                  <th className="px-3 py-3">Agence</th>
-                  <th className="px-3 py-3">Statut</th>
-                  <th className="px-3 py-3">Dernière connexion</th>
-                  <th className="px-3 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className="text-slate-800">
-                {items.map((u) => (
-                  <tr key={u.id} className="border-t border-slate-200 bg-white hover:bg-slate-50">
-                    <td className="px-3 py-3">
-                      <input
-                        type="checkbox"
-                        aria-label={`Sélectionner ${u.prenom} ${u.nom}`}
-                        checked={selectedIds.includes(u.id)}
-                        onChange={(e) => {
-                          setSelectedIds((prev) =>
-                            e.target.checked ? [...new Set([...prev, u.id])] : prev.filter((id) => id !== u.id),
-                          );
-                        }}
-                      />
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="font-medium">{u.prenom} {u.nom}</div>
-                      <div className="text-xs text-slate-600">{u.email}</div>
-                      {u.matricule ? <div className="text-[11px] text-slate-500">Matricule: {u.matricule}</div> : null}
-                    </td>
-                    <td className="px-3 py-3">
-                      <div className="font-medium">{getLonaciRoleLabel(u.role)}</div>
-                      {getLonaciRoleProfile(u.role)?.responsabilite ? (
-                        <div className="text-[11px] text-slate-500">{getLonaciRoleProfile(u.role)?.responsabilite}</div>
-                      ) : null}
-                    </td>
-                    <td className="px-3 py-3">{u.agenceId ? agenceLabelForId(u.agenceId, agences) : "—"}</td>
-                    <td className="px-3 py-3">{u.actif ? "ACTIF" : "INACTIF"}</td>
-                    <td className="px-3 py-3">
-                      {u.derniereConnexion ? new Date(u.derniereConnexion).toLocaleString("fr-FR") : "—"}
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="relative inline-block" data-user-menu-wrap>
-                        <button
-                          type="button"
-                          disabled={busyId === u.id}
-                          onClick={() => setRowMenuOpenId((prev) => (prev === u.id ? null : u.id))}
-                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                          aria-haspopup="menu"
-                          aria-label={`Actions pour ${u.prenom} ${u.nom}`}
-                        >
-                          {busyId === u.id ? "..." : "Actions"}
-                        </button>
-
-                        {rowMenuOpenId === u.id ? (
-                          <div
-                            role="menu"
-                            aria-label="Actions utilisateur"
-                            className="absolute right-0 mt-2 w-56 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg z-50"
-                          >
-                            <div className="px-3 py-2 text-xs text-slate-500">Utilisateur</div>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                setConfirmTarget(u);
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                            >
-                              Forcer déconnexion
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                void toggleActive(u);
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-amber-700 hover:bg-amber-50 disabled:opacity-50"
-                            >
-                              {u.actif ? "Désactiver" : "Réactiver"}
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                void adminResetPassword(u.id);
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-cyan-700 hover:bg-cyan-50 disabled:opacity-50"
-                            >
-                              Lien reset (e-mail)
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                setPasswordTarget(u);
-                                setAdminNewPassword("");
-                                setAdminNewPasswordConfirm("");
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
-                            >
-                              Définir le mot de passe
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                openEdit(u);
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                            >
-                              Modifier
-                            </button>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRowMenuOpenId(null);
-                                setDeleteTarget(u);
-                                setDeleteConfirmText("");
-                              }}
-                              disabled={busyId === u.id}
-                              className="w-full px-3 py-2 text-left text-sm text-rose-700 hover:bg-rose-50 disabled:opacity-50"
-                            >
-                              Supprimer l&apos;utilisateur
-                            </button>
-                          </div>
-                        ) : null}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {!items.length ? (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-5 text-center text-slate-500">
-                      Aucun utilisateur.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
-            <div>
-              Page {pagination.page} / {pagination.totalPages}
-            </div>
-            <div className="flex items-center gap-2">
-              <label className="flex items-center gap-1">
-                <span>Par page</span>
-                <select
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  className="rounded border border-slate-300 bg-white px-1.5 py-1 text-xs text-slate-700"
-                >
-                  <option value={10}>10</option>
-                  <option value={20}>20</option>
-                  <option value={50}>50</option>
-                </select>
-              </label>
-              <button
-                type="button"
-                disabled={pagination.page <= 1}
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-100 disabled:opacity-50"
-              >
-                Précédent
-              </button>
-              <button
-                type="button"
-                disabled={pagination.page >= pagination.totalPages}
-                onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-                className="rounded border border-slate-300 bg-white px-2 py-1 hover:bg-slate-100 disabled:opacity-50"
-              >
-                Suivant
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {passwordTarget ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <p className="text-xs uppercase tracking-[0.16em] text-indigo-600">Mot de passe</p>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">
-              Définir le mot de passe — {passwordTarget.prenom} {passwordTarget.nom}
-            </h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Compte : <span className="font-mono text-xs">{passwordTarget.email}</span>. L’utilisateur sera
-              déconnecté de ses sessions actives.
-            </p>
-            <div className="mt-4 grid gap-3">
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Nouveau mot de passe (min. 8 caractères)</span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={adminNewPassword}
-                  onChange={(e) => setAdminNewPassword(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Confirmation</span>
-                <input
-                  type="password"
-                  autoComplete="new-password"
-                  value={adminNewPasswordConfirm}
-                  onChange={(e) => setAdminNewPasswordConfirm(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-            </div>
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closePasswordModal}
-                disabled={busyId === passwordTarget.id}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={() => void adminSetPasswordDirect()}
-                disabled={
-                  busyId === passwordTarget.id ||
-                  adminNewPassword.trim().length < 8 ||
-                  adminNewPassword.trim() !== adminNewPasswordConfirm.trim()
-                }
-                className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-              >
-                {busyId === passwordTarget.id ? "Enregistrement…" : "Enregistrer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {confirmTarget ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <p className="text-xs uppercase tracking-[0.16em] text-rose-600">Confirmation</p>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">Forcer la déconnexion ?</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Cette action invalidera la session active de{" "}
-              <span className="font-medium text-slate-900">
-                {confirmTarget.prenom} {confirmTarget.nom}
-              </span>{" "}
-              ({confirmTarget.email}).
-            </p>
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => setConfirmTarget(null)}
-                disabled={busyId === confirmTarget.id}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={() => void forceLogout(confirmTarget.id)}
-                disabled={busyId === confirmTarget.id}
-                className="rounded-lg border border-rose-600 bg-rose-50 px-3 py-2 text-sm text-rose-700 hover:bg-rose-100 disabled:opacity-50"
-              >
-                {busyId === confirmTarget.id ? "Déconnexion..." : "Confirmer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {deleteTarget ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <p className="text-xs uppercase tracking-[0.16em] text-rose-600">Suppression</p>
-            <h3 className="mt-1 text-lg font-semibold text-slate-900">Supprimer cet utilisateur ?</h3>
-            <p className="mt-2 text-sm text-slate-600">
-              Tu vas retirer définitivement{" "}
-              <span className="font-medium text-slate-900">
-                {deleteTarget.prenom} {deleteTarget.nom}
-              </span>{" "}
-              ({deleteTarget.email}) des comptes actifs.
-            </p>
-            <p className="mt-1 text-xs text-slate-500">
-              Cette action désactive la session en cours et masque le compte des listes.
-            </p>
-            <label className="mt-3 grid gap-1">
-              <span className="text-xs text-slate-600">
-                Tapez <span className="font-semibold text-slate-900">SUPPRIMER</span> pour confirmer
-              </span>
-              <input
-                value={deleteConfirmText}
-                onChange={(e) => setDeleteConfirmText(e.target.value)}
-                placeholder="SUPPRIMER"
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              />
-            </label>
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setDeleteTarget(null);
-                  setDeleteConfirmText("");
-                }}
-                disabled={busyId === deleteTarget.id}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                onClick={() => void confirmDeleteUser()}
-                disabled={busyId === deleteTarget.id || deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER"}
-                className="rounded-lg border border-rose-700 bg-rose-700 px-3 py-2 text-sm font-medium text-white hover:bg-rose-800 disabled:opacity-50"
-              >
-                {busyId === deleteTarget.id ? "Suppression..." : "Supprimer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {editOpen && editTarget ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4">
-          <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
-              <div>
-                <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Modification</p>
-                <h3 className="mt-1 text-lg font-semibold text-slate-900">
-                  {editTarget.prenom} {editTarget.nom}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditOpen(false);
-                  setEditTarget(null);
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Prénom</span>
-                <input
-                  value={editPrenom}
-                  onChange={(e) => setEditPrenom(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Nom</span>
-                <input
-                  value={editNom}
-                  onChange={(e) => setEditNom(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Email</span>
-                <input
-                  value={editEmail}
-                  onChange={(e) => setEditEmail(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Matricule (optionnel)</span>
-                <input
-                  value={editMatricule}
-                  onChange={(e) => setEditMatricule(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Rôle</span>
-                <select
-                  value={editRole}
-                  onChange={(e) => setEditRole(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                >
-                  {ROLE_OPTIONS.map((role) => (
-                    <option key={role} value={role}>
-                      {LONACI_ROLE_LABELS[role]}
-                    </option>
-                  ))}
-                </select>
-                {editRoleProfile ? (
-                  <span className="text-[11px] text-slate-500">
-                    {editRoleProfile.designation} — {editRoleProfile.responsabilite}
-                  </span>
-                ) : null}
-              </label>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Agence de rattachement (optionnel)</span>
-                <AgenceRattachementCombobox
-                  agences={agences}
-                  value={editAgenceId}
-                  onChange={setEditAgenceId}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Actif</span>
-                <select
-                  value={editActif ? "true" : "false"}
-                  onChange={(e) => setEditActif(e.target.value === "true")}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                >
-                  <option value="true">ACTIF</option>
-                  <option value="false">INACTIF</option>
-                </select>
-              </label>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Agences autorisées</span>
-                <AgencesAutoriseesMultiPicker
-                  agences={agences}
-                  valueIds={editAgencesAutoriseesIds}
-                  onChangeIds={setEditAgencesAutoriseesIds}
-                  csvFallbackValue={editAgencesAutoriseesCsv}
-                  onCsvFallbackChange={setEditAgencesAutoriseesCsv}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-
-              <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                <p className="text-xs font-medium text-slate-800">Modules</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-                  Ce compte a accès à <strong className="text-slate-800">tous les modules</strong> applicatifs (liste
-                  vide côté serveur : pas de restriction par module, le rôle continue de s’appliquer).
-                </p>
-              </div>
-
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Produits autorisés</span>
-                <ProduitsAutorisesMultiPicker
-                  produits={produits}
-                  valueCodes={editProduitsCodes}
-                  onChangeCodes={setEditProduitsCodes}
-                  csvFallbackValue={editProduitsCsv}
-                  onCsvFallbackChange={setEditProduitsCsv}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-            </div>
-
-            <div className="mt-5 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setEditOpen(false);
-                  setEditTarget(null);
-                }}
-                className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                disabled={busyId === editTarget.id}
-                onClick={() => void saveEdit()}
-                className="rounded-lg border border-cyan-600 bg-cyan-50 px-3 py-2 text-sm font-semibold text-cyan-700 hover:bg-cyan-100 disabled:opacity-50"
-              >
-                {busyId === editTarget.id ? "Sauvegarde..." : "Enregistrer"}
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-6 overflow-hidden rounded-xl border border-slate-200">
-        <div className="border-b border-slate-200 bg-slate-100 px-3 py-2">
-          <h3 className="text-sm font-semibold text-slate-900">Journal de connexion</h3>
-          <p className="text-xs text-slate-600">Date, heure, IP et statut (succès/échec)</p>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="min-w-full text-left text-xs">
-            <thead className="bg-slate-100 text-slate-600">
-              <tr>
-                <th className="px-3 py-2">Date/heure</th>
-                <th className="px-3 py-2">Compte</th>
-                <th className="px-3 py-2">IP</th>
-                <th className="px-3 py-2">Statut</th>
-                <th className="px-3 py-2">Détail</th>
-              </tr>
-            </thead>
-            <tbody className="text-slate-800">
-              {authLogs.map((log) => (
-                <tr key={log.id} className="border-t border-slate-200 bg-white">
-                  <td className="px-3 py-2">{new Date(log.attemptedAt).toLocaleString("fr-FR")}</td>
-                  <td className="px-3 py-2">{log.email}</td>
-                  <td className="px-3 py-2">{log.ipAddress ?? "—"}</td>
-                  <td className="px-3 py-2">{log.status === "SUCCESS" ? "Succès" : "Échec"}</td>
-                  <td className="px-3 py-2">{log.reason ?? "—"}</td>
-                </tr>
-              ))}
-              {!authLogs.length ? (
-                <tr>
-                  <td colSpan={5} className="px-3 py-4 text-center text-slate-500">
-                    Aucun log de connexion.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {createOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-600/20 p-4"
-          role="presentation"
-          onClick={() => {
-            if (busyId !== "create") setCreateOpen(false);
+  const userColumns: DataTableColumn<AdminUser>[] = [
+    {
+      id: "selection",
+      header: (
+        <input
+          type="checkbox"
+          className="size-5"
+          aria-label="Sélectionner tous les utilisateurs de la page"
+          checked={items.length > 0 && selectedIds.length === items.length}
+          onChange={(event) => setSelectedIds(event.target.checked ? items.map((user) => user.id) : [])}
+        />
+      ),
+      cell: (user) => (
+        <input
+          type="checkbox"
+          className="size-5"
+          aria-label={`Sélectionner ${user.prenom} ${user.nom}`}
+          checked={selectedIds.includes(user.id)}
+          onChange={(event) => {
+            setSelectedIds((current) =>
+              event.target.checked
+                ? [...new Set([...current, user.id])]
+                : current.filter((id) => id !== user.id),
+            );
           }}
-        >
-          <div
-            className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="create-user-title"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 pb-4">
-              <h3 id="create-user-title" className="text-lg font-semibold text-slate-900">
-                Nouveau compte utilisateur
-              </h3>
-              <button
-                type="button"
-                onClick={() => {
-                  if (busyId !== "create") setCreateOpen(false);
-                }}
-                disabled={busyId === "create"}
-                className="rounded-lg border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
-            <div className="mt-4 grid gap-2 md:grid-cols-2">
-              <input value={createPrenom} onChange={(e) => setCreatePrenom(e.target.value)} placeholder="Prénom" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
-              <input value={createNom} onChange={(e) => setCreateNom(e.target.value)} placeholder="Nom" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
-              <input value={createEmail} onChange={(e) => setCreateEmail(e.target.value)} placeholder="Email" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2" />
-              <input value={createMatricule} onChange={(e) => setCreateMatricule(e.target.value)} placeholder="Matricule (optionnel)" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
-              <input type="password" value={createPassword} onChange={(e) => setCreatePassword(e.target.value)} placeholder="Mot de passe initial" className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900" />
+        />
+      ),
+    },
+    {
+      id: "user",
+      header: "Utilisateur",
+      cell: (user) => (
+        <div>
+          <strong className="font-semibold text-slate-950">{user.prenom} {user.nom}</strong>
+          <p className="mt-0.5 text-sm text-slate-600">{user.email}</p>
+          {user.matricule ? <p className="mt-0.5 text-xs text-slate-500">Matricule : {user.matricule}</p> : null}
+        </div>
+      ),
+    },
+    {
+      id: "role",
+      header: "Rôle",
+      cell: (user) => (
+        <div>
+          <strong className="font-semibold text-slate-900">{getLonaciRoleLabel(user.role)}</strong>
+          {getLonaciRoleProfile(user.role)?.responsabilite ? (
+            <p className="mt-0.5 max-w-xs text-xs text-slate-500">
+              {getLonaciRoleProfile(user.role)?.responsabilite}
+            </p>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      id: "agence",
+      header: "Agence",
+      cell: (user) => user.agenceId ? agenceLabelForId(user.agenceId, agences) : "—",
+    },
+    {
+      id: "status",
+      header: "Statut",
+      cell: (user) => (
+        <StatusBadge tone={user.actif ? "success" : "neutral"}>
+          {user.actif ? "Actif" : "Inactif"}
+        </StatusBadge>
+      ),
+    },
+    {
+      id: "lastLogin",
+      header: "Dernière connexion",
+      cell: (user) => user.derniereConnexion
+        ? new Date(user.derniereConnexion).toLocaleString("fr-FR")
+        : "Jamais",
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      align: "right",
+      cell: renderUserActions,
+    },
+  ];
+
+  const authLogColumns: DataTableColumn<AuthLogItem>[] = [
+    {
+      id: "date",
+      header: "Date et heure",
+      cell: (log) => new Date(log.attemptedAt).toLocaleString("fr-FR"),
+    },
+    { id: "account", header: "Compte", cell: (log) => log.email },
+    { id: "ip", header: "Adresse IP", cell: (log) => log.ipAddress ?? "—" },
+    {
+      id: "status",
+      header: "Statut",
+      cell: (log) => (
+        <StatusBadge tone={log.status === "SUCCESS" ? "success" : "danger"}>
+          {log.status === "SUCCESS" ? "Succès" : "Échec"}
+        </StatusBadge>
+      ),
+    },
+    { id: "detail", header: "Détail", cell: (log) => log.reason ?? "—" },
+  ];
+
+  const passwordValidationError = adminNewPassword.length > 0 && adminNewPassword.length < 8
+    ? "Le mot de passe doit contenir au moins 8 caractères."
+    : undefined;
+  const passwordConfirmationError =
+    adminNewPasswordConfirm.length > 0 && adminNewPassword !== adminNewPasswordConfirm
+      ? "La confirmation ne correspond pas au mot de passe."
+      : undefined;
+  const deleteValidationError =
+    deleteConfirmText.length > 0 && deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER"
+      ? "Saisissez exactement SUPPRIMER."
+      : undefined;
+
+  return (
+    <section className="min-w-0 space-y-5">
+      <PageHeader
+        eyebrow="Administration"
+        title="Utilisateurs"
+        description="Gérez les comptes, les rôles, les droits d’accès et les sessions actives."
+        actions={
+          <>
+            <Button variant="secondary" leadingIcon={RefreshCw} loading={loading} onClick={() => void load()}>
+              Rafraîchir
+            </Button>
+            <Button leadingIcon={Plus} onClick={() => setCreateOpen(true)}>
+              Créer un compte
+            </Button>
+          </>
+        }
+      />
+
+      <FilterBar
+        search={{
+          value: searchQuery,
+          onChange: setSearchQuery,
+          placeholder: "Nom, email ou matricule…",
+          label: "Rechercher un utilisateur",
+        }}
+        filters={
+          <>
+            <FormField label="Statut" htmlFor="users-filter-status">
               <select
-                aria-label="Rôle du compte"
-                value={createRole}
-                onChange={(e) => setCreateRole(e.target.value)}
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                id="users-filter-status"
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as "ALL" | "ACTIF" | "INACTIF")}
               >
+                <option value="ALL">Tous les statuts</option>
+                <option value="ACTIF">Actifs</option>
+                <option value="INACTIF">Inactifs</option>
+              </select>
+            </FormField>
+            <FormField label="Rôle" htmlFor="users-filter-role">
+              <select id="users-filter-role" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+                <option value="ALL">Tous les rôles</option>
                 {ROLE_OPTIONS.map((role) => (
-                  <option key={role} value={role}>
-                    {LONACI_ROLE_LABELS[role]}
-                  </option>
+                  <option key={role} value={role}>{LONACI_ROLE_LABELS[role]}</option>
                 ))}
               </select>
-              {createRoleProfile ? (
-                <p className="text-[11px] text-slate-500 md:col-span-2">
-                  {createRoleProfile.designation} — {createRoleProfile.responsabilite}
-                </p>
-              ) : null}
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Agence de rattachement</span>
-                <AgenceRattachementCombobox
-                  agences={agences}
-                  value={createAgenceId}
-                  onChange={setCreateAgenceId}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Agences autorisées</span>
-                <AgencesAutoriseesMultiPicker
-                  agences={agences}
-                  valueIds={createAgencesAutoriseesIds}
-                  onChangeIds={setCreateAgencesAutoriseesIds}
-                  csvFallbackValue={createAgencesAutoriseesCsv}
-                  onCsvFallbackChange={setCreateAgencesAutoriseesCsv}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-              <div className="md:col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2.5">
-                <p className="text-xs font-medium text-slate-800">Modules</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-slate-600">
-                  Accès à <strong className="text-slate-800">tous les modules</strong> (aucune liste restreinte à la
-                  création ; le rôle définit les habilitations métier).
-                </p>
-              </div>
-              <label className="grid gap-1 md:col-span-2">
-                <span className="text-xs text-slate-600">Produits autorisés</span>
-                <ProduitsAutorisesMultiPicker
-                  produits={produits}
-                  valueCodes={createProduitsCodes}
-                  onChangeCodes={setCreateProduitsCodes}
-                  csvFallbackValue={createProduitsCsv}
-                  onCsvFallbackChange={setCreateProduitsCsv}
-                  inputClassName="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex justify-end gap-2">
-              <button
-                type="button"
-                disabled={busyId === "create"}
-                onClick={() => setCreateOpen(false)}
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                disabled={busyId === "create"}
-                onClick={() => void createAccount()}
-                className="rounded border border-emerald-600 bg-emerald-50 px-3 py-2 text-sm text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-              >
-                {busyId === "create" ? "Création..." : "Créer"}
-              </button>
-            </div>
+            </FormField>
+            <FormField label="Agence" htmlFor="users-filter-agence">
+              <select id="users-filter-agence" value={agenceFilter} onChange={(event) => setAgenceFilter(event.target.value)}>
+                <option value="ALL">Toutes les agences</option>
+                {agences.filter((agence) => agence.actif).map((agence) => (
+                  <option key={agence.id} value={agence.id}>{agence.code} — {agence.libelle}</option>
+                ))}
+              </select>
+            </FormField>
+          </>
+        }
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={Download}
+              onClick={() =>
+                window.open(
+                  `/api/admin/users/export?${new URLSearchParams({
+                    status: statusFilter,
+                    ...(roleFilter !== "ALL" ? { role: roleFilter } : {}),
+                    ...(agenceFilter !== "ALL" ? { agenceId: agenceFilter } : {}),
+                    ...(searchQuery.trim() ? { q: searchQuery.trim() } : {}),
+                  }).toString()}`,
+                  "_blank",
+                  "noopener,noreferrer",
+                )
+              }
+            >
+              Export utilisateurs
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={Download}
+              onClick={() => window.open("/api/admin/auth-logs/export", "_blank", "noopener,noreferrer")}
+            >
+              Export journal
+            </Button>
+          </>
+        }
+      />
+
+      <div aria-live="polite" aria-atomic="true" className="lonaci-ui-sr-only">
+        {loading ? "Chargement des utilisateurs." : `${pagination.total} utilisateurs chargés.`}
+      </div>
+      {error ? (
+        <FeedbackState
+          tone="danger"
+          title="Opération impossible"
+          description={error}
+          action={<Button variant="secondary" size="sm" onClick={() => void load()}>Réessayer</Button>}
+        />
+      ) : null}
+
+      <Surface padding="none" elevated>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 p-4">
+          <div>
+            <h2 className="font-semibold text-slate-950">Comptes utilisateurs</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {pagination.total} compte(s) · {selectedIds.length} sélectionné(s)
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2" aria-label="Actions groupées">
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={LogOut}
+              disabled={!selectedIds.length}
+              loading={busyId === "bulk-FORCE_LOGOUT"}
+              onClick={() => void runBulkAction("FORCE_LOGOUT")}
+            >
+              Déconnecter
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={Power}
+              disabled={!selectedIds.length}
+              loading={busyId === "bulk-DEACTIVATE"}
+              onClick={() => void runBulkAction("DEACTIVATE")}
+            >
+              Désactiver
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              leadingIcon={ShieldCheck}
+              disabled={!selectedIds.length}
+              loading={busyId === "bulk-ACTIVATE"}
+              onClick={() => void runBulkAction("ACTIVATE")}
+            >
+              Réactiver
+            </Button>
+            {selectedIds.length ? (
+              <Button variant="ghost" size="sm" leadingIcon={X} onClick={() => setSelectedIds([])}>
+                Effacer
+              </Button>
+            ) : null}
           </div>
         </div>
-      ) : null}
+        {loading ? (
+          <div className="p-5"><Skeleton lines={6} /></div>
+        ) : (
+          <DataTable
+            rows={items}
+            columns={userColumns}
+            rowKey={(user) => user.id}
+            caption="Liste des comptes utilisateurs"
+            getRowLabel={(user) => `${user.prenom} ${user.nom}, ${getLonaciRoleLabel(user.role)}`}
+            emptyState={
+              <FeedbackState
+                title="Aucun utilisateur"
+                description="Aucun compte ne correspond aux filtres actuels."
+                action={<Button variant="secondary" onClick={() => {
+                  setSearchQuery("");
+                  setStatusFilter("ALL");
+                  setRoleFilter("ALL");
+                  setAgenceFilter("ALL");
+                }}>Réinitialiser les filtres</Button>}
+              />
+            }
+            mobileCard={(user) => (
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <label className="flex min-h-11 items-center gap-3">
+                    <input
+                      type="checkbox"
+                      className="size-5"
+                      checked={selectedIds.includes(user.id)}
+                      onChange={(event) => setSelectedIds((current) =>
+                        event.target.checked
+                          ? [...new Set([...current, user.id])]
+                          : current.filter((id) => id !== user.id),
+                      )}
+                    />
+                    <span className="lonaci-ui-sr-only">Sélectionner {user.prenom} {user.nom}</span>
+                  </label>
+                  <StatusBadge tone={user.actif ? "success" : "neutral"}>
+                    {user.actif ? "Actif" : "Inactif"}
+                  </StatusBadge>
+                </div>
+                <div className="mt-2 flex items-center gap-3">
+                  <span className="grid size-11 shrink-0 place-items-center rounded-full bg-orange-50 text-orange-700">
+                    <UserRound size={20} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="truncate font-semibold text-slate-950">{user.prenom} {user.nom}</h3>
+                    <p className="truncate text-sm text-slate-600">{user.email}</p>
+                  </div>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div><dt className="text-slate-500">Rôle</dt><dd className="mt-1 font-medium">{getLonaciRoleLabel(user.role)}</dd></div>
+                  <div><dt className="text-slate-500">Matricule</dt><dd className="mt-1 font-medium">{user.matricule ?? "—"}</dd></div>
+                  <div className="col-span-2"><dt className="text-slate-500">Agence</dt><dd className="mt-1 font-medium">{user.agenceId ? agenceLabelForId(user.agenceId, agences) : "—"}</dd></div>
+                  <div className="col-span-2"><dt className="text-slate-500">Dernière connexion</dt><dd className="mt-1 font-medium">{user.derniereConnexion ? new Date(user.derniereConnexion).toLocaleString("fr-FR") : "Jamais"}</dd></div>
+                </dl>
+                <div className="mt-4 flex justify-end">{renderUserActions(user)}</div>
+              </article>
+            )}
+          />
+        )}
+        <div className="flex flex-col items-center justify-between gap-4 border-t border-slate-200 bg-slate-50 p-4 sm:flex-row">
+          <FormField label="Résultats par page" htmlFor="users-page-size" className="w-full sm:w-44">
+            <select id="users-page-size" value={pageSize} onChange={(event) => setPageSize(Number(event.target.value))}>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+            </select>
+          </FormField>
+          <Pagination
+            page={pagination.page}
+            pageCount={pagination.totalPages}
+            onPageChange={setPage}
+            label="Pagination des utilisateurs"
+          />
+        </div>
+      </Surface>
+
+      <Surface elevated>
+        <SectionHeader
+          title="Journal de connexion"
+          description="Les dix dernières tentatives avec date, adresse IP et résultat."
+          action={<StatusBadge tone="info">{authLogs.length} événement(s)</StatusBadge>}
+        />
+        <div className="mt-4">
+          <DataTable
+            rows={authLogs}
+            columns={authLogColumns}
+            rowKey={(log) => log.id}
+            caption="Journal des connexions"
+            mobileCard={(log) => (
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <strong className="break-all text-sm text-slate-950">{log.email}</strong>
+                  <StatusBadge tone={log.status === "SUCCESS" ? "success" : "danger"}>
+                    {log.status === "SUCCESS" ? "Succès" : "Échec"}
+                  </StatusBadge>
+                </div>
+                <dl className="mt-3 grid gap-2 text-sm">
+                  <div><dt className="text-slate-500">Date et heure</dt><dd>{new Date(log.attemptedAt).toLocaleString("fr-FR")}</dd></div>
+                  <div><dt className="text-slate-500">Adresse IP</dt><dd>{log.ipAddress ?? "—"}</dd></div>
+                  {log.reason ? <div><dt className="text-slate-500">Détail</dt><dd>{log.reason}</dd></div> : null}
+                </dl>
+              </article>
+            )}
+            emptyState={<FeedbackState title="Aucun événement" description="Le journal de connexion est vide." />}
+          />
+        </div>
+      </Surface>
+
+      <ConfirmDialog
+        open={confirmTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && busyId !== confirmTarget?.id) setConfirmTarget(null);
+        }}
+        title="Forcer la déconnexion ?"
+        description="Toutes les sessions actives de ce compte seront invalidées."
+        message={confirmTarget ? (
+          <>Déconnecter <strong>{confirmTarget.prenom} {confirmTarget.nom}</strong> ({confirmTarget.email}) ?</>
+        ) : null}
+        confirmLabel="Forcer la déconnexion"
+        destructive
+        pending={busyId === confirmTarget?.id}
+        onConfirm={() => confirmTarget ? forceLogout(confirmTarget.id) : undefined}
+      />
+
+      <Dialog
+        open={passwordTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && busyId !== passwordTarget?.id) closePasswordModal();
+        }}
+        title="Définir le mot de passe"
+        description={passwordTarget
+          ? `${passwordTarget.prenom} ${passwordTarget.nom} · ${passwordTarget.email}. Les sessions actives seront invalidées.`
+          : undefined}
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" disabled={busyId === passwordTarget?.id} onClick={closePasswordModal}>
+              Annuler
+            </Button>
+            <Button
+              type="submit"
+              form="admin-password-form"
+              leadingIcon={KeyRound}
+              loading={busyId === passwordTarget?.id}
+              disabled={
+                adminNewPassword.length < 8 ||
+                adminNewPassword !== adminNewPasswordConfirm
+              }
+            >
+              Enregistrer
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="admin-password-form"
+          className="grid gap-4"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void adminSetPasswordDirect();
+          }}
+        >
+          <FormField label="Nouveau mot de passe" htmlFor="admin-new-password" required error={passwordValidationError} hint="8 caractères minimum.">
+            <input
+              id="admin-new-password"
+              data-autofocus
+              required
+              minLength={8}
+              type="password"
+              autoComplete="new-password"
+              value={adminNewPassword}
+              aria-invalid={passwordValidationError ? "true" : undefined}
+              onChange={(event) => setAdminNewPassword(event.target.value)}
+            />
+          </FormField>
+          <FormField label="Confirmation du mot de passe" htmlFor="admin-new-password-confirm" required error={passwordConfirmationError}>
+            <input
+              id="admin-new-password-confirm"
+              required
+              minLength={8}
+              type="password"
+              autoComplete="new-password"
+              value={adminNewPasswordConfirm}
+              aria-invalid={passwordConfirmationError ? "true" : undefined}
+              onChange={(event) => setAdminNewPasswordConfirm(event.target.value)}
+            />
+          </FormField>
+        </form>
+      </Dialog>
+
+      <Dialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && busyId !== deleteTarget?.id) {
+            setDeleteTarget(null);
+            setDeleteConfirmText("");
+          }
+        }}
+        title="Supprimer cet utilisateur ?"
+        description="Cette action invalide ses sessions et retire définitivement le compte des listes actives."
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              disabled={busyId === deleteTarget?.id}
+              onClick={() => {
+                setDeleteTarget(null);
+                setDeleteConfirmText("");
+              }}
+            >
+              Annuler
+            </Button>
+            <Button
+              variant="danger"
+              leadingIcon={Trash2}
+              loading={busyId === deleteTarget?.id}
+              disabled={deleteConfirmText.trim().toUpperCase() !== "SUPPRIMER"}
+              onClick={() => void confirmDeleteUser()}
+            >
+              Supprimer
+            </Button>
+          </>
+        }
+      >
+        {deleteTarget ? (
+          <div className="space-y-4">
+            <FeedbackState
+              tone="danger"
+              title={`${deleteTarget.prenom} ${deleteTarget.nom}`}
+              description={deleteTarget.email}
+            />
+            <FormField
+              label={<>Saisissez <strong>SUPPRIMER</strong> pour confirmer</>}
+              htmlFor="delete-user-confirmation"
+              required
+              error={deleteValidationError}
+            >
+              <input
+                id="delete-user-confirmation"
+                data-autofocus
+                required
+                value={deleteConfirmText}
+                aria-invalid={deleteValidationError ? "true" : undefined}
+                onChange={(event) => setDeleteConfirmText(event.target.value)}
+              />
+            </FormField>
+          </div>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={editOpen && editTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && busyId !== editTarget?.id) {
+            setEditOpen(false);
+            setEditTarget(null);
+          }
+        }}
+        title="Modifier le compte"
+        description={editTarget ? `${editTarget.prenom} ${editTarget.nom} · ${editTarget.email}` : undefined}
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" disabled={busyId === editTarget?.id} onClick={() => {
+              setEditOpen(false);
+              setEditTarget(null);
+            }}>
+              Annuler
+            </Button>
+            <Button
+              type="submit"
+              form="edit-user-form"
+              leadingIcon={Edit3}
+              loading={busyId === editTarget?.id}
+            >
+              Enregistrer
+            </Button>
+          </>
+        }
+      >
+        {editTarget ? (
+          <form
+            id="edit-user-form"
+            className="grid gap-4 md:grid-cols-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveEdit();
+            }}
+          >
+            <FormField label="Prénom" htmlFor="edit-user-prenom" required><input id="edit-user-prenom" data-autofocus required value={editPrenom} onChange={(event) => setEditPrenom(event.target.value)} /></FormField>
+            <FormField label="Nom" htmlFor="edit-user-nom" required><input id="edit-user-nom" required value={editNom} onChange={(event) => setEditNom(event.target.value)} /></FormField>
+            <FormField label="Adresse email" htmlFor="edit-user-email" required className="md:col-span-2"><input id="edit-user-email" required type="email" value={editEmail} onChange={(event) => setEditEmail(event.target.value)} /></FormField>
+            <FormField label="Matricule" htmlFor="edit-user-matricule" hint="Optionnel"><input id="edit-user-matricule" value={editMatricule} onChange={(event) => setEditMatricule(event.target.value)} /></FormField>
+            <FormField label="Rôle" htmlFor="edit-user-role" required hint={editRoleProfile ? `${editRoleProfile.designation} — ${editRoleProfile.responsabilite}` : undefined}>
+              <select id="edit-user-role" required value={editRole} onChange={(event) => setEditRole(event.target.value)}>
+                {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{LONACI_ROLE_LABELS[role]}</option>)}
+              </select>
+            </FormField>
+            <FormField label="Agence de rattachement" hint="Optionnel" className="md:col-span-2">
+              <AgenceRattachementCombobox agences={agences} value={editAgenceId} onChange={setEditAgenceId} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+            </FormField>
+            <FormField label="Statut du compte" htmlFor="edit-user-status">
+              <select id="edit-user-status" value={editActif ? "true" : "false"} onChange={(event) => setEditActif(event.target.value === "true")}>
+                <option value="true">Actif</option>
+                <option value="false">Inactif</option>
+              </select>
+            </FormField>
+            <FormField label="Agences autorisées" className="md:col-span-2">
+              <AgencesAutoriseesMultiPicker agences={agences} valueIds={editAgencesAutoriseesIds} onChangeIds={setEditAgencesAutoriseesIds} csvFallbackValue={editAgencesAutoriseesCsv} onCsvFallbackChange={setEditAgencesAutoriseesCsv} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+            </FormField>
+            <FeedbackState className="md:col-span-2" tone="info" title="Accès aux modules" description="Tous les modules restent accessibles côté serveur ; le rôle continue de définir les habilitations métier." />
+            <FormField label="Produits autorisés" className="md:col-span-2">
+              <ProduitsAutorisesMultiPicker produits={produits} valueCodes={editProduitsCodes} onChangeCodes={setEditProduitsCodes} csvFallbackValue={editProduitsCsv} onCsvFallbackChange={setEditProduitsCsv} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+            </FormField>
+          </form>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (busyId !== "create") setCreateOpen(open);
+        }}
+        title="Nouveau compte utilisateur"
+        description="Créez le compte, attribuez son rôle et définissez son périmètre d’accès."
+        size="lg"
+        footer={
+          <>
+            <Button variant="secondary" disabled={busyId === "create"} onClick={() => setCreateOpen(false)}>
+              Annuler
+            </Button>
+            <Button type="submit" form="create-user-form" leadingIcon={Plus} loading={busyId === "create"}>
+              Créer le compte
+            </Button>
+          </>
+        }
+      >
+        <form
+          id="create-user-form"
+          className="grid gap-4 md:grid-cols-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createAccount();
+          }}
+        >
+          <FormField label="Prénom" htmlFor="create-user-prenom" required><input id="create-user-prenom" data-autofocus required value={createPrenom} onChange={(event) => setCreatePrenom(event.target.value)} /></FormField>
+          <FormField label="Nom" htmlFor="create-user-nom" required><input id="create-user-nom" required value={createNom} onChange={(event) => setCreateNom(event.target.value)} /></FormField>
+          <FormField label="Adresse email" htmlFor="create-user-email" required className="md:col-span-2"><input id="create-user-email" required type="email" autoComplete="email" value={createEmail} onChange={(event) => setCreateEmail(event.target.value)} /></FormField>
+          <FormField label="Matricule" htmlFor="create-user-matricule" hint="Optionnel"><input id="create-user-matricule" value={createMatricule} onChange={(event) => setCreateMatricule(event.target.value)} /></FormField>
+          <FormField label="Mot de passe initial" htmlFor="create-user-password" required hint="8 caractères minimum."><input id="create-user-password" required minLength={8} type="password" autoComplete="new-password" value={createPassword} onChange={(event) => setCreatePassword(event.target.value)} /></FormField>
+          <FormField label="Rôle" htmlFor="create-user-role" required className="md:col-span-2" hint={createRoleProfile ? `${createRoleProfile.designation} — ${createRoleProfile.responsabilite}` : undefined}>
+            <select id="create-user-role" required value={createRole} onChange={(event) => setCreateRole(event.target.value)}>
+              {ROLE_OPTIONS.map((role) => <option key={role} value={role}>{LONACI_ROLE_LABELS[role]}</option>)}
+            </select>
+          </FormField>
+          <FormField label="Agence de rattachement" hint="Optionnel" className="md:col-span-2">
+            <AgenceRattachementCombobox agences={agences} value={createAgenceId} onChange={setCreateAgenceId} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+          </FormField>
+          <FormField label="Agences autorisées" className="md:col-span-2">
+            <AgencesAutoriseesMultiPicker agences={agences} valueIds={createAgencesAutoriseesIds} onChangeIds={setCreateAgencesAutoriseesIds} csvFallbackValue={createAgencesAutoriseesCsv} onCsvFallbackChange={setCreateAgencesAutoriseesCsv} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+          </FormField>
+          <FeedbackState className="md:col-span-2" tone="info" title="Accès aux modules" description="Tous les modules sont accessibles ; le rôle définit les habilitations métier." />
+          <FormField label="Produits autorisés" className="md:col-span-2">
+            <ProduitsAutorisesMultiPicker produits={produits} valueCodes={createProduitsCodes} onChangeCodes={setCreateProduitsCodes} csvFallbackValue={createProduitsCsv} onCsvFallbackChange={setCreateProduitsCsv} inputClassName="min-h-11 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900" />
+          </FormField>
+        </form>
+      </Dialog>
     </section>
   );
 }

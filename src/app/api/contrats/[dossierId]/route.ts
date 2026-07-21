@@ -3,7 +3,8 @@ import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { updateContratById } from "@/lib/lonaci/contracts";
+import { findContratById, updateContratById } from "@/lib/lonaci/contracts";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 
 const patchSchema = z
   .object({
@@ -34,6 +35,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const parsed = patchSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
+  }
+  const existing = await findContratById(dossierId);
+  if (
+    !existing ||
+    !(await findVisibleDossierById(existing.dossierId, auth.user))
+  ) {
+    return NextResponse.json({ message: "Contrat introuvable." }, { status: 404 });
   }
 
   try {

@@ -1,6 +1,12 @@
 import { ObjectId } from "mongodb";
 import { randomUUID } from "node:crypto";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  deriveSuccessionVisibilityState,
+  isWorkflowDocumentVisible,
+  isWorkflowStageAssignedToRole,
+} from "@/lib/auth/workflow-visibility";
 import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import {
@@ -10,7 +16,6 @@ import {
   patchSuccessionDocumentChecklistStatuts,
   successionChecklistWithActeDeces,
 } from "@/lib/lonaci/succession-document-checklist";
-import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
@@ -51,6 +56,23 @@ type InsertDossier = {
   deletedAt: null;
 };
 
+function requireSuccessionTransitionStage(
+  row: StoredSuccession,
+  actor: Pick<UserDocument, "_id" | "role">,
+): void {
+  const successionState = deriveSuccessionVisibilityState(row);
+  if (
+    !isWorkflowStageAssignedToRole({
+      workflow: "SUCCESSIONS",
+      role: actor.role,
+      status: row.status,
+      successionState,
+    })
+  ) {
+    throw new Error("CASE_NOT_FOUND");
+  }
+}
+
 async function ensureRowDocumentChecklist(row: StoredSuccession): Promise<DossierDocumentChecklistPayload> {
   const parsed = parseSuccessionDocumentChecklist(row.documentChecklist);
   if (parsed?.entries.length) {
@@ -63,14 +85,6 @@ async function ensureRowDocumentChecklist(row: StoredSuccession): Promise<Dossie
     { $set: { documentChecklist: built, updatedAt: new Date(), ...successionStaleAlertResetFields() } },
   );
   return built;
-}
-
-export function successionChecklistProgress(checklist: DossierDocumentChecklistPayload | null | undefined) {
-  if (!checklist?.entries.length) {
-    return { complet: false, obligatoiresFournis: 0, obligatoiresTotal: 0 };
-  }
-  const statuts = Object.fromEntries(checklist.entries.map((e) => [e.itemId, e.statut]));
-  return computeChecklistProgress(checklist.entries, statuts);
 }
 
 function mapRow(row: StoredSuccession, documentChecklist: DossierDocumentChecklistPayload | null): SuccessionCaseDocument {
@@ -308,11 +322,12 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     deletedAt: null,
   });
   if (!row) throw new Error("CASE_NOT_FOUND");
+  requireSuccessionTransitionStage(row, input.actor);
   if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
 
   const conc = await findConcessionnaireById(row.concessionnaireId);
   if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
-  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("CASE_NOT_FOUND");
 
   const len = row.stepHistory.length;
   const nextKey = nextStepKey(len);
@@ -472,6 +487,7 @@ export async function recordSuccessionValidationN1(input: { caseId: string; acto
     deletedAt: null,
   });
   if (!row) throw new Error("CASE_NOT_FOUND");
+  requireSuccessionTransitionStage(row, input.actor);
   if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
   if (row.stepHistory.length < 2) throw new Error("SUCCESSION_STEP_ORDER");
   if (row.validationN1At) throw new Error("SUCCESSION_VALIDATION_ALREADY_DONE");
@@ -481,7 +497,7 @@ export async function recordSuccessionValidationN1(input: { caseId: string; acto
   }
   const conc = await findConcessionnaireById(row.concessionnaireId);
   if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
-  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("CASE_NOT_FOUND");
   const now = new Date();
   await db.collection(COLLECTION).updateOne(
     { _id: row._id },
@@ -510,12 +526,13 @@ export async function recordSuccessionValidationN2(input: { caseId: string; acto
     deletedAt: null,
   });
   if (!row) throw new Error("CASE_NOT_FOUND");
+  requireSuccessionTransitionStage(row, input.actor);
   if (row.status !== "OUVERT") throw new Error("CASE_ALREADY_CLOSED");
   if (!row.validationN1At) throw new Error("SUCCESSION_VALIDATION_N1_REQUIRED");
   if (row.validationN2At) throw new Error("SUCCESSION_VALIDATION_ALREADY_DONE");
   const conc = await findConcessionnaireById(row.concessionnaireId);
   if (!conc || conc.deletedAt) throw new Error("CONCESSIONNAIRE_NOT_FOUND");
-  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("AGENCE_FORBIDDEN");
+  if (!canReadConcessionnaire(input.actor, conc)) throw new Error("CASE_NOT_FOUND");
   const now = new Date();
   await db.collection(COLLECTION).updateOne(
     { _id: row._id },
@@ -578,6 +595,35 @@ export async function findSuccessionCaseById(id: string): Promise<SuccessionCase
   return mapRow(row, checklist);
 }
 
+export async function findVisibleSuccessionCaseById(
+  id: string,
+  actor: UserDocument,
+): Promise<SuccessionCaseDocument | null> {
+  const successionCase = await findSuccessionCaseById(id);
+  if (!successionCase) return null;
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "SUCCESSIONS",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: successionCase.createdByUserId,
+      status: successionCase.status,
+      successionState: deriveSuccessionVisibilityState(successionCase),
+    })
+  ) {
+    return null;
+  }
+  const concessionnaire = await findConcessionnaireById(successionCase.concessionnaireId);
+  if (
+    !concessionnaire ||
+    concessionnaire.deletedAt ||
+    !canReadConcessionnaire(actor, concessionnaire)
+  ) {
+    return null;
+  }
+  return successionCase;
+}
+
 export async function listSuccessionCases(
   page: number,
   pageSize: number,
@@ -589,6 +635,7 @@ export async function listSuccessionCases(
     statutMetier?: SuccessionStatutMetier;
     dateFrom?: Date;
     dateTo?: Date;
+    visibility?: Pick<UserDocument, "_id" | "role">;
   },
 ) {
   const db = await getDatabase();
@@ -603,11 +650,21 @@ export async function listSuccessionCases(
     if (filters.dateFrom) (filter.updatedAt as { $gte?: Date }).$gte = filters.dateFrom;
     if (filters.dateTo) (filter.updatedAt as { $lte?: Date }).$lte = filters.dateTo;
   }
+  const visibilityFilter = filters?.visibility
+    ? buildWorkflowVisibilityMongoFilter({
+        workflow: "SUCCESSIONS",
+        role: filters.visibility.role,
+        userId: filters.visibility._id ?? "",
+      })
+    : null;
+  const effectiveFilter: Record<string, unknown> = visibilityFilter
+    ? { $and: [filter, visibilityFilter] }
+    : filter;
   const skip = (page - 1) * pageSize;
   const col = db.collection<StoredSuccession>(COLLECTION);
   const [total, rows] = await Promise.all([
-    col.countDocuments(filter),
-    col.find(filter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize).toArray(),
+    col.countDocuments(effectiveFilter),
+    col.find(effectiveFilter).sort({ updatedAt: -1 }).skip(skip).limit(pageSize).toArray(),
   ]);
   const itemsRaw = await Promise.all(
     rows.map(async (r) => {

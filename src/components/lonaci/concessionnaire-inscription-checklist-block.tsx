@@ -1,6 +1,6 @@
 "use client";
 
-import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { ChecklistEditor } from "@/components/lonaci/workflow/checklist-editor";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
   DOSSIER_CHECKLIST_STATUTS,
@@ -17,14 +17,14 @@ type Props = {
   onUpdated: (checklist: DossierDocumentChecklistPayload) => void;
 };
 
-function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
+function statutTone(statut: DossierDocumentChecklistStatut): "success" | "danger" | "warning" {
   switch (statut) {
     case "FOURNI":
-      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+      return "success";
     case "MANQUANT":
-      return "bg-rose-100 text-rose-800 border-rose-200";
+      return "danger";
     case "EN_ATTENTE":
-      return "bg-amber-100 text-amber-900 border-amber-200";
+      return "warning";
   }
 }
 
@@ -101,68 +101,24 @@ export default function ConcessionnaireInscriptionChecklistBlock({
   }
 
   return (
-    <section className="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
-      <DossierCompletIndicator
-        complet={progress.complet}
-        size="banner"
-        live={editable}
-        obligatoiresFournis={progress.obligatoiresFournis}
-        obligatoiresTotal={progress.obligatoiresTotal}
-        className="mb-3"
-      />
-      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-          Pièces justificatives (inscription)
-        </p>
-        <DossierCompletIndicator
-          complet={progress.complet}
-          size="sm"
-          live={editable}
-          obligatoiresFournis={progress.obligatoiresFournis}
-          obligatoiresTotal={progress.obligatoiresTotal}
-        />
-      </div>
-      {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
-      <ul className="space-y-2">
-        {checklist.entries.map((entry) => (
-          <li
-            key={entry.itemId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200 bg-white px-2.5 py-2"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-slate-900">{entry.libelle}</p>
-              <p className="text-[10px] text-slate-500">{entry.obligatoire ? "Obligatoire" : "Facultatif"}</p>
-            </div>
-            {editable ? (
-              <select
-                value={localStatuts[entry.itemId] ?? entry.statut}
-                disabled={saving}
-                onChange={(e) => {
-                  const statut = e.target.value as DossierDocumentChecklistStatut;
-                  const next = { ...localStatuts, [entry.itemId]: statut };
-                  setLocalStatuts(next);
-                  void saveStatuts(next);
-                }}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-800"
-              >
-                {DOSSIER_CHECKLIST_STATUTS.map((s) => (
-                  <option key={s} value={s}>
-                    {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span
-                className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statutBadgeClass(
-                  localStatuts[entry.itemId] ?? entry.statut,
-                )}`}
-              >
-                {DOSSIER_CHECKLIST_STATUT_LABELS[localStatuts[entry.itemId] ?? entry.statut]}
-              </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
+    <ChecklistEditor
+      title="Pièces justificatives (inscription)"
+      description="Suivi des pièces issues du référentiel des produits sélectionnés."
+      entries={checklist.entries}
+      statuses={DOSSIER_CHECKLIST_STATUTS}
+      statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}
+      statusTone={statutTone}
+      localStatuses={localStatuts}
+      progress={progress}
+      editable={editable}
+      saving={saving}
+      error={error}
+      onStatusChange={(itemId, statut) => {
+        const next = { ...localStatuts, [itemId]: statut };
+        setLocalStatuts(next);
+        void saveStatuts(next);
+      }}
+      className="border-slate-200 bg-slate-50/80"
+    />
   );
 }

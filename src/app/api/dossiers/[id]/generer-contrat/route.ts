@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { badRequest, conflict, forbidden, notFound } from "@/lib/api/error-responses";
+import { badRequest, conflict, notFound } from "@/lib/api/error-responses";
 import { requireApiAuth } from "@/lib/auth/guards";
-import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import { prepareContratFromDechargeDefinitive } from "@/lib/lonaci/contrat-document";
 import {
   buildDossierContratStatutMetierFields,
   ensureDossierIndexes,
-  findDossierById,
+  findVisibleDossierById,
   transitionDossier,
 } from "@/lib/lonaci/dossiers";
 
@@ -15,7 +14,7 @@ interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-function dossierToJson(dossier: NonNullable<Awaited<ReturnType<typeof findDossierById>>>) {
+function dossierToJson(dossier: NonNullable<Awaited<ReturnType<typeof findVisibleDossierById>>>) {
   return {
     id: dossier._id ?? "",
     type: dossier.type,
@@ -47,22 +46,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
   await ensureDossierIndexes();
 
-  const dossier = await findDossierById(id);
-  if (!dossier || dossier.deletedAt) {
+  const dossier = await findVisibleDossierById(id, auth.user);
+  if (!dossier) {
     return notFound("Dossier introuvable.");
   }
   if (dossier.type !== "CONTRAT_ACTUALISATION") {
     return badRequest("Generation contrat reservee aux dossiers contrat.", "DOSSIER_TYPE_UNSUPPORTED");
-  }
-
-  const party = contratPartyFromDossier(dossier);
-  if (!party) {
-    return notFound("Dossier sans rattachement client ou PDV.");
-  }
-  try {
-    await assertDossierPartyReadable(party, auth.user);
-  } catch {
-    return forbidden("Acces refuse.", "AGENCE_FORBIDDEN");
   }
 
   try {

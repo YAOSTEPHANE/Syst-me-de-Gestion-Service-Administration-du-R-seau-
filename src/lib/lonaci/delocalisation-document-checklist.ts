@@ -13,7 +13,7 @@ import type {
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** Spec 6.1 — pièces communes à toute demande de délocalisation. */
+/** Pièces communes à toute demande de délocalisation. */
 export const DELOCALISATION_CHECKLIST_ITEMS_SPEC_61: ProduitDocumentChecklistItem[] = [
   {
     id: "deloc_formulaire_signe",

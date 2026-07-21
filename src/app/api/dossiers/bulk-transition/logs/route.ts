@@ -6,7 +6,7 @@ import { requireApiAuth } from "@/lib/auth/guards";
 import {
   bulkTransitionLogsToCsv,
   ensureBulkTransitionLogsIndexes,
-  listBulkTransitionLogs,
+  listVisibleBulkTransitionLogs,
 } from "@/lib/lonaci/dossier-bulk-transition-logs";
 
 const querySchema = z.object({
@@ -31,13 +31,16 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureBulkTransitionLogsIndexes();
-  const data = await listBulkTransitionLogs({
-    page: parsed.data.page,
-    pageSize: parsed.data.pageSize,
-    actorUserId: parsed.data.actorUserId,
-    action: parsed.data.action,
-    failedOnly: parsed.data.failedOnly === "1",
-  });
+  const data = await listVisibleBulkTransitionLogs(
+    {
+      page: parsed.data.page,
+      pageSize: parsed.data.pageSize,
+      actorUserId: parsed.data.actorUserId,
+      action: parsed.data.action,
+      failedOnly: parsed.data.failedOnly === "1",
+    },
+    auth.user,
+  );
   if (parsed.data.format === "csv") {
     const csv = bulkTransitionLogsToCsv(data.items);
     const filename = `dossier-bulk-logs-${new Date().toISOString().slice(0, 10)}.csv`;

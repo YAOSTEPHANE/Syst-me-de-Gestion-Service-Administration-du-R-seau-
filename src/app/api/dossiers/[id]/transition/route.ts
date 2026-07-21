@@ -5,7 +5,8 @@ import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { isWorkflowSeparationError } from "@/lib/lonaci/workflow-separation";
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
-import { ensureDossierIndexes, findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import { ensureDossierIndexes, findVisibleDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import { userCanPerformDossierTransitionAtEtape } from "@/lib/auth/dossier-transition-rbac";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 const transitionSchema = z.object({
@@ -79,9 +80,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
   const { id } = await context.params;
 
   await ensureDossierIndexes();
-  const before = await findDossierById(id);
-  if (!before || before.deletedAt) {
+  const before = await findVisibleDossierById(id, auth.user);
+  if (!before) {
     return NextResponse.json({ message: "Dossier introuvable" }, { status: 404 });
+  }
+
+  const guardedAction =
+    parsed.data.action === "REJECT_TO_DRAFT" ? "REJECT" : parsed.data.action;
+  if (
+    !userCanPerformDossierTransitionAtEtape(auth.user.role, before.status, guardedAction)
+  ) {
+    return NextResponse.json(
+      { message: "Cette action n’est pas autorisée à l’étape actuelle du dossier." },
+      { status: 403 },
+    );
   }
 
   if (

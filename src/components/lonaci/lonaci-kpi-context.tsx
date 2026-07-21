@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
@@ -8,7 +8,7 @@ import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
 type Ctx = {
   kpi: LonaciKpiPayload | null;
   error: string | null;
-  refresh: () => Promise<void>;
+  refresh: (agenceId?: string) => Promise<void>;
 };
 
 const LonaciKpiContext = createContext<Ctx>({ kpi: null, error: null, refresh: async () => {} });
@@ -24,17 +24,25 @@ function isForcedPasswordChangeRoute() {
 export function LonaciKpiProvider({ children }: { children: ReactNode }) {
   const [kpi, setKpi] = useState<LonaciKpiPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const agenceIdRef = useRef("");
 
-  async function refresh() {
+  async function refresh(agenceId?: string) {
     if (isForcedPasswordChangeRoute()) {
       setKpi(null);
       setError(null);
       return;
     }
+    if (agenceId !== undefined) agenceIdRef.current = agenceId;
+    const selectedAgenceId = agenceId ?? agenceIdRef.current;
     try {
-      const res = await lonaciFetch("/api/dashboard/kpi");
+      const query = selectedAgenceId ? `?agenceId=${encodeURIComponent(selectedAgenceId)}` : "";
+      const res = await lonaciFetch(`/api/dashboard/kpi${query}`);
       if (!res.ok) throw new Error("Données tableau de bord indisponibles");
-      setKpi((await res.json()) as LonaciKpiPayload);
+      const next = (await res.json()) as LonaciKpiPayload;
+      setKpi((current) => {
+        if (!selectedAgenceId || !current?.agencesOverview30j?.length) return next;
+        return { ...next, agencesOverview30j: current.agencesOverview30j };
+      });
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erreur");
@@ -50,8 +58,10 @@ export function LonaciKpiProvider({ children }: { children: ReactNode }) {
       void refresh();
     };
     window.addEventListener("lonaci:data-imported", onDataImported);
+    window.addEventListener("lonaci:data-changed", onDataImported);
     return () => {
       window.removeEventListener("lonaci:data-imported", onDataImported);
+      window.removeEventListener("lonaci:data-changed", onDataImported);
     };
   }, []);
 

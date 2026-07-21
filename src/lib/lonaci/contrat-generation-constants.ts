@@ -1,4 +1,4 @@
-/** Parcours génération contrat (spec module Contrats — points 6 à 10). */
+/** Étapes du parcours de génération d’un contrat. */
 
 export const CONTRAT_GENERATION_STEPS = [
   "Informations client pré-remplies depuis la fiche concessionnaire / client",

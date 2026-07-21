@@ -1,7 +1,5 @@
 import "server-only";
 
-import PDFDocument from "pdfkit";
-
 import { cessionOperationDisplayStatutFields } from "@/lib/lonaci/cession-operation-statut-metier";
 import { parseDocumentChecklistForKind } from "@/lib/lonaci/cession-dossier-checklist";
 import { formatAgenceLibelle, loadAgenceLibelleMap, type AgenceLibelleDoc } from "@/lib/lonaci/zones-abidjan";
@@ -211,95 +209,4 @@ export function buildCessionsExportFiltersSummary(input: {
   if (input.produitCode) parts.push(`Produit : ${input.produitCode}`);
   if (input.statut) parts.push(`Statut : ${CESSION_STATUT_LABELS[input.statut]}`);
   return parts.join(" · ");
-}
-
-const PDF_COLUMNS: { key: keyof CessionExportRow; label: string; width: number }[] = [
-  { key: "reference", label: "Référence", width: 72 },
-  { key: "cedantLabel", label: "Cédant", width: 118 },
-  { key: "cessionnaireLabel", label: "Cessionnaire", width: 118 },
-  { key: "dateDemande", label: "Date", width: 58 },
-  { key: "statutLabel", label: "Statut", width: 88 },
-  { key: "agenceLabel", label: "Agence", width: 72 },
-];
-
-export async function renderCessionsListPdf(
-  meta: CessionExportMeta,
-  rows: CessionExportRow[],
-): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 36, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    const pageW = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-
-    doc.save();
-    doc.rect(doc.page.margins.left, doc.y, pageW, 44).fill("#312e81");
-    doc.fillColor("#ffffff").fontSize(12).text("LONACI — Liste des cessions", doc.page.margins.left + 12, doc.y - 36);
-    doc.fontSize(8).text("Spec 5.3 — Export pour rapports mensuels et contrôles terrain", doc.page.margins.left + 12, doc.y - 18);
-    doc.restore();
-    doc.moveDown(3.2);
-    doc.fillColor("#111827");
-
-    doc.fontSize(8).fillColor("#4b5563").text(meta.filtersSummary, { width: pageW });
-    doc.text(`Généré le ${new Date(meta.generatedAt).toLocaleString("fr-FR")} · ${meta.total} ligne(s)`, {
-      width: pageW,
-    });
-    doc.moveDown(0.8);
-
-    const colX: number[] = [];
-    let x = doc.page.margins.left;
-    for (const col of PDF_COLUMNS) {
-      colX.push(x);
-      x += col.width;
-    }
-
-    const drawHeader = () => {
-      const y = doc.y;
-      doc.save();
-      doc.rect(doc.page.margins.left, y, pageW, 16).fill("#e0e7ff");
-      doc.fillColor("#312e81").fontSize(7);
-      PDF_COLUMNS.forEach((col, i) => {
-        doc.text(col.label, colX[i] + 2, y + 4, { width: col.width - 4, lineBreak: false });
-      });
-      doc.restore();
-      doc.y = y + 18;
-      doc.fillColor("#111827").fontSize(7);
-    };
-
-    drawHeader();
-
-    for (let i = 0; i < rows.length; i++) {
-      if (doc.y > doc.page.height - doc.page.margins.bottom - 24) {
-        doc.addPage({ layout: "landscape", margin: 36 });
-        doc.fontSize(7).fillColor("#111827");
-        drawHeader();
-      }
-      const row = rows[i];
-      const y = doc.y;
-      if (i % 2 === 1) {
-        doc.save();
-        doc.rect(doc.page.margins.left, y - 1, pageW, 14).fill("#f8fafc");
-        doc.restore();
-      }
-      PDF_COLUMNS.forEach((col, ci) => {
-        const val = String(row[col.key] ?? "—");
-        doc.fillColor("#111827").text(val, colX[ci] + 2, y, {
-          width: col.width - 4,
-          height: 12,
-          ellipsis: true,
-        });
-      });
-      doc.y = y + 14;
-    }
-
-    if (!rows.length) {
-      doc.moveDown(1);
-      doc.fontSize(9).fillColor("#6b7280").text("Aucune demande ne correspond aux filtres sélectionnés.");
-    }
-
-    doc.end();
-  });
 }

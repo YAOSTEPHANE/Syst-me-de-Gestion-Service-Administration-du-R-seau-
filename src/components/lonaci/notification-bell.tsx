@@ -1,9 +1,14 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { RefreshCw } from "lucide-react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+import {
+  emitNotificationRead,
+  NOTIFICATION_READ_EVENT,
+} from "@/lib/lonaci/notification-client-events";
 
 interface NotificationItem {
   id: string;
@@ -48,6 +53,9 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
   const [error, setError] = useState<string | null>(null);
   const [markReadError, setMarkReadError] = useState<string | null>(null);
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const panelId = useId();
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   async function load() {
     if (isForcedPasswordChangeRoute()) {
@@ -78,16 +86,43 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
       setMarkReadError("Impossible de marquer comme lu. Réessayez.");
       return;
     }
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id ? { ...item, readAt: new Date().toISOString() } : item,
-      ),
-    );
+    emitNotificationRead(id);
   }
 
   useEffect(() => {
     void load();
   }, []);
+
+  useEffect(() => {
+    const handleNotificationRead = (event: Event) => {
+      const notificationId = (event as CustomEvent<string>).detail;
+      setItems((current) =>
+        current.map((item) =>
+          item.id === notificationId ? { ...item, readAt: new Date().toISOString() } : item,
+        ),
+      );
+    };
+    window.addEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead);
+    return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
 
   const unreadCount = useMemo(
     () => items.filter((item) => item.readAt === null).length,
@@ -97,10 +132,15 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
   const lightTrigger = Boolean(triggerClassName);
 
   return (
-    <div className="relative">
+    <div className="relative" ref={wrapRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
+        aria-label={unreadCount > 0 ? `Notifications, ${unreadCount} non lue${unreadCount > 1 ? "s" : ""}` : "Notifications"}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls={panelId}
         className={
           triggerClassName ??
           "relative rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm text-slate-100 hover:bg-slate-800"
@@ -109,8 +149,8 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
         {triggerContent ?? "Cloche"}
         {unreadCount > 0 && lightTrigger ? (
           <span
-            className="absolute right-[7px] top-[7px] h-[7px] w-[7px] rounded-full border-[1.5px] border-white bg-red-600"
-            aria-label={`${unreadCount} non lues`}
+            className="absolute right-1.75 top-1.75 h-1.75 w-1.75 rounded-full border-[1.5px] border-white bg-orange-500"
+            aria-hidden="true"
           />
         ) : null}
         {unreadCount > 0 && !lightTrigger ? (
@@ -121,43 +161,49 @@ export default function NotificationBell({ triggerClassName, triggerContent }: N
       </button>
 
       {open ? (
-        <div className="absolute right-0 z-10 mt-2 w-[28rem] rounded-xl border border-slate-700 bg-slate-950 p-3 shadow-2xl">
+        <div
+          id={panelId}
+          role="dialog"
+          aria-label="Notifications"
+          className="absolute right-0 z-10 mt-2 w-[min(28rem,calc(100vw-1.5rem))] rounded-xl border border-slate-200 bg-white p-3 text-slate-900 shadow-2xl"
+        >
           <div className="mb-2 flex items-center justify-between">
-            <p className="text-sm font-semibold text-slate-100">Notifications</p>
+            <p className="text-sm font-semibold text-slate-900">Notifications</p>
             <button
               type="button"
               onClick={() => void load()}
-              className="text-xs text-emerald-300 hover:text-emerald-200"
+              className="inline-flex items-center gap-1 text-xs font-semibold text-orange-600 hover:text-orange-700"
             >
+              <RefreshCw size={13} aria-hidden="true" />
               Actualiser
             </button>
           </div>
 
-          {loading ? <p className="text-sm text-slate-400">Chargement...</p> : null}
-          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-          {markReadError ? <p className="text-sm text-rose-300">{markReadError}</p> : null}
+          {loading ? <p className="text-sm text-slate-500">Chargement...</p> : null}
+          {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+          {markReadError ? <p className="text-sm text-rose-700">{markReadError}</p> : null}
 
           {!loading && !error ? (
             <div className="max-h-80 space-y-2 overflow-auto">
               {items.length === 0 ? (
-                <p className="text-sm text-slate-400">Aucune notification.</p>
+                <p className="text-sm text-slate-500">Aucune notification.</p>
               ) : (
                 items.map((item) => (
                   <div
                     key={item.id}
-                    className="rounded-lg border border-slate-800 bg-slate-900/70 p-3"
+                    className="rounded-lg border border-slate-200 bg-slate-50 p-3"
                   >
-                    <p className="text-sm font-semibold text-slate-100">{item.title}</p>
-                    <p className="mt-1 text-sm text-slate-300">{item.message}</p>
-                    <div className="mt-2 flex items-center justify-between text-xs text-slate-400">
+                    <p className="text-sm font-semibold text-slate-900">{item.title}</p>
+                    <p className="mt-1 text-sm text-slate-600">{item.message}</p>
+                    <div className="mt-2 flex items-center justify-between gap-3 text-xs text-slate-500">
                       <span>{new Date(item.createdAt).toLocaleString()}</span>
                       {item.readAt ? (
-                        <span className="text-emerald-300">Lu</span>
+                        <span className="text-slate-500">Lu</span>
                       ) : (
                         <button
                           type="button"
                           onClick={() => void markRead(item.id)}
-                          className="text-amber-300 hover:text-amber-200"
+                          className="font-semibold text-orange-600 hover:text-orange-700"
                         >
                           Marquer lu
                         </button>

@@ -134,6 +134,8 @@ export async function getContratsActifsByProduit(topN = 5, agenceId?: string | n
 
 export interface DossierValidationSnapshot {
   contratSoumis: number;
+  dossiersValidesN1: number;
+  dossiersValidesN2: number;
   contratSoumisRetard48h: number;
   cautionsEnAttente: number;
   cautionsJ10: number;
@@ -249,9 +251,19 @@ export async function getDossierValidationSnapshot(
     }
   }
 
-  const [contratSoumis, contratSoumisRetard48h, cautionsEnAttente, pdvEnCoursRetard5j, agrementQueue] =
+  const [
+    contratSoumis,
+    dossiersValidesN1,
+    dossiersValidesN2,
+    contratSoumisRetard48h,
+    cautionsEnAttente,
+    pdvEnCoursRetard5j,
+    agrementQueue,
+  ] =
     await Promise.all([
       db.collection("dossiers").countDocuments({ ...filter, status: "SOUMIS" }),
+      db.collection("dossiers").countDocuments({ ...filter, status: "VALIDE_N1" }),
+      db.collection("dossiers").countDocuments({ ...filter, status: "VALIDE_N2" }),
       db.collection("dossiers").countDocuments({
         ...filter,
         status: "SOUMIS",
@@ -275,6 +287,8 @@ export async function getDossierValidationSnapshot(
 
   return {
     contratSoumis,
+    dossiersValidesN1,
+    dossiersValidesN2,
     contratSoumisRetard48h,
     cautionsEnAttente,
     cautionsJ10: cautionsJ10Count,

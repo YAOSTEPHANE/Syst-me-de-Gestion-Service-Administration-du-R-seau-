@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
-import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import {
   buildDossierDechargeDefinitiveView,
   renderDossierDechargeDefinitivePdf,
 } from "@/lib/lonaci/dossier-decharge-definitive";
 import { prepareContratFromDechargeDefinitive, parseContratGenerePayload } from "@/lib/lonaci/contrat-document";
-import { findDossierById } from "@/lib/lonaci/dossiers";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -15,29 +14,19 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) {
     return auth.error;
   }
 
   const { id } = await context.params;
-  const dossier = await findDossierById(id);
-  if (!dossier || dossier.deletedAt) {
+  const dossier = await findVisibleDossierById(id, auth.user);
+  if (!dossier) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
   if (dossier.type !== "CONTRAT_ACTUALISATION") {
     return NextResponse.json({ message: "Decharge reservee aux dossiers contrat." }, { status: 400 });
-  }
-
-  const party = contratPartyFromDossier(dossier);
-  if (!party) {
-    return NextResponse.json({ message: "Dossier sans rattachement client ou PDV." }, { status: 404 });
-  }
-  try {
-    await assertDossierPartyReadable(party, auth.user);
-  } catch {
-    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 
   const view = await buildDossierDechargeDefinitiveView(id);

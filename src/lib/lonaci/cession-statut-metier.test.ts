@@ -3,8 +3,8 @@ import { describe, expect, it } from "vitest";
 import { CESSION_STATUTS_SPEC_54 } from "@/lib/lonaci/cession-statut-metier-constants";
 import { resolveCessionStatutMetier } from "@/lib/lonaci/cession-statut-metier";
 
-describe("cession statut métier spec 5.4", () => {
-  it("expose les 5 statuts spec 5.4", () => {
+describe("statut métier de cession", () => {
+  it("expose les cinq statuts métier", () => {
     expect(CESSION_STATUTS_SPEC_54).toHaveLength(5);
     expect(CESSION_STATUTS_SPEC_54[0]?.label).toBe("EN CONSTITUTION");
     expect(CESSION_STATUTS_SPEC_54[4]?.label).toBe("CESSION FINALISÉE");

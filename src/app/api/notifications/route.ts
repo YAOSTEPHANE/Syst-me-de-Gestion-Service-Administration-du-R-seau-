@@ -8,6 +8,7 @@ import { requireApiAuth } from "@/lib/auth/guards";
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
+  unreadOnly: z.enum(["true", "false"]).default("false"),
 });
 
 export async function GET(request: NextRequest) {
@@ -21,6 +22,11 @@ export async function GET(request: NextRequest) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureNotificationIndexes();
-  const result = await listMyNotifications(auth.user._id ?? "", parsed.data.page, parsed.data.pageSize);
+  const result = await listMyNotifications(
+    auth.user._id ?? "",
+    parsed.data.page,
+    parsed.data.pageSize,
+    parsed.data.unreadOnly === "true",
+  );
   return NextResponse.json(result, { status: 200 });
 }

@@ -2,12 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   DELOCALISATION_CHECKLIST_ITEMS_SPEC_61,
-  buildDelocalisationDocumentChecklist,
   mergeDelocalisationChecklistTemplate,
 } from "@/lib/lonaci/delocalisation-document-checklist";
 import { buildDocumentChecklistForKind } from "@/lib/lonaci/cession-dossier-checklist";
 
-describe("delocalisation document checklist spec 6.1", () => {
+describe("liste des pièces de délocalisation", () => {
   it("inclut les 4 pièces communes", () => {
     expect(DELOCALISATION_CHECKLIST_ITEMS_SPEC_61).toHaveLength(4);
   });
@@ -28,7 +27,7 @@ describe("delocalisation document checklist spec 6.1", () => {
   });
 });
 
-describe("cession-délocalisation checklist spec 6.2", () => {
+describe("liste des pièces de cession-délocalisation", () => {
   it("combine cession et délocalisation", () => {
     const checklist = buildDocumentChecklistForKind("CESSION_DELOCALISATION", "LOTO", [
       {

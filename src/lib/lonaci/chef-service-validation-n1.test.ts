@@ -42,7 +42,7 @@ describe("Chef de service - Validation N1 (sécurité)", () => {
       { resource: "CAUTIONS", action: "VALIDATE_N1" as const },
       { resource: "AGREMENTS", action: "VALIDATE_N1" as const },
       { resource: "CESSIONS", action: "VALIDATE_N1" as const },
-    ];
+    ] as const;
 
     for (const c of cases) {
       const r = canRole({ role: "CHEF_SERVICE", resource: c.resource, action: c.action });
@@ -90,7 +90,7 @@ describe("Chef de service - Validation N1 (sécurité)", () => {
     ).rejects.toThrow(WORKFLOW_SEPARATION_ERRORS.INSCRIPTION_N1_CHEF_SECTION_ONLY);
   });
 
-  it("transitionAgrement : RECU -> CONTROLE (VALIDATE_N1) interdit au chef de service (FORBIDDEN_TRANSITION)", async () => {
+  it("transitionAgrement : masque la file N1 au chef de service", async () => {
     (getDatabase as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({
       collection: () => ({
         findOne: vi.fn().mockResolvedValue({
@@ -103,13 +103,12 @@ describe("Chef de service - Validation N1 (sécurité)", () => {
       transitionAgrement({
         id: validObjectId,
         target: "CONTROLE",
-        role: "CHEF_SERVICE",
-        actorId: "u1",
+        actor: { role: "CHEF_SERVICE", _id: "u1" } as unknown as UserDocument,
       }),
-    ).rejects.toThrow("FORBIDDEN_TRANSITION");
+    ).rejects.toThrow("AGREMENT_NOT_FOUND");
   });
 
-  it("transitionCession : SAISIE_AGENT -> CONTROLE_CHEF_SECTION (VALIDATE_N1) interdit au chef de service (FORBIDDEN_TRANSITION)", async () => {
+  it("transitionCession : masque la file N1 au chef de service", async () => {
     (getDatabase as unknown as { mockResolvedValue: (v: unknown) => void }).mockResolvedValue({
       collection: () => ({
         findOne: vi.fn().mockResolvedValue({
@@ -126,7 +125,7 @@ describe("Chef de service - Validation N1 (sécurité)", () => {
         commentaire: "test",
         actor: { role: "CHEF_SERVICE", _id: "u1" } as unknown as UserDocument,
       }),
-    ).rejects.toThrow("FORBIDDEN_TRANSITION");
+    ).rejects.toThrow("CESSION_NOT_FOUND");
   });
 });
 

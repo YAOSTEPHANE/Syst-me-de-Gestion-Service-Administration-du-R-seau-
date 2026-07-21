@@ -15,7 +15,7 @@ vi.mock("@/lib/auth/guards", () => ({
 
 vi.mock("@/lib/lonaci/dossier-bulk-transition-logs", () => ({
   ensureBulkTransitionLogsIndexes: ensureBulkTransitionLogsIndexesMock,
-  listBulkTransitionLogs: listBulkTransitionLogsMock,
+  listVisibleBulkTransitionLogs: listBulkTransitionLogsMock,
   bulkTransitionLogsToCsv: bulkTransitionLogsToCsvMock,
 }));
 
@@ -39,13 +39,16 @@ describe("GET /api/dossiers/bulk-transition/logs", () => {
     const res = await GET(req);
     expectResponse(res);
     expect(res.status).toBe(200);
-    expect(listBulkTransitionLogsMock).toHaveBeenCalledWith({
-      page: 2,
-      pageSize: 5,
-      actorUserId: "u2",
-      action: "SUBMIT",
-      failedOnly: true,
-    });
+    expect(listBulkTransitionLogsMock).toHaveBeenCalledWith(
+      {
+        page: 2,
+        pageSize: 5,
+        actorUserId: "u2",
+        action: "SUBMIT",
+        failedOnly: true,
+      },
+      expect.objectContaining({ _id: "u1", role: "CHEF_SERVICE" }),
+    );
   });
 
   it("exporte les logs en csv", async () => {

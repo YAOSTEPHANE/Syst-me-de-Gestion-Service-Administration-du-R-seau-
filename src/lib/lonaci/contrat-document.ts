@@ -1,7 +1,6 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
 import { loadPartySnapshotForDossier, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
@@ -21,6 +20,20 @@ import {
 import { listProduits } from "@/lib/lonaci/referentials";
 import type { DossierDocument, DossierDocumentChecklistPayload, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
+import {
+  collectPdfBuffer,
+  createPremiumPdfDocument,
+  drawBulletList,
+  drawInformationCard,
+  drawSection,
+  drawStatusBadge,
+  drawTitle,
+  ensureSpace,
+  finalizePremiumPages,
+  PDF_COLORS,
+  PDF_TYPOGRAPHY,
+  type PdfField,
+} from "@/lib/pdf";
 import { saveAnnexeArchivePdf, saveContratArchivePdf } from "@/lib/storage/contrat-files";
 
 export const CONTRAT_OFFICIEL_TITLE = "CONTRAT DE CONCESSION — LONACI";
@@ -349,119 +362,102 @@ export async function buildContratDocumentView(
   };
 }
 
-function drawHeader(doc: InstanceType<typeof PDFDocument>, finalized: boolean) {
-  const x = doc.page.margins.left;
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const topY = doc.page.margins.top;
-  const bandH = 52;
-  doc.save();
-  doc.rect(x, topY, w, bandH).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
-  doc.fontSize(7).text("Document officiel — module Contrats", x + 14, topY + 38);
-  doc.restore();
-  doc.y = topY + bandH + 14;
-  doc.fillColor("#111827").fontSize(13).text(CONTRAT_OFFICIEL_TITLE, { align: "center" });
-  doc.moveDown(0.35);
-  doc
-    .fontSize(10)
-    .fillColor(finalized ? "#047857" : "#6b7280")
-    .text(finalized ? "CONTRAT SIGNÉ ET ARCHIVÉ" : "PROJET DE CONTRAT — EN CIRCUIT DE VALIDATION", {
-      align: "center",
-      underline: finalized,
-    });
-  doc.moveDown(0.8);
-}
-
-function drawField(doc: InstanceType<typeof PDFDocument>, label: string, value: string) {
-  const y = doc.y;
-  doc.fontSize(9).fillColor("#6b7280").text(label, doc.page.margins.left, y, { width: 170 });
-  doc.fontSize(10).fillColor("#111827").text(value, doc.page.margins.left + 175, y, {
-    width: doc.page.width - doc.page.margins.right - doc.page.margins.left - 180,
-    align: "right",
-  });
-  doc.moveDown(0.55);
-}
-
 export async function renderContratDocumentPdf(view: ContratDocumentView): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: CONTRAT_OFFICIEL_TITLE,
+      subject: `Contrat ${view.contratReference}`,
+      creationDate: view.generatedAt,
+    },
+  });
 
-    drawHeader(doc, view.finalized);
-    doc.fontSize(9).fillColor("#374151").text(`Réf. contrat : ${view.contratReference}`, { align: "center" });
-    doc.text(`Réf. dossier : ${view.dossierReference}`, { align: "center" });
-    doc.moveDown(0.8);
-
-    doc.fontSize(10).fillColor("#111827").text("Identité du concessionnaire", { underline: true });
-    doc.moveDown(0.4);
-    drawField(doc, "Nom complet", view.concessionnaire.nomComplet);
-    drawField(doc, "Raison sociale", view.concessionnaire.raisonSociale);
-    drawField(doc, "Code PDV", view.concessionnaire.codePdv);
-    if (view.concessionnaire.codeTerminal) drawField(doc, "Code terminal", view.concessionnaire.codeTerminal);
-    if (view.concessionnaire.codeConcessionnaire) {
-      drawField(doc, "Code concessionnaire", view.concessionnaire.codeConcessionnaire);
-    }
-    if (view.concessionnaire.cniNumero) drawField(doc, "N° CNI", view.concessionnaire.cniNumero);
-    if (view.concessionnaire.email) drawField(doc, "E-mail", view.concessionnaire.email);
-    if (view.concessionnaire.telephone) drawField(doc, "Téléphone", view.concessionnaire.telephone);
-    if (view.concessionnaire.adresse) drawField(doc, "Adresse", view.concessionnaire.adresse);
-    if (view.concessionnaire.ville) drawField(doc, "Ville", view.concessionnaire.ville);
-    drawField(doc, "Agence", view.concessionnaire.agenceLabel);
-
-    doc.moveDown(0.3);
-    doc.fontSize(10).text("Conditions du contrat", { underline: true });
-    doc.moveDown(0.4);
-    drawField(doc, "Produit", `${view.produitCode} — ${view.produitLibelle}`);
-    drawField(doc, "Type d’opération", view.operationType);
-    drawField(
+  return await collectPdfBuffer(doc, () => {
+    drawTitle(
       doc,
-      "Date d’effet",
-      view.dateEffet.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" }),
+      CONTRAT_OFFICIEL_TITLE,
+      `Réf. contrat : ${view.contratReference} · Réf. dossier : ${view.dossierReference}`,
     );
-    drawField(doc, "Réf. caution", view.cautionReferenceLabel);
+    drawStatusBadge(
+      doc,
+      view.finalized ? "CONTRAT SIGNÉ ET ARCHIVÉ" : "PROJET DE CONTRAT — EN CIRCUIT DE VALIDATION",
+      view.finalized ? "success" : "warning",
+    );
 
-    doc.moveDown(0.2);
-    doc.fontSize(10).fillColor("#047857").text("Référence de paiement de la caution", { underline: true });
-    doc.moveDown(0.25);
-    doc.fontSize(12).fillColor("#065f46").text(view.paymentReference, { align: "center" });
-    doc.moveDown(0.8);
-
-    doc.fontSize(10).fillColor("#111827").text("Documents fournis (checklist validée)", { underline: true });
-    doc.moveDown(0.35);
-    if (!view.documentsFournis.length) {
-      doc.fontSize(9).fillColor("#6b7280").text("—");
-    } else {
-      doc.fontSize(9).fillColor("#374151");
-      for (const d of view.documentsFournis) doc.text(`• ${d}`);
+    drawSection(doc, "Identité du concessionnaire");
+    const identityFields: PdfField[] = [
+      { label: "Nom complet", value: view.concessionnaire.nomComplet },
+      { label: "Raison sociale", value: view.concessionnaire.raisonSociale },
+      { label: "Code PDV", value: view.concessionnaire.codePdv },
+    ];
+    if (view.concessionnaire.codeTerminal) {
+      identityFields.push({ label: "Code terminal", value: view.concessionnaire.codeTerminal });
     }
-
-    doc.moveDown(0.5);
-    doc.fontSize(10).fillColor("#111827").text("Documents annexe associés au contrat", { underline: true });
-    doc.moveDown(0.35);
-    if (!view.documentsAnnexeAssocies.length) {
-      doc.fontSize(9).fillColor("#6b7280").text("— (configurer dans le référentiel produit)");
-    } else {
-      doc.fontSize(9).fillColor("#374151");
-      for (const d of view.documentsAnnexeAssocies) doc.text(`• ${d}`);
+    if (view.concessionnaire.codeConcessionnaire) {
+      identityFields.push({
+        label: "Code concessionnaire",
+        value: view.concessionnaire.codeConcessionnaire,
+      });
     }
+    if (view.concessionnaire.cniNumero) {
+      identityFields.push({ label: "N° CNI", value: view.concessionnaire.cniNumero });
+    }
+    if (view.concessionnaire.email) {
+      identityFields.push({ label: "E-mail", value: view.concessionnaire.email });
+    }
+    if (view.concessionnaire.telephone) {
+      identityFields.push({ label: "Téléphone", value: view.concessionnaire.telephone });
+    }
+    if (view.concessionnaire.adresse) {
+      identityFields.push({ label: "Adresse", value: view.concessionnaire.adresse });
+    }
+    if (view.concessionnaire.ville) {
+      identityFields.push({ label: "Ville", value: view.concessionnaire.ville });
+    }
+    identityFields.push({ label: "Agence", value: view.concessionnaire.agenceLabel });
+    drawInformationCard(doc, identityFields);
+
+    drawSection(doc, "Conditions du contrat");
+    drawInformationCard(doc, [
+      { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+      { label: "Type d’opération", value: view.operationType },
+      {
+        label: "Date d’effet",
+        value: view.dateEffet.toLocaleString("fr-FR", {
+          dateStyle: "long",
+          timeStyle: "short",
+        }),
+      },
+      { label: "Réf. caution", value: view.cautionReferenceLabel },
+    ]);
+
+    drawSection(doc, "Référence de paiement de la caution");
+    drawInformationCard(doc, [{ label: "Référence", value: view.paymentReference }]);
+
+    drawSection(doc, "Documents fournis (checklist validée)");
+    drawBulletList(doc, view.documentsFournis, "—");
+
+    drawSection(doc, "Documents annexe associés au contrat");
+    drawBulletList(
+      doc,
+      view.documentsAnnexeAssocies,
+      "— (configurer dans le référentiel produit)",
+    );
 
     if (view.signedAt && view.signerName) {
-      doc.moveDown(0.8);
-      drawField(
-        doc,
-        "Signature électronique",
-        `${view.signerName} — ${view.signedAt.toLocaleString("fr-FR")}`,
-      );
+      drawSection(doc, "Signature");
+      drawInformationCard(doc, [
+        {
+          label: "Signature électronique",
+          value: `${view.signerName} — ${view.signedAt.toLocaleString("fr-FR")}`,
+        },
+      ]);
     }
 
-    doc.moveDown(1);
+    ensureSpace(doc, 36);
     doc
-      .fontSize(8)
-      .fillColor("#6b7280")
+      .fillColor(PDF_COLORS.muted)
+      .font("Helvetica")
+      .fontSize(PDF_TYPOGRAPHY.label)
       .text(
         view.finalized
           ? "Contrat archivé après validation finale (Chef de Service). Le concessionnaire est actif dans le système."
@@ -469,32 +465,12 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
         { align: "justify" },
       );
 
-    doc.end();
-  });
-}
-
-function drawAnnexeHeader(doc: InstanceType<typeof PDFDocument>, finalized: boolean) {
-  const x = doc.page.margins.left;
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const topY = doc.page.margins.top;
-  const bandH = 52;
-  doc.save();
-  doc.rect(x, topY, w, bandH).fill("#1e3a5f");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
-  doc.fontSize(7).text("Document officiel — annexe contrat", x + 14, topY + 38);
-  doc.restore();
-  doc.y = topY + bandH + 14;
-  doc.fillColor("#111827").fontSize(13).text(CONTRAT_ANNEXE_TITLE, { align: "center" });
-  doc.moveDown(0.35);
-  doc
-    .fontSize(10)
-    .fillColor(finalized ? "#047857" : "#6b7280")
-    .text(finalized ? "ANNEXE SIGNÉE ET ARCHIVÉE" : "PROJET D’ANNEXE — EN CIRCUIT DE VALIDATION", {
-      align: "center",
-      underline: finalized,
+    finalizePremiumPages(doc, {
+      reference: view.contratReference,
+      issuedAt: view.generatedAt,
+      documentLabel: "DOCUMENT OFFICIEL — MODULE CONTRATS",
     });
-  doc.moveDown(0.8);
+  });
 }
 
 export async function buildAnnexeDocumentView(
@@ -526,72 +502,70 @@ export async function buildAnnexeDocumentView(
 }
 
 export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: CONTRAT_ANNEXE_TITLE,
+      subject: `Annexe ${view.annexeReference}`,
+      creationDate: view.generatedAt,
+    },
+  });
 
-    drawAnnexeHeader(doc, view.finalized);
-    doc.fontSize(9).fillColor("#374151").text(`Réf. annexe : ${view.annexeReference}`, { align: "center" });
-    doc.text(`Contrat parent : ${view.contratParentReference}`, { align: "center" });
-    doc.text(`Réf. dossier : ${view.dossierReference}`, { align: "center" });
-    doc.moveDown(0.8);
-
-    doc.fontSize(10).fillColor("#111827").text("Produit concerné", { underline: true });
-    doc.moveDown(0.4);
-    drawField(doc, "Produit", `${view.produitCode} — ${view.produitLibelle}`);
-    drawField(doc, "Type d’opération", view.operationType);
-    drawField(
+  return await collectPdfBuffer(doc, () => {
+    drawTitle(
       doc,
-      "Date d’effet",
-      view.dateEffet.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" }),
+      CONTRAT_ANNEXE_TITLE,
+      `Réf. annexe : ${view.annexeReference} · Contrat parent : ${view.contratParentReference} · Réf. dossier : ${view.dossierReference}`,
     );
-    drawField(doc, "Réf. caution", view.cautionReferenceLabel);
-    drawField(doc, "Réf. paiement caution", view.paymentReference);
+    drawStatusBadge(
+      doc,
+      view.finalized ? "ANNEXE SIGNÉE ET ARCHIVÉE" : "PROJET D’ANNEXE — EN CIRCUIT DE VALIDATION",
+      view.finalized ? "success" : "warning",
+    );
 
-    doc.moveDown(0.3);
-    doc.fontSize(10).text("Titulaire", { underline: true });
-    doc.moveDown(0.4);
-    drawField(doc, "Nom complet", view.concessionnaire.nomComplet);
-    drawField(doc, "Raison sociale", view.concessionnaire.raisonSociale);
-    drawField(doc, "Code PDV", view.concessionnaire.codePdv);
-    drawField(doc, "Agence", view.concessionnaire.agenceLabel);
+    drawSection(doc, "Produit concerné");
+    drawInformationCard(doc, [
+      { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+      { label: "Type d’opération", value: view.operationType },
+      {
+        label: "Date d’effet",
+        value: view.dateEffet.toLocaleString("fr-FR", {
+          dateStyle: "long",
+          timeStyle: "short",
+        }),
+      },
+      { label: "Réf. caution", value: view.cautionReferenceLabel },
+      { label: "Réf. paiement caution", value: view.paymentReference },
+    ]);
 
-    doc.moveDown(0.3);
-    doc.fontSize(10).text("Documents annexe associés", { underline: true });
-    doc.moveDown(0.35);
-    if (!view.documentsAnnexeAssocies.length) {
-      doc.fontSize(9).fillColor("#6b7280").text("—");
-    } else {
-      doc.fontSize(9).fillColor("#374151");
-      for (const d of view.documentsAnnexeAssocies) doc.text(`• ${d}`);
-    }
+    drawSection(doc, "Titulaire");
+    drawInformationCard(doc, [
+      { label: "Nom complet", value: view.concessionnaire.nomComplet },
+      { label: "Raison sociale", value: view.concessionnaire.raisonSociale },
+      { label: "Code PDV", value: view.concessionnaire.codePdv },
+      { label: "Agence", value: view.concessionnaire.agenceLabel },
+    ]);
 
-    doc.moveDown(0.3);
-    doc.fontSize(10).text("Autres pièces du dossier (hors annexe)", { underline: true });
-    doc.moveDown(0.35);
-    if (!view.documentsFournis.length) {
-      doc.fontSize(9).fillColor("#6b7280").text("—");
-    } else {
-      doc.fontSize(9).fillColor("#374151");
-      for (const d of view.documentsFournis) doc.text(`• ${d}`);
-    }
+    drawSection(doc, "Documents annexe associés");
+    drawBulletList(doc, view.documentsAnnexeAssocies, "—");
+
+    drawSection(doc, "Autres pièces du dossier (hors annexe)");
+    drawBulletList(doc, view.documentsFournis, "—");
 
     if (view.signedAt && view.signerName) {
-      doc.moveDown(0.8);
-      drawField(
-        doc,
-        "Signature électronique",
-        `${view.signerName} — ${view.signedAt.toLocaleString("fr-FR")}`,
-      );
+      drawSection(doc, "Signature");
+      drawInformationCard(doc, [
+        {
+          label: "Signature électronique",
+          value: `${view.signerName} — ${view.signedAt.toLocaleString("fr-FR")}`,
+        },
+      ]);
     }
 
-    doc.moveDown(1);
+    ensureSpace(doc, 36);
     doc
-      .fontSize(8)
-      .fillColor("#6b7280")
+      .fillColor(PDF_COLORS.muted)
+      .font("Helvetica")
+      .fontSize(PDF_TYPOGRAPHY.label)
       .text(
         view.finalized
           ? "Annexe archivée avec le contrat après validation finale (Chef de Service)."
@@ -599,7 +573,11 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
         { align: "justify" },
       );
 
-    doc.end();
+    finalizePremiumPages(doc, {
+      reference: view.annexeReference,
+      issuedAt: view.generatedAt,
+      documentLabel: "DOCUMENT OFFICIEL — ANNEXE CONTRAT",
+    });
   });
 }
 

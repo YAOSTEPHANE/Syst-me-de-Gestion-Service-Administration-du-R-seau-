@@ -5,6 +5,7 @@ import {
   buildCautionFicheDefinitiveView,
   renderCautionFicheDefinitivePdf,
 } from "@/lib/lonaci/caution-fiche-definitive";
+import { findVisibleCautionById } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 interface RouteContext {
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
+  if (!(await findVisibleCautionById(id, auth.user))) {
+    return notFound("Fiche definitive introuvable pour cette caution.", "FICHE_DEFINITIVE_NOT_FOUND");
+  }
   try {
     const view = await buildCautionFicheDefinitiveView(id);
     if (!view) {

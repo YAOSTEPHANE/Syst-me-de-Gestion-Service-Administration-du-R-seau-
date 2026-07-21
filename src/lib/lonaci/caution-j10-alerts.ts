@@ -2,6 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 
+import { isWorkflowStageAssignedToRole } from "@/lib/auth/workflow-visibility";
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { CAUTION_PENDING_PAYMENT_STATUSES } from "@/lib/lonaci/caution-statut-metier";
@@ -86,24 +87,27 @@ export async function dispatchAutomaticCautionJ10Alerts(): Promise<CautionJ10Ale
       "Régularisez le paiement puis finalisez en PAYÉE avec une référence de paiement valide.",
     ].join(" ");
 
-    await notifyRoleTargets("CHEF_SECTION", "Caution en retard J+10", message, {
-      cautionId,
-      kind: "CAUTION_J10_OVERDUE",
-      daysOverdue,
-      montant: row.montant,
-    });
-    await notifyRoleTargets("CHEF_SERVICE", "Caution en retard J+10", message, {
-      cautionId,
-      kind: "CAUTION_J10_OVERDUE",
-      daysOverdue,
-      montant: row.montant,
-    });
-    await notifyRoleTargets("ASSIST_CDS", "Caution en retard J+10", message, {
-      cautionId,
-      kind: "CAUTION_J10_OVERDUE",
-      daysOverdue,
-      montant: row.montant,
-    });
+    const targetRole = (["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] as const).find(
+      (role) =>
+        isWorkflowStageAssignedToRole({
+          workflow: "CAUTIONS",
+          role,
+          status: row.status,
+        }),
+    );
+    if (!targetRole) continue;
+    await notifyRoleTargets(
+      targetRole,
+      "Caution en retard J+10",
+      message,
+      {
+        cautionId,
+        kind: "CAUTION_J10_OVERDUE",
+        daysOverdue,
+        montant: row.montant,
+      },
+      row.agenceId ?? null,
+    );
 
     const auditEnt = cautionAlertEntityId(row);
     await appendAuditLog({

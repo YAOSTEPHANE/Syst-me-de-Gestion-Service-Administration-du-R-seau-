@@ -20,7 +20,7 @@ export function friendlyErrorMessage(raw: string | null | undefined): string {
     AGENCE_FORBIDDEN: "Accès refusé : vous n’avez pas les droits sur cette ressource.",
     ACTE_DECES_REQUIRED: "Acte de décès obligatoire pour cette opération.",
     SUCCESSION_CHECKLIST_INCOMPLETE:
-      "Checklist documentaire incomplète : toutes les pièces obligatoires (§10.1) doivent être marquées comme fournies avant la vérification juridique.",
+      "Checklist documentaire incomplète : toutes les pièces obligatoires doivent être marquées comme fournies avant la vérification juridique.",
     SUCCESSION_DOCUMENTS_REQUIRED:
       "Documents de succession requis avant la vérification juridique.",
     CONTRAT_NOT_FOUND: "Contrat introuvable.",

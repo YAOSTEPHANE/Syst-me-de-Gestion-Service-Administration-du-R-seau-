@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, use, useEffect, useMemo, useState } from "react";
 
 type SignatureResponse = {
   signature: {
@@ -23,8 +23,8 @@ type SignatureResponse = {
   } | null;
 };
 
-export default function DossierSignaturePage({ params }: { params: { token: string } }) {
-  const token = params.token;
+export default function DossierSignaturePage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = use(params);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [data, setData] = useState<SignatureResponse | null>(null);
@@ -137,7 +137,7 @@ export default function DossierSignaturePage({ params }: { params: { token: stri
 
             {isExpired ? (
               <p className="rounded-md bg-amber-50 px-3 py-2 text-amber-800">
-                Ce lien a expiré. Veuillez contacter votre gestionnaire Infinitecore Systeme pour demander un nouveau lien.
+                Ce lien a expiré. Veuillez contacter votre gestionnaire LONACI pour demander un nouveau lien.
               </p>
             ) : null}
 

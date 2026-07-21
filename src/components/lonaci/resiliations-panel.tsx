@@ -9,6 +9,14 @@ import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import ResiliationChecklistBlock from "@/components/lonaci/resiliation-checklist-block";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
+import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { RESILIATION_CHECKLIST_ITEMS_SPEC_71 } from "@/lib/lonaci/resiliation-document-checklist";
 import {
   RESILIATION_STATUTS_SPEC_72,
@@ -19,7 +27,10 @@ import { resiliationChecklistProgress } from "@/lib/lonaci/resiliations-checklis
 import { canRole } from "@/lib/auth/rbac";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
+import { notify } from "@/lib/toast";
+import { FilePlus2, RefreshCw, X } from "lucide-react";
 
 type ResiliationStatus =
   | "DOSSIER_RECU"
@@ -128,7 +139,6 @@ export default function ResiliationsPanel() {
   const pageSize = 20;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [meRole, setMeRole] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
@@ -155,6 +165,7 @@ export default function ResiliationsPanel() {
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [finalizeId, setFinalizeId] = useState<string | null>(null);
 
   const [fStatus, setFStatus] = useState<ResiliationStatus | "">("");
   const [fFilterClient, setFFilterClient] = useState<ClientPickerRow | null>(null);
@@ -225,7 +236,7 @@ export default function ResiliationsPanel() {
     try {
       if (!createClient?.id) {
         setError("Sélectionnez un client.");
-        setToast({ type: "error", message: "Sélectionnez un client." });
+        notify.error("Sélectionnez un client.");
         setCreating(false);
         return;
       }
@@ -248,12 +259,12 @@ export default function ResiliationsPanel() {
       setCommentaire("");
       setDocuments([]);
       setCreateOpen(false);
-      setToast({ type: "success", message: "Dossier de résiliation créé (statut DOSSIER_REÇU)." });
+      notify.success("Dossier de résiliation créé (statut DOSSIER_REÇU).");
       await load(1);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -274,10 +285,7 @@ export default function ResiliationsPanel() {
       setDetailItem(data.item);
       setDetailChecklistLive(resiliationChecklistProgress(data.item.documentChecklist));
     } catch (e) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"),
-      });
+      notify.error(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
       setDetailId(null);
     } finally {
       setDetailLoading(false);
@@ -296,7 +304,7 @@ export default function ResiliationsPanel() {
     setDetailChecklistLive(resiliationChecklistProgress(checklist));
   }
 
-  async function transitionResiliationRow(id: string, target: ResiliationStatus, options?: { confirmFinalize?: boolean }) {
+  async function transitionResiliationRow(id: string, target: ResiliationStatus) {
     if (target === "CONTROLE_CHEF_SECTION") {
       const row =
         detailId === id && detailItem ? detailItem : items.find((r) => r.id === id);
@@ -305,19 +313,9 @@ export default function ResiliationsPanel() {
           ? detailChecklistLive.complet
           : row?.documentChecklist?.complet;
       if (row?.documentChecklist && checklistComplet === false) {
-        setToast({
-          type: "error",
-          message: "Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » avant soumission.",
-        });
-        return;
-      }
-    }
-    if (target === "RESILIE" && options?.confirmFinalize) {
-      if (
-        !window.confirm(
-          "Confirmer la résiliation ? Cette action est irréversible (contrat archivé, concessionnaire résilié).",
-        )
-      ) {
+        notify.error(
+          "Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » avant soumission.",
+        );
         return;
       }
     }
@@ -337,18 +335,18 @@ export default function ResiliationsPanel() {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Transition impossible");
       }
-      setToast({
-        type: "success",
-        message: target === "RESILIE" ? "Résiliation finalisée — contrat archivé." : "Transition appliquée.",
-      });
+      notify.success(
+        target === "RESILIE" ? "Résiliation finalisée — contrat archivé." : "Transition appliquée.",
+      );
+      if (target === "RESILIE") setFinalizeId(null);
+      setItems((current) => current.filter((item) => item.id !== id));
+      setTotal((current) => Math.max(0, current - 1));
+      if (detailId === id) closeDetail();
       await load(page);
-      if (detailId === id) {
-        await openDetail(id);
-      }
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -377,15 +375,14 @@ export default function ResiliationsPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import résiliations terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+      notify.success(
+        `Import résiliations terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
           data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
         }.`,
-      });
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -415,6 +412,12 @@ export default function ResiliationsPanel() {
   const canReject = meRbacRole
     ? canRole({ role: meRbacRole, resource: "DOSSIERS", action: "REJECT" }).allowed
     : false;
+  const assignedTransitionTarget = (row: ResiliationItem): ResiliationStatus | null =>
+    getAssignedWorkflowTarget({
+      workflow: "RESILIATIONS",
+      role: meRbacRole,
+      status: row.statut,
+    }) as ResiliationStatus | null;
   function openCreate() {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -442,22 +445,26 @@ export default function ResiliationsPanel() {
   }).toString()}`;
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-cyan-50/60 via-white to-rose-50/30 p-6 shadow-sm">
+    <section className="space-y-5 bg-orange-50/20">
       <div className="pointer-events-none absolute -right-16 top-0 h-44 w-44 rounded-full bg-cyan-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-20 left-0 h-48 w-48 rounded-full bg-rose-200/20 blur-3xl" />
-      <div className="relative mb-4 flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
+      <Surface elevated padding="lg">
+        <PageHeader
+          eyebrow="Gestion contractuelle"
+          title="Résiliations"
+          description="Constitution, contrôle et clôture traçable des dossiers."
+          actions={<div className="flex flex-wrap gap-2"><Button leadingIcon={FilePlus2} onClick={openCreate}>Créer une demande</Button><Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void load()}>Actualiser</Button></div>}
+        />
         <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
-          <h2 className="text-2xl font-semibold text-slate-900">Résiliations</h2>
           <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
             <p>
-              <span className="font-semibold text-cyan-900">7.1 — Checklist :</span> dossier complet obligatoire avant
+              <span className="font-semibold text-cyan-900">Checklist :</span> dossier complet obligatoire avant
               traitement ({RESILIATION_CHECKLIST_ITEMS_SPEC_71.length} pièces communes + documents produit le cas
               échéant).
             </p>
             <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
-                7.1 — Documents à fournir
+                Documents à fournir
               </p>
               <ul className="mt-2 list-inside list-disc space-y-1 text-slate-700">
                 {RESILIATION_CHECKLIST_ITEMS_SPEC_71.map((item) => (
@@ -497,7 +504,7 @@ export default function ResiliationsPanel() {
             </div>
           </div>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={openCreate}
@@ -544,16 +551,11 @@ export default function ResiliationsPanel() {
             {importingFile ? "Import..." : "Importer fichier vers le tableau"}
           </button>
         </div>
-      </div>
+      </Surface>
 
-      {toast ? (
-        <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${toast.type === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-rose-200 bg-rose-50 text-rose-900"}`}>
-          {toast.message}
-        </div>
-      ) : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
+      {error ? <FeedbackState tone="danger" title="Impossible de charger les résiliations" description={error} /> : null}
 
-      <div className="mb-3 grid gap-3 rounded-xl border border-slate-200 bg-slate-50/70 p-3 md:grid-cols-5">
+      <FilterBar filters={<div className="grid w-full gap-3 md:grid-cols-5">
         <select value={fStatus} onChange={(e) => setFStatus(e.target.value as ResiliationStatus | "")} className={inputClass} aria-label="Filtrer par statut">
           <option value="">Tous statuts</option>
           {(Object.keys(WORKFLOW_STATUT_FILTER_LABELS) as ResiliationStatus[]).map((s) => (
@@ -579,7 +581,7 @@ export default function ResiliationsPanel() {
         </select>
         <input type="date" value={fDateFrom} onChange={(e) => setFDateFrom(e.target.value)} className={inputClass} />
         <input type="date" value={fDateTo} onChange={(e) => setFDateTo(e.target.value)} className={inputClass} />
-      </div>
+      </div>} />
 
       <div className="mb-3 grid gap-3 sm:grid-cols-3">
         <article className="rounded-xl border border-cyan-200 bg-cyan-50/80 p-3">
@@ -598,30 +600,40 @@ export default function ResiliationsPanel() {
         </article>
       </div>
 
-      <div className="mb-3 flex items-center gap-2 text-xs text-slate-600">
-        <span>{total} entrée(s) · page {page}/{totalPages}</span>
-        <button
-          type="button"
-          onClick={() => void load(page - 1)}
-          disabled={page <= 1}
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
-        >
-          Préc.
-        </button>
-        <button
-          type="button"
-          onClick={() => void load(page + 1)}
-          disabled={page >= totalPages}
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:opacity-40"
-        >
-          Suiv.
-        </button>
-      </div>
+      <div className="flex items-center justify-between gap-3 text-xs text-slate-600"><span>{total} entrée(s)</span><Pagination page={page} pageCount={totalPages} onPageChange={(next) => void load(next)} label="Pages des résiliations" /></div>
 
       {loading ? (
-        <p className="text-sm text-slate-500">Chargement...</p>
+        <Skeleton lines={5} />
       ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <>
+        <div className="grid gap-3 md:hidden">
+          {items.map((row) => {
+            const progress = resiliationChecklistProgress(row.documentChecklist);
+            return (
+              <Surface key={row.id} padding="md" elevated>
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-950">{labelById.get(row.concessionnaireId) ?? row.concessionnaireId}</p>
+                    <p className="mt-1 text-xs text-slate-500">{row.produitCode} · {new Date(row.dateReception).toLocaleString("fr-FR")}</p>
+                  </div>
+                  <StatusBadge tone={row.statut === "RESILIE" ? "success" : row.statut === "REJETEE" ? "danger" : "warning"}>
+                    {row.statutMetierLabel}
+                  </StatusBadge>
+                </div>
+                <div className="mt-3"><DossierCompletIndicator complet={progress.complet} size="sm" obligatoiresFournis={progress.obligatoiresFournis} obligatoiresTotal={progress.obligatoiresTotal} /></div>
+                {row.attachments.length ? <ul className="mt-3 space-y-1 text-xs">{row.attachments.map((a) => <li key={a.id}><a className="text-orange-700 underline" href={`/api/resiliations/${row.id}/attachments/${a.id}`} target="_blank" rel="noreferrer">{a.filename}</a></li>)}</ul> : null}
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>Voir le dossier</Button>
+                  {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" disabled={busyId === row.id || !progress.complet} onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}>Valider N1</Button> : null}
+                  {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transitionResiliationRow(row.id, "VALIDATION_N2")}>Valider N2</Button> : null}
+                  {assignedTransitionTarget(row) === "RESILIE" && canFinalize ? <Button size="sm" variant="danger" onClick={() => setFinalizeId(row.id)}>Finaliser</Button> : null}
+                </div>
+              </Surface>
+            );
+          })}
+          {!items.length ? <FeedbackState title="Aucune résiliation" description="Aucun dossier ne correspond aux filtres actifs." /> : null}
+        </div>
+        <div className="hidden overflow-x-auto rounded-xl border border-slate-200 md:block">
           <table className="w-full border-collapse text-left text-sm">
             <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
               <tr>
@@ -629,7 +641,7 @@ export default function ResiliationsPanel() {
                 <th className="px-3 py-2.5">Produit</th>
                 <th className="px-3 py-2.5">Date réception</th>
                 <th className="px-3 py-2.5">Statut</th>
-                <th className="px-3 py-2.5">Checklist 7.1</th>
+                <th className="px-3 py-2.5">Checklist</th>
                 <th className="px-3 py-2.5">Pièces jointes</th>
                 <th className="px-3 py-2.5 text-right">Action</th>
               </tr>
@@ -646,7 +658,7 @@ export default function ResiliationsPanel() {
                   <td className="px-3 py-2.5 text-xs">{new Date(row.dateReception).toLocaleString("fr-FR")}</td>
                   <td className="px-3 py-2.5">
                     <span
-                      className={`inline-flex max-w-[11rem] flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${resiliationStatutMetierBadgeClass(
+                      className={`inline-flex max-w-44 flex-col rounded-full border px-2 py-0.5 text-[10px] font-semibold leading-tight ${resiliationStatutMetierBadgeClass(
                         resolveResiliationStatutMetier({
                           statut: row.statut,
                           checklistComplet: row.documentChecklist?.complet ?? null,
@@ -687,20 +699,20 @@ export default function ResiliationsPanel() {
                   </td>
                   <td className="px-3 py-2.5 text-right" onClick={(e) => e.stopPropagation()}>
                     {row.statut === "RESILIE" ? (
-                      <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+                      <StatusBadge tone="success">
                         RÉSILIÉ
-                      </span>
+                      </StatusBadge>
                     ) : row.statut === "REJETEE" ? (
                       <span className="text-xs text-slate-400">Rejetée</span>
                     ) : (
                       <div className="flex flex-wrap justify-end gap-1">
-                        {row.statut === "DOSSIER_RECU" && canValidateN1 ? (
+                        {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? (
                           <button
                             type="button"
                             disabled={busyId === row.id || row.documentChecklist?.complet === false}
                             title={
                               row.documentChecklist?.complet === false
-                                ? "Checklist 7.1 incomplète"
+                                ? "Checklist incomplète"
                                 : undefined
                             }
                             onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}
@@ -709,7 +721,7 @@ export default function ResiliationsPanel() {
                             Valider N1
                           </button>
                         ) : null}
-                        {row.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                        {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -719,17 +731,17 @@ export default function ResiliationsPanel() {
                             Valider N2
                           </button>
                         ) : null}
-                        {row.statut === "VALIDATION_N2" && canFinalize ? (
+                        {assignedTransitionTarget(row) === "RESILIE" && canFinalize ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
-                            onClick={() => void transitionResiliationRow(row.id, "RESILIE", { confirmFinalize: true })}
+                            onClick={() => setFinalizeId(row.id)}
                             className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
                             Finaliser (RÉSILIÉ)
                           </button>
                         ) : null}
-                        {canReject ? (
+                        {assignedTransitionTarget(row) && canReject ? (
                           <button
                             type="button"
                             disabled={busyId === row.id}
@@ -752,13 +764,14 @@ export default function ResiliationsPanel() {
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {detailId ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="resiliation-detail-title">
           <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeDetail} />
           <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-rose-50 px-4 py-3">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-cyan-50 via-white to-rose-50 px-4 py-3">
               <div>
                 <h3 id="resiliation-detail-title" className="text-sm font-semibold text-slate-900">
                   Dossier résiliation {detailItem?.id.slice(-8) ?? detailId}
@@ -772,9 +785,7 @@ export default function ResiliationsPanel() {
                   </p>
                 ) : null}
               </div>
-              <button type="button" onClick={closeDetail} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">
-                ×
-              </button>
+              <IconButton icon={X} label="Fermer le détail de la résiliation" size="sm" onClick={closeDetail} />
             </div>
             {detailItem?.documentChecklist ? (
               <div className="shrink-0 border-b border-slate-200 px-4 py-2">
@@ -837,7 +848,7 @@ export default function ResiliationsPanel() {
             </div>
             {detailItem && detailItem.statut !== "RESILIE" && detailItem.statut !== "REJETEE" ? (
               <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2">
-                {detailItem.statut === "DOSSIER_RECU" && canValidateN1 ? (
+                {assignedTransitionTarget(detailItem) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? (
                   <button
                     type="button"
                     disabled={
@@ -850,7 +861,7 @@ export default function ResiliationsPanel() {
                     Valider N1
                   </button>
                 ) : null}
-                {detailItem.statut === "CONTROLE_CHEF_SECTION" && canValidateN2 ? (
+                {assignedTransitionTarget(detailItem) === "VALIDATION_N2" && canValidateN2 ? (
                   <button
                     type="button"
                     disabled={busyId === detailItem.id}
@@ -860,19 +871,19 @@ export default function ResiliationsPanel() {
                     Valider N2
                   </button>
                 ) : null}
-                {detailItem.statut === "VALIDATION_N2" && canFinalize ? (
+                {assignedTransitionTarget(detailItem) === "RESILIE" && canFinalize ? (
                   <button
                     type="button"
                     disabled={busyId === detailItem.id}
                     onClick={() =>
-                      void transitionResiliationRow(detailItem.id, "RESILIE", { confirmFinalize: true })
+                      setFinalizeId(detailItem.id)
                     }
                     className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white"
                   >
                     Finaliser (RÉSILIÉ)
                   </button>
                 ) : null}
-                {canReject ? (
+                {assignedTransitionTarget(detailItem) && canReject ? (
                   <button
                     type="button"
                     disabled={busyId === detailItem.id}
@@ -888,18 +899,33 @@ export default function ResiliationsPanel() {
         </div>
       ) : null}
 
+      <ConfirmDialog
+        open={Boolean(finalizeId)}
+        onOpenChange={(open) => {
+          if (!open && !busyId) setFinalizeId(null);
+        }}
+        title="Finaliser la résiliation"
+        message="Cette action est irréversible : le contrat sera archivé et le concessionnaire passera au statut résilié."
+        confirmLabel="Confirmer la résiliation"
+        destructive
+        pending={Boolean(finalizeId && busyId === finalizeId)}
+        onConfirm={async () => {
+          if (finalizeId) await transitionResiliationRow(finalizeId, "RESILIE");
+        }}
+      />
+
       {createOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="create-resiliation-title">
           <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeCreate} disabled={creating} />
           <div className="relative z-10 flex max-h-[84vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-rose-50 px-4 py-2">
+            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-cyan-50 via-white to-rose-50 px-4 py-2">
               <div>
                 <h3 id="create-resiliation-title" className="text-sm font-semibold text-slate-900">
                   Demande de résiliation
                 </h3>
                 <p className="mt-0.5 text-[11px] leading-4 text-slate-600">Client, produit, date de réception, motif, documents joints.</p>
               </div>
-              <button type="button" onClick={closeCreate} disabled={creating} className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600">×</button>
+              <IconButton icon={X} label="Fermer le formulaire de résiliation" size="sm" onClick={closeCreate} disabled={creating} />
             </div>
             <form id="create-resiliation-form" noValidate onSubmit={onCreate} className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
               <div className="grid gap-3">

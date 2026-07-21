@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 
+import { Surface } from "@/components/lonaci/ui/surface";
 import { mergeProductChecklistTemplates } from "@/lib/lonaci/produit-document-checklist";
 import type { ProduitDocument, ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
 
@@ -81,7 +82,10 @@ export default function ProduitSelectedPiecesChecklist({
   const fournis = obligatoires.filter((i) => fourniIds.has(i.id)).length;
 
   return (
-    <div className={`rounded-lg border border-cyan-200/80 bg-cyan-50/30 px-3 py-2 ${className}`}>
+    <Surface
+      padding="none"
+      className={`border-cyan-200/80 bg-cyan-50/30 px-3 py-2 ${className}`}
+    >
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs font-semibold uppercase tracking-wide text-cyan-950">{title}</p>
         {items.length > 0 ? (
@@ -128,6 +132,6 @@ export default function ProduitSelectedPiecesChecklist({
           ))}
         </ul>
       )}
-    </div>
+    </Surface>
   );
 }

@@ -15,7 +15,6 @@ import {
   BANCARISATION_STATUTS,
   CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS,
   CONCESSIONNAIRE_STATUT_LABELS,
-  CONCESSIONNAIRE_STATUTS,
   type BancarisationStatut,
   type ConcessionnaireInscriptionStatut,
   type ConcessionnaireStatut,
@@ -24,14 +23,25 @@ import { bancarisationStatutBadgeClass } from "@/lib/lonaci/bancarisation-statut
 import { captureByAliases, extractPdfText } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { userHasConcessionnairesSaisieModule } from "@/lib/lonaci/module-concessionnaires";
+import { notify } from "@/lib/toast";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Check, Plus, X } from "lucide-react";
+
+import { Badge, StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 type FicheModalTab = "fiche" | "contrats" | "historique" | "pieces";
 const OTHER_PRODUCT_CODE = "AUTRES";
 const OTHER_FILES_ACCEPT = ".pdf,image/jpeg,image/png,image/webp";
 
-/** Libellés courts dans le tableau (spec 8.3). */
+/** Libellés courts dans le tableau. */
 const BANCARISATION_TABLE_COURT: Record<BancarisationStatut, string> = {
   NON_BANCARISE: "Non",
   EN_ATTENTE_RIB: "Attente RIB",
@@ -43,47 +53,21 @@ const BANCARISATION_TABLE_COURT: Record<BancarisationStatut, string> = {
 const bancarisationUiToken = (statut: BancarisationStatut) =>
   `border ${bancarisationStatutBadgeClass(statut)}`;
 
-const CONCESSIONNAIRE_STATUS_TOKENS: Record<string, string> = {
-  ACTIF: "border-green-400 bg-green-100 text-green-900",
-  SUSPENDU: "border-slate-400 bg-slate-200 text-slate-800",
-  INACTIF: "border-slate-200 bg-slate-100 text-slate-700",
-  RESILIE: "border-rose-200 bg-rose-50 text-rose-800",
-  DECEDE: "border-rose-300 bg-rose-50 text-rose-900",
-  SUCCESSION_EN_COURS: "border-violet-200 bg-violet-50 text-violet-800",
+const CONCESSIONNAIRE_STATUS_TONES: Record<string, Tone> = {
+  ACTIF: "success",
+  SUSPENDU: "warning",
+  INACTIF: "neutral",
+  RESILIE: "danger",
+  DECEDE: "danger",
+  SUCCESSION_EN_COURS: "info",
 };
 
 function IconeBancarisationOui() {
-  return (
-    <svg
-      className="h-3.5 w-3.5 shrink-0 text-emerald-600 motion-reduce:animate-none motion-safe:animate-[lonaci-icon-pop_0.55s_ease-out_both] motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out motion-safe:hover:scale-125 motion-safe:active:scale-95"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path
-        fillRule="evenodd"
-        d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+  return <Check className="h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />;
 }
 
 function IconeBancarisationNon() {
-  return (
-    <svg
-      className="h-3.5 w-3.5 shrink-0 text-rose-600 motion-reduce:animate-none motion-safe:animate-[lonaci-icon-pop_0.55s_ease-out_both] motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out motion-safe:hover:scale-125 motion-safe:active:scale-95"
-      viewBox="0 0 20 20"
-      fill="currentColor"
-      aria-hidden
-    >
-      <path
-        fillRule="evenodd"
-        d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
-        clipRule="evenodd"
-      />
-    </svg>
-  );
+  return <X className="h-4 w-4 shrink-0 text-rose-600" aria-hidden="true" />;
 }
 
 function classePastilleProduitTableau(code: string): string {
@@ -110,14 +94,14 @@ function ConcessionnaireRowActionsMenu({
 }) {
   const label = codePdv ?? "fiche";
   return (
-    <button
-      type="button"
+    <Button
+      size="sm"
+      variant="secondary"
       onClick={() => onOpenFicheModal("fiche")}
-      className="inline-flex items-center justify-center rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-800 shadow-sm transition hover:border-cyan-500 hover:bg-cyan-50/70"
       aria-label={`Ouvrir la fiche de ${label}`}
     >
       Ouvrir
-    </button>
+    </Button>
   );
 }
 
@@ -385,7 +369,6 @@ export default function ConcessionnairesPanel() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [items, setItems] = useState<Item[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -526,10 +509,9 @@ export default function ConcessionnairesPanel() {
         setAgences(data.agences);
         setProduits(data.produits.filter((p) => p.actif));
       } catch (e) {
-        setToast({
-          type: "error",
-          message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement des référentiels"),
-        });
+        notify.error(
+          friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement des référentiels"),
+        );
       }
     })();
   }, []);
@@ -544,10 +526,7 @@ export default function ConcessionnairesPanel() {
         };
         setMe(data.user);
       } catch (e) {
-        setToast({
-          type: "error",
-          message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement du profil"),
-        });
+        notify.error(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur de chargement du profil"));
       }
     })();
   }, []);
@@ -678,10 +657,7 @@ export default function ConcessionnairesPanel() {
         });
         if (!up.ok) {
           const b = (await up.json().catch(() => null)) as { message?: string } | null;
-          setToast({
-            type: "error",
-            message: b?.message ?? "Concessionnaire créé, mais l’import de la photo a échoué.",
-          });
+          notify.warning(b?.message ?? "Concessionnaire créé, mais l’import de la photo a échoué.");
           await load(1);
           return;
         }
@@ -702,10 +678,9 @@ export default function ConcessionnairesPanel() {
           }
         }
         if (failedNames.length > 0) {
-          setToast({
-            type: "error",
-            message: `Concessionnaire créé, mais certains fichiers AUTRES n'ont pas été envoyés: ${failedNames.join(", ")}.`,
-          });
+          notify.warning(
+            `Concessionnaire créé, mais certains fichiers AUTRES n'ont pas été envoyés: ${failedNames.join(", ")}.`,
+          );
           await load(1);
           return;
         }
@@ -734,17 +709,15 @@ export default function ConcessionnairesPanel() {
       if (otherFilesInputRef.current) otherFilesInputRef.current.value = "";
       await load(1);
       setCreateOpen(false);
-      setToast({
-        type: "success",
-        message:
-          "Fiche créée — dossier en cours (avant paiement caution). Ouvrez-la pour joindre les pièces, compléter la checklist et soumettre à validation N1.",
-      });
+      notify.success(
+        "Fiche créée — dossier en cours (avant paiement caution). Ouvrez-la pour joindre les pièces, compléter la checklist et soumettre à validation N1.",
+      );
       if (newId) {
         setFicheModalId(newId);
         setFicheModalTab("pieces");
       }
     } catch (e) {
-      setToast({ type: "error", message: friendlyErrorMessage(e instanceof Error ? e.message : "Erreur") });
+      notify.error(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
     } finally {
       setCreating(false);
     }
@@ -767,13 +740,8 @@ export default function ConcessionnairesPanel() {
     const s = p.toString();
     return s ? `/carte-pdv?${s}` : "/carte-pdv";
   }, [filterAgenceId, q]);
-  const statusClass = CONCESSIONNAIRE_STATUS_TOKENS;
-
   const inputClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-
-  const searchInputClass =
-    "w-36 max-w-[11rem] rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-500 sm:w-44 sm:max-w-none";
 
   const agencesTriees = useMemo(
     () =>
@@ -886,9 +854,11 @@ export default function ConcessionnairesPanel() {
         if (matched) setBancarisation(matched);
       }
 
-      setToast({ type: "success", message: "Fichier analysé. Les champs reconnus ont été préremplis." });
+      notify.success("Fichier analysé. Les champs reconnus ont été préremplis.");
     } catch (e) {
-      setToast({ type: "error", message: friendlyErrorMessage(e instanceof Error ? e.message : "Extraction impossible.") });
+      notify.error(
+        friendlyErrorMessage(e instanceof Error ? e.message : "Extraction impossible."),
+      );
     } finally {
       setExtracting(false);
       ev.target.value = "";
@@ -912,32 +882,22 @@ export default function ConcessionnairesPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1, { q, agenceId: filterAgenceId });
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import concessionnaires terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
-      });
+      notify.success(
+        `Import concessionnaires terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      );
     } catch (err) {
-      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible.") });
+      notify.error(
+        friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible."),
+      );
     } finally {
       setImportingFile(false);
       ev.target.value = "";
     }
   }
 
-  const paginationBtnBase =
-    "inline-flex items-center justify-center gap-1 rounded-lg border text-xs font-semibold transition focus-visible:outline focus-visible:ring-2 focus-visible:ring-cyan-500 disabled:pointer-events-none disabled:opacity-40";
-  const paginationBtnGhost = `${paginationBtnBase} border-slate-200 bg-white px-2.5 py-2 text-slate-700 hover:border-slate-300 hover:bg-slate-50 sm:px-3`;
-  const paginationBtnPrimary = `${paginationBtnBase} border-cyan-600 bg-cyan-600 px-3 py-2 text-white hover:border-cyan-700 hover:bg-cyan-700 sm:min-w-[7.5rem]`;
-
   const listePaginationBar = (placement: "top" | "bottom") => (
-    <div
-      className={
-        placement === "top"
-          ? "mb-3 rounded-xl border border-slate-200 bg-white px-3 py-3 shadow-sm sm:px-4"
-          : "border-t border-slate-200 bg-slate-50/90 px-3 py-3 sm:px-4"
-      }
-    >
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+    <Surface padding="sm" className={placement === "top" ? "mb-3" : "mt-3"}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
         <p className="text-xs leading-relaxed text-slate-600">
           Affichage{" "}
           <span className="tabular-nums font-semibold text-slate-900">{rangeStart}</span>
@@ -950,79 +910,39 @@ export default function ConcessionnairesPanel() {
             · Page <span className="font-medium text-slate-800">{page}</span> / {totalPages}
           </span>
         </p>
-        <nav
-          className="flex flex-wrap items-center justify-end gap-1.5 sm:gap-2"
-          aria-label="Pagination de la liste des concessionnaires"
-        >
-          <button
-            type="button"
-            disabled={paginationLocked || page <= 1}
-            onClick={() => void load(1)}
-            className={`${paginationBtnGhost} aspect-square p-2 sm:aspect-auto sm:px-2.5`}
-            aria-label="Première page"
-            title="Première page"
-          >
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-            </svg>
-            <span className="hidden sm:inline">Début</span>
-          </button>
-          <button
-            type="button"
-            disabled={paginationLocked || page <= 1}
-            onClick={() => void load(page - 1)}
-            className={paginationBtnPrimary}
-            aria-label="Page précédente"
-          >
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
-            </svg>
-            <span>Précédent</span>
-          </button>
-          <button
-            type="button"
-            disabled={paginationLocked || page >= totalPages}
-            onClick={() => void load(page + 1)}
-            className={paginationBtnPrimary}
-            aria-label="Page suivante"
-          >
-            <span>Suivant</span>
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M9 18l6-6-6-6" />
-            </svg>
-          </button>
-          <button
-            type="button"
-            disabled={paginationLocked || page >= totalPages}
-            onClick={() => void load(totalPages)}
-            className={`${paginationBtnGhost} aspect-square p-2 sm:aspect-auto sm:px-2.5`}
-            aria-label="Dernière page"
-            title="Dernière page"
-          >
-            <span className="hidden sm:inline">Fin</span>
-            <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
-              <path strokeLinecap="round" strokeLinejoin="round" d="M13 5l7 7-7 7M5 5l7 7-7 7" />
-            </svg>
-          </button>
-        </nav>
+        <div aria-busy={paginationLocked || undefined}>
+          <Pagination
+            page={page}
+            pageCount={totalPages}
+            onPageChange={(next) => void load(next)}
+            label="Pagination de la liste des concessionnaires"
+          />
+        </div>
       </div>
-    </div>
+    </Surface>
   );
 
   return (
     <div className="min-w-0 space-y-4">
-      <section className="relative overflow-hidden rounded-3xl border border-sky-200 bg-gradient-to-r from-sky-50 via-white to-cyan-50 p-5 shadow-sm">
+      <PageHeader
+        eyebrow="Référentiel réseau"
+        title="Concessionnaires"
+        description="Pilotage centralisé du réseau PDV, création, import, export et suivi des statuts."
+        actions={
+          saisieReferentielConcessionnaires ? (
+            <Button leadingIcon={Plus} onClick={() => setCreateOpen(true)}>
+              Nouveau concessionnaire
+            </Button>
+          ) : undefined
+        }
+      />
+      <Surface className="relative overflow-hidden border-orange-200 bg-gradient-to-r from-orange-50 via-white to-amber-50" elevated>
         <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-sky-200/40 blur-2xl" />
         <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-cyan-200/30 blur-2xl" />
         <div className="relative flex flex-wrap items-start justify-between gap-4">
         <div>
-          <p className="inline-flex rounded-full border border-sky-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-sky-700">
-            Référentiel
-          </p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">Concessionnaires</h2>
-          <p className="mt-1 text-sm text-slate-700">Pilotage centralisé du réseau PDV, création rapide et suivi en temps réel.</p>
           {me && !saisieReferentielConcessionnaires ? (
-            <p className="mt-2 rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-xs text-sky-950">
+            <p className="rounded-lg border border-sky-200 bg-sky-50/90 px-3 py-2 text-xs text-sky-950">
               <span className="font-semibold">Profil suivi / lecture seule</span> sur ce référentiel : consultation,
               export et carte autorisés ; pas de création ni de modification des fiches.
             </p>
@@ -1163,9 +1083,34 @@ export default function ConcessionnairesPanel() {
             </div>
           </div>
         </div>
-      </section>
+      </Surface>
 
-      <div className="mb-4 rounded-xl border border-slate-200 bg-white p-2 shadow-sm sm:p-2.5">
+      <FilterBar
+        search={{
+          value: q,
+          onChange: setQ,
+          label: "Recherche concessionnaire",
+          placeholder: "Code PDV, nom, téléphone…",
+        }}
+        filters={
+          <select
+            value={filterInscription}
+            onChange={(e) => setFilterInscription(e.target.value)}
+            aria-label="Filtrer par inscription"
+          >
+            <option value="">Toutes inscriptions</option>
+            {(Object.keys(CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS) as ConcessionnaireInscriptionStatut[]).map(
+              (s) => (
+                <option key={s} value={s}>
+                  {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[s]}
+                </option>
+              ),
+            )}
+          </select>
+        }
+        actions={<Button onClick={() => void load(1)}>Rechercher</Button>}
+      />
+      <Surface padding="sm">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
           <div
             className="flex min-h-8 min-w-0 flex-1 items-center gap-1.5 overflow-x-auto pb-0.5 [scrollbar-width:thin]"
@@ -1194,64 +1139,22 @@ export default function ConcessionnairesPanel() {
               );
             })}
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder="Recherche PDV…"
-              className={searchInputClass}
-              aria-label="Recherche concessionnaire"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void load(1);
-                }
-              }}
-            />
-            <select
-              value={filterInscription}
-              onChange={(e) => setFilterInscription(e.target.value)}
-              className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs text-slate-800"
-              aria-label="Filtrer par inscription"
-            >
-              <option value="">Toutes inscriptions</option>
-              {(Object.keys(CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS) as ConcessionnaireInscriptionStatut[]).map(
-                (s) => (
-                  <option key={s} value={s}>
-                    {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[s]}
-                  </option>
-                ),
-              )}
-            </select>
-            <button
-              type="button"
-              onClick={() => void load(1)}
-              className="rounded-md border border-cyan-400 bg-cyan-500 px-2.5 py-1 text-xs font-semibold text-white transition hover:border-cyan-600 hover:bg-cyan-600"
-            >
-              OK
-            </button>
-          </div>
         </div>
         <p className="mt-1.5 text-[10px] text-slate-500">
           Dernière requête : {lastSearchMs != null ? `${lastSearchMs} ms` : "—"}
         </p>
-      </div>
+      </Surface>
 
-      {createOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="nouveau-concessionnaire-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
-            aria-label="Fermer la fenêtre"
-            disabled={creating}
-            onClick={() => setCreateOpen(false)}
-          />
-          <div className="relative z-10 flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl outline-none sm:max-h-[min(88vh,760px)] sm:rounded-3xl">
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => {
+          if (!open && !creating) setCreateOpen(false);
+        }}
+        title="Nouveau concessionnaire"
+        description="Promotion d’un client Lonaci éligible en point de vente."
+        size="lg"
+      >
+          <div className="flex min-h-0 flex-col">
               <div className="relative flex shrink-0 items-start justify-between gap-2 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-indigo-50 px-3 py-3 sm:gap-3 sm:px-5 sm:py-4">
               <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-cyan-200/40 blur-2xl" />
               <div>
@@ -1635,8 +1538,7 @@ export default function ConcessionnairesPanel() {
               </div>
             </form>
           </div>
-        </div>
-      ) : null}
+      </Dialog>
 
       <ConcessionnaireFicheModal
         open={ficheModalId != null}
@@ -1650,31 +1552,16 @@ export default function ConcessionnairesPanel() {
         onSaved={() => void load(page)}
       />
 
-      {toast ? (
-        <div
-          className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
-            toast.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
-          <div className="flex justify-between gap-2">
-            <span>{toast.message}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-xs underline">
-              Fermer
-            </button>
-          </div>
-        </div>
+      {loading ? <FeedbackState title="Chargement du réseau" description="Synchronisation des concessionnaires…" /> : null}
+      {error ? (
+        <FeedbackState tone="danger" title="Liste inaccessible" description={error} aria-live="assertive" />
       ) : null}
-
-      {loading ? <p className="text-sm text-slate-600">Chargement...</p> : null}
-      {error ? <p className="text-sm text-rose-700">{error}</p> : null}
 
       {!loading ? (
         <>
           {listePaginationBar("top")}
-          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm ring-1 ring-slate-900/[0.02]">
-          <div className="max-h-[min(70vh,36rem)] overflow-y-auto overflow-x-auto overscroll-y-contain">
+          <Surface padding="none" elevated>
+          <div className="hidden max-h-[min(70vh,36rem)] overflow-y-auto overflow-x-auto overscroll-y-contain md:block">
               <table className="w-full min-w-[980px] table-fixed border-collapse text-left text-xs">
                 <colgroup>
                   <col style={{ width: "13%" }} />
@@ -1801,16 +1688,14 @@ export default function ConcessionnairesPanel() {
                         {row.produitsAutorises?.length ?? 0}
                       </td>
                       <td className="px-2 py-1.5 align-middle">
-                        <span
-                          className={`block max-w-full truncate rounded-full border px-1.5 py-0.5 text-center text-[10px] font-medium leading-tight ${
-                            statusClass[row.statut] ?? "border-slate-200 bg-slate-100 text-slate-700"
-                          }`}
+                        <StatusBadge
+                          tone={CONCESSIONNAIRE_STATUS_TONES[row.statut] ?? "neutral"}
                           title={
                             CONCESSIONNAIRE_STATUT_LABELS[row.statut as ConcessionnaireStatut] ?? row.statut
                           }
                         >
                           {CONCESSIONNAIRE_STATUT_LABELS[row.statut as ConcessionnaireStatut] ?? row.statut}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td className="px-2 py-1.5 align-middle text-[10px] leading-tight">
                         <span
@@ -1849,8 +1734,45 @@ export default function ConcessionnairesPanel() {
                 </tbody>
               </table>
             </div>
+            <div className="grid gap-3 p-3 md:hidden" role="list" aria-label="Concessionnaires">
+              {items.length === 0 ? (
+                <FeedbackState title="Aucun concessionnaire" description="Aucun résultat pour les filtres actuels." />
+              ) : (
+                items.map((row) => {
+                  const sb = row.statutBancarisation as BancarisationStatut;
+                  const agence = agences.find((a) => a.id === row.agenceId);
+                  return (
+                    <article key={row.id} role="listitem" className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="font-mono text-xs font-semibold text-orange-700">{row.codePdv ?? "Code en attente"}</p>
+                          <h3 className="mt-1 text-base font-bold text-slate-950">{row.nomComplet || row.raisonSociale}</h3>
+                        </div>
+                        <StatusBadge tone={CONCESSIONNAIRE_STATUS_TONES[row.statut] ?? "neutral"}>
+                          {CONCESSIONNAIRE_STATUT_LABELS[row.statut as ConcessionnaireStatut] ?? row.statut}
+                        </StatusBadge>
+                      </div>
+                      <dl className="mt-4 grid gap-3 text-sm">
+                        <div><dt className="font-semibold text-slate-500">Agence</dt><dd className="mt-1">{agence ? `${agence.code} — ${agence.libelle}` : "—"}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Produits</dt><dd className="mt-1 flex flex-wrap gap-1">{row.produitsAutorises?.length ? row.produitsAutorises.map((code) => <Badge key={code}>{code}</Badge>) : "—"}</dd></div>
+                        <div><dt className="font-semibold text-slate-500">Bancarisation</dt><dd className="mt-1">{BANCARISATION_STATUT_LABELS[sb] ?? row.statutBancarisation}</dd></div>
+                      </dl>
+                      <div className="mt-4 border-t border-slate-100 pt-4">
+                        <ConcessionnaireRowActionsMenu
+                          codePdv={row.codePdv}
+                          onOpenFicheModal={(tab) => {
+                            setFicheModalTab(tab);
+                            setFicheModalId(row.id);
+                          }}
+                        />
+                      </div>
+                    </article>
+                  );
+                })
+              )}
+            </div>
             {listePaginationBar("bottom")}
-          </div>
+          </Surface>
         </>
       ) : null}
     </div>

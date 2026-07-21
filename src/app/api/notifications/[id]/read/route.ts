@@ -8,7 +8,9 @@ interface RouteContext {
 }
 
 export async function POST(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request);
+  const auth = await requireApiAuth(request, {
+    rbac: { resource: "NOTIFICATIONS", action: "UPDATE" },
+  });
   if ("error" in auth) {
     return auth.error;
   }

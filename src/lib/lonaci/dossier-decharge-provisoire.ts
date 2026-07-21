@@ -1,7 +1,6 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
 import {
   DECHARGE_PROVISOIRE_DISCLAIMER,
@@ -12,13 +11,28 @@ import { findDossierById } from "@/lib/lonaci/dossiers";
 import {
   ensureChecklistForDossierProduits,
   getDossierProduitCodes,
-  resolveDossierCautionsStatus,
 } from "@/lib/lonaci/dossier-produits";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import { DOSSIER_CHECKLIST_STATUT_LABELS } from "@/lib/lonaci/produit-document-checklist";
 import type { CautionDocument, DossierDocument, DossierDocumentChecklistPayload, DossierStatus } from "@/lib/lonaci/types";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
+import {
+  collectPdfBuffer,
+  contentWidth,
+  createPremiumPdfDocument,
+  drawBulletList,
+  drawInformationCard,
+  drawSection,
+  drawStatusBadge,
+  drawTitle,
+  ensureSpace,
+  finalizePremiumPages,
+  PDF_COLORS,
+  PDF_SPACING,
+  PDF_TYPOGRAPHY,
+  type PdfField,
+} from "@/lib/pdf";
 import { prisma } from "@/lib/prisma";
 
 const CAUTIONS_COLLECTION = "cautions";
@@ -225,7 +239,6 @@ export async function buildDossierDechargeProvisoireView(
     return null;
   }
 
-  const cautionsStatus = await resolveDossierCautionsStatus(dossier);
   const parentContratId =
     typeof dossier.payload?.parentContratId === "string" ? dossier.payload.parentContratId : null;
   const explicitCautionId =
@@ -277,89 +290,66 @@ export async function buildDossierDechargeProvisoireView(
   };
 }
 
-function drawPdfHeader(doc: InstanceType<typeof PDFDocument>) {
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const x = doc.page.margins.left;
-  doc.save();
-  doc.rect(x, doc.y, w, 52).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, doc.y + 2);
-  doc.fontSize(7).text("Document officiel — module Dossiers", x + 14, doc.y + 2);
-  doc.restore();
-  doc.moveDown(3.2);
-  doc.fillColor("#111827").fontSize(13).text(DECHARGE_PROVISOIRE_TITLE, { align: "center" });
-  doc.moveDown(0.8);
-}
-
-function drawFieldRow(doc: InstanceType<typeof PDFDocument>, label: string, value: string) {
-  const y = doc.y;
-  doc.fontSize(9).fillColor("#6b7280").text(label, doc.page.margins.left, y, { width: 160 });
-  doc.fontSize(10).fillColor("#111827").text(value, doc.page.margins.left + 165, y, {
-    width: doc.page.width - doc.page.margins.right - doc.page.margins.left - 170,
-    align: "right",
-  });
-  doc.moveDown(0.55);
-}
-
-function drawBulletList(doc: InstanceType<typeof PDFDocument>, title: string, items: string[], emptyLabel: string) {
-  doc.fontSize(10).fillColor("#111827").text(title, { underline: true });
-  doc.moveDown(0.35);
-  if (!items.length) {
-    doc.fontSize(9).fillColor("#6b7280").text(emptyLabel);
-  } else {
-    doc.fontSize(9).fillColor("#374151");
-    for (const item of items) {
-      doc.text(`• ${item}`);
-    }
-  }
-  doc.moveDown(0.6);
-}
-
 export async function renderDossierDechargeProvisoirePdf(view: DossierDechargeProvisoireView): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: DECHARGE_PROVISOIRE_TITLE,
+      subject: `Décharge provisoire du dossier ${view.dossierReference}`,
+      creationDate: view.generatedAt,
+    },
+  });
+  return collectPdfBuffer(doc, () => {
+    drawTitle(
+      doc,
+      DECHARGE_PROVISOIRE_TITLE,
+      `Réf. dossier : ${view.dossierReference} · Date : ${view.generatedAt.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
+    );
+    drawStatusBadge(doc, "DOSSIER INCOMPLET", "warning");
 
-    drawPdfHeader(doc);
+    const identityFields: PdfField[] = [
+      { label: view.identiteLabel, value: view.identiteDetail },
+      { label: "Code PDV", value: view.codePdv },
+      ...(view.cniNumero ? [{ label: "N° CNI", value: view.cniNumero }] : []),
+      { label: "Agence", value: view.agenceLabel },
+      { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+    ];
+    drawSection(doc, "Identification du dossier");
+    drawInformationCard(doc, identityFields);
 
-    doc.fontSize(9).fillColor("#374151").text(`Réf. dossier : ${view.dossierReference}`, { align: "center" });
-    doc.text(`Date : ${view.generatedAt.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`, {
-      align: "center",
-    });
-    doc.moveDown(0.8);
+    const cautionFields: PdfField[] = view.caution
+      ? [
+          { label: "Réf. caution associée", value: view.caution.referenceLabel },
+          ...(view.caution.numeroFicheProvisoire
+            ? [{ label: "Fiche provisoire (FPC)", value: view.caution.numeroFicheProvisoire }]
+            : []),
+          ...(view.caution.paymentReference
+            ? [{ label: "Référence de paiement", value: view.caution.paymentReference }]
+            : []),
+        ]
+      : [{ label: "Réf. caution associée", value: "Aucune caution liée identifiée" }];
+    drawSection(doc, "Caution associée");
+    drawInformationCard(doc, cautionFields);
 
-    drawFieldRow(doc, view.identiteLabel, view.identiteDetail);
-    drawFieldRow(doc, "Code PDV", view.codePdv);
-    if (view.cniNumero) drawFieldRow(doc, "N° CNI", view.cniNumero);
-    drawFieldRow(doc, "Agence", view.agenceLabel);
-    drawFieldRow(doc, "Produit", `${view.produitCode} — ${view.produitLibelle}`);
+    drawSection(doc, "Documents fournis");
+    drawBulletList(doc, view.documentsFournis, "Aucun document marqué comme fourni.");
+    doc.y += PDF_SPACING.sm;
+    drawSection(doc, "Documents manquants ou en attente");
+    drawBulletList(doc, view.documentsManquants, "Aucun document en attente.");
 
-    if (view.caution) {
-      drawFieldRow(doc, "Réf. caution associée", view.caution.referenceLabel);
-      if (view.caution.numeroFicheProvisoire) {
-        drawFieldRow(doc, "Fiche provisoire (FPC)", view.caution.numeroFicheProvisoire);
-      }
-      if (view.caution.paymentReference) {
-        drawFieldRow(doc, "Référence de paiement", view.caution.paymentReference);
-      }
-    } else {
-      drawFieldRow(doc, "Réf. caution associée", "Aucune caution liée identifiée");
-    }
-
-    doc.moveDown(0.4);
-    drawBulletList(doc, "Documents fournis", view.documentsFournis, "Aucun document marqué comme fourni.");
-    drawBulletList(doc, "Documents manquants ou en attente", view.documentsManquants, "Aucun document en attente.");
-
-    doc.moveDown(0.4);
+    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.label);
+    const disclaimerHeight =
+      doc.heightOfString(DECHARGE_PROVISOIRE_DISCLAIMER, { width: contentWidth(doc) }) +
+      PDF_SPACING.md;
+    ensureSpace(doc, disclaimerHeight);
     doc
-      .fontSize(8)
-      .fillColor("#b45309")
-      .text(DECHARGE_PROVISOIRE_DISCLAIMER, { align: "justify" });
+      .fillColor(PDF_COLORS.warning)
+      .text(DECHARGE_PROVISOIRE_DISCLAIMER, { width: contentWidth(doc), align: "justify" });
 
-    doc.end();
+    finalizePremiumPages(doc, {
+      reference: view.dossierReference,
+      issuedAt: view.generatedAt,
+      documentLabel: "DÉCHARGE PROVISOIRE",
+    });
   });
 }
 

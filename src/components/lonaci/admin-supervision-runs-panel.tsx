@@ -1,6 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Download, Play, RefreshCw } from "lucide-react";
+
+import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 type RunItem = {
   id: string;
@@ -10,6 +20,21 @@ type RunItem = {
   artifact: { filename: string; contentType: string } | null;
 };
 
+function runTone(status: string): Tone {
+  if (status === "OK") return "success";
+  if (status === "ERROR") return "danger";
+  if (status === "SKIPPED_HOUR" || status === "LOCKED") return "warning";
+  return "neutral";
+}
+
+function runStatusLabel(status: string): string {
+  if (status === "OK") return "Réussi";
+  if (status === "ERROR") return "Échoué";
+  if (status === "SKIPPED_HOUR") return "Hors plage";
+  if (status === "LOCKED") return "Déjà en cours";
+  return status;
+}
+
 export default function AdminSupervisionRunsPanel() {
   const [items, setItems] = useState<RunItem[]>([]);
   const [page, setPage] = useState(1);
@@ -18,7 +43,6 @@ export default function AdminSupervisionRunsPanel() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [runningNow, setRunningNow] = useState(false);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -54,27 +78,47 @@ export default function AdminSupervisionRunsPanel() {
     void load();
   }, [load]);
 
+  const downloadAction = (item: RunItem) =>
+    item.artifact ? (
+      <Button
+        size="sm"
+        variant="secondary"
+        leadingIcon={Download}
+        onClick={() =>
+          window.open(
+            `/api/admin/supervision/runs/${encodeURIComponent(item.id)}/download`,
+            "_blank",
+            "noopener,noreferrer",
+          )
+        }
+      >
+        Télécharger
+      </Button>
+    ) : <span className="text-slate-400">—</span>;
+
+  const columns: readonly DataTableColumn<RunItem>[] = [
+    { id: "date", header: "Date", cell: (item) => item.createdAt ? new Date(item.createdAt).toLocaleString("fr-FR") : "—" },
+    { id: "status", header: "Statut", cell: (item) => <StatusBadge tone={runTone(item.status)}>{runStatusLabel(item.status)}</StatusBadge> },
+    { id: "format", header: "Format", cell: (item) => String(item.summary?.format ?? "—").toUpperCase() },
+    { id: "cautions", header: "Cautions J+10", align: "right", cell: (item) => Number(item.summary?.cautionsJ10 ?? 0) },
+    { id: "successions", header: "Successions sans activité", align: "right", cell: (item) => Number(item.summary?.successionStale ?? 0) },
+    { id: "file", header: "Fichier", align: "right", cell: downloadAction },
+  ];
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">Historique des runs supervision</h3>
-          <p className="text-xs text-slate-600">Runs cron supervision avec statut et téléchargement de l&apos;artefact.</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void load()}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-        >
-          Rafraichir
-        </button>
-        <button
-          type="button"
-          disabled={runningNow}
+    <Surface elevated aria-labelledby="supervision-runs-title">
+      <SectionHeader
+        title={<span id="supervision-runs-title">Historique des exécutions</span>}
+        description="Exécutions planifiées, statuts et fichiers générés."
+        action={<div className="flex flex-wrap gap-2">
+          <Button variant="secondary" size="sm" leadingIcon={RefreshCw} onClick={() => void load()}>Rafraîchir</Button>
+          <Button
+          size="sm"
+          loading={runningNow}
+          leadingIcon={Play}
           onClick={async () => {
             setRunningNow(true);
             setError(null);
-            setInfoMessage(null);
             try {
               const res = await fetch("/api/admin/supervision/runs/trigger", {
                 method: "POST",
@@ -83,128 +127,52 @@ export default function AdminSupervisionRunsPanel() {
               if (!res.ok) {
                 const body = (await res.json().catch(() => null)) as { message?: string } | null;
                 if (res.status === 409) {
-                  setInfoMessage(body?.message ?? "Un run supervision est déjà en cours.");
+                  notify.info(body?.message ?? "Une exécution de supervision est déjà en cours.");
                   await load();
                   return;
                 }
                 throw new Error(body?.message ?? "Relance impossible");
               }
-              setInfoMessage("Relance supervision exécutée avec succès.");
+              notify.success("Relance supervision exécutée avec succès.");
               await load();
             } catch (e) {
-              setError(e instanceof Error ? e.message : "Erreur relance");
+              notify.error(e, "Erreur relance");
             } finally {
               setRunningNow(false);
             }
           }}
-          className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-xs font-semibold text-indigo-700 hover:bg-indigo-100 disabled:opacity-50"
         >
-          {runningNow ? "Relance..." : "Relancer maintenant"}
-        </button>
+          {runningNow ? "Relance…" : "Relancer maintenant"}
+          </Button>
+        </div>}
+      />
+      {error ? <FeedbackState className="mt-4" tone="danger" title="Historique indisponible" description={error} /> : null}
+      <div className="mt-5" aria-live="polite" aria-busy={loading}>
+        {loading ? <Skeleton lines={7} /> : (
+          <DataTable
+            rows={items}
+            columns={columns}
+            rowKey={(item) => item.id}
+            caption="Historique des exécutions de supervision"
+            emptyState={<FeedbackState title="Aucune exécution" description="Les prochaines exécutions apparaîtront ici." />}
+            getRowLabel={(item) => `Exécution ${item.createdAt ?? "sans date"}, statut ${item.status}`}
+            mobileCard={(item) => (
+              <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div><p className="text-xs text-slate-500">{item.createdAt ? new Date(item.createdAt).toLocaleString("fr-FR") : "Date inconnue"}</p><p className="mt-1 font-bold text-[#13213c]">{String(item.summary?.format ?? "Format indisponible").toUpperCase()}</p></div>
+                  <StatusBadge tone={runTone(item.status)}>{runStatusLabel(item.status)}</StatusBadge>
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-xs text-slate-500">Cautions J+10</dt><dd className="font-bold">{Number(item.summary?.cautionsJ10 ?? 0)}</dd></div><div><dt className="text-xs text-slate-500">Successions sans activité</dt><dd className="font-bold">{Number(item.summary?.successionStale ?? 0)}</dd></div></dl>
+                <div className="mt-4">{downloadAction(item)}</div>
+              </article>
+            )}
+          />
+        )}
       </div>
-
-      {loading ? <p className="text-xs text-slate-500">Chargement...</p> : null}
-      {infoMessage ? <p className="mb-2 text-xs text-indigo-700">{infoMessage}</p> : null}
-      {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
-
-      {!loading ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-xs">
-              <thead className="bg-slate-100 text-slate-600">
-                <tr>
-                  <th className="px-3 py-2">Date</th>
-                  <th className="px-3 py-2">Statut</th>
-                  <th className="px-3 py-2">Format</th>
-                  <th className="px-3 py-2">Cautions J+10</th>
-                  <th className="px-3 py-2">Successions stale</th>
-                  <th className="px-3 py-2 text-right">Fichier</th>
-                </tr>
-              </thead>
-              <tbody className="text-slate-800">
-                {items.map((item) => (
-                  <tr key={item.id} className="border-t border-slate-200 bg-white">
-                    <td className="px-3 py-2">{item.createdAt ? new Date(item.createdAt).toLocaleString("fr-FR") : "—"}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          item.status === "OK"
-                            ? "bg-emerald-100 text-emerald-800"
-                            : item.status === "ERROR"
-                              ? "bg-rose-100 text-rose-800"
-                              : item.status === "SKIPPED_HOUR"
-                                ? "bg-amber-100 text-amber-800"
-                                : item.status === "LOCKED"
-                                  ? "bg-orange-100 text-orange-800"
-                                : "bg-slate-100 text-slate-700"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{String(item.summary?.format ?? "—").toUpperCase()}</td>
-                    <td className="px-3 py-2">{Number(item.summary?.cautionsJ10 ?? 0)}</td>
-                    <td className="px-3 py-2">{Number(item.summary?.successionStale ?? 0)}</td>
-                    <td className="px-3 py-2 text-right">
-                      {item.artifact ? (
-                        <button
-                          type="button"
-                          onClick={() =>
-                            window.open(
-                              `/api/admin/supervision/runs/${encodeURIComponent(item.id)}/download`,
-                              "_blank",
-                              "noopener,noreferrer",
-                            )
-                          }
-                          className="rounded border border-indigo-300 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-700 hover:bg-indigo-100"
-                        >
-                          Télécharger
-                        </button>
-                      ) : (
-                        <span className="text-slate-500">—</span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {!items.length ? (
-                  <tr>
-                    <td colSpan={6} className="px-3 py-4 text-center text-slate-500">
-                      Aucun run supervision.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-2 flex items-center justify-between text-xs text-slate-600">
-        <span>
-          {pagination.total} run{pagination.total > 1 ? "s" : ""}
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="rounded border border-slate-300 bg-white px-2 py-1 disabled:opacity-40"
-          >
-            Precedent
-          </button>
-          <span>
-            Page {pagination.page}/{pagination.totalPages}
-          </span>
-          <button
-            type="button"
-            disabled={page >= pagination.totalPages}
-            onClick={() => setPage((p) => Math.min(pagination.totalPages, p + 1))}
-            className="rounded border border-slate-300 bg-white px-2 py-1 disabled:opacity-40"
-          >
-            Suivant
-          </button>
-        </div>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm text-slate-600">{pagination.total} exécution{pagination.total > 1 ? "s" : ""}</p>
+        <Pagination page={page} pageCount={pagination.totalPages} onPageChange={setPage} label="Pages des exécutions de supervision" />
       </div>
-    </section>
+    </Surface>
   );
 }

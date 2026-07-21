@@ -2,7 +2,7 @@
 
 import type { ConcessionnaireMapPointDto } from "@/lib/lonaci/concessionnaires-map-types";
 import L from "leaflet";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 
 import "leaflet/dist/leaflet.css";
 
@@ -18,6 +18,15 @@ function escapeHtml(s: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function googleMapsUrl(lat: number, lng: number): string {
+  return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`;
+}
+
+function googleMapsLinkHtml(lat: number, lng: number): string {
+  const href = escapeHtml(googleMapsUrl(lat, lng));
+  return `<div class="mt-2"><a class="text-orange-700 underline" href="${href}" target="_blank" rel="noopener noreferrer">Ouvrir dans Google Maps</a></div>`;
 }
 
 export default function PdvLeafletMap({
@@ -38,6 +47,7 @@ export default function PdvLeafletMap({
     zoom: number;
   }) => void;
 }) {
+  const instructionsId = useId();
   const containerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const layerRef = useRef<L.LayerGroup | null>(null);
@@ -47,15 +57,6 @@ export default function PdvLeafletMap({
   const lastPointsIdsRef = useRef<string>("");
   const lastFocusNonceRef = useRef(0);
   const lastHighlightIdRef = useRef<string | undefined>(undefined);
-
-  function googleMapsUrl(lat: number, lng: number): string {
-    return `https://www.google.com/maps?q=${encodeURIComponent(`${lat},${lng}`)}`;
-  }
-
-  function googleMapsLinkHtml(lat: number, lng: number): string {
-    const href = escapeHtml(googleMapsUrl(lat, lng));
-    return `<div class="mt-2"><a class="text-sky-600 underline" href="${href}" target="_blank" rel="noopener noreferrer">Ouvrir dans Google Maps</a></div>`;
-  }
 
   function cellSizeForZoom(zoom: number): number {
     if (zoom <= 6) return 0.8;
@@ -165,12 +166,12 @@ export default function PdvLeafletMap({
         const radius = size > 1 ? Math.min(30, 11 + Math.round(Math.log2(size) * 4)) : 7;
         const fillColor =
           cluster.highlight && size > 1
-            ? "#f59e0b"
+            ? "#ea580c"
             : size > 1
-              ? "#0ea5e9"
+              ? "#12304f"
               : cluster.highlight
-                ? "#0891b2"
-                : "#2563eb";
+                ? "#f97316"
+                : "#0b1d33";
 
         const marker = L.circleMarker([cluster.lat, cluster.lng], {
           radius,
@@ -228,7 +229,7 @@ export default function PdvLeafletMap({
           color: "#ffffff",
           weight: 2,
           opacity: 1,
-          fillColor: hi ? "#0891b2" : "#2563eb",
+          fillColor: hi ? "#f97316" : "#0b1d33",
           fillOpacity: 0.88,
         });
         circle.bindPopup(
@@ -279,12 +280,18 @@ export default function PdvLeafletMap({
   }, [points, highlightId, zoomLevel, focusNonce, onRenderStatsChange]);
 
   return (
-    <div className={`isolate z-0 h-[min(60vh,680px)] min-h-[360px] w-full rounded-xl border border-slate-200 bg-slate-100 ${className}`}>
+    <div
+      className={`isolate z-0 h-[min(60vh,680px)] min-h-90 w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-100 shadow-sm ${className}`}
+    >
+      <p id={instructionsId} className="lonaci-ui-sr-only">
+        Carte interactive. Utilisez les touches fléchées pour vous déplacer et les touches plus et moins pour zoomer.
+      </p>
       <div
         ref={containerRef}
-        className="h-full min-h-[360px] w-full rounded-[inherit]"
+        className="h-full min-h-90 w-full rounded-[inherit] focus-visible:ring-4 focus-visible:ring-orange-300"
         role="region"
         aria-label="Carte des points de vente géolocalisés"
+        aria-describedby={instructionsId}
       />
     </div>
   );

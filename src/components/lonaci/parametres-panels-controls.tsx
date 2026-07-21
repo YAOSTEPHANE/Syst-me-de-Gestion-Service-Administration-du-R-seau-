@@ -1,5 +1,7 @@
 "use client";
 
+import { Button } from "@/components/lonaci/ui/button";
+import { ChevronsDownUp, ChevronsUpDown, Info } from "lucide-react";
 import { useEffect } from "react";
 
 const STORAGE_KEY = "lonaci:parametres:open-panels";
@@ -85,22 +87,29 @@ export default function ParametresPanelsControls() {
   }
 
   return (
-    <div className="mt-3 flex flex-wrap items-center gap-2">
-      <button
-        type="button"
+    <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+      <Button
+        variant="secondary"
+        size="sm"
+        leadingIcon={ChevronsUpDown}
         onClick={openAllPanels}
-        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        className="w-full justify-center border-white/20 bg-white text-[#102a43] sm:w-auto"
       >
         Ouvrir tout
-      </button>
-      <button
-        type="button"
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        leadingIcon={ChevronsDownUp}
         onClick={closeAllPanels}
-        className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        className="w-full justify-center border border-white/20 text-white hover:bg-white/10 sm:w-auto"
       >
         Fermer tout
-      </button>
-      <span className="text-xs text-slate-500">Les panneaux ouverts sont mémorisés sur cet appareil.</span>
+      </Button>
+      <p className="inline-flex items-center gap-1.5 text-xs leading-5 text-slate-300">
+        <Info size={14} aria-hidden="true" className="shrink-0 text-orange-300" />
+        Les panneaux ouverts sont mémorisés sur cet appareil.
+      </p>
     </div>
   );
 }

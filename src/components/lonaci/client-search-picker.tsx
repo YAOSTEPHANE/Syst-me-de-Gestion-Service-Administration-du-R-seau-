@@ -1,8 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 
+import { EntityPicker } from "@/components/lonaci/ui/entity-picker";
 import { clientDisplayName, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 
@@ -75,9 +76,6 @@ function normalizeItem(raw: Record<string, unknown>): ClientPickerRow | null {
   };
 }
 
-const defaultInputClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-
 export type ClientSearchPickerProps = {
   id?: string;
   label: ReactNode;
@@ -104,135 +102,58 @@ export default function ClientSearchPicker({
   minQueryLength = 2,
   filter = "contrat",
 }: ClientSearchPickerProps) {
-  const inputClass = [defaultInputClass, inputClassName].filter(Boolean).join(" ");
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ClientPickerRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const minLen = Math.max(1, minQueryLength);
-
-  useEffect(() => {
-    if (selected) {
-      setQuery(formatClientPickerLabel(selected));
-    }
-  }, [selected]);
-
-  const onQueryChange = useCallback(
-    (v: string) => {
-      setQuery(v);
-      if (selected && v.trim() !== formatClientPickerLabel(selected).trim()) {
-        onSelectedChange(null);
+  const loadOptions = useCallback(
+    async (query: string): Promise<readonly ClientPickerRow[]> => {
+      const params = new URLSearchParams({
+        page: "1",
+        pageSize: "40",
+        q: query,
+      });
+      if (filter === "promotion") {
+        params.set("eligibleForPromotion", "true");
+      } else if (filter === "linkedPdv") {
+        params.set("linkedToConcessionnaire", "true");
+      } else {
+        params.set("eligibleForContrat", "true");
       }
+      const response = await fetch(`/api/clients?${params}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as { items?: Record<string, unknown>[] };
+      return (data.items ?? []).map(normalizeItem).filter((row): row is ClientPickerRow => row !== null);
     },
-    [onSelectedChange, selected],
+    [filter],
   );
 
-  useEffect(() => {
-    if (selected) return;
-    const q = query.trim();
-    if (q.length < minLen) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        setLoading(true);
-        try {
-          const params = new URLSearchParams({
-            page: "1",
-            pageSize: "40",
-            q,
-          });
-          if (filter === "promotion") {
-            params.set("eligibleForPromotion", "true");
-          } else if (filter === "linkedPdv") {
-            params.set("linkedToConcessionnaire", "true");
-          } else {
-            params.set("eligibleForContrat", "true");
-          }
-          const res = await fetch(`/api/clients?${params}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (cancelled || !res.ok) {
-            if (!cancelled) setResults([]);
-            return;
-          }
-          const data = (await res.json()) as { items: Record<string, unknown>[] };
-          const next = (data.items ?? []).map(normalizeItem).filter((x): x is ClientPickerRow => Boolean(x));
-          if (!cancelled) setResults(next);
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-      })();
-    }, 320);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [query, selected, minLen, filter]);
-
-  const selectedLabel = selected ? formatClientPickerLabel(selected) : "";
-  const showPanel =
-    query.trim().length >= minLen && (!selected || selectedLabel.trim() !== query.trim());
-
-  function pick(row: ClientPickerRow) {
-    onSelectedChange(row);
-    setQuery(formatClientPickerLabel(row));
-    setResults([]);
-  }
-
   return (
-    <label className="grid gap-1" htmlFor={id}>
-      <span className="text-xs font-medium text-slate-700">{label}</span>
-      <input
-        id={id}
-        type="search"
-        autoComplete="off"
-        disabled={disabled}
-        value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
-        placeholder={searchPlaceholder}
-        className={inputClass}
-      />
-      {showClearLink && selected ? (
-        <button
-          type="button"
-          className="w-fit text-xs text-cyan-700 underline-offset-2 hover:underline"
-          onClick={() => {
-            onSelectedChange(null);
-            setQuery("");
-            setResults([]);
-          }}
-        >
-          Effacer la sélection
-        </button>
-      ) : null}
-      {loading ? <p className="text-xs text-slate-500">Recherche…</p> : null}
-      {showPanel && !loading && results.length === 0 ? (
-        <p className="text-xs text-slate-500">Aucun client trouvé.</p>
-      ) : null}
-      {showPanel && results.length > 0 ? (
-        <ul className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm">
-          {results.map((row) => (
-            <li key={row.id}>
-              <button
-                type="button"
-                className="w-full px-3 py-2 text-left text-sm text-slate-800 hover:bg-cyan-50"
-                onClick={() => pick(row)}
-              >
-                {formatClientPickerLabel(row)}
-                {(row.produitsAutorises ?? []).length > 0 ? (
-                  <span className="mt-0.5 block text-[11px] text-slate-500">
-                    Produits : {(row.produitsAutorises ?? []).join(", ")}
-                  </span>
-                ) : null}
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </label>
+    <EntityPicker
+      id={id}
+      label={label}
+      selected={selected}
+      onSelectedChange={onSelectedChange}
+      loadOptions={loadOptions}
+      getOptionKey={(row) => row.id}
+      getOptionLabel={formatClientPickerLabel}
+      renderOption={(row) => (
+        <>
+          {formatClientPickerLabel(row)}
+          {(row.produitsAutorises ?? []).length > 0 ? (
+            <span className="mt-0.5 block text-[11px] text-slate-500">
+              Produits : {(row.produitsAutorises ?? []).join(", ")}
+            </span>
+          ) : null}
+        </>
+      )}
+      inputClassName={inputClassName}
+      disabled={disabled}
+      showClearLink={showClearLink}
+      searchPlaceholder={searchPlaceholder}
+      minQueryLength={minQueryLength}
+      emptyMessage="Aucun client trouvé."
+      resultsAriaLabel="Résultats de recherche clients"
+    />
   );
 }
 

@@ -29,6 +29,30 @@ describe("dossier-transition-rbac étape métier", () => {
     expect(userCanApproveDossierAtEtape("CHEF_SECTION", "SOUMIS")).toBe(true);
   });
 
+  it("retire les actions du valideur après la validation de son niveau", () => {
+    const chefSectionAfterN1 = listDossierTransitionActionsForUi("CHEF_SECTION", "VALIDE_N1");
+    expect(chefSectionAfterN1).not.toContain("REJECT");
+    expect(chefSectionAfterN1).not.toContain("RETURN_PREVIOUS");
+
+    const assistantAfterN2 = listDossierTransitionActionsForUi("ASSIST_CDS", "VALIDE_N2");
+    expect(assistantAfterN2).not.toContain("REJECT");
+    expect(assistantAfterN2).not.toContain("RETURN_PREVIOUS");
+  });
+
+  it("ne propose qu'une décision négative au valideur de l'étape courante", () => {
+    const atN1 = listDossierTransitionActionsForUi("CHEF_SECTION", "SOUMIS");
+    expect(atN1).toContain("REJECT");
+    expect(atN1).not.toContain("RETURN_PREVIOUS");
+
+    const atN2 = listDossierTransitionActionsForUi("ASSIST_CDS", "VALIDE_N1");
+    expect(atN2).not.toContain("REJECT");
+    expect(atN2).toContain("RETURN_PREVIOUS");
+
+    const atFinalization = listDossierTransitionActionsForUi("CHEF_SERVICE", "VALIDE_N2");
+    expect(atFinalization).not.toContain("REJECT");
+    expect(atFinalization).toContain("RETURN_PREVIOUS");
+  });
+
   it("filtre le bulk par statut liste", () => {
     const atN1 = listDossierBulkActionsForUi("CHEF_SECTION", "SOUMIS");
     expect(atN1).toContain("VALIDATE_N1");

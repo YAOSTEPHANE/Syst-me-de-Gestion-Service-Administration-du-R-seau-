@@ -1,5 +1,9 @@
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
-import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
+import {
+  findDossierById,
+  findVisibleDossierById,
+  transitionDossier,
+} from "@/lib/lonaci/dossiers";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { UserDocument } from "@/lib/lonaci/types";
 
@@ -54,6 +58,16 @@ export function dossierBulkErrorMessage(code: string): string {
     return "Soumission impossible : checklist documents incomplète (tous les documents obligatoires doivent être « Fourni »).";
   }
   return friendlyErrorMessage(code);
+}
+
+export async function assertDossierBulkVisibility(
+  ids: readonly string[],
+  actor: UserDocument,
+): Promise<void> {
+  const visible = await Promise.all(ids.map((id) => findVisibleDossierById(id, actor)));
+  if (visible.some((dossier) => dossier === null)) {
+    throw new Error("DOSSIER_BULK_NOT_FOUND");
+  }
 }
 
 export async function executeDossierBulkTransition(input: {

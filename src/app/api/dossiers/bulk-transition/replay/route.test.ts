@@ -8,6 +8,7 @@ const {
   findBulkTransitionLogByIdMock,
   appendBulkTransitionLogMock,
   executeDossierBulkTransitionMock,
+  assertDossierBulkVisibilityMock,
 } = vi.hoisted(() => ({
   requireApiAuthMock: vi.fn(),
   ensureDossierIndexesMock: vi.fn(),
@@ -15,6 +16,7 @@ const {
   findBulkTransitionLogByIdMock: vi.fn(),
   appendBulkTransitionLogMock: vi.fn(),
   executeDossierBulkTransitionMock: vi.fn(),
+  assertDossierBulkVisibilityMock: vi.fn(),
 }));
 
 vi.mock("@/lib/auth/guards", () => ({
@@ -34,6 +36,7 @@ vi.mock("@/lib/lonaci/dossier-bulk-transition-logs", () => ({
 vi.mock("@/lib/lonaci/dossier-bulk-transition", () => ({
   toDossierBulkRbacAction: vi.fn(() => "UPDATE"),
   executeDossierBulkTransition: executeDossierBulkTransitionMock,
+  assertDossierBulkVisibility: assertDossierBulkVisibilityMock,
 }));
 
 import { expectResponse } from "@/test-utils/expect-response";
@@ -47,6 +50,7 @@ describe("POST /api/dossiers/bulk-transition/replay", () => {
     ensureDossierIndexesMock.mockResolvedValue(undefined);
     ensureBulkTransitionLogsIndexesMock.mockResolvedValue(undefined);
     appendBulkTransitionLogMock.mockResolvedValue(undefined);
+    assertDossierBulkVisibilityMock.mockResolvedValue(undefined);
     findBulkTransitionLogByIdMock.mockResolvedValue({
       id: "log-1",
       actorUserId: "admin-1",

@@ -2,7 +2,6 @@ import {
   BANCARISATION_STATUT_DESCRIPTIONS,
   BANCARISATION_STATUT_LABELS,
   BANCARISATION_STATUTS,
-  BANCARISATION_STATUTS_SPEC_83,
   type BancarisationStatut,
 } from "@/lib/lonaci/constants";
 
@@ -17,7 +16,7 @@ export {
 const LEGACY_EN_COURS = "EN_COURS";
 
 /**
- * Normalise le statut 8.3 à partir du stockage (y compris legacy EN_COURS + etatRib).
+ * Normalise le statut de bancarisation enregistré, y compris l’ancien couple EN_COURS et etatRib.
  */
 export function normalizeBancarisationStatut(
   statutRaw: string | null | undefined,

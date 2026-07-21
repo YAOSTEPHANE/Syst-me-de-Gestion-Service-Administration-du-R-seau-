@@ -1,7 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { ObjectId } from "mongodb";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+  type HierarchicalWorkflow,
+} from "@/lib/auth/workflow-visibility";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import { canReadCessionScopeForUser } from "@/lib/lonaci/access";
 import {
   buildDocumentChecklistForKind,
   isDocumentChecklistCompleteForKind,
@@ -159,6 +165,64 @@ function mapCession(row: CessionStored): CessionListItem {
     })),
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
+  };
+}
+
+function workflowForCessionKind(kind: CessionKind): HierarchicalWorkflow {
+  return usesSimplifiedDelocalisationCircuit(kind) ? "DELOCALISATIONS" : "CESSIONS";
+}
+
+async function canAccessCession(row: CessionStored, actor: UserDocument): Promise<boolean> {
+  if (
+    !actor._id ||
+    !isWorkflowDocumentVisible({
+      workflow: workflowForCessionKind(row.kind),
+      role: actor.role,
+      userId: actor._id,
+      creatorId: row.createdByUserId,
+      status: row.statut,
+    })
+  ) {
+    return false;
+  }
+  return await canReadCessionScopeForUser(actor, {
+    concessionnaireId: row.concessionnaireId,
+    cedantId: row.cedantId,
+    beneficiaireId: row.beneficiaireId,
+  });
+}
+
+function buildCessionVisibilityFilter(input: Pick<CessionsListFilters, "kind"> & { actor: UserDocument }) {
+  const common = {
+    role: input.actor.role,
+    userId: input.actor._id ?? "",
+    statusField: "statut",
+  };
+  if (input.kind) {
+    return buildWorkflowVisibilityMongoFilter({
+      ...common,
+      workflow: workflowForCessionKind(input.kind),
+    });
+  }
+  const delocalisations = buildWorkflowVisibilityMongoFilter({
+    ...common,
+    workflow: "DELOCALISATIONS",
+  });
+  const cessions = buildWorkflowVisibilityMongoFilter({
+    ...common,
+    workflow: "CESSIONS",
+  });
+  if (!delocalisations || !cessions) return null;
+  return {
+    $or: [
+      { $and: [{ kind: "DELOCALISATION" }, delocalisations] },
+      {
+        $and: [
+          { kind: { $in: ["CESSION", "CESSION_DELOCALISATION"] } },
+          cessions,
+        ],
+      },
+    ],
   };
 }
 
@@ -337,6 +401,7 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
     notifyTitle,
     `Opération ${input.kind.toLowerCase()} | référence ${reference} | action contrôle N1 attendu | acteur ${actionBy}.`,
     { cessionId: r.insertedId.toHexString(), reference },
+    doc.oldAgenceId,
   );
 
   const created = await db.collection<CessionStored>(COLLECTION).findOne({ _id: r.insertedId });
@@ -389,11 +454,11 @@ async function ensureDocumentChecklistStored(row: CessionStored): Promise<Cessio
   return { ...row, documentChecklist: checklist };
 }
 
-export async function getCessionById(id: string): Promise<CessionListItem | null> {
+export async function getCessionById(id: string, actor: UserDocument): Promise<CessionListItem | null> {
   if (!ObjectId.isValid(id)) return null;
   const db = await getDatabase();
   let row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(id), deletedAt: null });
-  if (!row) return null;
+  if (!row || !(await canAccessCession(row, actor))) return null;
   if (kindHasDocumentChecklist(row.kind)) {
     row = await ensureDocumentChecklistStored(row);
   }
@@ -403,12 +468,12 @@ export async function getCessionById(id: string): Promise<CessionListItem | null
 export async function patchCessionDocumentChecklist(input: {
   id: string;
   entries: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
-  actorId: string;
+  actor: UserDocument;
 }): Promise<CessionListItem> {
   if (!ObjectId.isValid(input.id)) throw new Error("CESSION_NOT_FOUND");
   const db = await getDatabase();
   const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) throw new Error("CESSION_NOT_FOUND");
+  if (!row || !(await canAccessCession(row, input.actor))) throw new Error("CESSION_NOT_FOUND");
   if (!kindHasDocumentChecklist(row.kind)) throw new Error("CHECKLIST_NOT_SUPPORTED");
   const current = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
   if (!current?.entries.length) throw new Error("CHECKLIST_NOT_FOUND");
@@ -420,7 +485,7 @@ export async function patchCessionDocumentChecklist(input: {
       $set: {
         documentChecklist: next,
         updatedAt: now,
-        updatedByUserId: input.actorId,
+        updatedByUserId: input.actor._id ?? "",
       },
     },
   );
@@ -432,9 +497,12 @@ export async function patchCessionDocumentChecklist(input: {
 export async function listCessions(input: {
   page: number;
   pageSize: number;
+  actor: UserDocument;
 } & CessionsListFilters) {
   const db = await getDatabase();
   const filter = await buildCessionsMongoFilter(input);
+  const visibility = buildCessionVisibilityFilter(input);
+  filter.$and = visibility ? [visibility] : [{ _id: { $in: [] } }];
   const skip = (input.page - 1) * input.pageSize;
   const [total, rows] = await Promise.all([
     db.collection<CessionStored>(COLLECTION).countDocuments(filter),
@@ -450,9 +518,11 @@ export async function listCessions(input: {
 
 const CESSION_EXPORT_MAX = 10_000;
 
-export async function listCessionsForExport(filters: CessionsListFilters) {
+export async function listCessionsForExport(filters: CessionsListFilters & { actor: UserDocument }) {
   const db = await getDatabase();
   const filter = await buildCessionsMongoFilter(filters);
+  const visibility = buildCessionVisibilityFilter(filters);
+  filter.$and = visibility ? [visibility] : [{ _id: { $in: [] } }];
   const rows = await db
     .collection<CessionStored>(COLLECTION)
     .find(filter)
@@ -463,7 +533,7 @@ export async function listCessionsForExport(filters: CessionsListFilters) {
   return { rows, exportRows, truncated: rows.length >= CESSION_EXPORT_MAX };
 }
 
-/** Spec 5.4 — horodatage première génération d'acte (statut métier ACTE GÉNÉRÉ). */
+/** Horodatage de la première génération de l’acte, qui déclenche le statut métier ACTE GÉNÉRÉ. */
 export async function markActeCessionGenere(cessionId: string) {
   if (!ObjectId.isValid(cessionId)) return;
   const db = await getDatabase();
@@ -479,7 +549,7 @@ export async function markActeCessionGenere(cessionId: string) {
   );
 }
 
-/** Spec 6.1 / 6.2 — horodatage première génération de l'acte de délocalisation. */
+/** Horodatage de la première génération de l’acte de délocalisation. */
 export async function markActeDelocalisationGenere(cessionId: string) {
   if (!ObjectId.isValid(cessionId)) return;
   const db = await getDatabase();
@@ -495,22 +565,16 @@ export async function markActeDelocalisationGenere(cessionId: string) {
   );
 }
 
-export async function getCessionAttachment(input: { id: string; attachmentId: string }) {
+/** Lecture avec les identifiants nécessaires au contrôle d’accès agence / PDV. */
+export async function getCessionAttachmentWithScope(input: {
+  id: string;
+  attachmentId: string;
+  actor: UserDocument;
+}) {
   if (!ObjectId.isValid(input.id)) return null;
   const db = await getDatabase();
   const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) return null;
-  const attachment = row.attachments.find((a) => a.id === input.attachmentId);
-  if (!attachment) return null;
-  return attachment;
-}
-
-/** Même lecture que getCessionAttachment, avec les identifiants nécessaires au contrôle d’accès agence / PDV. */
-export async function getCessionAttachmentWithScope(input: { id: string; attachmentId: string }) {
-  if (!ObjectId.isValid(input.id)) return null;
-  const db = await getDatabase();
-  const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) return null;
+  if (!row || !(await canAccessCession(row, input.actor))) return null;
   const attachment = row.attachments.find((a) => a.id === input.attachmentId);
   if (!attachment) return null;
   return {
@@ -521,7 +585,7 @@ export async function getCessionAttachmentWithScope(input: { id: string; attachm
   };
 }
 
-function ensureTransitionAllowed(
+export function assertCessionTransitionAllowed(
   role: string,
   from: CessionStatus,
   target: CessionStatus,
@@ -537,7 +601,12 @@ function ensureTransitionAllowed(
       return;
     }
     if (target === "REJETEE") {
-      if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+      const expectedRole = from === "SAISIE_AGENT"
+        ? "CHEF_SECTION"
+        : from === "CONTROLE_CHEF_SECTION"
+          ? "CHEF_SERVICE"
+          : null;
+      if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
       return;
     }
     throw new Error("INVALID_TRANSITION");
@@ -556,7 +625,14 @@ function ensureTransitionAllowed(
     return;
   }
   if (target === "REJETEE") {
-    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    const expectedRole = from === "SAISIE_AGENT"
+      ? "CHEF_SECTION"
+      : from === "CONTROLE_CHEF_SECTION"
+        ? "ASSIST_CDS"
+        : from === "VALIDATION_N2"
+          ? "CHEF_SERVICE"
+          : null;
+    if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   throw new Error("INVALID_TRANSITION");
@@ -574,9 +650,9 @@ export async function transitionCession(input: {
 
   const db = await getDatabase();
   const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) throw new Error("CESSION_NOT_FOUND");
+  if (!row || !(await canAccessCession(row, input.actor))) throw new Error("CESSION_NOT_FOUND");
 
-  ensureTransitionAllowed(input.actor.role, row.statut, input.target, row.kind);
+  assertCessionTransitionAllowed(input.actor.role, row.statut, input.target, row.kind);
 
   if (input.target === "CONTROLE_CHEF_SECTION" && kindHasDocumentChecklist(row.kind)) {
     const checklist = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
@@ -601,6 +677,7 @@ export async function transitionCession(input: {
         "Cession / délocalisation : validation N2 attendue",
         `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
         { cessionId: input.id, reference: row.reference },
+        row.oldAgenceId,
       );
     } else {
       await notifyRoleTargets(
@@ -608,6 +685,7 @@ export async function transitionCession(input: {
         "Délocalisation : validation finale attendue",
         `Opération délocalisation | référence ${row.reference} | validation Chef de Service attendue | acteur ${actionBy}.`,
         { cessionId: input.id, reference: row.reference },
+        row.oldAgenceId,
       );
     }
   }
@@ -617,6 +695,7 @@ export async function transitionCession(input: {
       "Cession / délocalisation : validation finale attendue",
       `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation finale (chef de service) attendue | acteur ${actionBy}.`,
       { cessionId: input.id, reference: row.reference },
+      row.oldAgenceId,
     );
   }
   if (input.target === "VALIDEE_CHEF_SERVICE") {

@@ -7,7 +7,6 @@ import {
   buildChecklistFromTemplate,
   computeChecklistComplet,
   mergeProductChecklistTemplates,
-  normalizeChecklistTemplate,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";

@@ -1,7 +1,6 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
 import {
   DECHARGE_DEFINITIVE_MENTION,
@@ -19,9 +18,24 @@ import {
 import type {
   CautionDocument,
   DossierDocument,
-  DossierDocumentChecklistPayload,
 } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
+import {
+  collectPdfBuffer,
+  contentWidth,
+  createPremiumPdfDocument,
+  drawBulletList,
+  drawInformationCard,
+  drawSection,
+  drawStatusBadge,
+  drawTitle,
+  ensureSpace,
+  finalizePremiumPages,
+  PDF_COLORS,
+  PDF_SPACING,
+  PDF_TYPOGRAPHY,
+  type PdfField,
+} from "@/lib/pdf";
 
 export {
   DECHARGE_DEFINITIVE_DESCRIPTION,
@@ -159,103 +173,79 @@ export async function buildDossierDechargeDefinitiveView(
   };
 }
 
-function drawPdfHeader(doc: InstanceType<typeof PDFDocument>) {
-  const x = doc.page.margins.left;
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const topY = doc.page.margins.top;
-  const bandH = 52;
-  doc.save();
-  doc.rect(x, topY, w, bandH).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, topY + 10);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, topY + 26);
-  doc.fontSize(7).text("Document officiel — module Contrats", x + 14, topY + 38);
-  doc.restore();
-  doc.y = topY + bandH + 14;
-  doc.fillColor("#111827").fontSize(13).text(DECHARGE_DEFINITIVE_TITLE, { align: "center" });
-  doc.moveDown(0.4);
-  doc.fontSize(11).fillColor("#047857").text(DECHARGE_DEFINITIVE_MENTION, { align: "center", underline: true });
-  doc.moveDown(0.8);
-}
-
-function drawFieldRow(doc: InstanceType<typeof PDFDocument>, label: string, value: string) {
-  const y = doc.y;
-  doc.fontSize(9).fillColor("#6b7280").text(label, doc.page.margins.left, y, { width: 160 });
-  doc.fontSize(10).fillColor("#111827").text(value, doc.page.margins.left + 165, y, {
-    width: doc.page.width - doc.page.margins.right - doc.page.margins.left - 170,
-    align: "right",
-  });
-  doc.moveDown(0.55);
-}
-
 export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDefinitiveView): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    drawPdfHeader(doc);
-
-    doc.fontSize(9).fillColor("#374151").text(`Réf. dossier : ${view.dossierReference}`, { align: "center" });
-    doc.text(
-      `Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
-      { align: "center" },
-    );
-    doc.moveDown(0.8);
-
-    drawFieldRow(doc, "Nom complet", view.nomComplet);
-    drawFieldRow(doc, "Raison sociale", view.raisonSociale);
-    drawFieldRow(doc, "Code PDV", view.codePdv);
-    if (view.codeTerminal) drawFieldRow(doc, "Code terminal", view.codeTerminal);
-    if (view.codeConcessionnaire) drawFieldRow(doc, "Code concessionnaire", view.codeConcessionnaire);
-    if (view.cniNumero) drawFieldRow(doc, "N° CNI", view.cniNumero);
-    if (view.email) drawFieldRow(doc, "E-mail", view.email);
-    if (view.telephone) drawFieldRow(doc, "Téléphone", view.telephone);
-    if (view.adresse) drawFieldRow(doc, "Adresse", view.adresse);
-    if (view.ville) drawFieldRow(doc, "Ville", view.ville);
-    drawFieldRow(doc, "Agence", view.agenceLabel);
-    drawFieldRow(doc, "Produit", `${view.produitCode} — ${view.produitLibelle}`);
-
-    doc.moveDown(0.3);
-    doc.fontSize(10).fillColor("#111827").text("Caution réglée", { underline: true });
-    doc.moveDown(0.4);
-    drawFieldRow(doc, "Réf. caution", view.cautionReferenceLabel);
-    drawFieldRow(doc, "Montant (FCFA)", view.cautionMontantFCFA.toLocaleString("fr-FR"));
-    drawFieldRow(
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: DECHARGE_DEFINITIVE_TITLE,
+      subject: `Décharge définitive du dossier ${view.dossierReference}`,
+      creationDate: view.generatedAt,
+    },
+  });
+  return collectPdfBuffer(doc, () => {
+    drawTitle(
       doc,
-      "Date de paiement",
-      view.cautionPaidAt.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" }),
+      DECHARGE_DEFINITIVE_TITLE,
+      `Réf. dossier : ${view.dossierReference} · Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
     );
-    if (view.numeroFicheProvisoire) drawFieldRow(doc, "Fiche provisoire (FPC)", view.numeroFicheProvisoire);
-    if (view.numeroFicheDefinitive) drawFieldRow(doc, "Fiche définitive (FPD)", view.numeroFicheDefinitive);
+    drawStatusBadge(doc, view.mention, "success");
 
-    doc.moveDown(0.2);
-    doc.fontSize(10).fillColor("#047857").text("Référence de paiement", { underline: true });
-    doc.moveDown(0.25);
-    doc.fontSize(12).fillColor("#065f46").text(view.paymentReference, { align: "center" });
-    doc.moveDown(0.8);
+    const identityFields: PdfField[] = [
+      { label: "Nom complet", value: view.nomComplet },
+      { label: "Raison sociale", value: view.raisonSociale },
+      { label: "Code PDV", value: view.codePdv },
+      ...(view.codeTerminal ? [{ label: "Code terminal", value: view.codeTerminal }] : []),
+      ...(view.codeConcessionnaire
+        ? [{ label: "Code concessionnaire", value: view.codeConcessionnaire }]
+        : []),
+      ...(view.cniNumero ? [{ label: "N° CNI", value: view.cniNumero }] : []),
+      ...(view.email ? [{ label: "E-mail", value: view.email }] : []),
+      ...(view.telephone ? [{ label: "Téléphone", value: view.telephone }] : []),
+      ...(view.adresse ? [{ label: "Adresse", value: view.adresse }] : []),
+      ...(view.ville ? [{ label: "Ville", value: view.ville }] : []),
+      { label: "Agence", value: view.agenceLabel },
+      { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+    ];
+    drawSection(doc, "Identification");
+    drawInformationCard(doc, identityFields);
 
-    doc.fontSize(10).fillColor("#111827").text("Documents fournis et validés", { underline: true });
-    doc.moveDown(0.35);
-    if (!view.documentsFournis.length) {
-      doc.fontSize(9).fillColor("#6b7280").text("Aucun document listé.");
-    } else {
-      doc.fontSize(9).fillColor("#374151");
-      for (const item of view.documentsFournis) {
-        doc.text(`• ${item}`);
-      }
-    }
+    const cautionFields: PdfField[] = [
+      { label: "Réf. caution", value: view.cautionReferenceLabel },
+      { label: "Montant (FCFA)", value: view.cautionMontantFCFA.toLocaleString("fr-FR") },
+      {
+        label: "Date de paiement",
+        value: view.cautionPaidAt.toLocaleString("fr-FR", {
+          dateStyle: "long",
+          timeStyle: "short",
+        }),
+      },
+      ...(view.numeroFicheProvisoire
+        ? [{ label: "Fiche provisoire (FPC)", value: view.numeroFicheProvisoire }]
+        : []),
+      ...(view.numeroFicheDefinitive
+        ? [{ label: "Fiche définitive (FPD)", value: view.numeroFicheDefinitive }]
+        : []),
+      { label: "Référence de paiement", value: view.paymentReference },
+    ];
+    drawSection(doc, "Caution réglée");
+    drawInformationCard(doc, cautionFields);
 
-    doc.moveDown(1);
+    drawSection(doc, "Documents fournis et validés");
+    drawBulletList(doc, view.documentsFournis, "Aucun document listé.");
+
+    const legalNotice =
+      "Ce document atteste la complétude du dossier et le règlement de la caution. La référence de paiement est unique et obligatoire pour tout rapprochement comptable.";
+    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.label);
+    const noticeHeight =
+      doc.heightOfString(legalNotice, { width: contentWidth(doc) }) + PDF_SPACING.md;
+    ensureSpace(doc, noticeHeight);
     doc
-      .fontSize(8)
-      .fillColor("#6b7280")
-      .text(
-        "Ce document atteste la complétude du dossier et le règlement de la caution. La référence de paiement est unique et obligatoire pour tout rapprochement comptable.",
-        { align: "justify" },
-      );
+      .fillColor(PDF_COLORS.muted)
+      .text(legalNotice, { width: contentWidth(doc), align: "justify" });
 
-    doc.end();
+    finalizePremiumPages(doc, {
+      reference: view.dossierReference,
+      issuedAt: view.generatedAt,
+      documentLabel: "DÉCHARGE DÉFINITIVE",
+    });
   });
 }

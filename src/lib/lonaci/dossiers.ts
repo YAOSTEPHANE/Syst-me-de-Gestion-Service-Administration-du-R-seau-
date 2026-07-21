@@ -1,5 +1,9 @@
 import { ObjectId } from "mongodb";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+} from "@/lib/auth/workflow-visibility";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type {
@@ -23,7 +27,6 @@ import {
 import {
   allAnnexesArchivesComplete,
   allContratsArchivesComplete,
-  parseContratGenerePayload,
   parseContratsGeneresPayload,
   summarizeContratsParProduit,
 } from "@/lib/lonaci/contrat-document";
@@ -36,7 +39,6 @@ import {
 } from "@/lib/lonaci/dossier-contrat-party";
 import { findContratById, hasActiveContractForParty } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
@@ -226,7 +228,46 @@ export async function findDossierById(id: string): Promise<DossierDocument | nul
   return row ? mapDossier(row) : null;
 }
 
-function roleCanDoTransition(role: LonaciRole, target: DossierStatus): boolean {
+/**
+ * Lecture par identifiant fermée : un document absent et un document invisible
+ * produisent volontairement le même résultat.
+ */
+export async function findVisibleDossierById(
+  id: string,
+  actor: UserDocument,
+): Promise<DossierDocument | null> {
+  const dossier = await findDossierById(id);
+  if (!dossier || dossier.deletedAt) return null;
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "DOSSIERS",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: dossier.createdByUserId,
+      status: dossier.status,
+    })
+  ) {
+    return null;
+  }
+  const party = contratPartyFromDossier(dossier);
+  if (!party) return null;
+  try {
+    await assertDossierPartyReadable(party, actor);
+    return dossier;
+  } catch {
+    return null;
+  }
+}
+
+function roleCanDoTransition(
+  role: LonaciRole,
+  target: DossierStatus,
+  current?: DossierStatus,
+): boolean {
+  // Retour de l'étape de finalisation vers N2, demandé par le Chef de service.
+  if (current === "VALIDE_N2" && target === "VALIDE_N1" && role === "CHEF_SERVICE") {
+    return true;
+  }
   switch (target) {
     case "SOUMIS":
       return role === "AGENT" || role === "CHEF_SECTION" || role === "ASSIST_CDS" || role === "CHEF_SERVICE";
@@ -270,11 +311,13 @@ async function notifyAfterTransition(
       `Dossier ${dossier.reference} soumis`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}.`,
       metadata,
+      dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SECTION",
       `Dossier ${dossier.reference} soumis`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}. Connectez-vous à la console.`,
+      dossier.agenceId,
     );
   } else if (target === "VALIDE_N1") {
     await notifyRoleTargets(
@@ -282,11 +325,13 @@ async function notifyAfterTransition(
       `Dossier ${dossier.reference} valide N1`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
       metadata,
+      dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "ASSIST_CDS",
       `Dossier ${dossier.reference} valide N1`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+      dossier.agenceId,
     );
   } else if (target === "VALIDE_N2") {
     await notifyRoleTargets(
@@ -294,11 +339,13 @@ async function notifyAfterTransition(
       `Dossier ${dossier.reference} valide N2`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
       metadata,
+      dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SERVICE",
       `Dossier ${dossier.reference} valide N2`,
       `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
+      dossier.agenceId,
     );
   } else if (target === "FINALISE") {
     await sendNotification({
@@ -359,7 +406,7 @@ async function notifyAfterTransition(
   });
 }
 
-/** Champs statut métier 3.5 pour un dossier contrat (API détail / liste). */
+/** Champs du statut métier d’un dossier de contrat, utilisés par les API de détail et de liste. */
 export async function buildDossierContratStatutMetierFields(
   dossier: Pick<DossierDocument, "type" | "status" | "concessionnaireId" | "lonaciClientId" | "payload">,
 ) {
@@ -428,7 +475,18 @@ export async function transitionDossier(
   if (!dossier || dossier.deletedAt) {
     throw new Error("DOSSIER_NOT_FOUND");
   }
-  if (!roleCanDoTransition(actor.role, targetStatus)) {
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "DOSSIERS",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: dossier.createdByUserId,
+      status: dossier.status,
+    })
+  ) {
+    throw new Error("DOSSIER_NOT_FOUND");
+  }
+  if (!roleCanDoTransition(actor.role, targetStatus, dossier.status)) {
     throw new Error(dossierTransitionRoleError(actor.role, targetStatus));
   }
   if (!canTransition(dossier.status, targetStatus)) {
@@ -650,25 +708,43 @@ export async function listDossiers(
   status: DossierStatus | undefined,
   type: DossierType | undefined,
   agenceRestriction: ListAgenceRestriction,
+  actor: UserDocument,
   q?: string,
   concessionnaireId?: string,
   sortField: "updatedAt" | "reference" | "status" = "updatedAt",
   sortOrder: "asc" | "desc" = "desc",
 ) {
   const db = await getDatabase();
-  const filter: Record<string, unknown> = { deletedAt: null };
-  if (status) filter.status = status;
-  if (type) filter.type = type;
+  const conditions: Record<string, unknown>[] = [{ deletedAt: null }];
+  if (status) conditions.push({ status });
+  if (type) conditions.push({ type });
   const agenceMongo = restrictionToMongoAgenceFilter(agenceRestriction);
-  if (agenceMongo) filter.agenceId = agenceMongo;
-  if (concessionnaireId?.trim()) filter.concessionnaireId = concessionnaireId.trim();
+  if (agenceMongo) conditions.push({ agenceId: agenceMongo });
+  if (concessionnaireId?.trim()) {
+    conditions.push({ concessionnaireId: concessionnaireId.trim() });
+  }
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "DOSSIERS",
+    role: actor.role,
+    userId: actor._id ?? "",
+  });
+  if (!visibility) {
+    conditions.push({ _id: { $in: [] } });
+  } else {
+    conditions.push(visibility);
+  }
   if (q?.trim()) {
     const escaped = q
       .trim()
       .replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    // La valeur utilisateur est échappée ci-dessus avant construction.
+    // eslint-disable-next-line security/detect-non-literal-regexp
     const regex = new RegExp(escaped, "i");
-    filter.$or = [{ reference: regex }, { status: regex }, { type: regex }, { concessionnaireId: regex }];
+    conditions.push({
+      $or: [{ reference: regex }, { status: regex }, { type: regex }, { concessionnaireId: regex }],
+    });
   }
+  const filter: Record<string, unknown> = { $and: conditions };
   const skip = (page - 1) * pageSize;
   const col = db.collection<StoredDossier>(COLLECTION);
   const sort: Record<string, 1 | -1> = {
@@ -737,4 +813,29 @@ export async function listDossiers(
     page,
     pageSize,
   };
+}
+
+export async function listVisibleDossierIds(
+  actor: Pick<UserDocument, "_id" | "role">,
+  agenceRestriction: ListAgenceRestriction,
+  type?: DossierType,
+  status?: DossierStatus,
+): Promise<string[]> {
+  const db = await getDatabase();
+  const conditions: Record<string, unknown>[] = [{ deletedAt: null }];
+  if (type) conditions.push({ type });
+  if (status) conditions.push({ status });
+  const agenceMongo = restrictionToMongoAgenceFilter(agenceRestriction);
+  if (agenceMongo) conditions.push({ agenceId: agenceMongo });
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "DOSSIERS",
+    role: actor.role,
+    userId: actor._id ?? "",
+  });
+  conditions.push(visibility ?? { _id: { $in: [] } });
+  const rows = await db
+    .collection<StoredDossier>(COLLECTION)
+    .find({ $and: conditions }, { projection: { _id: 1 } })
+    .toArray();
+  return rows.map((row) => row._id.toHexString());
 }

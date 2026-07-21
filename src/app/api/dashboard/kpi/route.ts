@@ -15,6 +15,8 @@ import { buildReportSummary } from "@/lib/lonaci/reports";
 import { ensureSuccessionIndexes, listSuccessionStaleAlerts } from "@/lib/lonaci/succession";
 import { listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { requireListAgenceScope } from "@/lib/api/list-agence-scope";
+import { getWorkflowQueueCounts } from "@/lib/lonaci/workflow-queue-stats";
 
 function resolveDashboardScopeAgenceId(user: {
   role: string;
@@ -35,10 +37,19 @@ export async function GET(request: NextRequest) {
   });
   if ("error" in auth) return auth.error;
 
+  const requestedAgenceId = request.nextUrl.searchParams.get("agenceId")?.trim() || undefined;
+  const agenceScope = requireListAgenceScope(auth.user, requestedAgenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+
   await ensureSuccessionIndexes();
   await ensureAppSettingsIndexes();
   const appSettings = await getAppSettings();
-  const scopeAgenceId = resolveDashboardScopeAgenceId(auth.user);
+  const scopeAgenceId = agenceScope.agenceId ?? resolveDashboardScopeAgenceId(auth.user);
+  const workflowQueueRestriction = scopeAgenceId
+    ? { agenceId: scopeAgenceId }
+    : agenceScope.agenceIds?.length
+      ? { agenceIds: agenceScope.agenceIds }
+      : {};
   const [
     daily,
     weekly,
@@ -52,6 +63,7 @@ export async function GET(request: NextRequest) {
     topConcessionnairesActifs,
     dossierDelays30j,
     produitVolumes30j,
+    workflowQueues,
   ] = await Promise.all([
       buildReportSummary("daily", scopeAgenceId),
       buildReportSummary("weekly", scopeAgenceId),
@@ -71,6 +83,7 @@ export async function GET(request: NextRequest) {
       getTopConcessionnairesActifs(5, scopeAgenceId),
       getDossierDelaySnapshotLast30Days(scopeAgenceId),
       getProduitVolumesLast30Days(8, scopeAgenceId),
+      getWorkflowQueueCounts(auth.user, workflowQueueRestriction),
     ]);
 
   const cautionsJ10Count = cautionsJ10.length;
@@ -95,6 +108,7 @@ export async function GET(request: NextRequest) {
         successionStaleDays: appSettings.alertSuccessionStaleDays,
       },
       contractsMonthlyTarget: appSettings.dashboardContractsMonthlyTarget,
+      workflowQueues,
       daily,
       weekly,
       monthly,

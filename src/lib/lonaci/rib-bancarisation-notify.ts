@@ -7,7 +7,7 @@ export interface RibDemandeNotifyResult {
 }
 
 /**
- * Notifie le concessionnaire (email et/ou trace SMS) pour fournir son RIB (spec 8.1).
+ * Notifie le concessionnaire par courriel et/ou trace SMS afin qu’il fournisse son RIB.
  */
 export async function notifyConcessionnaireRibDemande(input: {
   concessionnaireId: string;

@@ -8,6 +8,24 @@ import ClientSearchPicker, {
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import type { LonaciRole } from "@/lib/lonaci/constants";
+import {
+  getAssignedWorkflowTarget,
+  getRoleWorkflowFilterStatuses,
+  parseLonaciRole,
+} from "@/lib/lonaci/workflow-ui-policy";
+import { notify } from "@/lib/toast";
+import { Download, FilePlus2, FileText, Upload } from "lucide-react";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 type AgrementStatus = "RECU" | "CONTROLE" | "TRANSMIS" | "FINALISE";
 interface AgrementItem {
@@ -37,6 +55,12 @@ function statusPillClass(status: AgrementStatus): string {
     default:
       return "bg-slate-100 text-slate-700";
   }
+}
+
+function transitionLabel(target: AgrementStatus): string {
+  if (target === "CONTROLE") return "Contrôler";
+  if (target === "TRANSMIS") return "Transmettre";
+  return "Finaliser";
 }
 
 async function downloadAgrementsExcelTemplate() {
@@ -115,8 +139,8 @@ export default function AgrementsPanel() {
   const pageSize = 20;
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [meRole, setMeRole] = useState<LonaciRole | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
@@ -177,6 +201,22 @@ export default function AgrementsPanel() {
   }, [filterAgence, filterProduit, filterStatut, filterDateFrom, filterDateTo]);
 
   useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/auth/me", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const body = (await response.json()) as { user?: { role?: string } };
+        setMeRole(parseLonaciRole(body.user?.role));
+      } catch {
+        setMeRole(null);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
     const onDataImported = () => {
       void load(1);
     };
@@ -190,7 +230,7 @@ export default function AgrementsPanel() {
     if (!pdfFile) {
       const message = "Document PDF obligatoire.";
       setCreateError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
       return;
     }
     setCreating(true);
@@ -217,12 +257,12 @@ export default function AgrementsPanel() {
       setObservations("");
       setPdfFile(null);
       setCreateOpen(false);
-      setToast({ type: "success", message: "Agrément enregistré (statut RECU)." });
+      notify.success("Agrément enregistré (statut RECU).");
       await load(1);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -246,14 +286,13 @@ export default function AgrementsPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import agréments terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
-      });
+      notify.success(
+        `Import agréments terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -274,18 +313,21 @@ export default function AgrementsPanel() {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Transition impossible");
       }
+      setItems((current) => current.filter((item) => item.id !== id));
+      setTotal((current) => Math.max(0, current - 1));
       await load(page);
-      setToast({ type: "success", message: "Transition effectuée." });
+      notify.success("Transition effectuée.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const visibleFilterStatuses = getRoleWorkflowFilterStatuses("AGREMENTS", meRole);
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
     if (filterAgence.trim()) params.set("agenceId", filterAgence.trim());
@@ -298,8 +340,6 @@ export default function AgrementsPanel() {
 
   const inputClass =
     "w-full min-w-0 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
-  const inputClassXs =
-    "rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400";
 
   function resetCreateFields() {
     setProduitCode("");
@@ -369,433 +409,113 @@ export default function AgrementsPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [createOpen]);
 
+  function workflowAction(row: AgrementItem) {
+    const assigned = getAssignedWorkflowTarget({ workflow: "AGREMENTS", role: meRole, status: row.statut });
+    const target = assigned === "CONTROLE" || assigned === "TRANSMIS" || assigned === "FINALISE" ? assigned : null;
+    return target ? (
+      <Button size="sm" loading={busyId === row.id} onClick={() => void transition(row.id, target)}>
+        {transitionLabel(target)}
+      </Button>
+    ) : null;
+  }
+
+  const columns: DataTableColumn<AgrementItem>[] = [
+    { id: "reference", header: "Référence", cell: (row) => <span className="font-mono text-xs">{row.reference}</span> },
+    { id: "produit", header: "Produit", cell: (row) => row.produitCode },
+    { id: "date", header: "Date de réception", cell: (row) => new Date(row.dateReception).toLocaleString("fr-FR") },
+    { id: "officielle", header: "Référence officielle", cell: (row) => row.referenceOfficielle },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statusPillClass(row.statut)}>{row.statut}</StatusBadge> },
+    {
+      id: "document",
+      header: "Document",
+      cell: (row) => row.hasDocument ? <a href={`/api/agrements/${row.id}/document`} target="_blank" rel="noopener noreferrer">Ouvrir le PDF</a> : "—",
+    },
+    { id: "action", header: "Action", align: "right", cell: workflowAction },
+  ];
+
   return (
-    <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <header className="relative overflow-hidden rounded-3xl border border-indigo-200 bg-linear-to-r from-slate-900 via-slate-800 to-indigo-900 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-indigo-300/20 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-indigo-100">
-              Référentiel
-            </p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Agréments</h2>
-            <p className="mt-1 text-sm text-indigo-100/90">Contrôles, validation et archivage des agréments produits.</p>
-          </div>
-          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-          <a
-            href={`/api/agrements/export?format=excel&${exportQuery}`}
-            className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
-          >
-            Excel
-          </a>
-          <a
-            href={`/api/agrements/export?format=pdf&${exportQuery}`}
-            className="inline-flex items-center justify-center rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
-          >
-            PDF
-          </a>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            disabled={creating}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-indigo-300 bg-indigo-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-indigo-200 hover:bg-indigo-400 disabled:opacity-60"
-          >
-            <span className="text-lg font-light leading-none">+</span>
-            Créer agrément
-          </button>
-        </div>
-        </div>
-      </header>
+    <section className="space-y-5">
+      <PageHeader
+        eyebrow="Référentiel"
+        title="Agréments"
+        description="Contrôle, validation et archivage des agréments produits."
+        actions={
+          <>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/agrements/export?format=excel&${exportQuery}`, "_blank")}>Excel</Button>
+            <Button variant="secondary" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/export?format=pdf&${exportQuery}`, "_blank")}>PDF</Button>
+            {meRole !== "AUDITEUR" ? <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Créer un agrément</Button> : null}
+          </>
+        }
+      />
 
-      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-linear-to-r from-slate-50 to-indigo-50/40 p-3 sm:grid-cols-5">
-        <input aria-label="Filtre agence" value={filterAgence} onChange={(e) => setFilterAgence(e.target.value)} placeholder="Agence" className={inputClassXs} />
-        <input aria-label="Filtre produit" value={filterProduit} onChange={(e) => setFilterProduit(e.target.value)} placeholder="Produit" className={inputClassXs} />
-        <select aria-label="Filtre statut" value={filterStatut} onChange={(e) => setFilterStatut(e.target.value as "" | AgrementStatus)} className={inputClassXs}>
-          <option value="">Tous statuts</option>
-          <option value="RECU">RECU</option>
-          <option value="CONTROLE">CONTROLE</option>
-          <option value="TRANSMIS">TRANSMIS</option>
-          <option value="FINALISE">FINALISE</option>
-        </select>
-        <input aria-label="Date début" type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} className={inputClassXs} />
-        <input aria-label="Date fin" type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} className={inputClassXs} />
-      </div>
+      <FilterBar
+        aria-label="Filtres des agréments"
+        filters={
+          <>
+            <FormField label="Agence"><input value={filterAgence} onChange={(e) => setFilterAgence(e.target.value)} placeholder="Identifiant agence" /></FormField>
+            <FormField label="Produit"><input value={filterProduit} onChange={(e) => setFilterProduit(e.target.value)} placeholder="Code produit" /></FormField>
+            <FormField label="Statut"><select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value as "" | AgrementStatus)}><option value="">Tous les statuts</option>{visibleFilterStatuses.map((status) => <option key={status} value={status}>{status}</option>)}</select></FormField>
+            <FormField label="Du"><input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} /></FormField>
+            <FormField label="Au"><input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} /></FormField>
+          </>
+        }
+      />
 
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-        <span>
-          {total} entrée(s) · page {page}/{totalPages}
-        </span>
-        <button type="button" disabled={page <= 1} onClick={() => void load(page - 1)} className="rounded-lg border border-slate-200 bg-white px-3 py-1 disabled:cursor-not-allowed disabled:opacity-40">
-          Précédent
-        </button>
-        <button type="button" disabled={page >= totalPages} onClick={() => void load(page + 1)} className="rounded-lg border border-slate-200 bg-white px-3 py-1 disabled:cursor-not-allowed disabled:opacity-40">
-          Suivant
-        </button>
-      </div>
-
-
-
-      {toast ? (
-        <div
-          className={`fixed left-1/2 top-4 z-100 w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
-            toast.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-          role="status"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="min-w-0 font-medium">{toast.message}</span>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              className="shrink-0 text-xs underline opacity-80 hover:opacity-100"
-            >
-              Fermer
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {listError ? <p className="mb-3 text-sm text-rose-700">{listError}</p> : null}
-      {loading ? (
-        <p className="text-sm text-slate-500">Chargement…</p>
-      ) : (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-              <tr>
-                <th className="px-3 py-2.5">Réf</th>
-                <th className="px-3 py-2.5">Produit</th>
-                <th className="px-3 py-2.5">Date réception</th>
-                <th className="px-3 py-2.5">Réf officielle</th>
-                <th className="px-3 py-2.5">Statut</th>
-                <th className="px-3 py-2.5">Document</th>
-                <th className="px-3 py-2.5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100 transition-colors hover:bg-indigo-50/40">
-                  <td className="px-3 py-2.5 font-mono text-xs">{row.reference}</td>
-                  <td className="px-3 py-2.5">{row.produitCode}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap text-xs">{new Date(row.dateReception).toLocaleString("fr-FR")}</td>
-                  <td className="px-3 py-2.5">{row.referenceOfficielle}</td>
-                  <td className="px-3 py-2.5">
-                    <span className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ${statusPillClass(row.statut)}`}>
-                      {row.statut}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    {row.hasDocument ? (
-                      <a
-                        href={`/api/agrements/${row.id}/document`}
-                        className="text-xs font-medium underline underline-offset-2 text-slate-700 hover:text-slate-900"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        PDF
-                      </a>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2.5 text-right">
-                    {row.statut === "RECU" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "CONTROLE")}
-                        className="inline-flex items-center justify-center rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-sky-700 hover:bg-sky-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Contrôler"}
-                      </button>
-                    ) : row.statut === "CONTROLE" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "TRANSMIS")}
-                        className="inline-flex items-center justify-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Transmettre"}
-                      </button>
-                    ) : row.statut === "TRANSMIS" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "FINALISE")}
-                        className="inline-flex items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-emerald-700 hover:bg-emerald-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Finaliser"}
-                      </button>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {!items.length ? (
-                <tr>
-                  <td colSpan={7} className="px-3 py-8 text-center text-sm text-slate-500">
-                    Aucune entrée.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-          </div>
-        </div>
-      )}
-
-      {createOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="create-agrement-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/60"
-            aria-label="Fermer"
-            onClick={closeCreate}
-            disabled={creating}
-          />
-          <div className="relative z-10 flex max-h-[82vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-indigo-50 via-white to-cyan-50 px-5 py-4">
-              <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-indigo-200/40 blur-2xl" />
-              <div>
-                <p className="mb-1 inline-flex rounded-full border border-indigo-300 bg-indigo-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-900">
-                  Workflow agréments
-                </p>
-                <h3 id="create-agrement-title" className="text-lg font-semibold text-slate-900">
-                  Créer agrément
-                </h3>
-                <p className="mt-1 text-xs leading-4 text-slate-600">Saisie des informations et chargement du document PDF.</p>
-              </div>
-              <button
-                type="button"
-                disabled={creating}
-                onClick={closeCreate}
-                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
-
-            <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto bg-linear-to-b from-slate-50/80 via-white to-white px-5 py-4">
-                {createError ? (
-                  <div className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900" role="alert">
-                    {createError}
-                  </div>
-                ) : null}
-
-                <div className="grid gap-3">
-                  <section className="rounded-2xl border border-indigo-200/80 bg-white p-4 shadow-sm">
-                    <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
-                      Paramètres de l’agrément
-                    </p>
-                    <div className="grid gap-3 lg:grid-cols-2">
-                  <label className="grid min-w-0 gap-1 lg:col-span-2">
-                    <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
-                    <select
-                      required
-                      value={produitCode}
-                      onChange={(e) => setProduitCode(e.target.value)}
-                      className={inputClass}
-                      disabled={referentialsLoading}
-                    >
-                      <option value="" disabled>
-                        {referentialsLoading ? "Chargement des référentiels…" : "Sélectionner un produit"}
-                      </option>
-                      {produits
-                        .filter((p) => p.actif)
-                        .map((p) => (
-                          <option key={p.code} value={p.code}>
-                            {p.code} — {p.libelle}
-                          </option>
-                        ))}
-                    </select>
-                    {referentialsError ? <span className="text-[11px] leading-4 text-rose-700">{referentialsError}</span> : null}
-                  </label>
-
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-xs font-medium text-slate-700">Date de réception *</span>
-                    <input
-                      required
-                      type="datetime-local"
-                      value={dateReception}
-                      onChange={(e) => setDateReception(e.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-xs font-medium text-slate-700">Référence officielle *</span>
-                    <input
-                      required
-                      value={referenceOfficielle}
-                      onChange={(e) => setReferenceOfficielle(e.target.value)}
-                      className={inputClass}
-                      placeholder="Référence officielle"
-                    />
-                  </label>
-
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-xs font-medium text-slate-700">Agence concernée</span>
-                    <select
-                      value={agenceId}
-                      onChange={(e) => setAgenceId(e.target.value)}
-                      className={inputClass}
-                      disabled={referentialsLoading}
-                    >
-                      <option value="">{referentialsLoading ? "Chargement des référentiels…" : "Aucune agence"}</option>
-                      {agences
-                        .filter((a) => a.actif && a.id)
-                        .map((a) => (
-                          <option key={a.id} value={a.id}>
-                            {a.code} — {a.libelle}
-                          </option>
-                        ))}
-                    </select>
-                  </label>
-
-                  <ClientSearchPicker
-                    key={`agrement-create-${createOpen}`}
-                    label={<span className="text-xs font-medium text-slate-700">Client Lonaci</span>}
-                    selected={createClient}
-                    onSelectedChange={(r) => {
-                      setCreateClient(r);
-                      const codes = produits.filter((p) => p.actif).map((p) => p.code);
-                      const picked = pickProduitCodeFromClient(r, codes);
-                      if (picked) setProduitCode(picked);
-                      const agIds = agences.filter((a) => a.actif && a.id).map((a) => a.id);
-                      const pickedAg = pickAgenceIdFromClient(r, agIds);
-                      if (pickedAg) setAgenceId(pickedAg);
-                    }}
-                    filter="contrat"
-                    inputClassName={inputClass}
-                    searchPlaceholder="Rechercher un client (nom, code, CNI…)"
-                  />
-                    </div>
-                  </section>
-
-                  <section className="rounded-2xl border border-cyan-200/80 bg-white p-4 shadow-sm">
-                    <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
-                      Document et notes
-                    </p>
-                    <div className="grid gap-3">
-                  <label className="grid min-w-0 gap-1">
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-700">
-                      <svg
-                        aria-hidden="true"
-                        viewBox="0 0 24 24"
-                        className="h-3.5 w-3.5 text-slate-500"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
-                        <path d="M14 2v5h5" />
-                        <path d="M9 13h6" />
-                        <path d="M9 17h6" />
-                      </svg>
-                      Document PDF *
-                    </span>
-                    <input
-                      ref={pdfInputRef}
-                      required
-                      type="file"
-                      accept="application/pdf"
-                      onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)}
-                      className="sr-only"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => pdfInputRef.current?.click()}
-                      className="flex w-full min-w-0 items-center justify-between gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 shadow-sm outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    >
-                      <span className="inline-flex min-w-0 items-center gap-1.5">
-                        <svg
-                          aria-hidden="true"
-                          viewBox="0 0 24 24"
-                          className="h-3.5 w-3.5 shrink-0 text-slate-500"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <path d="M14 2H7a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7z" />
-                          <path d="M14 2v5h5" />
-                        </svg>
-                        <span className="truncate">{pdfFile ? pdfFile.name : "Choisir un fichier PDF"}</span>
-                      </span>
-                      <span className="shrink-0 text-slate-500">Parcourir</span>
-                    </button>
-                  </label>
-
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-xs font-medium text-slate-700">Observations</span>
-                    <textarea
-                      value={observations}
-                      onChange={(e) => setObservations(e.target.value)}
-                      rows={2}
-                      className={inputClass}
-                      placeholder="Notes internes (optionnel)"
-                    />
-                  </label>
-                    </div>
-                  </section>
+      {listError ? <FeedbackState tone="danger" title="Chargement impossible" description={listError} /> : null}
+      <Surface padding="none" elevated>
+        {loading ? <Skeleton lines={5} /> : (
+          <DataTable
+            rows={items}
+            columns={columns}
+            rowKey={(row) => row.id}
+            caption="Liste des agréments"
+            getRowLabel={(row) => `Agrément ${row.reference}`}
+            mobileCard={(row) => (
+              <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><strong>{row.referenceOfficielle}</strong><p className="mt-1 text-sm text-slate-600">{row.reference} · {row.produitCode}</p></div><StatusBadge className={statusPillClass(row.statut)}>{row.statut}</StatusBadge></div>
+                <dl className="mt-4 text-sm"><div><dt className="text-slate-500">Date de réception</dt><dd className="mt-1 font-medium">{new Date(row.dateReception).toLocaleString("fr-FR")}</dd></div></dl>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                  {row.hasDocument ? <Button variant="secondary" size="sm" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/${row.id}/document`, "_blank")}>PDF</Button> : null}
+                  {workflowAction(row)}
                 </div>
-              </div>
+              </article>
+            )}
+          />
+        )}
+      </Surface>
+      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">{total} agrément(s)</p><Pagination page={page} pageCount={totalPages} onPageChange={(next) => void load(next)} label="Pagination des agréments" /></div>
 
-              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-5 py-3">
-                <input
-                  ref={importFileInputRef}
-                  type="file"
-                  accept=".json,.csv,.xlsx,.xls,.pdf"
-                  aria-label="Importer des agréments"
-                  className="sr-only"
-                  onChange={(e) => void onImportFileChange(e)}
-                />
-                <button
-                  type="button"
-                  disabled={importingFile}
-                  onClick={() => importFileInputRef.current?.click()}
-                  className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-2 text-sm font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
-                >
-                  {importingFile ? "Import..." : "Importer fichier vers le tableau"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void downloadAgrementsExcelTemplate()}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                >
-                  Télécharger le modèle Excel
-                </button>
-                <button
-                  type="button"
-                  onClick={closeCreate}
-                  disabled={creating}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700 disabled:opacity-60"
-                >
-                  {creating ? "Enregistrement…" : "Créer agrément"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => { if (!open && !creating) closeCreate(); }}
+        title="Créer un agrément"
+        description="Saisissez les informations et joignez le document PDF obligatoire."
+        size="lg"
+        footer={
+          <>
+            <input ref={importFileInputRef} type="file" accept=".json,.csv,.xlsx,.xls,.pdf" aria-label="Importer des agréments" className="sr-only" onChange={(e) => void onImportFileChange(e)} />
+            <Button variant="ghost" leadingIcon={Upload} loading={importingFile} onClick={() => importFileInputRef.current?.click()}>Importer</Button>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => void downloadAgrementsExcelTemplate()}>Modèle Excel</Button>
+            <Button variant="secondary" disabled={creating} onClick={closeCreate}>Annuler</Button>
+            <Button type="submit" form="agrement-create-form" loading={creating}>Créer l’agrément</Button>
+          </>
+        }
+      >
+        {createError ? <FeedbackState tone="danger" title="Création impossible" description={createError} /> : null}
+        <form id="agrement-create-form" noValidate onSubmit={onCreate} className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Produit concerné" required error={referentialsError}>
+            <select required value={produitCode} onChange={(e) => setProduitCode(e.target.value)} disabled={referentialsLoading}><option value="">Sélectionner un produit</option>{produits.filter((p) => p.actif).map((p) => <option key={p.code} value={p.code}>{p.code} — {p.libelle}</option>)}</select>
+          </FormField>
+          <FormField label="Date de réception" required><input required type="datetime-local" value={dateReception} onChange={(e) => setDateReception(e.target.value)} /></FormField>
+          <FormField label="Référence officielle" required><input required value={referenceOfficielle} onChange={(e) => setReferenceOfficielle(e.target.value)} /></FormField>
+          <FormField label="Agence concernée"><select value={agenceId} onChange={(e) => setAgenceId(e.target.value)} disabled={referentialsLoading}><option value="">Aucune agence</option>{agences.filter((a) => a.actif && a.id).map((a) => <option key={a.id} value={a.id}>{a.code} — {a.libelle}</option>)}</select></FormField>
+          <div className="sm:col-span-2"><ClientSearchPicker key={`agrement-create-${createOpen}`} label="Client Lonaci" selected={createClient} onSelectedChange={(row) => { setCreateClient(row); const picked = pickProduitCodeFromClient(row, produits.filter((p) => p.actif).map((p) => p.code)); if (picked) setProduitCode(picked); const pickedAgence = pickAgenceIdFromClient(row, agences.filter((a) => a.actif && a.id).map((a) => a.id)); if (pickedAgence) setAgenceId(pickedAgence); }} filter="contrat" inputClassName={inputClass} searchPlaceholder="Rechercher un client" /></div>
+          <FormField label="Document PDF" required>
+            <input ref={pdfInputRef} required type="file" accept="application/pdf" onChange={(e) => setPdfFile(e.target.files?.[0] ?? null)} />
+          </FormField>
+          <FormField label="Observations"><textarea value={observations} onChange={(e) => setObservations(e.target.value)} rows={3} /></FormField>
+        </form>
+      </Dialog>
     </section>
   );
 }

@@ -88,7 +88,9 @@ const createFormSchema = z
   });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
+  const auth = await requireApiAuth(request, {
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
+  });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
@@ -100,6 +102,7 @@ export async function GET(request: NextRequest) {
   const result = await listCessions({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
+    actor: auth.user,
     kind: parsed.data.kind as CessionKind | undefined,
     statut: parsed.data.statut as CessionStatus | undefined,
     produitCode: parsed.data.produitCode?.trim() || undefined,

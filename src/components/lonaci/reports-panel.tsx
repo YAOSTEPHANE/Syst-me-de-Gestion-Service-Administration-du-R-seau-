@@ -1,6 +1,16 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  BarChart3,
+  Building2,
+  Download,
+  FileDown,
+  FileSpreadsheet,
+  Printer,
+  RefreshCw,
+  ShieldAlert,
+} from "lucide-react";
 import type { ChartOptions } from "chart.js";
 import {
   ArcElement,
@@ -17,13 +27,20 @@ import { Bar, Doughnut, Line } from "react-chartjs-2";
 import Link from "next/link";
 
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
+import { calculateRasterPageSlices, CLIENT_PDF_COLORS } from "@/lib/pdf/client-premium";
+import { notify } from "@/lib/toast";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ChartCard, KpiCard } from "@/components/lonaci/ui/dashboard-cards";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, BarElement, Tooltip, Legend);
 
 type Period = "daily" | "weekly" | "monthly";
 type ProductTrendFilter = "all" | "up" | "down";
 type AgenceRef = { id: string; code: string; libelle: string; actif: boolean };
-const cronScheduleLabel = process.env.NEXT_PUBLIC_CRON_SCHEDULE_LABEL?.trim() || "08h00 locale";
 const periodLabels: Record<Period, string> = {
   daily: "Journalier",
   weekly: "Hebdomadaire",
@@ -86,7 +103,6 @@ export default function ReportsPanel() {
   const [agenceId, setAgenceId] = useState("");
   const [weeklySummary, setWeeklySummary] = useState<ReportSummary | null>(null);
   const [monthlySummary, setMonthlySummary] = useState<ReportSummary | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [compareAgences, setCompareAgences] = useState(true);
   const [topAgences, setTopAgences] = useState(8);
@@ -198,11 +214,11 @@ export default function ReportsPanel() {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: "#475569", font: { size: 11 } } },
+        legend: { labels: { color: "#475569", font: { size: 12 } } },
       },
       scales: {
-        x: { ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "rgba(148,163,184,0.2)" } },
-        y: { ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
+        x: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" } },
+        y: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
       },
     }),
     [],
@@ -228,7 +244,7 @@ export default function ReportsPanel() {
         {
           label: "Répartition des volumes",
           data: moduleDistribution.values,
-          backgroundColor: ["#f59e0b", "#ef4444", "#22c55e", "#6366f1", "#0ea5e9", "#8b5cf6"],
+          backgroundColor: ["#f97316", "#ef4444", "#22c55e", "#1e3a5f", "#0f766e", "#64748b"],
           borderColor: "rgba(255,255,255,0.85)",
           borderWidth: 1.5,
         },
@@ -243,12 +259,12 @@ export default function ReportsPanel() {
     const pdvPending = summary?.modules?.pdvIntegrations?.nonFinalise ?? summary?.pdvIntegrations?.nonFinalise ?? 0;
     const contratsResilie = summary?.modules?.contrats?.resilie ?? summary?.contrats?.resilie ?? 0;
     return {
-      labels: ["Cautions J+10", "Succession stale 30j", "PDV non finalisés", "Contrats résiliés"],
+      labels: ["Cautions J+10", "Successions sans activité 30j", "PDV non finalisés", "Contrats résiliés"],
       datasets: [
         {
           label: "Indicateurs de risque",
           data: [cautionAlert, successionStale, pdvPending, contratsResilie],
-          backgroundColor: ["#f97316", "#ef4444", "#8b5cf6", "#0ea5e9"],
+          backgroundColor: ["#f97316", "#ef4444", "#eab308", "#1e3a5f"],
           borderRadius: 8,
         },
       ],
@@ -265,8 +281,8 @@ export default function ReportsPanel() {
         {
           label: "Dossiers par statut",
           data: values,
-          backgroundColor: "rgba(99,102,241,0.75)",
-          borderColor: "#4338ca",
+          backgroundColor: "rgba(249,115,22,0.78)",
+          borderColor: "#c2410c",
           borderWidth: 1,
           borderRadius: 6,
         },
@@ -298,12 +314,12 @@ export default function ReportsPanel() {
           label: "Contrats actifs",
           data: productActiveRows.map((row) => row.count),
           backgroundColor: [
-            "#0ea5e9",
+            "#f97316",
             "#14b8a6",
-            "#8b5cf6",
+            "#1e3a5f",
             "#f59e0b",
             "#ef4444",
-            "#6366f1",
+            "#334155",
             "#22c55e",
             "#64748b",
           ],
@@ -322,8 +338,8 @@ export default function ReportsPanel() {
         {
           label: "Période courante",
           data: productWindowRows.map((row) => row.currentWindow),
-          backgroundColor: "rgba(14,165,233,0.82)",
-          borderColor: "#0284c7",
+          backgroundColor: "rgba(249,115,22,0.82)",
+          borderColor: "#c2410c",
           borderWidth: 1,
           borderRadius: 8,
         },
@@ -365,16 +381,16 @@ export default function ReportsPanel() {
       maintainAspectRatio: false,
       indexAxis: "y",
       plugins: {
-        legend: { labels: { color: "#475569", font: { size: 11 } } },
+        legend: { labels: { color: "#475569", font: { size: 12 } } },
       },
       scales: {
         x: {
-          ticks: { color: "#64748b", font: { size: 10 } },
+          ticks: { color: "#64748b", font: { size: 12 } },
           grid: { color: "rgba(148,163,184,0.2)" },
           beginAtZero: true,
         },
         y: {
-          ticks: { color: "#64748b", font: { size: 10 } },
+          ticks: { color: "#64748b", font: { size: 12 } },
           grid: { display: false },
         },
       },
@@ -387,11 +403,11 @@ export default function ReportsPanel() {
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: { labels: { color: "#475569", font: { size: 11 } } },
+        legend: { labels: { color: "#475569", font: { size: 12 } } },
       },
       scales: {
-        x: { ticks: { color: "#64748b", font: { size: 10 } }, grid: { display: false } },
-        y: { ticks: { color: "#64748b", font: { size: 10 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
+        x: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { display: false } },
+        y: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
       },
     }),
     [],
@@ -403,7 +419,7 @@ export default function ReportsPanel() {
       maintainAspectRatio: false,
       cutout: "65%",
       plugins: {
-        legend: { position: "bottom", labels: { color: "#475569", font: { size: 11 } } },
+        legend: { position: "bottom", labels: { color: "#475569", font: { size: 12 } } },
       },
     }),
     [],
@@ -475,11 +491,6 @@ export default function ReportsPanel() {
   const deltaContrats = pctDelta(weekContrats, monthContrats);
   const deltaCautions = pctDelta(weekCautions, monthCautions);
 
-  function flash(msg: string) {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 2800);
-  }
-
   function exportCsv() {
     const params = new URLSearchParams({ period, format: "csv" });
     if (agenceId.trim()) params.set("agenceId", agenceId.trim());
@@ -488,7 +499,7 @@ export default function ReportsPanel() {
       params.set("topAgences", String(topAgences));
     }
     window.open(`/api/reports/export?${params.toString()}`, "_blank");
-    flash("Export CSV lancé");
+    notify.success("Export CSV lancé");
   }
 
   function exportXlsx() {
@@ -499,19 +510,19 @@ export default function ReportsPanel() {
       params.set("topAgences", String(topAgences));
     }
     window.open(`/api/reports/export?${params.toString()}`, "_blank");
-    flash("Export Excel lancé");
+    notify.success("Export Excel lancé");
   }
 
   function printView() {
     const params = new URLSearchParams({ period });
     if (agenceId.trim()) params.set("agenceId", agenceId.trim());
     window.open(`/rapports/print?${params.toString()}`, "_blank", "noopener,noreferrer");
-    flash("Aperçu imprimable ouvert");
+    notify.success("Aperçu imprimable ouvert");
   }
 
   async function exportPdf() {
     if (!reportRef.current) {
-      flash("Section de rapport introuvable");
+      notify.error("Section de rapport introuvable");
       return;
     }
     setExportingPdf(true);
@@ -526,61 +537,92 @@ export default function ReportsPanel() {
       const pdf = new JsPdf("p", "mm", "a4");
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const margin = 8;
-      const headerHeight = 16;
-      const footerHeight = 10;
+      const margin = 10;
+      const headerHeight = 21;
+      const footerHeight = 12;
       const printableWidth = pageWidth - margin * 2;
       const printableHeight = pageHeight - margin * 2 - headerHeight - footerHeight;
-      const imageHeight = (canvas.height * printableWidth) / canvas.width;
-      const imageData = canvas.toDataURL("image/png");
       const generatedAt = new Date().toLocaleString("fr-FR");
       const periodLabel = periodLabels[period];
       const filterLabel = `Agence: ${selectedAgenceLabel}`;
-      const totalPages = Math.max(1, Math.ceil(imageHeight / printableHeight));
+      const sourcePixelsPerMillimeter = canvas.width / printableWidth;
+      const maximumSliceHeight = printableHeight * sourcePixelsPerMillimeter;
+      const reportBounds = reportRef.current.getBoundingClientRect();
+      const safeBreaks = Array.from(reportRef.current.querySelectorAll<HTMLElement>(":scope > div"))
+        .map((element) => (element.getBoundingClientRect().bottom - reportBounds.top) * (canvas.height / reportRef.current!.scrollHeight))
+        .filter((value) => value > 0 && value < canvas.height);
+      const slices = calculateRasterPageSlices(canvas.height, maximumSliceHeight, safeBreaks);
+      const totalPages = slices.length;
+      const orange = CLIENT_PDF_COLORS.orange;
+      const orangeDark = CLIENT_PDF_COLORS.orangeDark;
 
       const drawPageHeaderFooter = (pageNumber: number) => {
-        pdf.setDrawColor(226, 232, 240);
+        pdf.setFillColor(orange);
+        pdf.rect(0, 0, pageWidth, 3.2, "F");
+        pdf.setDrawColor(249, 115, 22);
         pdf.setLineWidth(0.2);
         pdf.line(margin, margin + headerHeight - 2, pageWidth - margin, margin + headerHeight - 2);
         pdf.line(margin, pageHeight - margin - footerHeight + 2, pageWidth - margin, pageHeight - margin - footerHeight + 2);
 
         pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(11);
-        pdf.setTextColor(15, 23, 42);
-        pdf.text("Infinitecore Systeme - Rapport opérationnel", margin, margin + 5);
+        pdf.setFontSize(13);
+        pdf.setTextColor(orangeDark);
+        pdf.text("LONACI", margin, margin + 5);
+        pdf.setFontSize(10);
+        pdf.setTextColor(17, 24, 39);
+        pdf.text("Rapport opérationnel", margin, margin + 10);
 
         pdf.setFont("helvetica", "normal");
-        pdf.setFontSize(9);
+        pdf.setFontSize(8.5);
         pdf.setTextColor(71, 85, 105);
-        pdf.text(`${periodLabel} | ${filterLabel}`, margin, margin + 10);
-        pdf.text(`Généré le: ${generatedAt}`, pageWidth - margin, margin + 10, { align: "right" });
+        pdf.text(`${periodLabel} | ${filterLabel}`, pageWidth - margin, margin + 5, { align: "right" });
+        pdf.text(`Généré le ${generatedAt}`, pageWidth - margin, margin + 10, { align: "right" });
 
         pdf.setFontSize(8);
         pdf.setTextColor(100, 116, 139);
+        pdf.text("Loterie Nationale de Côte d’Ivoire · Document interne", margin, pageHeight - margin - 2);
         pdf.text(`Page ${pageNumber}/${totalPages}`, pageWidth - margin, pageHeight - margin - 2, { align: "right" });
       };
 
-      let remainingHeight = imageHeight;
-      let yOffset = margin + headerHeight;
-      drawPageHeaderFooter(1);
-      pdf.addImage(imageData, "PNG", margin, yOffset, printableWidth, imageHeight, undefined, "FAST");
-      remainingHeight -= printableHeight;
-      let pageNumber = 1;
-
-      while (remainingHeight > 0) {
-        pageNumber += 1;
-        yOffset = margin + headerHeight - (imageHeight - remainingHeight);
-        pdf.addPage();
-        drawPageHeaderFooter(pageNumber);
-        pdf.addImage(imageData, "PNG", margin, yOffset, printableWidth, imageHeight, undefined, "FAST");
-        remainingHeight -= printableHeight;
-      }
+      slices.forEach((slice, index) => {
+        if (index > 0) pdf.addPage();
+        drawPageHeaderFooter(index + 1);
+        const sliceCanvas = document.createElement("canvas");
+        sliceCanvas.width = canvas.width;
+        sliceCanvas.height = Math.ceil(slice.end - slice.start);
+        const context = sliceCanvas.getContext("2d");
+        if (!context) throw new Error("Contexte graphique indisponible");
+        context.fillStyle = CLIENT_PDF_COLORS.surface;
+        context.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
+        context.drawImage(
+          canvas,
+          0,
+          slice.start,
+          canvas.width,
+          slice.end - slice.start,
+          0,
+          0,
+          canvas.width,
+          slice.end - slice.start,
+        );
+        const renderedHeight = sliceCanvas.height / sourcePixelsPerMillimeter;
+        pdf.addImage(
+          sliceCanvas.toDataURL("image/png"),
+          "PNG",
+          margin,
+          margin + headerHeight,
+          printableWidth,
+          renderedHeight,
+          undefined,
+          "FAST",
+        );
+      });
 
       const suffix = new Date().toISOString().slice(0, 10);
       pdf.save(`lonaci-rapport-${period}-${suffix}.pdf`);
-      flash("Export PDF terminé");
+      notify.success("Export PDF terminé");
     } catch {
-      flash("Échec de l'export PDF");
+      notify.error("Échec de l'export PDF");
     } finally {
       setExportingPdf(false);
     }
@@ -599,102 +641,86 @@ export default function ReportsPanel() {
   return (
     <section
       ref={reportRef}
-      className="relative overflow-hidden rounded-3xl border border-slate-200 bg-linear-to-br from-amber-50/60 via-white to-sky-50/50 p-6 shadow-sm"
+      className="space-y-5 rounded-3xl bg-slate-50/70 p-4 md:p-6"
     >
-      <div className="pointer-events-none absolute -left-16 -top-16 h-52 w-52 rounded-full bg-amber-300/20 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 -right-20 h-72 w-72 rounded-full bg-indigo-400/15 blur-3xl" />
-      {toast ? (
-        <div className="fixed bottom-5 right-5 z-100 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 shadow-lg">
-          {toast}
-        </div>
-      ) : null}
+      <PageHeader
+        eyebrow="Analyse institutionnelle"
+        title="Rapports opérationnels"
+        description={`Analyse, exports et pilotage · ${selectedAgenceLabel}`}
+        actions={
+          <Button
+            leadingIcon={RefreshCw}
+            loading={loading}
+            onClick={() => {
+              void load();
+              notify.success("Rapport régénéré");
+            }}
+          >
+            Générer le rapport
+          </Button>
+        }
+      />
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200/80 bg-white/90 p-4 shadow-sm backdrop-blur">
-        <div>
-          <p className="text-xs uppercase tracking-[0.16em] text-amber-700">Infinitecore Systeme</p>
-          <h2 className="text-lg font-semibold text-slate-900">Rapports</h2>
-          <p className="mt-0.5 text-xs text-slate-600">Analyse, exports et vue pilotage</p>
-          <div className="mt-2 inline-flex items-center gap-2 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-700">
-            <span className="inline-block h-1.5 w-1.5 rounded-full bg-amber-500" aria-hidden />
-            Scope agence: {selectedAgenceLabel}
-          </div>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            void load();
-            flash("Rapport régénéré");
-          }}
-          className="rounded border border-amber-600 bg-amber-600 px-3 py-1.5 text-sm font-medium text-white transition hover:border-amber-700 hover:bg-amber-700"
-        >
-          Générer rapport
-        </button>
-      </div>
-
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
-        <button
-          type="button"
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Surface
+          role="button"
+          tabIndex={0}
           onClick={() => {
             setPeriod("monthly");
             void load();
-            flash("Période : mensuelle (30 j.)");
+            notify.success("Période : mensuelle (30 j.)");
           }}
-          className="rounded-xl border border-amber-200 bg-amber-50/70 p-4 text-left transition hover:border-amber-300"
-        >
-          <div className="text-sm font-medium text-slate-900">Rapport mensuel</div>
-          <div className="mt-1 text-xs text-slate-600">Synthèse glissante 30 jours</div>
-          <div className="mt-2">
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">
-              Disponible
-            </span>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            exportCsv();
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              setPeriod("monthly");
+            }
           }}
-          className="rounded-xl border border-sky-200 bg-sky-50/70 p-4 text-left transition hover:border-sky-300"
+          className="cursor-pointer border-orange-200 bg-orange-50/60"
         >
-          <div className="text-sm font-medium text-slate-900">Performance agences</div>
-          <div className="mt-1 text-xs text-slate-600">Export CSV des agrégats</div>
-          <div className="mt-2">
-            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">Excel</span>
-          </div>
-        </button>
+          <p className="text-sm font-semibold text-slate-950">Rapport mensuel</p>
+          <p className="mt-1 text-xs text-slate-600">Synthèse glissante 30 jours</p>
+          <Badge tone="success" className="mt-3">Disponible</Badge>
+        </Surface>
+        <Surface
+          role="button"
+          tabIndex={0}
+          onClick={exportCsv}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") exportCsv();
+          }}
+          className="cursor-pointer border-slate-200 bg-white"
+        >
+          <p className="text-sm font-semibold text-slate-950">Performance agences</p>
+          <p className="mt-1 text-xs text-slate-600">Export CSV des agrégats</p>
+          <Badge tone="brand" className="mt-3">Excel</Badge>
+        </Surface>
         <Link
           href="/alertes"
-          className="rounded-xl border border-rose-200 bg-rose-50/70 p-4 text-left transition hover:border-rose-300"
+          className="rounded-2xl border border-rose-200 bg-rose-50/70 p-4 text-left transition hover:border-rose-300"
         >
-          <div className="text-sm font-medium text-slate-900">Alertes &amp; retards</div>
-          <div className="mt-1 text-xs text-slate-600">Dossiers problématiques</div>
-          <div className="mt-2">
-            <span className="rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700">
-              {urgentHint} indicateurs critiques
-            </span>
-          </div>
+          <p className="text-sm font-semibold text-slate-950">Alertes &amp; retards</p>
+          <p className="mt-1 text-xs text-slate-600">Dossiers problématiques</p>
+          <Badge tone="danger" className="mt-3">{urgentHint} indicateurs critiques</Badge>
         </Link>
       </div>
 
-      <div className="mb-5 grid gap-4 lg:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Tendance activité (7 j.)</div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <ChartCard title="Tendance activité" description="7 derniers jours">
           <div className="h-[220px]">
-            {kpi ? <Line data={lineData} options={lineOpts} /> : <p className="text-xs text-slate-500">Chargement du graphique…</p>}
+            {kpi ? <Line data={lineData} options={lineOpts} /> : <Skeleton lines={4} />}
           </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Répartition modules</div>
+        </ChartCard>
+        <ChartCard title="Répartition modules" description="Volumes par domaine métier">
           <div className="h-[220px]">
             <Doughnut data={moduleDoughnutData} options={doughnutOpts} />
           </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Heatmap risques</div>
+        </ChartCard>
+        <ChartCard title="Indicateurs de risque" description="Retards et dossiers sensibles">
           <div className="h-[220px]">
             <Bar data={riskBarData} options={barOpts} />
           </div>
-        </div>
+        </ChartCard>
       </div>
 
       <div className="mb-5 grid gap-4 lg:grid-cols-2">
@@ -779,16 +805,16 @@ export default function ReportsPanel() {
       </div>
 
       <div className="mb-5 grid gap-4 lg:grid-cols-3">
-        <article className="rounded-2xl border border-indigo-200 bg-indigo-50/60 p-4">
-          <p className="text-xs uppercase tracking-[0.12em] text-indigo-700">Tendance semaine</p>
+        <article className="rounded-2xl border border-slate-300 bg-slate-100/80 p-4">
+          <p className="text-xs uppercase tracking-[0.12em] text-slate-700">Tendance semaine</p>
           <p className="mt-2 text-sm text-slate-700">
-            Dossiers créés: <span className="font-semibold text-indigo-900">{weekDossiers}</span>
+            Dossiers créés: <span className="font-semibold text-slate-950">{weekDossiers}</span>
           </p>
           <p className="text-sm text-slate-700">
-            Contrats créés: <span className="font-semibold text-indigo-900">{weekContrats}</span>
+            Contrats créés: <span className="font-semibold text-slate-950">{weekContrats}</span>
           </p>
           <p className="text-sm text-slate-700">
-            Cautions en attente: <span className="font-semibold text-indigo-900">{weekCautions}</span>
+            Cautions en attente: <span className="font-semibold text-slate-950">{weekCautions}</span>
           </p>
         </article>
         <article className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4">
@@ -814,8 +840,8 @@ export default function ReportsPanel() {
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold text-slate-700">Résumé opérationnel</h3>
+      <Surface>
+        <SectionHeader title="Résumé opérationnel" description="Filtres, exports et options de diffusion" />
         <div className="flex flex-wrap gap-2">
           <select
             aria-label="Période"
@@ -861,112 +887,77 @@ export default function ReportsPanel() {
             <option value={10}>Top 10</option>
             <option value={15}>Top 15</option>
           </select>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-          >
+          <Button variant="secondary" size="sm" leadingIcon={RefreshCw} onClick={() => void load()}>
             Rafraîchir
-          </button>
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="rounded border border-emerald-300 bg-emerald-50 px-3 py-1 text-sm text-emerald-700 hover:bg-emerald-100"
-          >
+          </Button>
+          <Button variant="secondary" size="sm" leadingIcon={FileDown} onClick={exportCsv}>
             Export CSV (Excel)
-          </button>
-          <button
-            type="button"
-            onClick={exportXlsx}
-            className="rounded border border-emerald-400 bg-emerald-100 px-3 py-1 text-sm font-medium text-emerald-800 hover:bg-emerald-200"
-          >
+          </Button>
+          <Button variant="secondary" size="sm" leadingIcon={FileSpreadsheet} onClick={exportXlsx}>
             Export XLSX (multi-feuilles)
-          </button>
-          <button
-            type="button"
-            onClick={printView}
-            className="rounded border border-slate-300 bg-white px-3 py-1 text-sm text-slate-700 hover:bg-slate-50"
-          >
+          </Button>
+          <Button variant="secondary" size="sm" leadingIcon={Printer} onClick={printView}>
             Aperçu imprimable (PDF via navigateur)
-          </button>
-          <button
-            type="button"
+          </Button>
+          <Button
+            size="sm"
+            leadingIcon={Download}
             onClick={() => void exportPdf()}
-            disabled={exportingPdf}
-            className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1 text-sm text-indigo-700 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-60"
+            loading={exportingPdf}
           >
-            {exportingPdf ? "Génération PDF..." : "Télécharger PDF (avec graphiques)"}
-          </button>
+            Télécharger PDF (avec graphiques)
+          </Button>
         </div>
-      </div>
-      <p className="mb-3 text-xs text-slate-600">
-        Planification cron (horaire configurable, recommande: {cronScheduleLabel}) : appeler{" "}
-        <code className="text-slate-700">POST /api/cron/daily-jobs</code> avec{" "}
-        <code className="text-slate-700">Authorization: Bearer {"<CRON_SECRET>"}</code>. Exemple:{" "}
-        Vercel Cron (POST), Render Cron Job HTTP, ou GitHub Actions via <code className="text-slate-700">curl</code>.
-      </p>
-      {loading ? <p className="text-sm text-slate-500">Chargement...</p> : null}
-      {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+      </Surface>
+      {loading ? <Skeleton lines={4} /> : null}
+      {error ? <FeedbackState tone="danger" title="Rapport indisponible" description={error} /> : null}
       {!loading && !error && summary ? (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <article className="rounded-xl border border-slate-200 bg-white p-3">
-              <p className="text-[11px] uppercase tracking-wide text-slate-500">Période analysée</p>
-              <p className="mt-1 text-base font-semibold text-slate-900">{summary.windowLabel ?? "—"}</p>
-            </article>
-            <article className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
-              <p className="text-[11px] uppercase tracking-wide text-indigo-700">Dossiers (total)</p>
-              <p className="mt-1 text-base font-semibold text-indigo-900">{summary.dossiers?.total ?? 0}</p>
-            </article>
-            <article className="rounded-xl border border-cyan-200 bg-cyan-50/60 p-3">
-              <p className="text-[11px] uppercase tracking-wide text-cyan-700">Contrats en cours</p>
-              <p className="mt-1 text-base font-semibold text-cyan-900">{summary.contrats?.actifs ?? 0}</p>
-            </article>
-            <article className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-              <p className="text-[11px] uppercase tracking-wide text-emerald-700">Concessionnaires actifs</p>
-              <p className="mt-1 text-base font-semibold text-emerald-900">{summary.concessionnaires?.total ?? 0}</p>
-            </article>
+            <KpiCard label="Période analysée" value={summary.windowLabel ?? "—"} icon={BarChart3} />
+            <KpiCard label="Dossiers" value={summary.dossiers?.total ?? 0} icon={FileSpreadsheet} />
+            <KpiCard label="Contrats en cours" value={summary.contrats?.actifs ?? 0} icon={ShieldAlert} />
+            <KpiCard label="Concessionnaires actifs" value={summary.concessionnaires?.total ?? 0} icon={Building2} />
           </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-            <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">Graphique statuts dossiers</h4>
-            <div className="mt-3 h-[220px]">
+          <ChartCard title="Statuts des dossiers" description="Répartition sur la période sélectionnée">
+            <div className="h-[220px]">
               <Bar data={dossiersStatusData} options={barOpts} />
             </div>
-          </div>
+          </ChartCard>
 
           <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
             <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">
               Détail complet de tous les modules
             </h4>
             <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-              <article className="rounded-xl border border-cyan-200 bg-linear-to-br from-cyan-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-cyan-700">Contrats</p>
+              <article className="rounded-xl border border-orange-200 bg-linear-to-br from-orange-50 to-white p-3">
+                <p className="text-xs uppercase tracking-wide text-orange-800">Contrats</p>
                 <p className="mt-2 text-sm text-slate-700">Actifs: <span className="font-semibold">{summary.modules?.contrats?.actifs ?? summary.contrats?.actifs ?? 0}</span></p>
                 <p className="text-sm text-slate-700">Résiliés: <span className="font-semibold">{summary.modules?.contrats?.resilie ?? summary.contrats?.resilie ?? 0}</span></p>
                 <p className="text-sm text-slate-700">Créés période: <span className="font-semibold">{summary.modules?.contrats?.createdInWindow ?? summary.contrats?.createdInWindow ?? 0}</span></p>
               </article>
               <article className="rounded-xl border border-rose-200 bg-linear-to-br from-rose-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-rose-700">Cautions</p>
+                <p className="text-xs uppercase tracking-wide text-rose-700">Cautions</p>
                 <p className="mt-2 text-sm text-slate-700">En attente: <span className="font-semibold">{summary.modules?.cautions?.enAttente ?? summary.cautions?.enAttente ?? 0}</span></p>
                 <p className="text-sm text-slate-700">Alertes J+10: <span className="font-semibold">{summary.modules?.cautions?.alertesJ10 ?? summary.cautions?.alertesJ10 ?? 0}</span></p>
               </article>
               <article className="rounded-xl border border-emerald-200 bg-linear-to-br from-emerald-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-emerald-700">Concessionnaires</p>
+                <p className="text-xs uppercase tracking-wide text-emerald-700">Concessionnaires</p>
                 <p className="mt-2 text-sm text-slate-700">Total actifs: <span className="font-semibold">{summary.modules?.concessionnaires?.total ?? summary.concessionnaires?.total ?? 0}</span></p>
               </article>
-              <article className="rounded-xl border border-indigo-200 bg-linear-to-br from-indigo-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-indigo-700">Dossiers</p>
+              <article className="rounded-xl border border-slate-300 bg-linear-to-br from-slate-100 to-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-700">Dossiers</p>
                 <p className="mt-2 text-sm text-slate-700">Total: <span className="font-semibold">{summary.modules?.dossiers?.total ?? summary.dossiers?.total ?? 0}</span></p>
                 <p className="text-sm text-slate-700">Créés période: <span className="font-semibold">{summary.modules?.dossiers?.createdInWindow ?? summary.dossiers?.createdInWindow ?? 0}</span></p>
               </article>
               <article className="rounded-xl border border-amber-200 bg-linear-to-br from-amber-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-amber-700">Succession</p>
+                <p className="text-xs uppercase tracking-wide text-amber-700">Succession</p>
                 <p className="mt-2 text-sm text-slate-700">Ouverts: <span className="font-semibold">{summary.modules?.succession?.ouverts ?? summary.succession?.ouverts ?? 0}</span></p>
                 <p className="text-sm text-slate-700">Stale 30j: <span className="font-semibold">{summary.modules?.succession?.stale30j ?? summary.succession?.stale30j ?? 0}</span></p>
               </article>
-              <article className="rounded-xl border border-violet-200 bg-linear-to-br from-violet-50 to-white p-3">
-                <p className="text-[11px] uppercase tracking-wide text-violet-700">Géolocalisation PDV</p>
+              <article className="rounded-xl border border-slate-300 bg-linear-to-br from-slate-100 to-white p-3">
+                <p className="text-xs uppercase tracking-wide text-slate-700">Géolocalisation PDV</p>
                 <p className="mt-2 text-sm text-slate-700">Non finalisées: <span className="font-semibold">{summary.modules?.pdvIntegrations?.nonFinalise ?? summary.pdvIntegrations?.nonFinalise ?? 0}</span></p>
               </article>
             </div>

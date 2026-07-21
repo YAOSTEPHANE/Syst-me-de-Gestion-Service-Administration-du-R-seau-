@@ -7,6 +7,6 @@ export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] });
   if ("error" in auth) return auth.error;
   await ensureGprGrattageIndexes();
-  const logs = await listGprExportLogs();
+  const logs = await listGprExportLogs(auth.user);
   return NextResponse.json({ items: logs }, { status: 200 });
 }

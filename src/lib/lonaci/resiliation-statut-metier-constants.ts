@@ -1,4 +1,4 @@
-/** Statuts métier affichés (spec 7.2 — résiliation). */
+/** Statuts métier affichés pour une résiliation. */
 export const RESILIATION_STATUTS_METIER = [
   "EN_CONSTITUTION",
   "DOSSIER_COMPLET",
@@ -8,7 +8,7 @@ export const RESILIATION_STATUTS_METIER = [
 
 export type ResiliationStatutMetier = (typeof RESILIATION_STATUTS_METIER)[number];
 
-/** Libellés affichés en UI (spec 7.2 — majuscules métier). */
+/** Libellés métier affichés en majuscules dans l’interface. */
 export const RESILIATION_STATUT_METIER_DISPLAY_LABELS: Record<ResiliationStatutMetier, string> = {
   EN_CONSTITUTION: "EN CONSTITUTION",
   DOSSIER_COMPLET: "DOSSIER COMPLET",
@@ -16,7 +16,7 @@ export const RESILIATION_STATUT_METIER_DISPLAY_LABELS: Record<ResiliationStatutM
   RESILIEE: "RÉSILIÉ",
 };
 
-/** Descriptions spec 7.2. */
+/** Descriptions des statuts métier de résiliation. */
 export const RESILIATION_STATUT_METIER_DESCRIPTIONS: Record<ResiliationStatutMetier, string> = {
   EN_CONSTITUTION: "Dossier incomplet — Checklist en cours",
   DOSSIER_COMPLET: "Checklist validée — Prêt pour traitement",
@@ -24,7 +24,7 @@ export const RESILIATION_STATUT_METIER_DESCRIPTIONS: Record<ResiliationStatutMet
   RESILIEE: "Contrat résilié — Concessionnaire archivé",
 };
 
-/** Liste ordonnée spec 7.2 pour affichage (tableau de bord, aide). */
+/** Liste ordonnée destinée au tableau de bord et à l’aide. */
 export const RESILIATION_STATUTS_SPEC_72 = RESILIATION_STATUTS_METIER.map((statut) => ({
   statut,
   label: RESILIATION_STATUT_METIER_DISPLAY_LABELS[statut],

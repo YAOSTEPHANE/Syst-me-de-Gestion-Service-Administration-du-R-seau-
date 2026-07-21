@@ -21,7 +21,7 @@ export type DelocalisationWorkflowStatut =
 const VALIDATION_CIRCUIT = new Set<DelocalisationWorkflowStatut>(["CONTROLE_CHEF_SECTION"]);
 
 /**
- * Résout le statut métier 6.3 à partir du statut technique et de la checklist.
+ * Résout le statut métier à partir du statut technique et de la liste des pièces.
  */
 export function resolveDelocalisationStatutMetier(input: {
   statut: string;

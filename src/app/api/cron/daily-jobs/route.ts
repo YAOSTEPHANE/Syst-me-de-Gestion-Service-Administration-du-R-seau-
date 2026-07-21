@@ -16,6 +16,7 @@ import {
 import { dispatchAutomaticCautionJ10Alerts } from "@/lib/lonaci/caution-j10-alerts";
 import { ensureSprint4Indexes, listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
 import { getDatabase } from "@/lib/mongodb";
+import { renderDailySupervisionPdf } from "@/lib/pdf";
 
 const RUNS = "report_cron_runs";
 const LOCKS = "job_locks";
@@ -142,24 +143,12 @@ async function buildSupervisionAttachment(
     };
   }
 
-  const PDFDocument = (await import("pdfkit")).default;
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 24, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    doc.fontSize(14).text("Export supervision automatique", { underline: true });
-    doc.moveDown(0.4);
-    doc.fontSize(10).text(`Date: ${payload.generatedAt.toLocaleString("fr-FR")}`);
-    doc.fontSize(10).text(`Cautions J+10: ${payload.cautionsJ10}`);
-    doc.fontSize(10).text(`Successions sans action: ${payload.successionStale}`);
-    doc.moveDown(0.6);
-    doc.fontSize(9).text("Apercu CSV:");
-    for (const line of payload.dailyCsv.split(/\r?\n/).slice(0, 60)) {
-      doc.fontSize(8).text(line);
-    }
-    doc.end();
+  const pdfBuffer = await renderDailySupervisionPdf({
+    generatedAt: payload.generatedAt,
+    cautionsJ10: payload.cautionsJ10,
+    successionStale: payload.successionStale,
+    dailyCsv: payload.dailyCsv,
+    previewLimit: 60,
   });
   return {
     filename: `supervision-export-${stamp}.pdf`,

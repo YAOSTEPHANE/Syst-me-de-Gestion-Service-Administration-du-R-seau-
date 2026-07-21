@@ -5,6 +5,7 @@ import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureDossierIndexes } from "@/lib/lonaci/dossiers";
 import { appendBulkTransitionLog, ensureBulkTransitionLogsIndexes } from "@/lib/lonaci/dossier-bulk-transition-logs";
 import {
+  assertDossierBulkVisibility,
   executeDossierBulkTransition,
   toDossierBulkRbacAction,
   type DossierBulkTransitionAction,
@@ -51,6 +52,11 @@ export async function POST(request: NextRequest) {
   const ids = [...new Set(parsed.data.ids.map((id) => id.trim()).filter(Boolean))];
   await ensureDossierIndexes();
   await ensureBulkTransitionLogsIndexes();
+  try {
+    await assertDossierBulkVisibility(ids, auth.user);
+  } catch {
+    return NextResponse.json({ message: "Un ou plusieurs dossiers sont introuvables." }, { status: 404 });
+  }
 
   const execution = await executeDossierBulkTransition({
     ids,

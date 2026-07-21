@@ -35,7 +35,7 @@ const listSchema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -55,10 +55,19 @@ export async function GET(request: NextRequest) {
       statut: parsed.data.statut,
       scopeAgenceId: scopeFields.scopeAgenceId,
       scopeAgenceIds: scopeFields.scopeAgenceIds,
+      visibility: auth.user,
     }),
-    bancarisationCountersByAgenceProduit(scopeFields.scopeAgenceId, scopeFields.scopeAgenceIds),
+    bancarisationCountersByAgenceProduit(
+      scopeFields.scopeAgenceId,
+      scopeFields.scopeAgenceIds,
+      auth.user,
+    ),
     listAgences(),
-    countBancarisationRequestsByStatus(scopeFields.scopeAgenceId, scopeFields.scopeAgenceIds),
+    countBancarisationRequestsByStatus(
+      scopeFields.scopeAgenceId,
+      scopeFields.scopeAgenceIds,
+      auth.user,
+    ),
   ]);
   const agenceLabelById = Object.fromEntries(agences.map((a) => [a._id ?? "", `${a.code} - ${a.libelle}`]));
 

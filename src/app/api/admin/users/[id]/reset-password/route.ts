@@ -66,9 +66,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       sentByEmail: emailResult.sent,
       message: emailResult.sent
         ? "Lien de réinitialisation envoyé."
-        : "Lien de réinitialisation généré (email non configuré).",
-      // En dev/sans SMTP, renvoyer le token permet de finaliser le reset.
-      resetToken: emailResult.sent ? undefined : rawToken,
+        : "Envoi du lien impossible : vérifiez la configuration email.",
       expiresAt: expiresAt.toISOString(),
     },
     { status: 200 },

@@ -34,7 +34,7 @@ function isDossierCompletReady(input: ResolveSuccessionStatutMetierInput): boole
 }
 
 /**
- * Résout le statut métier §10.3 à partir du workflow, de la checklist et de la décision.
+ * Résout le statut métier à partir du workflow, de la checklist et de la décision.
  */
 export function resolveSuccessionStatutMetier(input: ResolveSuccessionStatutMetierInput): SuccessionStatutMetier {
   const decision = input.decisionType ?? null;

@@ -1,6 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { CheckCheck, Download, Filter, RefreshCw } from "lucide-react";
+
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 interface MonitoringEventItem {
   id: string;
@@ -67,7 +79,6 @@ export default function MonitoringEventsPanel() {
 
   async function ackEvent(id: string) {
     setAckingId(id);
-    setError(null);
     try {
       const res = await fetch(`/api/monitoring/events/${encodeURIComponent(id)}/ack`, {
         method: "POST",
@@ -78,8 +89,9 @@ export default function MonitoringEventsPanel() {
         throw new Error(body?.message ?? "Impossible de marquer traité");
       }
       await load();
+      notify.success("Événement marqué comme traité.");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Erreur");
+      notify.error(e, "Impossible de marquer l’événement comme traité.");
     } finally {
       setAckingId(null);
     }
@@ -93,168 +105,58 @@ export default function MonitoringEventsPanel() {
   const openCount = items.filter((item) => item.status === "OPEN").length;
   const ackCount = items.filter((item) => item.status === "ACK").length;
 
+  const ackAction = (item: MonitoringEventItem) =>
+    item.status === "OPEN" ? (
+      <Button size="sm" leadingIcon={CheckCheck} loading={ackingId === item.id} onClick={() => void ackEvent(item.id)}>
+        Marquer traité
+      </Button>
+    ) : <span className="text-xs text-slate-500">Traité {item.ackedAt ? new Date(item.ackedAt).toLocaleString("fr-FR") : ""}</span>;
+
+  const columns: readonly DataTableColumn<MonitoringEventItem>[] = [
+    { id: "date", header: "Date", cell: (item) => <span className="whitespace-nowrap">{new Date(item.createdAt).toLocaleString("fr-FR")}</span> },
+    { id: "code", header: "Code", cell: (item) => <span className="font-mono text-xs">{item.code}</span> },
+    { id: "title", header: "Titre", cell: (item) => item.title },
+    { id: "message", header: "Message", cell: (item) => item.message },
+    { id: "status", header: "Statut", cell: (item) => <StatusBadge tone={item.status === "ACK" ? "success" : "warning"}>{item.status === "ACK" ? "Traité" : "Ouvert"}</StatusBadge> },
+    { id: "target", header: "Cible", cell: (item) => item.roleTarget },
+    { id: "action", header: "Action", align: "right", cell: ackAction },
+  ];
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="mb-3 flex flex-wrap items-end justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">Monitoring events</h3>
-          <p className="text-xs text-slate-600">Journal des alertes critiques (application + infra).</p>
-          <p className="mt-1 text-[11px] text-slate-500">
-            OPEN: <span className="font-semibold text-amber-700">{openCount}</span> | ACK:{" "}
-            <span className="font-semibold text-emerald-700">{ackCount}</span> | TOTAL PAGE:{" "}
-            <span className="font-semibold text-slate-700">{items.length}</span>
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <input
-            value={codeFilter}
-            onChange={(e) => setCodeFilter(e.target.value)}
-            placeholder="Filtrer par code (ex: HEALTH_MONGODB_DOWN)"
-            className="w-[280px] rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
-            aria-label="Filtrer événements monitoring par code"
+    <Surface elevated aria-labelledby="monitoring-events-title">
+      <SectionHeader
+        title={<span id="monitoring-events-title">Événements de supervision</span>}
+        description="Journal des alertes critiques applicatives et infrastructure."
+        action={<div className="flex gap-2"><StatusBadge tone="warning">Ouverts {openCount}</StatusBadge><StatusBadge tone="success">Traités {ackCount}</StatusBadge><StatusBadge>{items.length} sur cette page</StatusBadge></div>}
+      />
+      <FilterBar
+        className="mt-5"
+        filters={<div className="grid w-full gap-3 sm:grid-cols-2">
+          <FormField label="Code événement" htmlFor="monitoring-code"><input id="monitoring-code" value={codeFilter} onChange={(e) => setCodeFilter(e.target.value)} placeholder="Ex. HEALTH_MONGODB_DOWN" className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm" /></FormField>
+          <FormField label="Statut" htmlFor="monitoring-status"><select id="monitoring-status" value={statusFilter} onChange={(e) => { setPage(1); setStatusFilter(e.target.value as "" | "OPEN" | "ACK"); }} className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm"><option value="">Tous</option><option value="OPEN">Ouvert</option><option value="ACK">Traité</option></select></FormField>
+        </div>}
+        actions={<div className="flex flex-wrap gap-2">
+          <Button size="sm" leadingIcon={Filter} onClick={() => { setPage(1); setCodeFilterApplied(codeFilter); }}>Appliquer</Button>
+          <Button size="sm" variant="secondary" leadingIcon={RefreshCw} onClick={() => void load()}>Rafraîchir</Button>
+          <Button size="sm" variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/monitoring/events/export?${new URLSearchParams({ ...(codeFilterApplied.trim() ? { code: codeFilterApplied.trim() } : {}), ...(statusFilter ? { status: statusFilter } : {}) }).toString()}`, "_blank", "noopener,noreferrer")}>Export PDF</Button>
+        </div>}
+      />
+      {error ? <FeedbackState className="mt-4" tone="danger" title="Supervision indisponible" description={error} /> : null}
+      <div className="mt-5" aria-live="polite" aria-busy={loading}>
+        {loading ? <Skeleton lines={8} /> : (
+          <DataTable
+            rows={items}
+            columns={columns}
+            rowKey={(item) => item.id}
+            caption="Événements critiques de supervision"
+            getRowLabel={(item) => `${item.code}, ${item.status}, ${item.title}`}
+            emptyState={<FeedbackState title="Aucun événement" description="Aucune alerte ne correspond aux filtres actifs." />}
+            mobileCard={(item) => <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex items-start justify-between gap-3"><div><p className="font-mono text-xs text-orange-700">{item.code}</p><h3 className="mt-1 font-bold text-[#13213c]">{item.title}</h3></div><StatusBadge tone={item.status === "ACK" ? "success" : "warning"}>{item.status === "ACK" ? "Traité" : "Ouvert"}</StatusBadge></div><p className="mt-3 text-sm text-slate-600">{item.message}</p><p className="mt-3 text-xs text-slate-500">{new Date(item.createdAt).toLocaleString("fr-FR")} · Cible : {item.roleTarget}</p><div className="mt-4">{ackAction(item)}</div></article>}
           />
-          <button
-            type="button"
-            onClick={() => {
-              setPage(1);
-              setCodeFilterApplied(codeFilter);
-            }}
-            className="rounded-lg border border-cyan-600 bg-cyan-50 px-3 py-2 text-xs font-semibold text-cyan-700 hover:bg-cyan-100"
-          >
-            Filtrer
-          </button>
-          <select
-            value={statusFilter}
-            onChange={(e) => {
-              setPage(1);
-              setStatusFilter(e.target.value as "" | "OPEN" | "ACK");
-            }}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900"
-            aria-label="Filtrer événements monitoring par statut"
-          >
-            <option value="">Tous statuts</option>
-            <option value="OPEN">OPEN</option>
-            <option value="ACK">ACK</option>
-          </select>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-          >
-            Rafraîchir
-          </button>
-          <button
-            type="button"
-            onClick={() =>
-              window.open(
-                `/api/monitoring/events/export?${new URLSearchParams({
-                  ...(codeFilterApplied.trim() ? { code: codeFilterApplied.trim() } : {}),
-                  ...(statusFilter ? { status: statusFilter } : {}),
-                }).toString()}`,
-                "_blank",
-                "noopener,noreferrer",
-              )
-            }
-            className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-          >
-            Export PDF
-          </button>
-        </div>
+        )}
       </div>
-
-      {loading ? <p className="text-xs text-slate-500">Chargement...</p> : null}
-      {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
-
-      {!loading ? (
-        <div className="overflow-hidden rounded-xl border border-slate-200">
-          <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-xs">
-              <thead className="bg-slate-100 text-slate-600">
-                <tr>
-                  <th className="px-3 py-2">Date</th>
-                  <th className="px-3 py-2">Code</th>
-                  <th className="px-3 py-2">Titre</th>
-                  <th className="px-3 py-2">Message</th>
-                  <th className="px-3 py-2">Statut</th>
-                  <th className="px-3 py-2">Cible</th>
-                  <th className="px-3 py-2 text-right">Action</th>
-                </tr>
-              </thead>
-              <tbody className="text-slate-800">
-                {items.map((item) => (
-                  <tr key={item.id} className="border-t border-slate-200 bg-white align-top">
-                    <td className="px-3 py-2 whitespace-nowrap">{new Date(item.createdAt).toLocaleString("fr-FR")}</td>
-                    <td className="px-3 py-2 font-mono">{item.code}</td>
-                    <td className="px-3 py-2">{item.title}</td>
-                    <td className="px-3 py-2">{item.message}</td>
-                    <td className="px-3 py-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                          item.status === "ACK" ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
-                        }`}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">{item.roleTarget}</td>
-                    <td className="px-3 py-2 text-right">
-                      {item.status === "OPEN" ? (
-                        <button
-                          type="button"
-                          disabled={ackingId === item.id}
-                          onClick={() => void ackEvent(item.id)}
-                          className="rounded border border-emerald-600 bg-emerald-50 px-2 py-1 text-[11px] font-semibold text-emerald-700 hover:bg-emerald-100 disabled:opacity-50"
-                        >
-                          {ackingId === item.id ? "..." : "Marquer traité"}
-                        </button>
-                      ) : (
-                        <span className="text-[11px] text-slate-500">
-                          Traité {item.ackedAt ? new Date(item.ackedAt).toLocaleString("fr-FR") : ""}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {!items.length ? (
-                  <tr>
-                    <td colSpan={7} className="px-3 py-4 text-center text-slate-500">
-                      Aucun événement.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      ) : null}
-
-      <div className="mt-3 flex items-center justify-between text-xs text-slate-600">
-        <span>
-          {total} événement{total > 1 ? "s" : ""}
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            disabled={page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="rounded border border-slate-300 bg-white px-2 py-1 disabled:opacity-40"
-          >
-            Précédent
-          </button>
-          <span>
-            Page {page}/{totalPages}
-          </span>
-          <button
-            type="button"
-            disabled={page >= totalPages}
-            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="rounded border border-slate-300 bg-white px-2 py-1 disabled:opacity-40"
-          >
-            Suivant
-          </button>
-        </div>
-      </div>
-    </section>
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">{total} événement{total > 1 ? "s" : ""}</p><Pagination page={page} pageCount={totalPages} onPageChange={setPage} label="Pages des événements de monitoring" /></div>
+    </Surface>
   );
 }
 

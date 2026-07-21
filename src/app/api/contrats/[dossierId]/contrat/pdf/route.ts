@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
-import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import {
   buildContratDocumentView,
   parseContratsGeneresPayload,
   renderContratDocumentPdf,
 } from "@/lib/lonaci/contrat-document";
-import { findDossierById } from "@/lib/lonaci/dossiers";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 import { createContratArchiveReadStream } from "@/lib/storage/contrat-files";
 
 interface RouteContext {
@@ -36,26 +35,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const { dossierId } = await context.params;
-  const dossier = await findDossierById(dossierId);
-  if (!dossier || dossier.deletedAt) {
+  const dossier = await findVisibleDossierById(dossierId, auth.user);
+  if (!dossier) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
-  }
-
-  const party = contratPartyFromDossier(dossier);
-  if (!party) {
-    return NextResponse.json({ message: "Dossier sans rattachement client ou PDV." }, { status: 404 });
-  }
-  try {
-    await assertDossierPartyReadable(party, auth.user);
-  } catch (error) {
-    const code = error instanceof Error ? error.message : "UNKNOWN";
-    if (code === "AGENCE_FORBIDDEN") {
-      return NextResponse.json({ message: "Acces refuse pour cette agence.", code }, { status: 403 });
-    }
-    if (code === "CLIENT_NOT_FOUND" || code === "CONCESSIONNAIRE_NOT_FOUND") {
-      return NextResponse.json({ message: "Titulaire du dossier introuvable.", code }, { status: 404 });
-    }
-    return NextResponse.json({ message: "Acces refuse.", code }, { status: 403 });
   }
 
   const produitCode = request.nextUrl.searchParams.get("produitCode");

@@ -28,7 +28,7 @@ const createSchema = z.object({
   gprRegistrationId: z.string().optional(),
 });
 
-/** §9.3 — Liste des contrats grattage (filtres agence, PDV, statut). */
+/** Liste des contrats grattage (filtres agence, PDV, statut). */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: [...GRATTAGE_CONTRAT_ROLES] });
   if ("error" in auth) return auth.error;

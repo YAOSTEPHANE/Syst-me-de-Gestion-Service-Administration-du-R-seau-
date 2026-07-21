@@ -1,9 +1,6 @@
 import { type BancarisationStatut } from "@/lib/lonaci/constants";
 import {
-  bancarisationStatutBadgeClass,
-  bancarisationStatutDescription,
   bancarisationStatutFields,
-  bancarisationStatutLabel,
   normalizeBancarisationStatut,
 } from "@/lib/lonaci/bancarisation-statut";
 import { appendAuditLog } from "@/lib/lonaci/audit";
@@ -24,18 +21,6 @@ export {
   bancarisationStatutLabel,
   normalizeBancarisationStatut,
 } from "@/lib/lonaci/bancarisation-statut";
-
-/** @deprecated Utiliser bancarisationStatutBadgeClass */
-export function ribEtatBadgeClass(etat: BancarisationStatut | null): string {
-  if (!etat) return "border-slate-200 bg-slate-50 text-slate-600";
-  return bancarisationStatutBadgeClass(etat);
-}
-
-/** @deprecated Utiliser bancarisationStatutLabel */
-export function ribEtatLabel(etat: BancarisationStatut | null): string {
-  if (!etat) return "—";
-  return bancarisationStatutLabel(etat);
-}
 
 function resolvedStatut(doc: ConcessionnaireDocument): BancarisationStatut {
   return normalizeBancarisationStatut(doc.statutBancarisation, doc.etatRib);

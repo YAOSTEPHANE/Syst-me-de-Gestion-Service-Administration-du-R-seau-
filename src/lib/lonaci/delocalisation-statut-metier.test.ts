@@ -4,8 +4,8 @@ import { DELOCALISATION_STATUTS_SPEC_63 } from "@/lib/lonaci/delocalisation-stat
 import { resolveDelocalisationStatutMetier } from "@/lib/lonaci/delocalisation-statut-metier";
 import { cessionOperationDisplayStatutFields } from "@/lib/lonaci/cession-operation-statut-metier";
 
-describe("délocalisation statut métier spec 6.3", () => {
-  it("expose les 4 statuts spec 6.3", () => {
+describe("statut métier de délocalisation", () => {
+  it("expose les quatre statuts métier", () => {
     expect(DELOCALISATION_STATUTS_SPEC_63).toHaveLength(4);
     expect(DELOCALISATION_STATUTS_SPEC_63[0]?.label).toBe("EN CONSTITUTION");
     expect(DELOCALISATION_STATUTS_SPEC_63[3]?.label).toBe("DÉLOCALISATION EFFECTIVE");

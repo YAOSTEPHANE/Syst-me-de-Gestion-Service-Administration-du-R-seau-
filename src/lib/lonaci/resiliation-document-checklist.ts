@@ -13,7 +13,7 @@ import type {
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** Spec 7.1 — pièces communes à toute demande de résiliation de contrat. */
+/** Pièces communes à toute demande de résiliation de contrat. */
 export const RESILIATION_CHECKLIST_ITEMS_SPEC_71: ProduitDocumentChecklistItem[] = [
   {
     id: "resiliation_demande_signee",

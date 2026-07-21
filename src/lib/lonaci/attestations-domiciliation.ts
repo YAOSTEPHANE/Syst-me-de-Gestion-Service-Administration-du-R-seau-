@@ -46,7 +46,7 @@ function msToDays(ms: number): number {
   return Math.round((ms / 86_400_000) * 10) / 10;
 }
 
-/** Délai entre soumission (dateDemande) et transmission au client (spec 4.2). */
+/** Délai entre la soumission (`dateDemande`) et la transmission au client. */
 export function computeDelaiTraitementClientJours(
   dateDemande: Date,
   sentToClientAt: Date | null,
@@ -177,7 +177,7 @@ export type EnvoyerAttestationClientResult = {
   smtpSkippedReason?: string;
 };
 
-/** Spec 4.3 étapes 15–16 : envoi SMTP puis statut ENVOYE_CLIENT horodaté. */
+/** Envoie le courriel par SMTP, puis horodate le passage au statut ENVOYE_CLIENT. */
 export async function envoyerAttestationAuClient(input: {
   id: string;
   role: string;
@@ -322,7 +322,7 @@ async function buildAttestationsDomiciliationFilter(
   return filter;
 }
 
-/** Indicateurs spec 4.2 — tableau de bord attestations. */
+/** Indicateurs du tableau de bord des attestations. */
 export interface AttestationsDomiciliationDashboardIndicators {
   type: AttestationDomiciliationType | null;
   agenceId: string | null;

@@ -3,6 +3,12 @@ import { randomBytes } from "crypto";
 import { ObjectId } from "mongodb";
 
 import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+  isWorkflowStageAssignedToRole,
+} from "@/lib/auth/workflow-visibility";
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import {
   GRATTAGE_STOCK_ALERT_DEFAULT,
   type ScratchCodeStatut,
   SCRATCH_CODE_STATUTS,
@@ -10,7 +16,9 @@ import {
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { UserDocument } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { ensureGrattageContratIndexes, ensureGrattageContratsFromGpr } from "@/lib/lonaci/grattage-contrats";
+import { restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
 import { prisma } from "@/lib/prisma";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -109,6 +117,29 @@ type StoredScratchCode = {
   createdAt: Date;
   updatedAt: Date;
 };
+
+async function canAccessGprRegistration(
+  row: StoredGprRegistration,
+  actor: UserDocument,
+): Promise<boolean> {
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "GPR",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: row.createdByUserId,
+      status: row.status,
+    })
+  ) {
+    return false;
+  }
+  const concessionnaire = await findConcessionnaireById(row.concessionnaireId);
+  return Boolean(
+    concessionnaire &&
+      !concessionnaire.deletedAt &&
+      canReadConcessionnaire(actor, concessionnaire),
+  );
+}
 
 export async function ensureGprGrattageIndexes() {
   const db = await getDatabase();
@@ -211,7 +242,13 @@ function canTransitionGpr(role: LonaciRole, from: GprRegistrationStatus, to: Gpr
   if (from === "SOUMIS_AGENT" && to === "VALIDE_N1") return role === "CHEF_SECTION";
   if (from === "VALIDE_N1" && to === "VALIDE_N2") return role === "ASSIST_CDS";
   if (from === "VALIDE_N2" && to === "SUIVI_CHEF_SERVICE") return role === "CHEF_SERVICE";
-  if (to === "REJETE") return ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role);
+  if (to === "REJETE") {
+    return isWorkflowStageAssignedToRole({
+      workflow: "GPR",
+      role,
+      status: from,
+    });
+  }
   return false;
 }
 
@@ -228,6 +265,9 @@ export async function transitionGprRegistration(input: {
     deletedAt: null,
   });
   if (!row) throw new Error("GPR_REGISTRATION_NOT_FOUND");
+  if (!(await canAccessGprRegistration(row, input.actor))) {
+    throw new Error("GPR_REGISTRATION_NOT_FOUND");
+  }
   if (!canTransitionGpr(input.actor.role, row.status, input.targetStatus)) throw new Error("FORBIDDEN_TRANSITION");
   const now = new Date();
   await db.collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION).updateOne(
@@ -262,15 +302,45 @@ export async function transitionGprRegistration(input: {
   }
 }
 
-export async function listGprRegistrations(params: { page: number; pageSize: number; status?: GprRegistrationStatus }) {
+export async function listGprRegistrations(params: {
+  page: number;
+  pageSize: number;
+  status?: GprRegistrationStatus;
+  scopeAgenceId?: string;
+  scopeAgenceIds?: string[];
+  visibility?: Pick<UserDocument, "_id" | "role">;
+}) {
   const db = await getDatabase();
   const skip = (params.page - 1) * params.pageSize;
   const filter: Record<string, unknown> = { deletedAt: null };
   if (params.status) filter.status = params.status;
+  if (params.scopeAgenceId || (params.scopeAgenceIds && params.scopeAgenceIds.length > 0)) {
+    const concessionnaires = await prisma.concessionnaire.findMany({
+      where: {
+        deletedAt: null,
+        ...restrictionToPrismaAgenceWhere({
+          agenceId: params.scopeAgenceId,
+          agenceIds: params.scopeAgenceIds,
+        }),
+      },
+      select: { id: true },
+    });
+    filter.concessionnaireId = { $in: concessionnaires.map((row) => row.id) };
+  }
+  const visibilityFilter = params.visibility
+    ? buildWorkflowVisibilityMongoFilter({
+        workflow: "GPR",
+        role: params.visibility.role,
+        userId: params.visibility._id ?? "",
+      })
+    : null;
+  const effectiveFilter: Record<string, unknown> = visibilityFilter
+    ? { $and: [filter, visibilityFilter] }
+    : filter;
   const col = db.collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION);
   const [total, rows] = await Promise.all([
-    col.countDocuments(filter),
-    col.find(filter).sort({ createdAt: -1 }).skip(skip).limit(params.pageSize).toArray(),
+    col.countDocuments(effectiveFilter),
+    col.find(effectiveFilter).sort({ createdAt: -1 }).skip(skip).limit(params.pageSize).toArray(),
   ]);
   return {
     items: rows.map((r) => ({
@@ -305,7 +375,9 @@ export async function syncGprRegistration(registrationId: string, actor: UserDoc
     _id: new ObjectId(registrationId),
     deletedAt: null,
   });
-  if (!row) throw new Error("GPR_REGISTRATION_NOT_FOUND");
+  if (!row || !(await canAccessGprRegistration(row, actor))) {
+    throw new Error("GPR_REGISTRATION_NOT_FOUND");
+  }
   if (!["VALIDE_N2", "SUIVI_CHEF_SERVICE"].includes(row.status)) throw new Error("GPR_SYNC_STATUS_NOT_ELIGIBLE");
 
   const payload = {
@@ -401,11 +473,28 @@ export async function syncGprRegistration(registrationId: string, actor: UserDoc
 
 export async function exportGprCsv(actor: UserDocument) {
   const db = await getDatabase();
-  const rows = await db
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "GPR",
+    role: actor.role,
+    userId: actor._id ?? "",
+  });
+  const candidates = await db
     .collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION)
-    .find({ deletedAt: null, status: { $in: ["VALIDE_N2", "SUIVI_CHEF_SERVICE"] } })
+    .find({
+      $and: [
+        { deletedAt: null, status: { $in: ["VALIDE_N2", "SUIVI_CHEF_SERVICE"] } },
+        visibility ?? { _id: { $in: [] } },
+      ],
+    })
     .sort({ createdAt: -1 })
     .toArray();
+  const access = await Promise.all(
+    candidates.map(async (row) => ({
+      row,
+      visible: await canAccessGprRegistration(row, actor),
+    })),
+  );
+  const rows = access.filter((entry) => entry.visible).map((entry) => entry.row);
   const header = ["Reference", "ConcessionnaireId", "Produits", "DateEnregistrement", "Statut"];
   const escapeCell = (v: string) => `"${v.replace(/"/g, '""')}"`;
   const lines = rows.map((r) =>
@@ -427,11 +516,11 @@ export async function exportGprCsv(actor: UserDocument) {
   };
 }
 
-export async function listGprExportLogs() {
+export async function listGprExportLogs(actor: Pick<UserDocument, "_id">) {
   const db = await getDatabase();
   const rows = await db
     .collection<StoredGprExportLog>(GPR_EXPORT_LOGS_COLLECTION)
-    .find({})
+    .find({ operatorUserId: actor._id ?? "" })
     .sort({ exportedAt: -1 })
     .limit(50)
     .toArray();

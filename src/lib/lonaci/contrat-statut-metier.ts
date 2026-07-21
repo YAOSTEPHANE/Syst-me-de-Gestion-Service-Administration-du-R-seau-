@@ -26,7 +26,7 @@ export function isDossierPretPourContrat(input: {
 }
 
 /**
- * Résout le statut métier 3.5 à partir du contrat, du dossier, de la checklist et de la caution.
+ * Résout le statut métier à partir du contrat, du dossier, de la liste des pièces et de la caution.
  */
 export function resolveContratStatutMetier(input: {
   contratStatus?: string | null;

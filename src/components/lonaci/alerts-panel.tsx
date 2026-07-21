@@ -1,8 +1,15 @@
 "use client";
 
 import Link from "next/link";
+import { AlertTriangle, Download, MapPin, RefreshCw, ShieldAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
 
 type CautionAlert = { id: string; contratId: string; montant: number; dueDate: string; daysOverdue: number };
@@ -101,37 +108,64 @@ export default function AlertsPanel() {
 
   if (loading) {
     return (
-      <section className="rounded-2xl border border-slate-200 bg-white p-6 text-sm text-slate-500 shadow-sm">
-        Chargement des alertes…
-      </section>
+      <div className="space-y-5" aria-live="polite" aria-busy="true">
+        <PageHeader
+          eyebrow="Pilotage des risques"
+          title="Toutes les alertes"
+          description="Chargement de la vue consolidée…"
+        />
+        <Surface padding="lg">
+          <Skeleton lines={5} />
+        </Surface>
+      </div>
     );
   }
 
   if (error) {
-    return <p className="text-sm text-rose-700">{error}</p>;
+    return (
+      <FeedbackState
+        tone="danger"
+        title="Alertes indisponibles"
+        description={error}
+        aria-live="assertive"
+        action={
+          <Button leadingIcon={RefreshCw} onClick={() => void loadAlerts()}>
+            Réessayer
+          </Button>
+        }
+      />
+    );
   }
 
   const dv = kpi?.dossierValidation;
   const daily = kpi?.daily;
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-rose-50/70 via-white to-amber-50/60 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-10 -top-16 h-44 w-44 rounded-full bg-rose-200/30 blur-3xl" />
-        <div className="relative">
-          <p className="text-xs uppercase tracking-[0.16em] text-rose-700">Infinitecore Systeme</p>
-          <h2 className="mt-1 text-2xl font-semibold text-slate-900">Toutes les alertes</h2>
-          <p className="mt-1 text-sm text-slate-600">
-            Vue consolidée des indicateurs critiques et des listes détaillées selon vos droits d’accès.
-          </p>
-        </div>
-        <div className="relative mt-4 grid gap-2 md:grid-cols-4">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Filtre référence/contrat…"
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 md:col-span-2"
-          />
+    <div className="space-y-6" aria-live="polite">
+      <PageHeader
+        eyebrow="Pilotage des risques"
+        title="Toutes les alertes"
+        description="Indicateurs critiques et listes détaillées, affichés selon vos droits d’accès."
+        actions={
+          <>
+            <Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void loadAlerts()}>
+              Rafraîchir
+            </Button>
+            <Button leadingIcon={Download} onClick={exportAlertsCsv}>
+              Export CSV
+            </Button>
+          </>
+        }
+      />
+
+      <FilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          placeholder: "Référence, contrat ou identifiant…",
+          label: "Rechercher dans les alertes",
+        }}
+        filters={
           <label className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700">
             Seuil retard min (jours)
             <input
@@ -142,76 +176,74 @@ export default function AlertsPanel() {
               className="w-16 rounded border border-slate-300 px-2 py-1 text-sm text-slate-900"
             />
           </label>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void loadAlerts()}
-              className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-700 hover:bg-slate-50"
-            >
-              Rafraîchir
-            </button>
-            <button
-              type="button"
-              onClick={exportAlertsCsv}
-              className="rounded-lg border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs text-emerald-700 hover:bg-emerald-100"
-            >
-              Export CSV
-            </button>
-          </div>
-        </div>
-      </section>
+        }
+      />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <AlertCard
-          title="Dossiers contrats en attente"
-          value={dv?.contratSoumis ?? 0}
-          subtitle={`${dv?.contratSoumisRetard48h ?? 0} sans traitement > 48h`}
-          href="/contrats"
-          tone="blue"
-        />
-        <AlertCard
-          title="Cautions en attente"
-          value={dv?.cautionsEnAttente ?? 0}
-          subtitle={`${dv?.cautionsJ10 ?? 0} en retard J+10`}
-          href="/cautions"
-          tone="amber"
-        />
+        {kpi?.workflowQueues.dossiers != null ? (
+          <AlertCard
+            title="Votre file dossiers"
+            value={kpi.workflowQueues.dossiers}
+            subtitle={`${dv?.contratSoumisRetard48h ?? 0} sans traitement > 48h`}
+            href="/dossiers"
+            tone="info"
+          />
+        ) : null}
+        {kpi?.workflowQueues.cautions != null ? (
+          <AlertCard
+            title="Votre file cautions"
+            value={kpi.workflowQueues.cautions}
+            subtitle={`${dv?.cautionsJ10 ?? 0} en retard J+10`}
+            href="/cautions"
+            tone="warning"
+          />
+        ) : null}
         <AlertCard
           title="Géolocalisation PDV — dossiers non finalisés"
           value={daily?.pdvIntegrations?.nonFinalise ?? 0}
           subtitle={`${dv?.pdvEnCoursRetard5j ?? 0} en cours > 5 j.`}
           href="/pdv-integrations"
-          tone="violet"
+          tone="brand"
         />
-        <AlertCard
-          title="Agréments en contrôle"
-          value={dv?.agrementsEnAttente ?? 0}
-          subtitle={`${dv?.agrementsRetard ?? 0} sans mise à jour > 7 j.`}
-          href="/agrements"
-          tone="emerald"
-        />
-        <AlertCard
-          title="Successions ouvertes"
-          value={dv?.successionOuverts ?? 0}
-          subtitle={`${dv?.successionStale30j ?? 0} sans avance > 30 j.`}
-          href="/succession"
-          tone="rose"
-        />
-        <AlertCard
-          title="PDV non bancarisés"
-          value={kpi?.bancarisation?.nonBancarise ?? 0}
-          subtitle={`Taux bancarisés : ${kpi?.bancarisation?.tauxBancarisation ?? 0}%`}
-          href="/bancarisation"
-          tone="slate"
-        />
+        {kpi?.workflowQueues.agrements != null ? (
+          <AlertCard
+            title="Votre file agréments"
+            value={kpi.workflowQueues.agrements}
+            subtitle={`${dv?.agrementsRetard ?? 0} sans mise à jour > 7 j.`}
+            href="/agrements"
+            tone="success"
+          />
+        ) : null}
+        {kpi?.workflowQueues.successions != null ? (
+          <AlertCard
+            title="Votre file successions"
+            value={kpi.workflowQueues.successions}
+            subtitle={`${dv?.successionStale30j ?? 0} sans avance > 30 j.`}
+            href="/succession"
+            tone="danger"
+          />
+        ) : null}
+        {kpi?.workflowQueues.bancarisation != null ? (
+          <AlertCard
+            title="Votre file bancarisation"
+            value={kpi.workflowQueues.bancarisation}
+            subtitle={`Taux bancarisés : ${kpi.bancarisation.tauxBancarisation}%`}
+            href="/bancarisation"
+            tone="neutral"
+          />
+        ) : null}
       </div>
 
       {filteredCautions.length > 0 ? (
-        <section className="rounded-2xl border border-amber-200 bg-amber-50/60 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-amber-900">Cautions dépassées (J+10)</h3>
+        <Surface padding="md">
+          <SectionHeader
+            title="Cautions dépassées"
+            description="Échéances ayant franchi le seuil sélectionné."
+            action={<Badge tone="warning">{filteredCautions.length} résultat(s)</Badge>}
+          />
           <ul className="mt-2 space-y-2 text-sm">
             {filteredCautions.slice(0, 30).map((c) => (
-              <li key={c.id} className="flex flex-wrap items-baseline justify-between gap-2 text-slate-700">
+              <li key={c.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 py-2 text-slate-700 last:border-0">
                 <span>
                   Contrat <code className="text-xs text-slate-600">{c.contratId}</code> —{" "}
                   {c.montant.toLocaleString("fr-FR")} FCFA — retard {c.daysOverdue} j.
@@ -222,15 +254,19 @@ export default function AlertsPanel() {
               </li>
             ))}
           </ul>
-        </section>
+        </Surface>
       ) : null}
 
       {filteredSuccession.length > 0 ? (
-        <section className="rounded-2xl border border-rose-200 bg-rose-50/60 p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-rose-900">Successions sans avancement (30 j.)</h3>
+        <Surface padding="md">
+          <SectionHeader
+            title="Successions sans avancement"
+            description="Dossiers inactifs au-delà du seuil sélectionné."
+            action={<Badge tone="danger">{filteredSuccession.length} résultat(s)</Badge>}
+          />
           <ul className="mt-2 space-y-2 text-sm">
             {filteredSuccession.slice(0, 30).map((s) => (
-              <li key={s.id} className="flex flex-wrap items-baseline justify-between gap-2 text-slate-700">
+              <li key={s.id} className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 py-2 text-slate-700 last:border-0">
                 <span>
                   {s.reference} — inactif depuis {s.daysInactive} j.
                 </span>
@@ -240,7 +276,14 @@ export default function AlertsPanel() {
               </li>
             ))}
           </ul>
-        </section>
+        </Surface>
+      ) : null}
+
+      {filteredCautions.length === 0 && filteredSuccession.length === 0 ? (
+        <FeedbackState
+          title="Aucune alerte détaillée"
+          description="Aucune caution ni succession ne correspond aux filtres actifs."
+        />
       ) : null}
     </div>
   );
@@ -257,28 +300,25 @@ function AlertCard({
   value: number;
   subtitle: string;
   href: string;
-  tone: "blue" | "amber" | "violet" | "rose" | "slate" | "emerald";
+  tone: "neutral" | "brand" | "info" | "success" | "warning" | "danger";
 }) {
-  const border =
-    tone === "blue"
-      ? "border-blue-200"
-      : tone === "amber"
-        ? "border-amber-200"
-        : tone === "violet"
-          ? "border-violet-200"
-          : tone === "rose"
-            ? "border-rose-200"
-            : tone === "emerald"
-              ? "border-emerald-200"
-              : "border-slate-200";
+  const Icon = tone === "brand" ? MapPin : tone === "danger" || tone === "warning" ? AlertTriangle : ShieldAlert;
   return (
     <Link
       href={href}
-      className={`block rounded-xl border ${border} bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md`}
+      className="block rounded-xl focus-visible:outline-none"
     >
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</p>
-      <p className="mt-2 text-3xl font-semibold text-slate-900">{value}</p>
-      <p className="mt-1 text-xs text-slate-600">{subtitle}</p>
+      <Surface className="h-full transition hover:-translate-y-0.5 hover:shadow-md" padding="md">
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs font-bold uppercase tracking-wide text-slate-500">{title}</p>
+          <Badge tone={tone}>
+            <Icon size={14} aria-hidden="true" />
+            Alerte
+          </Badge>
+        </div>
+        <p className="mt-4 text-3xl font-extrabold tracking-tight text-(--lonaci-navy-950)">{value}</p>
+        <p className="mt-2 text-sm text-slate-600">{subtitle}</p>
+      </Surface>
     </Link>
   );
 }

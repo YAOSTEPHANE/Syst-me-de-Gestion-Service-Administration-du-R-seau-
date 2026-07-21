@@ -1,9 +1,16 @@
 "use client";
 
+import { Database, FileJson2, ShieldCheck, Upload } from "lucide-react";
 import { useState } from "react";
 
 import { LONACI_AGENCES } from "@/components/lonaci/lonaci-nav";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
+import { notify } from "@/lib/toast";
 
 type Mode = "insert" | "upsert";
 type ImportModuleKey =
@@ -59,7 +66,7 @@ const IMPORT_MODULES: Array<{
   {
     key: "REGISTRES",
     label: "Registres",
-    collections: [{ value: "lonaci_registries", label: "Registres Infinitecore Systeme", defaultUpsertBy: "_id" }],
+    collections: [{ value: "lonaci_registries", label: "Registres LONACI", defaultUpsertBy: "_id" }],
   },
 ];
 
@@ -239,7 +246,9 @@ export default function DashboardDataImportCard() {
         | null;
 
       if (!res.ok) {
-        setError(data?.message ?? "Import échoué");
+        const failureMessage = data?.message ?? "Import échoué";
+        setError(failureMessage);
+        notify.error(failureMessage);
         return;
       }
 
@@ -260,55 +269,44 @@ export default function DashboardDataImportCard() {
           `Import réussi: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
         );
       }
+      notify.success("Import terminé.");
       setFile(null);
       window.dispatchEvent(new Event("lonaci:data-imported"));
       const input = document.getElementById("dashboard-import-file") as HTMLInputElement | null;
       if (input) input.value = "";
     } catch {
-      setError("Erreur réseau pendant l'import");
+      setError("Erreur réseau pendant l’import");
+      notify.error("Erreur réseau pendant l’import");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-slate-200/80 bg-white/95 p-5 shadow-sm backdrop-blur md:p-6">
-      <div className="pointer-events-none absolute -right-16 -top-16 h-44 w-44 rounded-full bg-cyan-200/30 blur-3xl" />
-      <div className="pointer-events-none absolute -bottom-20 left-10 h-48 w-48 rounded-full bg-indigo-200/30 blur-3xl" />
+    <Surface padding="lg" elevated>
+      <SectionHeader
+        title="Fichier et destination"
+        description="Sélectionnez la source, la collection cible et le mode d’intégration."
+        action={<Badge tone="brand"><Database size={15} aria-hidden="true" />{selectedAgenceLabel}</Badge>}
+      />
 
-      <div className="relative mb-5 flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <p className="inline-flex items-center rounded-full border border-cyan-200 bg-cyan-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.14em] text-cyan-800">
-            Import externe
-          </p>
-          <h2 className="mt-2 text-lg font-semibold text-slate-900 md:text-xl">Import de données (JSON/CSV)</h2>
-          <p className="mt-1 text-xs text-slate-600 md:text-sm">
-            Chargez un fichier, ciblez une collection, puis exécutez un insert massif ou une mise à jour intelligente.
-          </p>
-        </div>
-        <div className="min-w-[210px] rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-          <p className="text-[11px] font-medium uppercase tracking-[0.1em] text-slate-500">Agence active</p>
-          <p className="mt-1 truncate text-sm font-semibold text-slate-800">{selectedAgenceLabel}</p>
-        </div>
-      </div>
-
-      <form onSubmit={onSubmit} className="relative grid gap-4 md:grid-cols-2">
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700">
+      <form onSubmit={onSubmit} className="grid gap-4 md:grid-cols-2" aria-busy={loading}>
+        <label className="lonaci-ui-form-field text-sm">
           Fichier (.json/.csv)
           <input
             id="dashboard-import-file"
             type="file"
             accept=".json,.csv"
             onChange={(e) => void onFilePicked(e.target.files?.[0] ?? null)}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
+            className="text-sm"
             required
           />
-          <span className="text-[11px] text-slate-500">
+          <span className="lonaci-ui-field-hint">
             Formats acceptés: tableau JSON ou CSV avec en-têtes.
           </span>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700">
+        <label className="lonaci-ui-form-field text-sm">
           Module concerné
           <select
             value={moduleKey}
@@ -321,7 +319,6 @@ export default function DashboardDataImportCard() {
                 setUpsertBy(nextModule.collections[0].defaultUpsertBy ?? "code");
               }
             }}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
           >
             {IMPORT_MODULES.map((m) => (
               <option key={m.key} value={m.key}>
@@ -331,7 +328,7 @@ export default function DashboardDataImportCard() {
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700">
+        <label className="lonaci-ui-form-field text-sm">
           Collection
           <select
             value={collection}
@@ -343,7 +340,6 @@ export default function DashboardDataImportCard() {
                 setUpsertBy(selected.defaultUpsertBy);
               }
             }}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
           >
             {selectedModule.collections.map((c) => (
               <option key={c.value} value={c.value}>
@@ -353,12 +349,11 @@ export default function DashboardDataImportCard() {
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700">
+        <label className="lonaci-ui-form-field text-sm">
           Agence concernée
           <select
             value={agenceId}
             onChange={(e) => setAgenceId(e.target.value)}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
           >
             <option value="">Toutes / non précisée</option>
             {LONACI_AGENCES.filter((a) => a.value).map((a) => (
@@ -369,68 +364,60 @@ export default function DashboardDataImportCard() {
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700">
+        <label className="lonaci-ui-form-field text-sm">
           Mode
           <select
             value={mode}
             onChange={(e) => setMode(e.target.value as Mode)}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100"
           >
             <option value="insert">Insert</option>
             <option value="upsert">Upsert</option>
           </select>
         </label>
 
-        <label className="flex flex-col gap-1.5 text-xs font-medium text-slate-700 md:col-span-2">
+        <label className="lonaci-ui-form-field text-sm md:col-span-2">
           Champ upsert (si mode upsert)
           <input
             value={upsertBy}
             onChange={(e) => setUpsertBy(e.target.value)}
-            className="rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-xs text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-cyan-500 focus:ring-2 focus:ring-cyan-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            className="disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
             placeholder="code"
             disabled={mode !== "upsert"}
           />
         </label>
 
-        <div className="md:col-span-2 flex flex-wrap items-center gap-3 pt-1">
-          <button
+        <div className="flex flex-wrap items-center gap-3 pt-1 md:col-span-2">
+          <Button
             type="submit"
-            disabled={loading}
-            className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-400"
+            leadingIcon={Upload}
+            loading={loading}
           >
-            <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-              <path d="M12 16V4m0 12l-4-4m4 4l4-4M4 19h16" />
-            </svg>
-            {loading ? "Import en cours..." : "Lancer l'import"}
-          </button>
-          <span className="text-[11px] text-slate-500">
-            Sécurité: seules les collections valides sont autorisées.
-          </span>
+            {loading ? "Import en cours…" : "Lancer l’import"}
+          </Button>
+          <Badge tone="neutral"><ShieldCheck size={15} aria-hidden="true" />Collections autorisées uniquement</Badge>
         </div>
 
         {message ? (
-          <div className="md:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
-            {message}
-          </div>
+          <FeedbackState className="md:col-span-2" tone="success" title="Import terminé" description={message} aria-live="polite" />
         ) : null}
         {error ? (
-          <div className="md:col-span-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-            {error}
-          </div>
+          <FeedbackState className="md:col-span-2" tone="danger" title="Import impossible" description={error} aria-live="assertive" />
         ) : null}
         {previewError ? (
-          <div className="md:col-span-2 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800">
-            {previewError}
-          </div>
+          <FeedbackState className="md:col-span-2" tone="danger" title="Aperçu indisponible" description={previewError} aria-live="assertive" />
         ) : null}
 
         {previewColumns.length > 0 ? (
-          <div className="md:col-span-2 rounded-xl border border-slate-200 bg-white">
-            <div className="border-b border-slate-200 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.08em] text-slate-500">
-              Aperçu du fichier ({previewRows.length} ligne(s) affichée(s), max 20)
+          <div className="overflow-hidden rounded-xl border border-slate-200 bg-white md:col-span-2">
+            <div className="flex items-center justify-between gap-3 border-b border-slate-200 bg-slate-50 px-4 py-3">
+              <span className="flex items-center gap-2 font-bold text-(--lonaci-navy-900)">
+                <FileJson2 size={18} aria-hidden="true" />
+                Aperçu du fichier
+              </span>
+              <Badge>{previewRows.length} ligne(s), max. 20</Badge>
             </div>
             <div className="max-h-64 overflow-auto">
-              <table className="w-full min-w-[560px] border-collapse text-left text-xs">
+              <table className="min-w-140 w-full border-collapse text-left text-xs">
                 <thead className="sticky top-0 z-10 bg-slate-50 text-slate-600">
                   <tr>
                     {previewColumns.map((col) => (
@@ -456,13 +443,17 @@ export default function DashboardDataImportCard() {
           </div>
         ) : null}
 
-        <div className="md:col-span-2 rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-slate-500">Aide rapide</p>
-          <p className="mt-1 text-xs text-slate-600">
+        {file && previewColumns.length === 0 && !previewError ? (
+          <FeedbackState className="md:col-span-2" title="Fichier sans aperçu" description="Le fichier ne contient aucune ligne exploitable pour l’aperçu." />
+        ) : null}
+
+        <div className="rounded-xl border border-orange-200 bg-orange-50/70 px-4 py-3 md:col-span-2">
+          <p className="font-bold text-(--lonaci-navy-900)">Aide rapide</p>
+          <p className="mt-1 text-sm text-slate-600">
             Utilisez <strong>Insert</strong> pour créer de nouvelles lignes, et <strong>Upsert</strong> pour créer ou mettre à jour selon le champ clé.
           </p>
         </div>
       </form>
-    </section>
+    </Surface>
   );
 }

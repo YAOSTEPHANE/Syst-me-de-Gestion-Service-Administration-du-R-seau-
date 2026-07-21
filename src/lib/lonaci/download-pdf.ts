@@ -33,16 +33,25 @@ export async function downloadLonaciPdf(url: string, filename: string): Promise<
 
 /** Ouvre un PDF authentifié dans un nouvel onglet (aperçu navigateur). */
 export async function openLonaciPdfInTab(url: string): Promise<void> {
-  const res = await lonaciFetch(url);
-  if (!res.ok) {
-    throw new Error(await readPdfErrorMessage(res));
-  }
-  const blob = await res.blob();
-  const objectUrl = URL.createObjectURL(blob);
-  const opened = window.open(objectUrl, "_blank", "noopener,noreferrer");
+  // L’onglet doit être créé pendant le clic utilisateur, avant tout `await`,
+  // sinon les navigateurs considèrent l’ouverture comme une pop-up différée.
+  const opened = window.open("", "_blank");
   if (!opened) {
-    URL.revokeObjectURL(objectUrl);
     throw new Error("Ouverture du PDF bloquée par le navigateur. Autorisez les pop-ups ou utilisez Télécharger.");
   }
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 120_000);
+  opened.opener = null;
+
+  try {
+    const res = await lonaciFetch(url);
+    if (!res.ok) {
+      throw new Error(await readPdfErrorMessage(res));
+    }
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    opened.location.replace(objectUrl);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 120_000);
+  } catch (error) {
+    opened.close();
+    throw error;
+  }
 }

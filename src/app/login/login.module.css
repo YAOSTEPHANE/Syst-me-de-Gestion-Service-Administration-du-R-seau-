@@ -1,0 +1,127 @@
+.lotteryBalls {
+  position: relative;
+  width: min(100%, 31rem);
+  height: 10.75rem;
+  isolation: isolate;
+}
+
+.lotteryBall {
+  --ball-size: 7.25rem;
+  --ball-color-light: #7dd3fc;
+  --ball-color: #0284c7;
+  --ball-color-dark: #075985;
+  position: absolute;
+  width: var(--ball-size);
+  height: var(--ball-size);
+  border: 1px solid rgb(255 255 255 / 42%);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 29% 18%, rgb(255 255 255 / 95%) 0 5%, rgb(255 255 255 / 42%) 6%, transparent 17%),
+    radial-gradient(circle at 34% 28%, var(--ball-color-light) 0 7%, transparent 35%),
+    radial-gradient(circle at 67% 72%, var(--ball-color-dark) 0, var(--ball-color) 58%, var(--ball-color-light) 100%);
+  box-shadow:
+    inset 0 -15px 22px rgb(2 6 23 / 35%),
+    inset 9px 9px 20px rgb(255 255 255 / 25%),
+    0 22px 28px rgb(0 0 0 / 35%),
+    0 0 28px color-mix(in srgb, var(--ball-color) 42%, transparent);
+  animation: ballFloat 5s ease-in-out infinite;
+}
+
+.lotteryBall::after {
+  content: "";
+  position: absolute;
+  right: 16%;
+  bottom: 10%;
+  left: 16%;
+  height: 15%;
+  z-index: -1;
+  border-radius: 50%;
+  background: rgb(2 6 23 / 48%);
+  filter: blur(10px);
+}
+
+.number {
+  width: 53%;
+  height: 53%;
+  border: 3px solid rgb(255 255 255 / 72%);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 34% 25%, #ffffff 0 12%, transparent 38%),
+    linear-gradient(145deg, #ffffff, #dbe3ea 64%, #9ca3af);
+  color: #111827;
+  font-size: calc(var(--ball-size) * 0.27);
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 1px 0 #ffffff;
+  box-shadow:
+    inset 0 3px 6px rgb(255 255 255 / 85%),
+    inset 0 -5px 9px rgb(15 23 42 / 28%),
+    0 3px 8px rgb(0 0 0 / 35%);
+}
+
+.blue {
+  top: 2.65rem;
+  left: 0;
+  z-index: 2;
+}
+
+.silver {
+  --ball-size: 7.65rem;
+  --ball-color-light: #f8fafc;
+  --ball-color: #a8b2bd;
+  --ball-color-dark: #475569;
+  top: 0;
+  left: 21%;
+  z-index: 4;
+  animation-delay: -1.4s;
+}
+
+.orange {
+  --ball-size: 7rem;
+  --ball-color-light: #fdba74;
+  --ball-color: #f97316;
+  --ball-color-dark: #9a3412;
+  top: 3.25rem;
+  left: 43%;
+  z-index: 5;
+  animation-delay: -2.6s;
+}
+
+.green {
+  --ball-size: 7.45rem;
+  --ball-color-light: #86efac;
+  --ball-color: #22c55e;
+  --ball-color-dark: #166534;
+  top: 1.5rem;
+  left: 65%;
+  z-index: 3;
+  animation-delay: -3.8s;
+}
+
+.compact {
+  height: 6.6rem;
+  transform: scale(0.62);
+  transform-origin: top left;
+  width: 155%;
+  margin-bottom: -1.8rem;
+}
+
+@keyframes ballFloat {
+  0%,
+  100% {
+    transform: translateY(0) rotate(-1deg);
+  }
+  50% {
+    transform: translateY(-7px) rotate(1deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lotteryBall {
+    animation: none;
+  }
+}

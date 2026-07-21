@@ -226,27 +226,6 @@ export async function searchClients(params: {
         : { AND: [finalWhere, { id: { in: ["__none__"] } }] };
   }
 
-  let whereJson = "";
-  try {
-    whereJson = JSON.stringify(where).slice(0, 900);
-  } catch {
-    whereJson = "(unserializable)";
-  }
-  // #region agent log
-  fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-    body: JSON.stringify({
-      sessionId: "669066",
-      hypothesisId: "H2",
-      location: "lib/lonaci/clients.ts:searchClients",
-      message: "searchClients prisma where",
-      data: { whereJson },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-
   const skip = (params.page - 1) * params.pageSize;
   const [total, rows] = await Promise.all([
     prisma.lonaciClient.count({ where: finalWhere }),
@@ -257,22 +236,6 @@ export async function searchClients(params: {
       take: params.pageSize,
     }),
   ]);
-
-  // #region agent log
-  fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-      body: JSON.stringify({
-        sessionId: "669066",
-        hypothesisId: "H2",
-        runId: "post-fix",
-        location: "lib/lonaci/clients.ts:searchClients",
-        message: "searchClients prisma counts",
-        data: { total, rowsReturned: rows.length },
-        timestamp: Date.now(),
-      }),
-  }).catch(() => {});
-  // #endregion
 
   const db = await getDatabase();
   const agenceMap = await loadAgenceLibelleMap(

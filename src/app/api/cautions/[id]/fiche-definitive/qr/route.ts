@@ -6,6 +6,7 @@ import {
   isCautionFpdQrEnabled,
   renderCautionFicheDefinitiveQrPng,
 } from "@/lib/lonaci/caution-fiche-definitive";
+import { findVisibleCautionById } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 interface RouteContext {
@@ -23,6 +24,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const { id } = await context.params;
+  if (!(await findVisibleCautionById(id, auth.user))) {
+    return notFound("Fiche definitive introuvable.", "FICHE_DEFINITIVE_NOT_FOUND");
+  }
   try {
     const view = await buildCautionFicheDefinitiveView(id);
     if (!view) {

@@ -5,7 +5,7 @@ import { userMayPatchDossierPayload } from "@/lib/auth/dossier-transition-rbac";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import type { ContratStatutMetier } from "@/lib/lonaci/contrat-statut-metier";
 import { CONTRAT_OPERATION_TYPE_LABELS, CONTRAT_OPERATION_TYPES } from "@/lib/lonaci/constants";
-import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { notify } from "@/lib/toast";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useState } from "react";
 
@@ -218,8 +218,9 @@ export default function DossierContratActualisationForm({ dossier, meRole, onUpd
         throw new Error("Réponse inattendue du serveur.");
       }
       onUpdated(json.dossier);
+      notify.success("Modifications enregistrées.");
     } catch (err) {
-      setError(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
+      notify.error(err, "Enregistrement impossible.");
     } finally {
       setSaving(false);
     }

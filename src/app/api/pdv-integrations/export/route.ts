@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
 import { LONACI_ROLES, PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
+import { createPdfResponse, renderPdvIntegrationsExportPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -82,33 +82,21 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 28, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    doc.fontSize(14).text("Journal integrations PDV", { underline: true });
-    doc.moveDown(0.4);
-    doc.fontSize(9).text(`Export: ${new Date().toLocaleString("fr-FR")}`);
-    doc.moveDown(0.5);
-    for (const row of result.items) {
-      doc
-        .fontSize(8)
-        .text(
-          `${row.reference} | ${row.codePdv} | ${row.agenceId ?? "-"} | ${row.produitCode} | n=${row.nombreDemandes} | ${new Date(row.dateDemande).toLocaleDateString("fr-FR")} | ${row.status}`,
-        );
-    }
-    doc.end();
+  const generatedAt = new Date();
+  const filters = [
+    parsed.data.agenceId ? `Agence : ${parsed.data.agenceId}` : undefined,
+    parsed.data.produitCode ? `Produit : ${parsed.data.produitCode}` : undefined,
+    parsed.data.status ? `Statut : ${parsed.data.status}` : undefined,
+    parsed.data.dateFrom ? `Depuis : ${new Date(parsed.data.dateFrom).toLocaleDateString("fr-FR")}` : undefined,
+    parsed.data.dateTo ? `Jusqu’au : ${new Date(parsed.data.dateTo).toLocaleDateString("fr-FR")}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const pdfBuffer = await renderPdvIntegrationsExportPdf(result.items, {
+    generatedAt,
+    filters,
   });
 
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="pdv-integrations-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  return createPdfResponse(pdfBuffer, {
+    filename: `pdv-integrations-${generatedAt.getTime()}`,
   });
 }
 

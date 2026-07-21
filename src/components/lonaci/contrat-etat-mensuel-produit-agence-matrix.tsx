@@ -1,7 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, MapPinned } from "lucide-react";
 
+import { Badge } from "@/components/lonaci/ui/badge";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { Card } from "@/components/lonaci/ui/surface";
 import type { ContratEtatMensuelMatrixMonth, ContratEtatMensuelMatrixZone } from "@/lib/lonaci/sprint4";
 
 export type ContratEtatMensuelProduitAgenceMatrixProps = {
@@ -55,6 +59,10 @@ function MatrixZoneTable({
 
   return (
     <table className="w-full min-w-[720px] border-collapse text-left text-[11px] text-slate-800">
+      <caption className="sr-only">
+        Matrice mensuelle des contrats par produit et agence — zone{" "}
+        {variant === "abidjan" ? "Abidjan" : "Intérieur"}
+      </caption>
       <thead className="bg-white text-slate-600">
         <tr className={headerRowClass}>
           <th scope="col" className={cornerHeaderClass}>
@@ -204,9 +212,15 @@ export function ContratEtatMensuelProduitAgenceMatrix({
   const showBody = sections.length > 0;
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 bg-amber-50/60 px-4 py-3">
-        <h3 className="text-sm font-semibold text-slate-900">État des contrats (par mois)</h3>
+    <Card
+      title="État des contrats par mois"
+      description="Matrice de couverture des produits par agence, séparée entre Abidjan et l’intérieur."
+      action={<MapPinned className="text-orange-600" size={20} aria-hidden="true" />}
+      padding="none"
+      elevated
+      className="overflow-hidden"
+    >
+      <div className="border-b border-orange-100 bg-orange-50/60 px-4 py-3">
         <p className="mt-1 text-xs text-slate-600">
           {months <= 1
             ? "Dernier mois calendaire."
@@ -217,12 +231,23 @@ export function ContratEtatMensuelProduitAgenceMatrix({
           sans contrat : « — ». Chaque case = <strong>nombre de contrats saisis</strong> dans le mois.{" "}
           <strong className="text-slate-800">Cliquez un mois</strong> pour afficher ou masquer les matrices.
         </p>
-        {hint ? <p className="mt-2 text-xs text-amber-900">{hint}</p> : null}
+        {hint ? (
+          <FeedbackState
+            title="Matrice indisponible"
+            description={hint}
+            tone="warning"
+            className="mt-3"
+            aria-live="polite"
+          />
+        ) : null}
       </div>
       <div className="max-h-[min(40rem,60vh)] overflow-auto p-3 sm:p-4">
-        {loading ? <p className="text-sm text-slate-500">Chargement…</p> : null}
+        {loading ? <Skeleton lines={4} /> : null}
         {!loading && !showBody && !hint ? (
-          <p className="text-sm text-slate-500">Aucune donnée pour cette période.</p>
+          <FeedbackState
+            title="Aucune donnée"
+            description="Aucun contrat n’a été saisi sur cette période."
+          />
         ) : null}
         {!loading && showBody ? (
           <div className="space-y-5">
@@ -261,19 +286,15 @@ export function ContratEtatMensuelProduitAgenceMatrix({
                     }`}
                   >
                     <span className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-0 w-0 border-y-[5px] border-y-transparent border-l-[6px] transition-transform ${
-                          isOpen ? "rotate-90 border-l-amber-800" : "border-l-slate-500"
-                        }`}
-                        aria-hidden
+                      <ChevronDown
+                        size={16}
+                        className={`shrink-0 text-orange-700 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                        aria-hidden="true"
                       />
                       <span className="text-sm font-semibold capitalize text-slate-900">{sec.moisLabel}</span>
-                      <span
-                        className="max-w-[min(100%,18rem)] truncate rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600 sm:max-w-none"
-                        title={badge}
-                      >
+                      <Badge className="max-w-[min(100%,18rem)] truncate sm:max-w-none" title={badge}>
                         {np} prod. max · {badge}
-                      </span>
+                      </Badge>
                     </span>
                     <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-right">
                       <span className="font-mono text-xs text-slate-500">{sec.yearMonth}</span>
@@ -309,22 +330,18 @@ export function ContratEtatMensuelProduitAgenceMatrix({
                       <>
                         {sec.zoneAbidjan ? (
                           <div>
-                            <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                              Zone Abidjan
-                            </h4>
+                            <Badge tone="brand" className="mb-2">Zone Abidjan</Badge>
                             <MatrixZoneTable zone={sec.zoneAbidjan} variant="abidjan" />
                           </div>
                         ) : null}
                         {sec.interieur ? (
                           <div>
-                            <h4 className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-700">
-                              Intérieur
-                            </h4>
+                            <Badge tone="neutral" className="mb-2">Intérieur</Badge>
                             <MatrixZoneTable zone={sec.interieur} variant="interieur" />
                           </div>
                         ) : null}
                         {!sec.zoneAbidjan && !sec.interieur ? (
-                          <p className="text-xs text-slate-500">Aucune donnée pour ce mois.</p>
+                          <FeedbackState title="Aucune donnée pour ce mois" />
                         ) : null}
                       </>
                     ) : null}
@@ -335,6 +352,6 @@ export function ContratEtatMensuelProduitAgenceMatrix({
           </div>
         ) : null}
       </div>
-    </section>
+    </Card>
   );
 }

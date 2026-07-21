@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { badRequest, conflict, notFound, serverError } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { listAgenceScopeFields, requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import {
   addResiliationAttachment,
   createResiliation,
@@ -26,6 +27,7 @@ const listSchema = z.object({
     .optional(),
   concessionnaireId: z.string().optional(),
   lonaciClientId: z.string().optional(),
+  agenceId: z.string().optional(),
   produitCode: z.string().optional(),
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
@@ -33,7 +35,7 @@ const listSchema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -50,9 +52,13 @@ export async function GET(request: NextRequest) {
     lonaciClientId: parsed.data.lonaciClientId,
     concessionnaireId: parsed.data.concessionnaireId,
   });
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
   const result = await listResiliations({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
+    actor: auth.user,
+    ...listAgenceScopeFields(agenceScope),
     statut: parsed.data.statut as ResiliationStatus | undefined,
     concessionnaireId: concessionnaireFilter,
     produitCode: parsed.data.produitCode?.trim() || undefined,

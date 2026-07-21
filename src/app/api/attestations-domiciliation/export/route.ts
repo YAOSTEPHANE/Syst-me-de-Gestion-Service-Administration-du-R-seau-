@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import {
@@ -9,6 +8,7 @@ import {
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { getAttestationDomiciliationStatutLabel, LONACI_ROLES } from "@/lib/lonaci/constants";
+import { createPdfResponse, renderAttestationsDomiciliationExportPdf } from "@/lib/pdf";
 
 const schema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -83,36 +83,34 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 40, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const generatedAt = new Date();
+  const filters = [
+    parsed.data.type ? `Type : ${parsed.data.type}` : undefined,
+    parsed.data.concessionnaireId
+      ? `Concessionnaire : ${parsed.data.concessionnaireId}`
+      : undefined,
+    parsed.data.produitCode ? `Produit : ${parsed.data.produitCode}` : undefined,
+    parsed.data.statut
+      ? `Statut : ${getAttestationDomiciliationStatutLabel(parsed.data.statut)}`
+      : undefined,
+    parsed.data.agenceId ? `Agence : ${parsed.data.agenceId}` : undefined,
+    parsed.data.dateFrom ? `Depuis : ${new Date(parsed.data.dateFrom).toLocaleDateString("fr-FR")}` : undefined,
+    parsed.data.dateTo ? `Jusqu’au : ${new Date(parsed.data.dateTo).toLocaleDateString("fr-FR")}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const pdfBuffer = await renderAttestationsDomiciliationExportPdf(
+    result.items.map((row) => ({
+      type: row.type,
+      concessionnaireId: row.concessionnaireId,
+      produitCode: row.produitCode,
+      dateDemande: row.dateDemande,
+      statut: getAttestationDomiciliationStatutLabel(row.statut),
+      observations: row.observations,
+    })),
+    { generatedAt, filters },
+  );
 
-    doc.fontSize(16).text("Synthese Attestations & domiciliation", { underline: true });
-    doc.moveDown(0.5);
-    for (const row of result.items) {
-      doc
-        .fontSize(9)
-        .text(
-          `${row.type} | ${row.produitCode ?? "—"} | ${new Date(row.dateDemande).toLocaleDateString("fr-FR")} | ${getAttestationDomiciliationStatutLabel(row.statut)} | ${row.concessionnaireId ?? "—"}`,
-        );
-      if (row.observations) {
-        doc.fontSize(8).fillColor("#444").text(row.observations, { indent: 10 });
-        doc.fillColor("#000");
-      }
-    }
-    doc.end();
-  });
-
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="attestations-domiciliation-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  return createPdfResponse(pdfBuffer, {
+    filename: `attestations-domiciliation-${generatedAt.getTime()}`,
   });
 }
 

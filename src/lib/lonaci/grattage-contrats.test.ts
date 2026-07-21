@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { canTransitionGrattageContrat } from "@/lib/lonaci/grattage-contrats";
 
-describe("canTransitionGrattageContrat (§9.3)", () => {
+describe("canTransitionGrattageContrat", () => {
   it("autorise la suspension depuis EN COURS", () => {
     expect(canTransitionGrattageContrat("AGENT", "EN_COURS", "SUSPENDU")).toBe(true);
   });

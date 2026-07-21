@@ -7,6 +7,18 @@ import { canRole } from "@/lib/auth/rbac";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import { notify } from "@/lib/toast";
+import { Download, FilePlus2, RefreshCw, Upload } from "lucide-react";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Card, Surface } from "@/components/lonaci/ui/surface";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -186,7 +198,6 @@ export default function PdvIntegrationsPanel() {
   const searchParams = useSearchParams();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [items, setItems] = useState<PdvItem[]>([]);
   const [dashboard, setDashboard] = useState<ListResponse["dashboard"] | null>(null);
   const [total, setTotal] = useState(0);
@@ -259,7 +270,7 @@ export default function PdvIntegrationsPanel() {
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setLoading(false);
     }
@@ -358,12 +369,12 @@ export default function PdvIntegrationsPanel() {
       setObservations("");
       setCreateOpen(false);
       await load(1);
-      setToast({ type: "success", message: "Demande PDV créée." });
+      notify.success("Demande PDV créée.");
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -387,14 +398,13 @@ export default function PdvIntegrationsPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       await load(1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import PDV terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
-      });
+      notify.success(
+        `Import PDV terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateFormError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -439,12 +449,13 @@ export default function PdvIntegrationsPanel() {
         throw new Error(body?.message ?? "Finalisation impossible");
       }
       await load(page);
-      closeFinalizeModal();
-      setToast({ type: "success", message: "Demande PDV finalisée." });
+      setFinalizeModal(null);
+      setFinalizeAck(false);
+      notify.success("Demande PDV finalisée.");
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setFinalizingId(null);
     }
@@ -470,11 +481,11 @@ export default function PdvIntegrationsPanel() {
         throw new Error(body?.message ?? "Transition impossible");
       }
       await load(page);
-      setToast({ type: "success", message: "Transition de statut effectuée." });
+      notify.success("Transition de statut effectuée.");
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setFinalizingId(null);
     }
@@ -572,663 +583,148 @@ export default function PdvIntegrationsPanel() {
     };
   }, [items]);
 
+  function rowAction(row: PdvItem) {
+    if (row.status === "DEMANDE_RECUE" && canTransitionPdv) {
+      return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "EN_TRAITEMENT")}>Passer en traitement</Button>;
+    }
+    if (row.status === "EN_TRAITEMENT" && canTransitionPdv) {
+      return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "INTEGRE_GPR")}>Marquer intégré GPR</Button>;
+    }
+    if (row.status === "INTEGRE_GPR" && canFinalizePdv) {
+      return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "FINALISE")}>Finaliser</Button>;
+    }
+    return row.status === "FINALISE" || row.status === "INTEGRE_GPR"
+      ? <StatusBadge tone="success">Validée</StatusBadge>
+      : null;
+  }
+
+  const columns: DataTableColumn<PdvItem>[] = [
+    { id: "reference", header: "Référence", cell: (row) => <span className="font-mono text-xs">{row.reference}</span> },
+    { id: "code", header: "Code PDV", cell: (row) => row.codePdv },
+    { id: "produit", header: "Produit", cell: (row) => row.produitCode },
+    { id: "demandes", header: "Demandes", align: "center", cell: (row) => row.nombreDemandes },
+    { id: "date", header: "Date de demande", cell: (row) => new Date(row.dateDemande).toLocaleString("fr-FR") },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statusClass(row.status)}>{row.status}</StatusBadge> },
+    { id: "concessionnaire", header: "Concessionnaire", cell: (row) => <span className="font-mono text-xs">{row.concessionnaireId ?? "—"}</span> },
+    { id: "action", header: "Action", align: "right", cell: rowAction },
+  ];
+
   return (
-    <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <header className="relative overflow-hidden rounded-3xl border border-violet-200 bg-gradient-to-r from-slate-900 via-slate-800 to-violet-900 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-violet-300/20 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-indigo-300/20 blur-2xl" />
-        <div className="relative flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-100">
-              Référentiel
-            </p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Géolocalisation PDV</h2>
-            <p className="mt-1 text-sm text-violet-100/90">
-              Géolocalisation des points de vente et suivi du workflow jusqu’à la finalisation.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void load(page)}
-            className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
-          >
-            Actualiser
-          </button>
-          {canCreatePdv ? (
-            <button
-              type="button"
-              onClick={openCreate}
-              className="rounded-xl border border-violet-300 bg-violet-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-violet-200 hover:bg-violet-400"
-            >
-              Créer demande PDV
-            </button>
-          ) : null}
-          {canExportPdv ? (
-            <a
-              href={`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-              className="rounded-xl border border-emerald-300 bg-emerald-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600"
-            >
-              Export Excel
-            </a>
-          ) : null}
-          {canExportPdv ? (
-            <a
-              href={`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}${filterDateFrom ? `&dateFrom=${encodeURIComponent(new Date(`${filterDateFrom}T00:00:00`).toISOString())}` : ""}${filterDateTo ? `&dateTo=${encodeURIComponent(new Date(`${filterDateTo}T23:59:59.999`).toISOString())}` : ""}`}
-              className="rounded-xl border border-rose-300 bg-rose-500 px-3 py-2 text-sm font-semibold text-white transition hover:bg-rose-600"
-            >
-              Export PDF
-            </a>
-          ) : null}
-        </div>
-        </div>
-      </header>
+    <section className="space-y-5">
+      <PageHeader
+        eyebrow="Référentiel"
+        title="Géolocalisation PDV"
+        description="Géolocalisation des points de vente et suivi du workflow jusqu’à la finalisation."
+        actions={
+          <>
+            <Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void load(page)}>Actualiser</Button>
+            {canExportPdv ? <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/pdv-integrations/export?format=excel&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}`, "_blank")}>Excel</Button> : null}
+            {canExportPdv ? <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/pdv-integrations/export?format=pdf&agenceId=${encodeURIComponent(filterAgenceId)}&produitCode=${encodeURIComponent(filterProduit)}&status=${encodeURIComponent(filterStatus)}`, "_blank")}>PDF</Button> : null}
+            {canCreatePdv ? <Button leadingIcon={FilePlus2} onClick={openCreate}>Créer une demande</Button> : null}
+          </>
+        }
+      />
 
-      <div className="grid gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 to-violet-50/40 p-3 sm:grid-cols-5">
-        <input
-          value={filterAgenceId}
-          onChange={(e) => setFilterAgenceId(e.target.value)}
-          placeholder="Filtre agence"
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm"
-        />
-        <input
-          value={filterProduit}
-          onChange={(e) => setFilterProduit(e.target.value)}
-          placeholder="Filtre produit"
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm"
-        />
-        <select
-          value={filterStatus}
-          onChange={(e) => setFilterStatus(e.target.value as "" | PdvStatus)}
-          aria-label="Filtrer par statut"
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm"
-        >
-          <option value="">Tous statuts</option>
-          <option value="DEMANDE_RECUE">DEMANDE_RECUE</option>
-          <option value="EN_TRAITEMENT">EN_TRAITEMENT</option>
-          <option value="INTEGRE_GPR">INTEGRE_GPR</option>
-          <option value="FINALISE">FINALISE</option>
-        </select>
-        <input
-          type="date"
-          value={filterDateFrom}
-          onChange={(e) => setFilterDateFrom(e.target.value)}
-          aria-label="Filtrer date demande début"
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm"
-        />
-        <input
-          type="date"
-          value={filterDateTo}
-          onChange={(e) => setFilterDateTo(e.target.value)}
-          aria-label="Filtrer date demande fin"
-          className="rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 shadow-sm"
-        />
-      </div>
+      <FilterBar
+        aria-label="Filtres des intégrations PDV"
+        filters={
+          <>
+            <FormField label="Agence"><input value={filterAgenceId} onChange={(e) => setFilterAgenceId(e.target.value)} placeholder="Identifiant agence" /></FormField>
+            <FormField label="Produit"><input value={filterProduit} onChange={(e) => setFilterProduit(e.target.value)} placeholder="Code produit" /></FormField>
+            <FormField label="Statut"><select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value as "" | PdvStatus)}><option value="">Tous les statuts</option><option value="DEMANDE_RECUE">Demande reçue</option><option value="EN_TRAITEMENT">En traitement</option><option value="INTEGRE_GPR">Intégré GPR</option><option value="FINALISE">Finalisé</option></select></FormField>
+            <FormField label="Du"><input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} /></FormField>
+            <FormField label="Au"><input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} /></FormField>
+          </>
+        }
+      />
 
-      <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white">
-        <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
-          <h3 className="text-sm font-semibold text-slate-900">Analytics PDV</h3>
-          <p className="mt-0.5 text-xs text-slate-600">
-            Vue avancée du pipeline d’intégration, de la finalisation et de la charge agence.
-          </p>
+      <Surface elevated>
+        <SectionHeader title="Pilotage PDV" description="Indicateurs calculés sur les dossiers visibles et la charge en traitement." />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          <Card title="Volume visible"><strong className="text-2xl">{analytics.volumeTotal}</strong></Card>
+          <Card title="Pipeline actif"><strong className="text-2xl">{analytics.pipelineTotal}</strong></Card>
+          <Card title="Taux finalisé"><strong className="text-2xl">{analytics.finalRate}%</strong></Card>
+          <Card title="Cycle moyen"><strong className="text-2xl">{analytics.avgFinalizeDays} j</strong></Card>
+          <Card title="Alertes > 5 jours"><strong className="text-2xl">{dashboard?.staleProcessingCount ?? 0}</strong></Card>
         </div>
-        <div className="grid gap-3 border-b border-slate-100 p-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div className="rounded-xl border border-slate-200 bg-linear-to-br from-slate-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-slate-600">Volume visible</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{analytics.volumeTotal}</div>
-            <div className="text-[11px] text-slate-500">Lignes chargées</div>
+        {dashboard?.byAgenceEnTraitement?.length ? (
+          <div className="mt-4 flex flex-wrap gap-2" aria-label="Demandes en cours par agence">
+            {dashboard.byAgenceEnTraitement.map((row) => <StatusBadge key={`${row.agenceId ?? "none"}-${row.count}`} tone="warning">{row.agenceId ?? "Non rattachée"} · {row.count}</StatusBadge>)}
           </div>
-          <div className="rounded-xl border border-sky-100 bg-linear-to-br from-sky-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-sky-700">Pipeline actif</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{analytics.pipelineTotal}</div>
-            <div className="text-[11px] text-slate-500">Demande reçue + Traitement + Intégré GPR</div>
-          </div>
-          <div className="rounded-xl border border-emerald-100 bg-linear-to-br from-emerald-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-emerald-700">Taux finalisé</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{analytics.finalRate}%</div>
-            <div className="text-[11px] text-slate-500">Sur les éléments visibles</div>
-          </div>
-          <div className="rounded-xl border border-violet-100 bg-linear-to-br from-violet-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-violet-700">Cycle moyen</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{analytics.avgFinalizeDays}</div>
-            <div className="text-[11px] text-slate-500">Jours jusqu’à finalisation</div>
-          </div>
-          <div className="rounded-xl border border-rose-100 bg-linear-to-br from-rose-50 to-white p-3">
-            <div className="text-[11px] uppercase tracking-wide text-rose-700">Alertes &gt; 5 jours</div>
-            <div className="mt-1 text-2xl font-semibold text-slate-900">{dashboard?.staleProcessingCount ?? 0}</div>
-            <div className="text-[11px] text-slate-500">Demandes bloquées en EN_TRAITEMENT</div>
-          </div>
-        </div>
-        <div className="grid gap-4 p-4 lg:grid-cols-12">
-          <div className="rounded-xl border border-slate-200 p-3 lg:col-span-4">
-            <div className="text-xs font-semibold text-slate-900">Répartition statuts</div>
-            <div className="mt-3 space-y-2 text-[11px]">
-              {[
-                { label: "Demande reçue", value: analytics.demandeRecue, tone: "bg-amber-500" },
-                { label: "En traitement", value: analytics.enTraitement, tone: "bg-sky-500" },
-                { label: "Intégré GPR", value: analytics.integreGpr, tone: "bg-violet-500" },
-                { label: "Finalisé", value: analytics.finalise, tone: "bg-emerald-500" },
-              ].map((row) => {
-                const pct = analytics.volumeTotal > 0 ? Math.round((row.value / analytics.volumeTotal) * 100) : 0;
-                return (
-                  <div key={row.label}>
-                    <div className="mb-1 flex items-center justify-between text-slate-600">
-                      <span>{row.label}</span>
-                      <span>
-                        {row.value} ({pct}%)
-                      </span>
-                    </div>
-                    <div className="h-2 rounded-full bg-slate-100">
-                      <progress
-                        className={`h-2 w-full overflow-hidden rounded-full [&::-webkit-progress-bar]:bg-slate-100 ${
-                          row.tone === "bg-amber-500"
-                            ? "[&::-webkit-progress-value]:bg-amber-500"
-                            : row.tone === "bg-sky-500"
-                              ? "[&::-webkit-progress-value]:bg-sky-500"
-                              : row.tone === "bg-violet-500"
-                                ? "[&::-webkit-progress-value]:bg-violet-500"
-                                : "[&::-webkit-progress-value]:bg-emerald-500"
-                        }`}
-                        max={100}
-                        value={pct}
-                        aria-label={`Part ${row.label}`}
-                      />
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+        ) : null}
+      </Surface>
 
-          <div className="rounded-xl border border-slate-200 p-3 lg:col-span-4">
-            <div className="text-xs font-semibold text-slate-900">Momentum création (7 jours)</div>
-            <div className="mt-1 text-[11px] text-slate-600">Tendance des intégrations récentes</div>
-            <div className="mt-3 h-24 rounded-lg bg-slate-50 p-2">
-              {analytics.sparkline ? (
-                <svg viewBox="0 0 100 100" className="h-full w-full" preserveAspectRatio="none">
-                  <polyline
-                    fill="none"
-                    stroke="#0ea5e9"
-                    strokeWidth="2.5"
-                    points={analytics.sparkline}
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-              ) : (
-                <p className="text-xs text-slate-500">Pas assez de données récentes.</p>
-              )}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 p-3 lg:col-span-4">
-            <div className="text-xs font-semibold text-slate-900">Demandes en cours par agence</div>
-            <div className="mt-2 space-y-2">
-              {dashboard?.byAgenceEnTraitement?.length ? (
-                dashboard.byAgenceEnTraitement.map((row) => (
-                  <div
-                    key={`${row.agenceId ?? "none"}-${row.count}`}
-                    className="rounded-md bg-violet-50/70 px-2 py-1.5 text-[11px] text-violet-900"
-                  >
-                    <div className="font-mono">{row.agenceId ?? "Non rattachée"}</div>
-                    <div>{row.count} intégration(s)</div>
-                  </div>
-                ))
-              ) : (
-                <p className="text-xs text-slate-500">Aucune demande en traitement.</p>
-              )}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {createOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="create-pdv-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/60"
-            aria-label="Fermer"
-            disabled={creating}
-            onClick={closeCreate}
+      {error ? <FeedbackState tone="danger" title="Opération impossible" description={error} /> : null}
+      <Surface padding="none" elevated>
+        {loading ? <Skeleton lines={6} /> : (
+          <DataTable
+            rows={items}
+            columns={columns}
+            rowKey={(row) => row.id}
+            caption="Dossiers de géolocalisation PDV"
+            getRowLabel={(row) => `Dossier ${row.reference}`}
+            mobileCard={(row) => (
+              <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><strong>{row.codePdv}</strong><p className="mt-1 text-sm text-slate-600">{row.reference} · {row.produitCode}</p></div><StatusBadge className={statusClass(row.status)}>{row.status}</StatusBadge></div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Date de demande</dt><dd className="mt-1 font-medium">{new Date(row.dateDemande).toLocaleString("fr-FR")}</dd></div><div><dt className="text-slate-500">Demandes</dt><dd className="mt-1 font-medium">{row.nombreDemandes}</dd></div></dl>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{rowAction(row)}</div>
+              </article>
+            )}
           />
-          <div className="relative z-10 flex max-h-[78vh] w-full max-w-xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="relative flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-4 py-3">
-              <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-200/40 blur-2xl" />
-              <div>
-                <p className="mb-1 inline-flex rounded-full border border-violet-300 bg-violet-100 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-violet-900">
-                  Géolocalisation PDV
-                </p>
-                <h3 id="create-pdv-title" className="text-lg font-semibold text-slate-900">
-                  Créer demande PDV
-                </h3>
-                <p className="mt-1 text-xs leading-4 text-slate-600">
-                  Renseignez les informations minimales pour initier la géolocalisation du point de vente.
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={creating}
-                onClick={closeCreate}
-                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
+        )}
+      </Surface>
+      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">{total} dossier(s)</p><Pagination page={page} pageCount={totalPages} onPageChange={(next) => void load(next)} label="Pagination des intégrations PDV" /></div>
 
-            <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-4 py-3">
-              {refError ? <p className="mb-2 text-xs text-rose-700">{refError}</p> : null}
-              <form onSubmit={onCreate} className="grid gap-2.5">
-                <section className="rounded-xl border border-violet-200/80 bg-white p-3 shadow-sm">
-                  <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-violet-800">
-                    Paramètres opérationnels
-                  </p>
-                  <div className="grid gap-2.5 sm:grid-cols-2">
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Agence concernée</span>
-                  <select
-                    value={agenceId}
-                    onChange={(e) => setAgenceId(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    disabled={refLoading}
-                  >
-                    <option value="">{refLoading ? "Chargement…" : "Aucune agence"}</option>
-                    {agences
-                      .slice()
-                      .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }))
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.code} — {a.libelle}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Produit concerné *</span>
-                  <select
-                    required
-                    value={produitCode}
-                    onChange={(e) => setProduitCode(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                    disabled={refLoading}
-                  >
-                    <option value="">{refLoading ? "Chargement…" : "Sélectionner un produit"}</option>
-                    {produits
-                      .slice()
-                      .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }))
-                      .map((p) => (
-                        <option key={p.code} value={p.code}>
-                          {p.libelle}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Nombre de demandes *</span>
-                  <input
-                    required
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={nombreDemandes}
-                    onChange={(e) => setNombreDemandes(e.target.value)}
-                    placeholder="Ex: 1"
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Date de la demande *</span>
-                  <input
-                    required
-                    type="datetime-local"
-                    value={dateDemande}
-                    onChange={(e) => setDateDemande(e.target.value)}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </label>
-                </div>
-                </section>
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => { if (!open) closeCreate(); }}
+        title="Créer une demande PDV"
+        description="Renseignez les informations opérationnelles et la position du point de vente."
+        size="lg"
+        footer={
+          <>
+            <input ref={importFileInputRef} type="file" accept={getImportAcceptAttribute("PDV_INTEGRATIONS")} aria-label="Importer des dossiers PDV" className="sr-only" onChange={(e) => void onImportFileChange(e)} />
+            <Button variant="ghost" leadingIcon={Upload} loading={importingFile} onClick={() => importFileInputRef.current?.click()}>Importer</Button>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => void downloadPdvIntegrationsExcelTemplate()}>Modèle Excel</Button>
+            <Button variant="secondary" disabled={creating} onClick={closeCreate}>Annuler</Button>
+            <Button type="submit" form="pdv-create-form" loading={creating}>Créer la demande</Button>
+          </>
+        }
+      >
+        {refError ? <FeedbackState tone="danger" title="Référentiels indisponibles" description={refError} /> : null}
+        {createFormError ? <FeedbackState tone="danger" title="Création impossible" description={createFormError} /> : null}
+        <form id="pdv-create-form" onSubmit={onCreate} className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Agence concernée"><select value={agenceId} onChange={(e) => setAgenceId(e.target.value)} disabled={refLoading}><option value="">Aucune agence</option>{agences.slice().sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")).map((a) => <option key={a.id} value={a.id}>{a.code} — {a.libelle}</option>)}</select></FormField>
+          <FormField label="Produit concerné" required><select required value={produitCode} onChange={(e) => setProduitCode(e.target.value)} disabled={refLoading}><option value="">Sélectionner un produit</option>{produits.slice().sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")).map((p) => <option key={p.code} value={p.code}>{p.libelle}</option>)}</select></FormField>
+          <FormField label="Nombre de demandes" required><input required type="number" min={1} step={1} value={nombreDemandes} onChange={(e) => setNombreDemandes(e.target.value)} /></FormField>
+          <FormField label="Date de la demande" required><input required type="datetime-local" value={dateDemande} onChange={(e) => setDateDemande(e.target.value)} /></FormField>
+          <FormField label="Latitude" required><input required type="number" step="any" value={lat} onChange={(e) => setLat(e.target.value)} /></FormField>
+          <FormField label="Longitude" required><input required type="number" step="any" value={lng} onChange={(e) => setLng(e.target.value)} /></FormField>
+          <FormField label="Observations" className="sm:col-span-2"><textarea value={observations} onChange={(e) => setObservations(e.target.value)} rows={3} /></FormField>
+        </form>
+      </Dialog>
 
-                <section className="rounded-xl border border-indigo-200/80 bg-white p-3 shadow-sm">
-                  <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
-                    Localisation et contexte
-                  </p>
-                  <div className="grid gap-2.5 sm:grid-cols-2">
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Latitude *</span>
-                  <input
-                    required
-                    type="number"
-                    step="any"
-                    value={lat}
-                    onChange={(e) => setLat(e.target.value)}
-                    placeholder="Ex: 5.32"
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </label>
-                <label className="grid gap-1">
-                  <span className="text-xs font-medium text-slate-700">Longitude *</span>
-                  <input
-                    required
-                    type="number"
-                    step="any"
-                    value={lng}
-                    onChange={(e) => setLng(e.target.value)}
-                    placeholder="Ex: -4.03"
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                  />
-                </label>
-                <label className="grid gap-1 sm:col-span-2">
-                  <span className="text-xs font-medium text-slate-700">Observations</span>
-                  <textarea
-                    value={observations}
-                    onChange={(e) => setObservations(e.target.value)}
-                    placeholder="Zone observations"
-                    rows={3}
-                    className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400"
-                  />
-                </label>
-                  </div>
-                </section>
-
-                <div>
-                  {createFormError ? (
-                    <div className="mb-2 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">
-                      {createFormError}
-                    </div>
-                  ) : null}
-                  <input
-                    ref={importFileInputRef}
-                    type="file"
-                    accept={getImportAcceptAttribute("PDV_INTEGRATIONS")}
-                    aria-label="Importer des dossiers géolocalisation PDV"
-                    className="sr-only"
-                    onChange={(e) => void onImportFileChange(e)}
-                  />
-                  <div className="flex flex-wrap justify-end gap-2">
-                    <button
-                      type="button"
-                      disabled={importingFile}
-                      onClick={() => importFileInputRef.current?.click()}
-                      className="rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-xs font-semibold text-indigo-800 shadow-sm transition hover:bg-indigo-100 disabled:opacity-60"
-                    >
-                      {importingFile ? "Import..." : "Importer fichier vers le tableau"}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void downloadPdvIntegrationsExcelTemplate()}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50"
-                    >
-                      Télécharger le modèle Excel
-                    </button>
-                    <button
-                      type="button"
-                      onClick={closeCreate}
-                      disabled={creating}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
-                    >
-                      Annuler
-                    </button>
-                    <button
-                      type="submit"
-                      disabled={creating}
-                      className="rounded-lg border border-violet-700 bg-violet-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:opacity-60"
-                    >
-                      {creating ? "Création..." : "Créer la demande PDV"}
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {loading ? <p className="text-sm text-slate-500">Chargement...</p> : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
-      {toast ? (
-        <div
-          className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
-            toast.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-              : "border-rose-200 bg-rose-50 text-rose-800"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span>{toast.message}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-xs opacity-80 hover:opacity-100">
-              Fermer
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {!loading ? (
-        <>
-          <div className="mb-3 flex flex-wrap items-center gap-2 text-xs text-slate-600">
-            <span>
-              {total} enregistrement(s) · page {page}/{totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => void load(page - 1)}
-              className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Précédent
-            </button>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => void load(page + 1)}
-              className="rounded border border-slate-300 px-2 py-1 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Suivant
-            </button>
-          </div>
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="overflow-x-auto">
-            <table className="min-w-full text-left text-sm">
-              <thead className="bg-slate-50 text-slate-600">
-                <tr>
-                  <th className="px-2 py-2">Réf</th>
-                  <th className="px-2 py-2">Code PDV</th>
-                  <th className="px-2 py-2">Produit</th>
-                  <th className="px-2 py-2">Nb demandes</th>
-                  <th className="px-2 py-2">Date demande</th>
-                  <th className="px-2 py-2">Statut</th>
-                  <th className="px-2 py-2">Concessionnaire</th>
-                  <th className="px-2 py-2">Créé</th>
-                  <th className="px-2 py-2">Action</th>
-                </tr>
-              </thead>
-              <tbody className="text-slate-900">
-                {items.map((row) => (
-                  <tr key={row.id} className="border-t border-slate-100 transition-colors hover:bg-slate-50">
-                    <td className="px-2 py-2 font-mono text-xs">{row.reference}</td>
-                    <td className="px-2 py-2">{row.codePdv}</td>
-                    <td className="px-2 py-2">{row.produitCode}</td>
-                    <td className="px-2 py-2">{row.nombreDemandes}</td>
-                    <td className="px-2 py-2 text-xs">{new Date(row.dateDemande).toLocaleString("fr-FR")}</td>
-                    <td className="px-2 py-2">
-                      <span className={`rounded-full border px-2 py-0.5 text-xs ${statusClass(row.status)}`}>
-                        {row.status}
-                      </span>
-                    </td>
-                    <td className="px-2 py-2 font-mono text-xs">{row.concessionnaireId ?? "—"}</td>
-                    <td className="px-2 py-2 text-xs">{new Date(row.createdAt).toLocaleString()}</td>
-                    <td className="px-2 py-2">
-                      {(() => {
-                        const actionAlreadyValidated =
-                          row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv);
-                        if (actionAlreadyValidated) {
-                          return (
-                            <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-semibold text-emerald-700">
-                              Validée
-                            </span>
-                          );
-                        }
-                        return null;
-                      })()}
-                      {row.status === "DEMANDE_RECUE" && canTransitionPdv ? (
-                        <button
-                          type="button"
-                          disabled={finalizingId === row.id}
-                          onClick={() => void transitionIntegration(row.id, "EN_TRAITEMENT")}
-                          className="rounded-lg border border-sky-200 px-2 py-1 text-xs font-semibold text-sky-700 hover:bg-sky-50 disabled:opacity-50"
-                        >
-                          {finalizingId === row.id ? "…" : "Passer en traitement"}
-                        </button>
-                      ) : row.status === "EN_TRAITEMENT" && canTransitionPdv ? (
-                        <button
-                          type="button"
-                          disabled={finalizingId === row.id}
-                          onClick={() => void transitionIntegration(row.id, "INTEGRE_GPR")}
-                          className="rounded-lg border border-violet-200 px-2 py-1 text-xs font-semibold text-violet-700 hover:bg-violet-50 disabled:opacity-50"
-                        >
-                          {finalizingId === row.id ? "…" : "Marquer intégré GPR"}
-                        </button>
-                      ) : row.status === "INTEGRE_GPR" && canFinalizePdv ? (
-                        <button
-                          type="button"
-                          disabled={finalizingId === row.id}
-                          onClick={() => void transitionIntegration(row.id, "FINALISE")}
-                          className="rounded-lg border border-emerald-200 px-2 py-1 text-xs font-semibold text-emerald-700 hover:bg-emerald-50 disabled:opacity-50"
-                        >
-                          {finalizingId === row.id ? "…" : "Finaliser"}
-                        </button>
-                      ) : (
-                        <span className="text-xs text-slate-500">
-                          {row.status === "FINALISE" || (row.status === "INTEGRE_GPR" && !canFinalizePdv)
-                            ? ""
-                            : "—"}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-                {!items.length ? (
-                  <tr>
-                    <td className="px-2 py-4 text-slate-500" colSpan={9}>
-                      Aucun dossier géolocalisation PDV.
-                    </td>
-                  </tr>
-                ) : null}
-              </tbody>
-            </table>
-            </div>
-          </div>
-        </>
-      ) : null}
-
-      {finalizeModal ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="finalize-pdv-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/60"
-            aria-label="Fermer"
-            disabled={finalizingId !== null}
-            onClick={closeFinalizeModal}
-          />
-          <div className="relative z-10 w-full max-w-lg overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
-            <div className="relative flex items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-violet-50 via-white to-indigo-50 px-5 py-4">
-              <div className="pointer-events-none absolute -right-8 -top-8 h-24 w-24 rounded-full bg-violet-200/40 blur-2xl" />
-              <div>
-                <h3 id="finalize-pdv-title" className="text-lg font-semibold text-slate-900">
-                  Validation finale — géolocalisation PDV
-                </h3>
-                <p className="mt-1 text-xs text-slate-600">
-                  Cette action finalise le dossier et peut créer/lier automatiquement un concessionnaire.
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={finalizingId !== null}
-                onClick={closeFinalizeModal}
-                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
-            <div className="p-5">
-
-            <div className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-950">
-              Action sensible et potentiellement irréversible. Vérifiez les données avant confirmation.
-            </div>
-
-            <dl className="mt-4 grid gap-2 text-sm text-slate-800">
-              <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                <dt className="text-slate-500">Référence</dt>
-                <dd className="font-mono text-xs">{finalizeModal.reference}</dd>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                <dt className="text-slate-500">Code PDV</dt>
-                <dd className="font-mono text-xs">{finalizeModal.codePdv}</dd>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                <dt className="text-slate-500">Raison sociale</dt>
-                <dd>{finalizeModal.raisonSociale}</dd>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                <dt className="text-slate-500">Agence</dt>
-                <dd className="font-mono text-xs">{finalizeModal.agenceId ?? "Non rattachée"}</dd>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 border-b border-slate-100 py-1.5">
-                <dt className="text-slate-500">GPS</dt>
-                <dd className="font-mono text-xs">
-                  {finalizeModal.gps.lat}, {finalizeModal.gps.lng}
-                </dd>
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 py-1.5">
-                <dt className="text-slate-500">Statut actuel</dt>
-                <dd>{finalizeModal.status}</dd>
-              </div>
-            </dl>
-
-            <label className="mt-4 flex cursor-pointer items-start gap-2 rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2.5 text-sm text-slate-800">
-              <input
-                type="checkbox"
-                checked={finalizeAck}
-                onChange={(e) => setFinalizeAck(e.target.checked)}
-                disabled={finalizingId !== null}
-                className="mt-0.5 rounded border-slate-300"
-              />
-              <span>Je confirme avoir vérifié les informations et autorise la finalisation.</span>
-            </label>
-
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                disabled={finalizingId !== null}
-                onClick={closeFinalizeModal}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                disabled={!finalizeAck || finalizingId !== null}
-                onClick={() => void finalizeIntegration(finalizeModal.id)}
-                className="rounded-lg border border-violet-700 bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
-              >
-                {finalizingId === finalizeModal.id ? "Finalisation..." : "Confirmer la finalisation"}
-              </button>
-            </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <Dialog
+        open={finalizeModal !== null}
+        onOpenChange={(open) => { if (!open) closeFinalizeModal(); }}
+        title="Finaliser la géolocalisation PDV"
+        description="Cette action peut créer ou lier automatiquement un concessionnaire."
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" disabled={finalizingId !== null} onClick={closeFinalizeModal}>Annuler</Button>
+            <Button disabled={!finalizeAck || finalizingId !== null} loading={finalizingId !== null} onClick={() => finalizeModal && void finalizeIntegration(finalizeModal.id)}>Confirmer la finalisation</Button>
+          </>
+        }
+      >
+        {finalizeModal ? (
+          <>
+            <FeedbackState tone="warning" title="Action sensible" description="Vérifiez les données avant de poursuivre." />
+            <dl className="mt-4 grid gap-2 text-sm"><div><dt>Référence</dt><dd>{finalizeModal.reference}</dd></div><div><dt>Code PDV</dt><dd>{finalizeModal.codePdv}</dd></div><div><dt>Raison sociale</dt><dd>{finalizeModal.raisonSociale}</dd></div><div><dt>GPS</dt><dd>{finalizeModal.gps.lat}, {finalizeModal.gps.lng}</dd></div></dl>
+            <label className="mt-4 flex min-h-11 items-center gap-3"><input type="checkbox" checked={finalizeAck} onChange={(e) => setFinalizeAck(e.target.checked)} disabled={finalizingId !== null} /><span>Je confirme avoir vérifié les informations.</span></label>
+          </>
+        ) : null}
+      </Dialog>
     </section>
   );
 }

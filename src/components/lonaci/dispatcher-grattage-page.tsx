@@ -1,8 +1,18 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Boxes, PackageCheck, Send, Store, TicketCheck } from "lucide-react";
 
+import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { KpiCard } from "@/components/lonaci/ui/dashboard-cards";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { SCRATCH_CODE_STATUT_LABELS, type ScratchCodeStatut } from "@/lib/lonaci/constants";
+import { notify } from "@/lib/toast";
 
 type RefProduit = { code: string; libelle: string; actif: boolean };
 
@@ -42,11 +52,11 @@ type ScratchLot = {
   history: Array<{ action: string; at: string }>;
 };
 
-function statusClass(status: ScratchCodeStatut) {
-  if (status === "GENERE") return "border-slate-300 bg-slate-100 text-slate-900";
-  if (status === "ATTRIBUE") return "border-sky-300 bg-sky-100 text-sky-900";
-  if (status === "ACTIF") return "border-emerald-300 bg-emerald-100 text-emerald-900";
-  return "border-amber-300 bg-amber-100 text-amber-900";
+function statusTone(status: ScratchCodeStatut): Tone {
+  if (status === "ATTRIBUE") return "info";
+  if (status === "ACTIF") return "success";
+  if (status === "EPUISE") return "warning";
+  return "neutral";
 }
 
 export default function DispatcherGrattagePage() {
@@ -153,7 +163,6 @@ export default function DispatcherGrattagePage() {
   async function onAttribuerLot(e: FormEvent, lotId: string, concessionnaireId: string) {
     e.preventDefault();
     setAttributingLot(lotId);
-    setError(null);
     try {
       const res = await fetch(`/api/scratch-codes/lots/${encodeURIComponent(lotId)}/transition`, {
         method: "POST",
@@ -167,79 +176,74 @@ export default function DispatcherGrattagePage() {
       }
       await Promise.all([loadDashboard(), loadLots(), selectedPdvId ? loadHistory(selectedPdvId) : Promise.resolve()]);
       if (concessionnaireId === selectedPdvId) void loadHistory(concessionnaireId);
+      notify.success("Lot attribué avec succès.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Erreur");
+      notify.error(err, "Attribution impossible.");
     } finally {
       setAttributingLot(null);
     }
   }
 
-  return (
-    <div className="mx-auto max-w-6xl space-y-6 p-4 sm:p-6">
-      <header className="rounded-2xl border border-violet-200 bg-gradient-to-r from-violet-50 via-white to-fuchsia-50 p-5 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-700">§9.2 Dispatcher</p>
-        <h1 className="mt-1 text-xl font-semibold text-slate-900">Distribution codes grattage</h1>
-        <p className="mt-2 max-w-2xl text-sm text-slate-600">
-          Attribution en temps réel, concessionnaires éligibles par produit, suivi des stocks et alertes de rupture.
-        </p>
-      </header>
+  const lotActions = (lot: ScratchLot) =>
+    selectedPdv && lot.produitCode === produitCode ? (
+      <Button
+        size="sm"
+        leadingIcon={Send}
+        loading={attributingLot === lot.lotId}
+        onClick={(event) => void onAttribuerLot(event, lot.lotId, selectedPdv.id)}
+      >
+        Attribuer
+      </Button>
+    ) : <span className="text-sm text-slate-400">Sélectionnez un PDV</span>;
+  const lotColumns: readonly DataTableColumn<ScratchLot>[] = [
+    { id: "lot", header: "Lot", cell: (lot) => <span className="font-mono text-xs font-semibold">{lot.lotId}</span> },
+    { id: "produit", header: "Produit", cell: (lot) => lot.produitCode },
+    { id: "quantite", header: "Quantité", cell: (lot) => lot.generatedCount, align: "right" },
+    { id: "pdv", header: "PDV cible", cell: (lot) => selectedPdv && lot.produitCode === produitCode ? `${selectedPdv.codePdv} — ${selectedPdv.raisonSociale}` : "À sélectionner" },
+    { id: "action", header: "Action", cell: lotActions },
+  ];
 
-      {error ? (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert">
-          {error}
-        </p>
-      ) : null}
+  return (
+    <div className="mx-auto max-w-7xl space-y-6 p-4 sm:p-6">
+      <PageHeader eyebrow="Dispatcher" title="Distribution des codes grattage" description="Attribution en temps réel, concessionnaires éligibles par produit, suivi des stocks et alertes de rupture." />
+
+      {error ? <FeedbackState tone="danger" title="Données indisponibles" description={error} action={<Button variant="secondary" onClick={() => void refreshAll()}>Réessayer</Button>} /> : null}
 
       {dashboard ? (
         <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <article className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-4">
-            <p className="text-xs text-emerald-800">Codes distribués</p>
-            <p className="mt-1 text-2xl font-semibold text-emerald-950">{dashboard.codesDistribues}</p>
-          </article>
-          <article className="rounded-xl border border-sky-200 bg-sky-50/60 p-4">
-            <p className="text-xs text-sky-800">Solde restant (non attribués)</p>
-            <p className="mt-1 text-2xl font-semibold text-sky-950">{dashboard.soldeRestant}</p>
-          </article>
-          <article className="rounded-xl border border-amber-200 bg-amber-50/60 p-4">
-            <p className="text-xs text-amber-800">Lots en attente d&apos;attribution</p>
-            <p className="mt-1 text-2xl font-semibold text-amber-950">{dashboard.lotsEnAttenteAttribution}</p>
-          </article>
-          <article className="rounded-xl border border-violet-200 bg-violet-50/60 p-4">
-            <p className="text-xs text-violet-800">Lots actifs</p>
-            <p className="mt-1 text-2xl font-semibold text-violet-950">{dashboard.lotsActifs}</p>
-          </article>
+          <KpiCard label="Codes distribués" value={dashboard.codesDistribues} icon={TicketCheck} />
+          <KpiCard label="Solde restant" value={dashboard.soldeRestant} icon={Boxes} detail="Codes non attribués" />
+          <KpiCard label="Lots en attente" value={dashboard.lotsEnAttenteAttribution} icon={PackageCheck} />
+          <KpiCard label="Lots actifs" value={dashboard.lotsActifs} icon={Store} />
         </section>
-      ) : null}
+      ) : loading ? <Skeleton lines={4} /> : null}
 
       {dashboard && dashboard.alertesRupture.length > 0 ? (
-        <section className="rounded-2xl border border-rose-200 bg-rose-50/40 p-4">
-          <h2 className="text-sm font-semibold text-rose-900">
-            Alertes rupture (solde &lt; {dashboard.seuilAlerte} codes)
-          </h2>
-          <ul className="mt-2 space-y-1 text-xs text-rose-900">
+        <FeedbackState tone="warning" title={`Alertes rupture (solde < ${dashboard.seuilAlerte} codes)`} description={
+          <ul className="mt-2 space-y-1 text-sm">
             {dashboard.alertesRupture.map((a) => (
               <li key={a.produitCode}>
                 <strong>{a.produitCode}</strong> — solde {a.soldeRestant} · déjà distribués {a.codesDistribues}
               </li>
             ))}
           </ul>
-        </section>
+        } />
       ) : null}
 
       <section className="grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Concessionnaires éligibles</h2>
-          <p className="mt-1 text-xs text-slate-600">Contrat actif + enregistrement GPR validé pour le produit.</p>
-          <div className="mt-3 grid gap-2 sm:grid-cols-2">
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium text-slate-700">Produit</span>
+        <Surface elevated>
+          <SectionHeader title="Concessionnaires éligibles" description="Contrat actif et enregistrement GPR validé pour le produit." />
+          <FilterBar
+            search={{ value: pdvSearch, onChange: setPdvSearch, placeholder: "Code ou raison sociale", label: "Rechercher un PDV" }}
+            filters={
               <select
+                aria-label="Filtrer par produit"
                 value={produitCode}
                 onChange={(e) => {
                   setProduitCode(e.target.value);
                   setSelectedPdvId(null);
                 }}
-                className="rounded-lg border border-slate-300 px-2 py-2"
+                className="min-h-11 rounded-lg border border-slate-300 bg-white px-3"
               >
                 {produits.map((p) => (
                   <option key={p.code} value={p.code}>
@@ -247,29 +251,20 @@ export default function DispatcherGrattagePage() {
                   </option>
                 ))}
               </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium text-slate-700">Recherche PDV</span>
-              <input
-                value={pdvSearch}
-                onChange={(e) => setPdvSearch(e.target.value)}
-                placeholder="Code ou raison sociale"
-                className="rounded-lg border border-slate-300 px-2 py-2"
-              />
-            </label>
-          </div>
-          <ul className="mt-3 max-h-64 space-y-1 overflow-y-auto text-xs">
+            }
+          />
+          <ul className="mt-4 max-h-72 space-y-2 overflow-y-auto" aria-live="polite">
             {eligible.length === 0 ? (
-              <li className="text-slate-500">{loading ? "Chargement…" : "Aucun PDV éligible."}</li>
+              <li>{loading ? <Skeleton lines={3} /> : <FeedbackState title="Aucun PDV éligible" description="Modifiez le produit ou la recherche." />}</li>
             ) : (
               eligible.map((p) => (
                 <li key={p.id}>
                   <button
                     type="button"
                     onClick={() => setSelectedPdvId(p.id)}
-                    className={`w-full rounded-lg border px-2 py-2 text-left transition ${
+                    className={`min-h-11 w-full rounded-xl border px-3 py-3 text-left transition ${
                       selectedPdvId === p.id
-                        ? "border-violet-400 bg-violet-50"
+                        ? "border-orange-500 bg-orange-50 ring-2 ring-orange-200"
                         : "border-slate-200 bg-slate-50 hover:border-slate-300"
                     }`}
                   >
@@ -280,32 +275,25 @@ export default function DispatcherGrattagePage() {
               ))
             )}
           </ul>
-        </div>
+        </Surface>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-sm font-semibold text-slate-900">Historique PDV (§9.1)</h2>
+        <Surface elevated>
+          <SectionHeader title="Historique PDV" description={selectedPdv ? `${selectedPdv.codePdv} — ${selectedPdv.raisonSociale}` : "Sélectionnez un concessionnaire."} />
           {selectedPdv ? (
-            <p className="mt-1 text-xs text-slate-600">
-              {selectedPdv.codePdv} — {selectedPdv.raisonSociale}
-            </p>
-          ) : (
-            <p className="mt-1 text-xs text-slate-500">Sélectionnez un concessionnaire.</p>
-          )}
+            null
+          ) : <FeedbackState title="Aucun PDV sélectionné" description="Choisissez un concessionnaire éligible dans la liste." />}
           {history && selectedPdv ? (
             <>
-              <p className="mt-2 text-[11px] text-slate-600">
-                Codes par statut :{" "}
+              <div className="mt-2 flex flex-wrap gap-2">
                 {(Object.keys(SCRATCH_CODE_STATUT_LABELS) as ScratchCodeStatut[]).map((s) => (
-                  <span key={s} className="mr-2">
-                    {SCRATCH_CODE_STATUT_LABELS[s]} {history.codesByStatus[s] ?? 0}
-                  </span>
+                  <StatusBadge key={s} tone={statusTone(s)}>{SCRATCH_CODE_STATUT_LABELS[s]} · {history.codesByStatus[s] ?? 0}</StatusBadge>
                 ))}
-              </p>
-              <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto text-xs">
+              </div>
+              <ul className="mt-4 max-h-64 space-y-2 overflow-y-auto text-sm">
                 {history.items.map((lot) => (
-                  <li key={lot.id} className="rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5">
+                  <li key={lot.id} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                     <span className="font-mono">{lot.lotId}</span> · {lot.generatedCount} codes ·{" "}
-                    <span className={statusClass(lot.status)}>{SCRATCH_CODE_STATUT_LABELS[lot.status]}</span>
+                    <StatusBadge tone={statusTone(lot.status)}>{SCRATCH_CODE_STATUT_LABELS[lot.status]}</StatusBadge>
                     {lot.attribueAt ? (
                       <span className="ml-1 text-slate-500">
                         attribué {new Date(lot.attribueAt).toLocaleString("fr-FR")}
@@ -316,65 +304,32 @@ export default function DispatcherGrattagePage() {
               </ul>
             </>
           ) : null}
-        </div>
+        </Surface>
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-slate-900">Lots à attribuer (temps réel)</h2>
-        <p className="mt-1 text-xs text-slate-600">
-          Lots au statut Généré — sélectionnez un PDV éligible puis attribuez le lot.
-        </p>
-        <div className="mt-3 overflow-x-auto">
-          <table className="w-full min-w-[640px] text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-100 text-slate-700">
-                <th className="px-2 py-2">Lot</th>
-                <th className="px-2 py-2">Produit</th>
-                <th className="px-2 py-2">Quantité</th>
-                <th className="px-2 py-2">PDV cible</th>
-                <th className="px-2 py-2">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {lots.map((lot) => (
-                <tr key={lot.id} className="border-b border-slate-100">
-                  <td className="px-2 py-2 font-mono">{lot.lotId}</td>
-                  <td className="px-2 py-2">{lot.produitCode}</td>
-                  <td className="px-2 py-2">{lot.generatedCount}</td>
-                  <td className="px-2 py-2">
-                    {selectedPdv && lot.produitCode === produitCode ? (
-                      <span>
-                        {selectedPdv.codePdv} — {selectedPdv.raisonSociale}
-                      </span>
-                    ) : (
-                      <span className="text-slate-400">Choisir un PDV éligible</span>
-                    )}
-                  </td>
-                  <td className="px-2 py-2">
-                    {selectedPdv && lot.produitCode === produitCode ? (
-                      <button
-                        type="button"
-                        disabled={attributingLot === lot.lotId}
-                        onClick={(e) => void onAttribuerLot(e, lot.lotId, selectedPdv.id)}
-                        className="rounded-lg border border-sky-300 bg-sky-600 px-2 py-1 text-[11px] font-medium text-white disabled:opacity-50"
-                      >
-                        {attributingLot === lot.lotId ? "…" : "Attribuer"}
-                      </button>
-                    ) : (
-                      "—"
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {lots.length === 0 && !loading ? (
-            <p className="mt-2 text-xs text-slate-500">Aucun lot en attente pour ce produit.</p>
-          ) : null}
+      <Surface elevated>
+        <SectionHeader title="Lots à attribuer en temps réel" description="Lots générés — sélectionnez un PDV éligible puis attribuez le lot." />
+        <div aria-live="polite" aria-busy={loading}>
+          {loading ? <Skeleton lines={5} /> : (
+            <DataTable
+              rows={lots}
+              columns={lotColumns}
+              rowKey={(lot) => lot.id}
+              caption="Lots de codes à attribuer"
+              mobileCard={(lot) => (
+                <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3"><div><p className="font-mono text-xs text-slate-500">{lot.lotId}</p><h3 className="font-bold">{lot.produitCode}</h3></div><StatusBadge tone="neutral">{lot.generatedCount} codes</StatusBadge></div>
+                  <p className="mt-3 text-sm text-slate-600">{selectedPdv && lot.produitCode === produitCode ? `${selectedPdv.codePdv} — ${selectedPdv.raisonSociale}` : "Choisissez un PDV éligible"}</p>
+                  <div className="mt-4">{lotActions(lot)}</div>
+                </article>
+              )}
+            />
+          )}
         </div>
-      </section>
+      </Surface>
 
-      <p className="text-[11px] text-slate-500">
+      <p className="flex items-center gap-2 text-xs text-slate-500" role="status">
+        <AlertTriangle size={15} aria-hidden="true" />
         Dernière mise à jour tableau de bord :{" "}
         {dashboard ? new Date(dashboard.generatedAt).toLocaleString("fr-FR") : "—"}
       </p>

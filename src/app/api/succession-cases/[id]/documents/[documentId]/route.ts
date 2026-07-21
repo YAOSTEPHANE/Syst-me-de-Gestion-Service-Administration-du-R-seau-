@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import { ensureSuccessionIndexes, findSuccessionCaseById } from "@/lib/lonaci/succession";
+import {
+  ensureSuccessionIndexes,
+  findVisibleSuccessionCaseById,
+} from "@/lib/lonaci/succession";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { createSuccessionReadStream } from "@/lib/storage/succession-files";
 
@@ -18,17 +19,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
 
   const { id, documentId } = await context.params;
   await ensureSuccessionIndexes();
-  const doc = await findSuccessionCaseById(id);
+  const doc = await findVisibleSuccessionCaseById(id, auth.user);
   if (!doc) {
     return NextResponse.json({ message: "CASE_NOT_FOUND" }, { status: 404 });
-  }
-
-  const conc = await findConcessionnaireById(doc.concessionnaireId);
-  if (!conc || conc.deletedAt) {
-    return NextResponse.json({ message: "CONCESSIONNAIRE_NOT_FOUND" }, { status: 404 });
-  }
-  if (!canReadConcessionnaire(auth.user, conc)) {
-    return NextResponse.json({ message: "AGENCE_FORBIDDEN" }, { status: 403 });
   }
 
   const file = doc.documents.find((d) => d.id === documentId);

@@ -1,13 +1,36 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import {
+  Archive,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  FilePlus2,
+  Files,
+  Package,
+  Pencil,
+  Plus,
+  Power,
+  Save,
+  Trash2,
+} from "lucide-react";
 
 import ProduitPiecesEditor, {
-  createEmptyPiece,
   piecesFromStored,
   piecesToApiPayload,
   type ProduitPieceDraft,
 } from "@/components/lonaci/produit-pieces-editor";
+import { Badge, StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 interface ProduitRow {
   _id: string;
@@ -19,6 +42,8 @@ interface ProduitRow {
   documentsAnnexe?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
 }
 
+const PAGE_SIZE = 8;
+
 export default function AdminProduitsPanel() {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -28,7 +53,6 @@ export default function AdminProduitsPanel() {
   const [prix, setPrix] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCode, setEditCode] = useState("");
   const [editLibelle, setEditLibelle] = useState("");
@@ -45,15 +69,17 @@ export default function AdminProduitsPanel() {
   const [savingAnnexeId, setSavingAnnexeId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<ProduitRow | null>(null);
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
   /** Sauvegarde rapide du montant attendu (prix) depuis la cellule du tableau. */
   const [savingPrixId, setSavingPrixId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [sortBy, setSortBy] = useState<"CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC">("CODE");
+  const [page, setPage] = useState(1);
 
   const inputClass =
-    "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
+    "lonaci-ui-input";
 
   const load = useCallback(async () => {
     setError(null);
@@ -91,7 +117,6 @@ export default function AdminProduitsPanel() {
 
   function startEdit(p: ProduitRow) {
     setError(null);
-    setSuccess(null);
     setEditingId(p._id);
     setEditCode(p.code);
     setEditLibelle(p.libelle);
@@ -102,7 +127,6 @@ export default function AdminProduitsPanel() {
 
   function openPiecesModal(p: ProduitRow) {
     setError(null);
-    setSuccess(null);
     setPiecesModalProduit(p);
     setPiecesModalItems(piecesFromStored(p.documentsChecklist));
   }
@@ -114,7 +138,6 @@ export default function AdminProduitsPanel() {
 
   function openAnnexeModal(p: ProduitRow) {
     setError(null);
-    setSuccess(null);
     setAnnexeModalProduit(p);
     setAnnexeModalItems(piecesFromStored(p.documentsAnnexe));
   }
@@ -128,7 +151,6 @@ export default function AdminProduitsPanel() {
     e.preventDefault();
     if (!annexeModalProduit) return;
     setError(null);
-    setSuccess(null);
     setSavingAnnexeId(annexeModalProduit._id);
     try {
       const res = await fetch(`/api/admin/produits/${annexeModalProduit._id}`, {
@@ -139,16 +161,16 @@ export default function AdminProduitsPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
       if (!res.ok || !body?.produit) {
-        setError(body?.message ?? "Enregistrement des documents annexe impossible.");
+        notify.error(body?.message ?? "Enregistrement des documents annexe impossible.");
         return;
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
-      setSuccess(
+      notify.success(
         `Documents annexe du produit « ${body.produit.code} » enregistrés (${body.produit.documentsAnnexe?.length ?? 0}).`,
       );
       closeAnnexeModal();
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setSavingAnnexeId(null);
     }
@@ -158,7 +180,6 @@ export default function AdminProduitsPanel() {
     e.preventDefault();
     if (!piecesModalProduit) return;
     setError(null);
-    setSuccess(null);
     setSavingPiecesId(piecesModalProduit._id);
     try {
       const res = await fetch(`/api/admin/produits/${piecesModalProduit._id}`, {
@@ -169,16 +190,16 @@ export default function AdminProduitsPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
       if (!res.ok || !body?.produit) {
-        setError(body?.message ?? "Enregistrement des pièces impossible.");
+        notify.error(body?.message ?? "Enregistrement des pièces impossible.");
         return;
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
-      setSuccess(
+      notify.success(
         `Pièces du produit « ${body.produit.code} » enregistrées (${body.produit.documentsChecklist?.length ?? 0}).`,
       );
       closePiecesModal();
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setSavingPiecesId(null);
     }
@@ -192,7 +213,6 @@ export default function AdminProduitsPanel() {
     e.preventDefault();
     if (!editingId) return;
     setError(null);
-    setSuccess(null);
     const c = editCode.trim();
     const l = editLibelle.trim();
     const prixNum = Number.parseInt(editPrix.replace(/\s/g, ""), 10);
@@ -222,14 +242,14 @@ export default function AdminProduitsPanel() {
         | { message?: string; produit?: ProduitRow; issues?: { message: string }[] }
         | null;
       if (res.status === 409) {
-        setError(body?.message ?? "Modification impossible (conflit).");
+        notify.error(body?.message ?? "Modification impossible (conflit).");
         return;
       }
       if (!res.ok) {
         const msg =
           body?.message ??
           (body?.issues?.[0]?.message ? `Données invalides : ${body.issues[0].message}` : "Enregistrement impossible.");
-        setError(msg);
+        notify.error(msg);
         return;
       }
       if (body?.produit?._id) {
@@ -238,23 +258,18 @@ export default function AdminProduitsPanel() {
             .map((row) => (row._id === body.produit!._id ? body.produit! : row))
             .sort((a, b) => a.code.localeCompare(b.code, "fr")),
         );
-        setSuccess(`Produit « ${body.produit.code} » mis à jour.`);
+        notify.success(`Produit « ${body.produit.code} » mis à jour.`);
         setEditingId(null);
       }
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setSavingId(null);
     }
   }
 
-  async function onDelete(p: ProduitRow) {
-    const ok = window.confirm(
-      `Supprimer le produit « ${p.code} » ?\n\nSi des contrats ou dossiers utilisent encore ce code, il sera seulement désactivé.`,
-    );
-    if (!ok) return;
+  async function deleteProduit(p: ProduitRow) {
     setError(null);
-    setSuccess(null);
     setDeletingId(p._id);
     try {
       const res = await fetch(`/api/admin/produits/${p._id}`, {
@@ -265,22 +280,24 @@ export default function AdminProduitsPanel() {
         | { message?: string; produit?: ProduitRow; deactivated?: boolean; deleted?: boolean }
         | null;
       if (!res.ok) {
-        setError(body?.message ?? "Suppression impossible.");
+        notify.error(body?.message ?? "Suppression impossible.");
         return;
       }
       if (body?.deleted) {
         setProduits((prev) => prev.filter((row) => row._id !== p._id));
-        setSuccess(`Produit « ${p.code} » supprimé.`);
+        notify.success(`Produit « ${p.code} » supprimé.`);
         if (editingId === p._id) setEditingId(null);
+        setDeleteTarget(null);
         return;
       }
       if (body?.produit && body.deactivated) {
         setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
-        setSuccess(body.message ?? `Produit « ${p.code} » désactivé (données encore liées).`);
+        notify.success(body.message ?? `Produit « ${p.code} » désactivé (données encore liées).`);
         if (editingId === p._id) setEditingId(null);
+        setDeleteTarget(null);
       }
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setDeletingId(null);
     }
@@ -298,7 +315,6 @@ export default function AdminProduitsPanel() {
       return;
     }
     setError(null);
-    setSuccess(null);
     setSavingPrixId(p._id);
     try {
       const res = await fetch(`/api/admin/produits/${p._id}`, {
@@ -309,13 +325,13 @@ export default function AdminProduitsPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
       if (!res.ok || !body?.produit) {
-        setError(body?.message ?? "Enregistrement du montant impossible.");
+        notify.error(body?.message ?? "Enregistrement du montant impossible.");
         return;
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
-      setSuccess(`Montant attendu « ${body.produit.code} » : ${prixNum.toLocaleString("fr-FR")} FCFA.`);
+      notify.success(`Montant attendu « ${body.produit.code} » : ${prixNum.toLocaleString("fr-FR")} FCFA.`);
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setSavingPrixId(null);
     }
@@ -323,7 +339,6 @@ export default function AdminProduitsPanel() {
 
   async function toggleActif(p: ProduitRow) {
     setError(null);
-    setSuccess(null);
     setQuickUpdatingId(p._id);
     try {
       const res = await fetch(`/api/admin/produits/${p._id}`, {
@@ -334,14 +349,14 @@ export default function AdminProduitsPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
       if (!res.ok || !body?.produit) {
-        setError(body?.message ?? "Mise à jour du statut impossible.");
+        notify.error(body?.message ?? "Mise à jour du statut impossible.");
         return;
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
-      setSuccess(`Produit « ${body.produit.code} » ${body.produit.actif ? "activé" : "désactivé"}.`);
+      notify.success(`Produit « ${body.produit.code} » ${body.produit.actif ? "activé" : "désactivé"}.`);
       if (editingId === p._id) setEditingId(null);
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setQuickUpdatingId(null);
     }
@@ -350,7 +365,6 @@ export default function AdminProduitsPanel() {
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setSuccess(null);
     const c = code.trim();
     const l = libelle.trim();
     const prixNum = Number.parseInt(prix.replace(/\s/g, ""), 10);
@@ -379,14 +393,14 @@ export default function AdminProduitsPanel() {
         | { message?: string; produit?: ProduitRow; issues?: { message: string }[] }
         | null;
       if (res.status === 409) {
-        setError(body?.message ?? "Ce code produit existe déjà.");
+        notify.error(body?.message ?? "Ce code produit existe déjà.");
         return;
       }
       if (!res.ok) {
         const msg =
           body?.message ??
           (body?.issues?.[0]?.message ? `Données invalides : ${body.issues[0].message}` : "Création impossible.");
-        setError(msg);
+        notify.error(msg);
         return;
       }
       if (body?.produit?._id) {
@@ -399,9 +413,9 @@ export default function AdminProduitsPanel() {
       setPrix("");
       setCreateChecklistItems([]);
       setShowCreatePieces(false);
-      setSuccess(`Produit « ${body?.produit?.code ?? c} » créé.`);
+      notify.success(`Produit « ${body?.produit?.code ?? c} » créé.`);
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setCreating(false);
     }
@@ -430,139 +444,111 @@ export default function AdminProduitsPanel() {
     produits.length > 0
       ? Math.round(produits.reduce((sum, p) => sum + (typeof p.prix === "number" ? p.prix : 0), 0) / produits.length)
       : 0;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">Produits (référentiel)</h3>
-          <p className="mt-1 text-xs text-slate-600">
-            Création et modification réservées au <strong>chef de service</strong>. Configurez pour chaque produit
-            le montant caution et les <strong>pièces à fournir</strong> (checklists automatiques dans les dossiers).
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => window.open("/api/admin/produits/export", "_blank", "noopener,noreferrer")}
-          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-        >
-          Export PDF
-        </button>
-      </div>
+    <section className="space-y-4">
+      <PageHeader
+        eyebrow="Administration · Référentiel"
+        title="Produits"
+        description="Pilotez les produits, les cautions attendues et les pièces injectées dans les dossiers."
+        actions={
+          <Button
+            variant="secondary"
+            leadingIcon={Download}
+            onClick={() => window.open("/api/admin/produits/export", "_blank", "noopener,noreferrer")}
+          >
+            Export PDF
+          </Button>
+        }
+      />
 
-      <form
-        onSubmit={onCreate}
-        className="mt-4 grid gap-3 rounded-xl border border-cyan-200/70 bg-cyan-50/40 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_minmax(0,1fr)_auto] sm:items-end"
-      >
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Code produit *</span>
+      <Surface padding="lg" elevated>
+        <SectionHeader title="Nouveau produit" description="Création réservée au chef de service." />
+      <form onSubmit={onCreate} className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:items-end">
+        <FormField label="Code produit" htmlFor="produit-code" required>
           <input
+            id="produit-code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Ex. LOTO"
             maxLength={32}
             className={inputClass}
             autoComplete="off"
-            aria-label="Code produit"
           />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Libellé *</span>
+        </FormField>
+        <FormField label="Libellé" htmlFor="produit-libelle" required>
           <input
+            id="produit-libelle"
             value={libelle}
             onChange={(e) => setLibelle(e.target.value)}
             placeholder="Ex. Loterie nationale"
             maxLength={200}
             className={inputClass}
-            aria-label="Libellé produit"
           />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Montant attendu caution (FCFA) *</span>
+        </FormField>
+        <FormField label="Montant attendu caution (FCFA)" htmlFor="produit-prix" required>
           <input
+            id="produit-prix"
             value={prix}
             onChange={(e) => setPrix(e.target.value.replace(/[^\d\s]/g, ""))}
             placeholder="Ex. 500"
             inputMode="numeric"
             className={inputClass}
             autoComplete="off"
-            aria-label="Montant attendu caution en FCFA"
           />
-        </label>
-        <button
-          type="submit"
-          disabled={creating}
-          className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-50"
-        >
-          {creating ? "Création…" : "Créer le produit"}
-        </button>
+        </FormField>
+        <Button type="submit" leadingIcon={Plus} loading={creating}>Créer le produit</Button>
       </form>
 
-      <div className="mt-2 rounded-xl border border-slate-200 bg-white p-3">
-        <button
-          type="button"
+      <div className="mt-4 border-t border-slate-200 pt-4">
+        <Button
+          variant="ghost"
+          leadingIcon={showCreatePieces ? ChevronUp : ChevronDown}
           onClick={() => setShowCreatePieces((v) => !v)}
-          className="flex w-full items-center justify-between text-left text-xs font-semibold text-slate-800"
         >
-          <span>Pièces à fournir à la création (optionnel)</span>
-          <span className="text-slate-500">{showCreatePieces ? "▲" : "▼"}</span>
-        </button>
+          Pièces à fournir à la création (optionnel)
+        </Button>
         {showCreatePieces ? (
-          <div className="mt-3 border-t border-slate-100 pt-3">
+          <div className="mt-3">
             <ProduitPiecesEditor items={createChecklistItems} onChange={setCreateChecklistItems} />
           </div>
         ) : null}
       </div>
+      </Surface>
 
-      {error ? <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">{error}</p> : null}
-      {success ? (
-        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          {success}
-        </p>
-      ) : null}
+      {error ? <FeedbackState tone="danger" title="Action impossible" description={error} /> : null}
 
-      <div className="mt-4 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 sm:grid-cols-3">
-        <p>
-          Total produits : <strong>{produits.length}</strong>
-        </p>
-        <p>
-          Actifs / Inactifs :{" "}
-          <strong>
-            {activeCount} / {inactiveCount}
-          </strong>
-        </p>
-        <p>
-          Montant attendu moyen : <strong>{avgPrice.toLocaleString("fr-FR")} FCFA</strong>
-        </p>
+      <Surface padding="none" elevated className="lonaci-ui-data-table">
+      <div className="grid gap-3 border-b border-slate-200 p-4 sm:grid-cols-3">
+        <div><p className="text-xs text-slate-500">Total produits</p><p className="text-xl font-semibold text-slate-950">{produits.length}</p></div>
+        <div><p className="text-xs text-slate-500">Actifs / Inactifs</p><p className="text-xl font-semibold text-slate-950">{activeCount} <span className="text-slate-400">/</span> {inactiveCount}</p></div>
+        <div><p className="text-xs text-slate-500">Caution moyenne</p><p className="text-xl font-semibold text-cyan-800">{avgPrice.toLocaleString("fr-FR")} FCFA</p></div>
       </div>
 
-      <div className="mt-3 grid gap-2 rounded-xl border border-slate-200 bg-white p-3 sm:grid-cols-3">
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Recherche</span>
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Code ou libellé"
-            className={inputClass}
-          />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Statut</span>
+      <FilterBar
+        className="border-b border-slate-200"
+        search={{ value: search, onChange: (value) => { setSearch(value); setPage(1); }, placeholder: "Code ou libellé…", label: "Rechercher un produit" }}
+        filters={<>
+        <FormField label="Statut" htmlFor="produit-status-filter" className="min-w-44">
           <select
+            id="produit-status-filter"
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE")}
+            onChange={(e) => { setStatusFilter(e.target.value as "ALL" | "ACTIVE" | "INACTIVE"); setPage(1); }}
             className={inputClass}
           >
             <option value="ALL">Tous</option>
             <option value="ACTIVE">Actifs uniquement</option>
             <option value="INACTIVE">Inactifs uniquement</option>
           </select>
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Tri</span>
+        </FormField>
+        <FormField label="Tri" htmlFor="produit-sort-filter" className="min-w-44">
           <select
+            id="produit-sort-filter"
             value={sortBy}
-            onChange={(e) => setSortBy(e.target.value as "CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC")}
+            onChange={(e) => { setSortBy(e.target.value as "CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC"); setPage(1); }}
             className={inputClass}
           >
             <option value="CODE">Code (A → Z)</option>
@@ -570,11 +556,15 @@ export default function AdminProduitsPanel() {
             <option value="PRICE_ASC">Prix (croissant)</option>
             <option value="PRICE_DESC">Prix (décroissant)</option>
           </select>
-        </label>
-      </div>
+        </FormField>
+        </>}
+        actions={<Badge tone="info">{filtered.length} résultat{filtered.length > 1 ? "s" : ""}</Badge>}
+      />
 
-      <div className="mt-5 overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full min-w-[520px] border-collapse text-left text-xs">
+      {pageRows.length === 0 ? <FeedbackState className="m-4" title="Aucun produit" description="Aucun produit ne correspond aux critères actuels." /> : (
+      <div className="lonaci-ui-table-scroll lonaci-ui-table-scroll--has-mobile">
+        <table>
+          <caption className="lonaci-ui-sr-only">Référentiel des produits</caption>
           <thead>
             <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
               <th className="px-3 py-2 font-semibold">Code</th>
@@ -594,7 +584,7 @@ export default function AdminProduitsPanel() {
                 </td>
               </tr>
             ) : (
-              filtered.map((p) =>
+              pageRows.map((p) =>
                 editingId === p._id ? (
                   <tr key={p._id} className="border-b border-slate-100 bg-cyan-50/50 last:border-b-0">
                     <td colSpan={7} className="p-3">
@@ -650,21 +640,23 @@ export default function AdminProduitsPanel() {
                           />
                         </div>
                         <div className="flex flex-wrap gap-2 lg:col-span-2">
-                          <button
+                          <Button
                             type="submit"
+                            size="sm"
+                            leadingIcon={Save}
+                            loading={savingId === p._id}
                             disabled={savingId === p._id}
-                            className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
                           >
-                            {savingId === p._id ? "Enregistrement…" : "Enregistrer"}
-                          </button>
-                          <button
-                            type="button"
+                            Enregistrer
+                          </Button>
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             disabled={savingId === p._id}
                             onClick={cancelEdit}
-                            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                           >
                             Annuler
-                          </button>
+                          </Button>
                         </div>
                       </form>
                     </td>
@@ -695,7 +687,7 @@ export default function AdminProduitsPanel() {
                             (e.currentTarget as HTMLInputElement).blur();
                           }
                         }}
-                        className="w-full min-w-[7rem] max-w-[11rem] rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:bg-slate-100 disabled:text-slate-500"
+                        className="w-full min-w-28 max-w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:bg-slate-100 disabled:text-slate-500"
                       />
                     </td>
                     <td className="px-3 py-2">
@@ -705,66 +697,55 @@ export default function AdminProduitsPanel() {
                             ? "Aucune"
                             : `${p.documentsChecklist!.length} pièce${p.documentsChecklist!.length > 1 ? "s" : ""}`}
                         </span>
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          leadingIcon={Files}
                           onClick={() => openPiecesModal(p)}
                           disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
-                          className="w-fit rounded-md border border-indigo-200 bg-indigo-50 px-2 py-1 text-[11px] font-semibold text-indigo-900 hover:bg-indigo-100 disabled:opacity-50"
                         >
                           Gérer les pièces
-                        </button>
+                        </Button>
                         <span className="text-[11px] text-slate-600">
                           {(p.documentsAnnexe?.length ?? 0) === 0
                             ? "Aucun doc. annexe"
                             : `${p.documentsAnnexe!.length} doc. annexe`}
                         </span>
-                        <button
-                          type="button"
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          leadingIcon={Archive}
                           onClick={() => openAnnexeModal(p)}
                           disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
-                          className="w-fit rounded-md border border-violet-200 bg-violet-50 px-2 py-1 text-[11px] font-semibold text-violet-900 hover:bg-violet-100 disabled:opacity-50"
                         >
                           Docs annexe contrat
-                        </button>
+                        </Button>
                       </div>
                     </td>
                     <td className="px-3 py-2">
-                      {p.actif ? (
-                        <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
-                          Actif
-                        </span>
-                      ) : (
-                        <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
-                          Inactif
-                        </span>
-                      )}
+                      <StatusBadge tone={p.actif ? "success" : "neutral"}>{p.actif ? "Actif" : "Inactif"}</StatusBadge>
                     </td>
                     <td className="px-3 py-2">
-                      <div className="flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
+                      <div className="flex gap-1">
+                        <IconButton
+                          icon={Pencil}
+                          label={`Modifier ${p.code}`}
                           onClick={() => startEdit(p)}
                           disabled={deletingId === p._id || editingId !== null}
-                          className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
-                        >
-                          Modifier
-                        </button>
-                        <button
-                          type="button"
+                        />
+                        <IconButton
+                          icon={Power}
+                          label={p.actif ? `Désactiver ${p.code}` : `Activer ${p.code}`}
                           onClick={() => void toggleActif(p)}
                           disabled={deletingId === p._id || quickUpdatingId === p._id || editingId !== null}
-                          className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-                        >
-                          {quickUpdatingId === p._id ? "…" : p.actif ? "Désactiver" : "Activer"}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void onDelete(p)}
+                        />
+                        <IconButton
+                          icon={Trash2}
+                          label={`Supprimer ${p.code}`}
+                          variant="danger"
+                          onClick={() => setDeleteTarget(p)}
                           disabled={deletingId === p._id || quickUpdatingId === p._id || editingId !== null}
-                          className="rounded-md border border-rose-200 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-900 hover:bg-rose-100 disabled:opacity-50"
-                        >
-                          {deletingId === p._id ? "…" : "Supprimer"}
-                        </button>
+                        />
                       </div>
                     </td>
                     <td className="max-w-32 truncate px-3 py-2 font-mono text-[10px] text-slate-500" title={p._id}>
@@ -777,87 +758,142 @@ export default function AdminProduitsPanel() {
           </tbody>
         </table>
       </div>
+      )}
+      {pageRows.length > 0 ? (
+      <div className="lonaci-ui-table-mobile" role="list" aria-label="Référentiel des produits">
+        {pageRows.map((p) => (
+          <Surface key={p._id} padding="md" elevated>
+            {editingId === p._id ? (
+              <form onSubmit={onSaveEdit} className="grid gap-3">
+                <FormField label="Code" htmlFor={`mobile-produit-code-${p._id}`} required>
+                  <input id={`mobile-produit-code-${p._id}`} value={editCode} onChange={(event) => setEditCode(event.target.value)} maxLength={32} className={inputClass} />
+                </FormField>
+                <FormField label="Libellé" htmlFor={`mobile-produit-libelle-${p._id}`} required>
+                  <input id={`mobile-produit-libelle-${p._id}`} value={editLibelle} onChange={(event) => setEditLibelle(event.target.value)} maxLength={200} className={inputClass} />
+                </FormField>
+                <FormField label="Montant attendu (FCFA)" htmlFor={`mobile-produit-prix-${p._id}`} required>
+                  <input id={`mobile-produit-prix-${p._id}`} value={editPrix} onChange={(event) => setEditPrix(event.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" className={inputClass} />
+                </FormField>
+                <FormField label="Statut" htmlFor={`mobile-produit-status-${p._id}`}>
+                  <select id={`mobile-produit-status-${p._id}`} value={editActif ? "true" : "false"} onChange={(event) => setEditActif(event.target.value === "true")} className={inputClass}>
+                    <option value="true">Actif</option><option value="false">Inactif</option>
+                  </select>
+                </FormField>
+                <FormField label="Pièces à fournir">
+                  <ProduitPiecesEditor items={editChecklistItems} onChange={setEditChecklistItems} disabled={savingId === p._id} />
+                </FormField>
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={savingId === p._id}>Annuler</Button>
+                  <Button type="submit" size="sm" leadingIcon={Save} loading={savingId === p._id}>Enregistrer</Button>
+                </div>
+              </form>
+            ) : (
+            <>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex gap-3"><Package className="mt-0.5 text-cyan-700" size={20} /><div><p className="font-mono text-sm font-semibold">{p.code}</p><p className="text-sm text-slate-600">{p.libelle}</p></div></div>
+              <StatusBadge tone={p.actif ? "success" : "neutral"}>{p.actif ? "Actif" : "Inactif"}</StatusBadge>
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div><dt className="text-xs text-slate-500">Caution</dt><dd className="font-semibold">{(p.prix ?? 0).toLocaleString("fr-FR")} FCFA</dd></div>
+              <div><dt className="text-xs text-slate-500">Documents</dt><dd>{p.documentsChecklist?.length ?? 0} pièce(s) · {p.documentsAnnexe?.length ?? 0} annexe(s)</dd></div>
+            </dl>
+            <div className="mt-4 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
+              <IconButton icon={Files} label={`Gérer les pièces de ${p.code}`} size="sm" onClick={() => openPiecesModal(p)} disabled={editingId !== null || deletingId !== null} />
+              <IconButton icon={Archive} label={`Gérer les annexes de ${p.code}`} size="sm" onClick={() => openAnnexeModal(p)} disabled={editingId !== null || deletingId !== null} />
+              <IconButton icon={Pencil} label={`Modifier ${p.code}`} size="sm" onClick={() => startEdit(p)} disabled={editingId !== null || deletingId !== null} />
+              <IconButton icon={Power} label={p.actif ? `Désactiver ${p.code}` : `Activer ${p.code}`} size="sm" onClick={() => void toggleActif(p)} disabled={editingId !== null || deletingId !== null || quickUpdatingId !== null} />
+              <IconButton icon={Trash2} label={`Supprimer ${p.code}`} size="sm" variant="danger" onClick={() => setDeleteTarget(p)} disabled={editingId !== null || deletingId !== null} />
+            </div>
+            </>
+            )}
+          </Surface>
+        ))}
+      </div>
+      ) : null}
+      <div className="p-4"><Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} label="Pagination des produits" /></div>
+      </Surface>
 
       {piecesModalProduit ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-          role="dialog"
-          aria-modal
-          aria-labelledby="produit-pieces-modal-title"
+        <Dialog
+          open
+          onOpenChange={(open) => { if (!open && savingPiecesId === null) closePiecesModal(); }}
+          title={`Pièces à fournir — ${piecesModalProduit.code}`}
+          description={piecesModalProduit.libelle}
+          size="lg"
         >
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-            <h4 id="produit-pieces-modal-title" className="text-base font-semibold text-slate-900">
-              Pièces à fournir — {piecesModalProduit.code}
-            </h4>
-            <p className="mt-1 text-xs text-slate-600">{piecesModalProduit.libelle}</p>
-            <form onSubmit={(e) => void savePiecesModal(e)} className="mt-4 space-y-3">
+            <form onSubmit={(e) => void savePiecesModal(e)} className="space-y-4">
               <ProduitPiecesEditor
                 items={piecesModalItems}
                 onChange={setPiecesModalItems}
                 disabled={savingPiecesId === piecesModalProduit._id}
               />
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-                <button
-                  type="button"
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
                   disabled={savingPiecesId === piecesModalProduit._id}
                   onClick={closePiecesModal}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Annuler
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
+                  leadingIcon={Save}
+                  loading={savingPiecesId === piecesModalProduit._id}
                   disabled={savingPiecesId === piecesModalProduit._id}
-                  className="rounded-lg border border-cyan-600 bg-cyan-600 px-4 py-2 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
                 >
-                  {savingPiecesId === piecesModalProduit._id ? "Enregistrement…" : "Enregistrer les pièces"}
-                </button>
+                  Enregistrer les pièces
+                </Button>
               </div>
             </form>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
 
       {annexeModalProduit ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-          role="dialog"
-          aria-modal
-          aria-labelledby="produit-annexe-modal-title"
+        <Dialog
+          open
+          onOpenChange={(open) => { if (!open && savingAnnexeId === null) closeAnnexeModal(); }}
+          title={`Documents annexe au contrat — ${annexeModalProduit.code}`}
+          description={annexeModalProduit.libelle}
+          size="lg"
         >
-          <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-            <h4 id="produit-annexe-modal-title" className="text-base font-semibold text-slate-900">
-              Documents annexe au contrat — {annexeModalProduit.code}
-            </h4>
-            <p className="mt-1 text-xs text-slate-600">{annexeModalProduit.libelle}</p>
-            <form onSubmit={(e) => void saveAnnexeModal(e)} className="mt-4 space-y-3">
+            <form onSubmit={(e) => void saveAnnexeModal(e)} className="space-y-4">
               <ProduitPiecesEditor
                 items={annexeModalItems}
                 onChange={setAnnexeModalItems}
                 disabled={savingAnnexeId === annexeModalProduit._id}
                 helpText="Ces documents sont associés à l’annexe du contrat (PDF annexe et checklist dossier). Marquez-les comme fournis avant la génération du contrat."
               />
-              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3">
-                <button
-                  type="button"
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="secondary"
                   disabled={savingAnnexeId === annexeModalProduit._id}
                   onClick={closeAnnexeModal}
-                  className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-50"
                 >
                   Annuler
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
+                  leadingIcon={FilePlus2}
+                  loading={savingAnnexeId === annexeModalProduit._id}
                   disabled={savingAnnexeId === annexeModalProduit._id}
-                  className="rounded-lg border border-violet-600 bg-violet-600 px-4 py-2 text-xs font-semibold text-white hover:bg-violet-700 disabled:opacity-50"
                 >
-                  {savingAnnexeId === annexeModalProduit._id ? "Enregistrement…" : "Enregistrer les documents annexe"}
-                </button>
+                  Enregistrer les documents annexe
+                </Button>
               </div>
             </form>
-          </div>
-        </div>
+        </Dialog>
       ) : null}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open && deletingId === null) setDeleteTarget(null); }}
+        title="Supprimer ce produit ?"
+        description={deleteTarget ? `${deleteTarget.code} — ${deleteTarget.libelle}` : undefined}
+        message="Si des contrats ou dossiers utilisent encore ce produit, il sera désactivé au lieu d’être supprimé."
+        confirmLabel="Supprimer le produit"
+        destructive
+        pending={deleteTarget !== null && deletingId === deleteTarget._id}
+        onConfirm={async () => { if (deleteTarget) await deleteProduit(deleteTarget); }}
+      />
     </section>
   );
 }

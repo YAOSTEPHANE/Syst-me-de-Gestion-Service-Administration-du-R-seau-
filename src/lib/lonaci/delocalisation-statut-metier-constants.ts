@@ -1,4 +1,4 @@
-/** Statuts métier affichés (spec 6.3 — délocalisation). */
+/** Statuts métier affichés pour une délocalisation. */
 export const DELOCALISATION_STATUTS_METIER = [
   "EN_CONSTITUTION",
   "DOSSIER_COMPLET",
@@ -8,7 +8,7 @@ export const DELOCALISATION_STATUTS_METIER = [
 
 export type DelocalisationStatutMetier = (typeof DELOCALISATION_STATUTS_METIER)[number];
 
-/** Libellés affichés en UI (spec 6.3 — majuscules métier). */
+/** Libellés métier affichés en majuscules dans l’interface. */
 export const DELOCALISATION_STATUT_METIER_DISPLAY_LABELS: Record<DelocalisationStatutMetier, string> = {
   EN_CONSTITUTION: "EN CONSTITUTION",
   DOSSIER_COMPLET: "DOSSIER COMPLET",
@@ -16,7 +16,7 @@ export const DELOCALISATION_STATUT_METIER_DISPLAY_LABELS: Record<DelocalisationS
   DELOCALISATION_EFFECTIVE: "DÉLOCALISATION EFFECTIVE",
 };
 
-/** Descriptions spec 6.3. */
+/** Descriptions des statuts métier de délocalisation. */
 export const DELOCALISATION_STATUT_METIER_DESCRIPTIONS: Record<DelocalisationStatutMetier, string> = {
   EN_CONSTITUTION: "Dossier en cours — Documents manquants",
   DOSSIER_COMPLET: "Checklist complète — Prêt pour validation",
@@ -24,7 +24,7 @@ export const DELOCALISATION_STATUT_METIER_DESCRIPTIONS: Record<DelocalisationSta
   DELOCALISATION_EFFECTIVE: "Zone mise à jour — Fiche concessionnaire actualisée",
 };
 
-/** Liste ordonnée spec 6.3 pour affichage (tableau de bord, aide). */
+/** Liste ordonnée destinée au tableau de bord et à l’aide. */
 export const DELOCALISATION_STATUTS_SPEC_63 = DELOCALISATION_STATUTS_METIER.map((statut) => ({
   statut,
   label: DELOCALISATION_STATUT_METIER_DISPLAY_LABELS[statut],

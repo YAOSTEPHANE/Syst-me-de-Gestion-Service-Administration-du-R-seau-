@@ -1,4 +1,10 @@
 /* Tableau de bord — styles issus du mock HTML (préfixe lonaci-db-) */
+html:has(.lonaci-db-app),
+body:has(.lonaci-db-app) {
+  max-width: 100%;
+  overflow-x: clip;
+}
+
 .lonaci-db-app {
   --lonaci-bg-primary: #ffffff;
   --lonaci-bg-secondary: #f8fafc;
@@ -23,6 +29,8 @@
   background: #f1f5f9;
   color: var(--lonaci-text-primary);
   min-height: 100vh;
+  max-width: 100vw;
+  overflow-x: clip;
 }
 
 .lonaci-db-app *,
@@ -1146,13 +1154,18 @@ body.lonaci-db-no-scroll {
 .lonaci-db-content {
   flex: 1;
   padding: 20px 22px;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: clip;
 }
 
 .lonaci-shell-page-inner {
   width: 100%;
   max-width: 1120px;
+  min-width: 0;
   margin: 0 auto;
   font-size: 12px;
+  overflow-x: hidden;
 }
 
 .lonaci-db-kpi {
@@ -1987,166 +2000,6 @@ body.lonaci-db-no-scroll {
   font-size: 10px;
 }
 
-/* Bandeau agences — tableau de bord */
-.lonaci-db-agences-strip {
-  margin-bottom: 14px;
-  border-radius: 14px;
-  border: 0.5px solid #e2e8f0;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
-  padding: 14px 16px 16px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-
-.lonaci-db-agences-strip-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.lonaci-db-agences-strip-head-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-}
-
-.lonaci-db-agences-total-hint {
-  font-size: 9.5px;
-  color: #64748b;
-}
-
-.lonaci-db-agences-loading,
-.lonaci-db-agences-empty {
-  font-size: 10.5px;
-  margin: 0;
-}
-
-.lonaci-db-agences-track {
-  display: flex;
-  gap: 10px;
-  overflow-x: auto;
-  padding-bottom: 6px;
-  scroll-snap-type: x mandatory;
-  -webkit-overflow-scrolling: touch;
-}
-
-.lonaci-db-agence-card {
-  flex: 0 0 auto;
-  width: min(100%, 220px);
-  scroll-snap-align: start;
-  border-radius: 10px;
-  border: 0.5px solid #e2e8f0;
-  background: #fff;
-  padding: 10px 12px 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.lonaci-db-agence-card--inactive {
-  opacity: 0.72;
-  background: #f8fafc;
-}
-
-.lonaci-db-agence-card-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 6px;
-}
-
-.lonaci-db-agence-code {
-  margin: 0;
-  font-size: 12px;
-  font-weight: 700;
-  font-family: ui-monospace, monospace;
-  color: #0f172a;
-  letter-spacing: 0.02em;
-}
-
-.lonaci-db-agence-libelle {
-  margin: 2px 0 0;
-  font-size: 9.5px;
-  line-height: 1.35;
-  color: #64748b;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-
-.lonaci-db-agence-badge-inactive {
-  flex-shrink: 0;
-  font-size: 8px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #94a3b8;
-  border: 0.5px solid #e2e8f0;
-  border-radius: 4px;
-  padding: 2px 5px;
-}
-
-.lonaci-db-agence-metrics {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 4px;
-  text-align: center;
-}
-
-.lonaci-db-agence-metric-val {
-  display: block;
-  font-size: 12px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-}
-
-.lonaci-db-agence-metric-contract {
-  color: #1d4ed8;
-}
-.lonaci-db-agence-metric-caution {
-  color: #0d9488;
-}
-.lonaci-db-agence-metric-pdv {
-  color: #d97706;
-}
-
-.lonaci-db-agence-metric-total {
-  border-left: 0.5px solid #e2e8f0;
-  padding-left: 4px;
-}
-
-.lonaci-db-agence-metric-val-total {
-  display: block;
-  font-size: 12px;
-  font-weight: 800;
-  font-variant-numeric: tabular-nums;
-  color: #0f172a;
-}
-
-.lonaci-db-agence-metric-lbl {
-  display: block;
-  font-size: 7.5px;
-  color: #94a3b8;
-  margin-top: 1px;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.lonaci-db-agence-link {
-  font-size: 9.5px;
-  font-weight: 600;
-  color: #0e7490;
-  text-decoration: none;
-  margin-top: 2px;
-}
-
-.lonaci-db-agence-link:hover {
-  text-decoration: underline;
-}
-
 /* Bandeau notifications — tableau de bord */
 .lonaci-db-notifications {
   margin-bottom: 14px;
@@ -2336,25 +2189,18 @@ body.lonaci-db-no-scroll {
 }
 
 @media (max-width: 640px) {
-  .lonaci-db-agences-strip,
   .lonaci-db-notifications {
     padding: 12px;
   }
 
-  .lonaci-db-agences-strip-head,
   .lonaci-db-notifications-head {
     flex-direction: column;
     align-items: stretch;
     gap: 8px;
   }
 
-  .lonaci-db-agences-track,
   .lonaci-db-notifications-track {
     gap: 8px;
-  }
-
-  .lonaci-db-agence-card {
-    width: min(100%, 250px);
   }
 
   .lonaci-db-notification-card {
@@ -3531,56 +3377,7 @@ body.lonaci-db-no-scroll {
   background: #64748b;
 }
 
-/* Bandeaux agences & notifications — fond clair */
-.lonaci-db-dashboard--premium .lonaci-db-agences-strip {
-  background: var(--db-prem-surface);
-  border: 1px solid var(--db-prem-border);
-  box-shadow: 0 12px 40px -16px rgba(15, 23, 42, 0.1);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agences-total-hint {
-  color: #64748b;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-card {
-  background: #ffffff;
-  border-color: #e2e8f0;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-card--inactive {
-  background: #f8fafc;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-code {
-  color: #0f172a;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-libelle {
-  color: #64748b;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-metric-contract {
-  color: #0284c7;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-metric-caution {
-  color: #0d9488;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-metric-pdv {
-  color: #d97706;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-metric-val-total {
-  color: #0f172a;
-}
-
-.lonaci-db-dashboard--premium .lonaci-db-agence-link {
-  color: #0284c7;
-}
-
+/* Bandeau notifications — fond clair */
 .lonaci-db-dashboard--premium .lonaci-db-notifications {
   background: var(--db-prem-surface);
   border: 1px solid var(--db-prem-border);
@@ -3628,4 +3425,384 @@ body.lonaci-db-no-scroll {
 
 .lonaci-db-dashboard--premium .lonaci-db-notifications-footer {
   color: #64748b;
+}
+
+/* Shell institutionnel hybride : navigation bleu nuit, surfaces claires, accent LONACI. */
+.lonaci-db-app {
+  --lonaci-shell-navy: #081426;
+  --lonaci-shell-navy-soft: #10233d;
+  --lonaci-shell-orange: #f97316;
+}
+
+.lonaci-db-sidebar,
+.lonaci-db-mobile-drawer {
+  background: var(--lonaci-shell-navy);
+  border-color: rgba(255, 255, 255, 0.09);
+  color: #e2e8f0;
+}
+
+.lonaci-db-sidebar {
+  width: 248px;
+  padding: 0 12px 18px;
+  box-shadow: 8px 0 30px rgba(8, 20, 38, 0.08);
+}
+
+.lonaci-db-sidebar-brand,
+.lonaci-db-mobile-drawer-head {
+  border-color: rgba(255, 255, 255, 0.09);
+}
+
+.lonaci-db-sidebar-brand-inner {
+  min-width: 0;
+}
+
+.lonaci-db-sidebar .lonaci-ui-brand,
+.lonaci-db-mobile-drawer .lonaci-ui-brand {
+  min-width: 0;
+}
+
+.lonaci-db-sidebar .lonaci-ui-brand__monogram,
+.lonaci-db-mobile-drawer .lonaci-ui-brand__monogram {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  font-size: 18px;
+  background: var(--lonaci-shell-orange);
+}
+
+.lonaci-db-sidebar .lonaci-ui-brand__wordmark strong,
+.lonaci-db-mobile-drawer .lonaci-ui-brand__wordmark strong {
+  font-size: 15px;
+}
+
+.lonaci-db-sidebar .lonaci-ui-brand__wordmark small,
+.lonaci-db-mobile-drawer .lonaci-ui-brand__wordmark small {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.lonaci-db-sidebar-toggle {
+  width: 28px;
+  height: 28px;
+  border-color: rgba(249, 115, 22, 0.55);
+  background: rgba(249, 115, 22, 0.12);
+  color: #fdba74;
+  box-shadow: none;
+}
+
+.lonaci-db-sidebar-toggle:hover {
+  border-color: var(--lonaci-shell-orange);
+  background: var(--lonaci-shell-orange);
+  color: #081426;
+  box-shadow: none;
+}
+
+.lonaci-db-nav-search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  margin: 10px 4px 12px;
+}
+
+.lonaci-db-nav-search > svg {
+  position: absolute;
+  left: 10px;
+  color: #94a3b8;
+  pointer-events: none;
+}
+
+.lonaci-db-nav-search input {
+  width: 100%;
+  min-width: 0;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 9px;
+  padding: 0 10px 0 32px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #f8fafc;
+  font-size: 11px;
+  outline: none;
+}
+
+.lonaci-db-nav-search input::placeholder {
+  color: #64748b;
+}
+
+.lonaci-db-nav-search input:focus {
+  border-color: var(--lonaci-shell-orange);
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.14);
+}
+
+.lonaci-db-nav-section,
+.lonaci-db-nav-shortcuts-title {
+  color: #64748b;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.lonaci-db-nav-shortcuts {
+  margin: 0 4px 12px;
+}
+
+.lonaci-db-nav-shortcuts-title {
+  margin-bottom: 6px;
+}
+
+.lonaci-db-nav-shortcuts-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.lonaci-db-nav-shortcut {
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 3px 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: #cbd5e1;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.lonaci-db-nav-shortcut:hover,
+.lonaci-db-nav-shortcut--favorite {
+  border-color: rgba(249, 115, 22, 0.45);
+  color: #fdba74;
+  background: rgba(249, 115, 22, 0.09);
+}
+
+.lonaci-db-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.lonaci-db-nav-row > .lonaci-db-nav-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.lonaci-db-nav-item {
+  color: #cbd5e1;
+  padding: 8px 9px;
+  border-radius: 8px;
+}
+
+.lonaci-db-nav-item:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #ffffff;
+}
+
+.lonaci-db-nav-item svg,
+.lonaci-db-nav-item.lonaci-db-active svg {
+  color: currentColor;
+}
+
+.lonaci-db-nav-item.lonaci-db-active {
+  background: rgba(249, 115, 22, 0.14);
+  color: #fed7aa;
+  box-shadow: inset 3px 0 0 var(--lonaci-shell-orange);
+}
+
+.lonaci-db-nav-favorite {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.lonaci-db-nav-favorite:hover,
+.lonaci-db-nav-favorite[aria-pressed="true"] {
+  background: rgba(249, 115, 22, 0.1);
+  color: #fb923c;
+}
+
+.lonaci-db-nav-badge-orange {
+  background: rgba(249, 115, 22, 0.18);
+  color: #fdba74;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar {
+  width: 74px;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar .lonaci-ui-brand__wordmark {
+  display: none;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar-brand-inner {
+  padding-right: 0;
+  justify-content: center;
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar-toggle {
+  top: auto;
+  right: 50%;
+  bottom: -38px;
+  transform: translateX(50%);
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-sidebar-toggle:hover {
+  transform: translateX(50%);
+}
+
+.lonaci-db-sidebar-collapsed .lonaci-db-nav-row > .lonaci-db-nav-item {
+  flex: 1;
+}
+
+.lonaci-db-header {
+  min-height: 60px;
+  height: auto;
+  border-bottom: 1px solid #e2e8f0;
+  box-shadow: 0 3px 16px rgba(15, 23, 42, 0.04);
+}
+
+.lonaci-db-mobile-menu-btn,
+.lonaci-db-mobile-close-btn,
+.lonaci-db-notif-btn {
+  border-color: #e2e8f0;
+  background: #ffffff;
+  color: #475569;
+}
+
+.lonaci-db-mobile-menu-btn svg,
+.lonaci-db-mobile-close-btn svg,
+.lonaci-db-notif-btn svg {
+  color: currentColor;
+}
+
+.lonaci-db-mobile-menu-btn:hover,
+.lonaci-db-mobile-close-btn:hover,
+.lonaci-db-notif-btn:hover {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #ea580c;
+}
+
+.lonaci-db-shell-agence-trigger:focus-visible,
+.lonaci-db-avatar-btn:focus-visible,
+.lonaci-db-mobile-menu-btn:focus-visible,
+.lonaci-db-mobile-close-btn:focus-visible,
+.lonaci-db-notif-btn:focus-visible,
+.lonaci-db-nav-favorite:focus-visible,
+.lonaci-db-nav-item:focus-visible {
+  outline: 2px solid var(--lonaci-shell-orange);
+  outline-offset: 2px;
+}
+
+.lonaci-db-shell-agence-option {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 3px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.lonaci-db-shell-agence-option:focus-visible {
+  outline: 2px solid var(--lonaci-shell-orange);
+  outline-offset: -2px;
+}
+
+.lonaci-db-shell-agence-option--selected {
+  border-color: #fed7aa;
+  background: #fff7ed;
+  color: #ea580c;
+  box-shadow: none;
+}
+
+.lonaci-db-user-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.lonaci-db-mobile-drawer {
+  width: min(310px, calc(100vw - 24px));
+  box-shadow: 12px 0 40px rgba(2, 6, 23, 0.34);
+}
+
+.lonaci-db-mobile-close-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.12);
+  color: #e2e8f0;
+}
+
+@media (max-width: 1200px) {
+  .lonaci-db-sidebar {
+    width: 224px;
+  }
+}
+
+@media (max-width: 768px) {
+  .lonaci-db-header {
+    min-height: 58px;
+    flex-wrap: nowrap;
+  }
+
+  .lonaci-db-header-user-meta {
+    display: none;
+  }
+
+  .lonaci-db-shell-agence-filter {
+    max-width: 180px;
+  }
+}
+
+@media (max-width: 520px) {
+  .lonaci-db-header {
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .lonaci-db-header-grow {
+    flex: 1 1 72px;
+  }
+
+  .lonaci-db-header-sub {
+    display: none;
+  }
+
+  .lonaci-db-header-title {
+    overflow: hidden;
+    font-size: 12px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .lonaci-db-shell-agence-filter {
+    flex: 0 1 118px;
+    max-width: 118px;
+  }
+
+  .lonaci-db-shell-agence-trigger {
+    font-size: 10px;
+  }
+
+  .lonaci-db-content {
+    padding: 10px;
+  }
+}
+
+@media (max-width: 360px) {
+  .lonaci-db-header-grow {
+    display: none;
+  }
+
+  .lonaci-db-shell-agence-filter {
+    margin-left: auto;
+  }
 }

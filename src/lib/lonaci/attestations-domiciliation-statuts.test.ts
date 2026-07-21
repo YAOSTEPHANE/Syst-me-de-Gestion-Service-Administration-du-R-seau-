@@ -6,7 +6,7 @@ import {
   ATTESTATION_DOMICILIATION_STATUTS_SPEC_44,
 } from "@/lib/lonaci/constants";
 
-describe("statuts attestation spec 4.4", () => {
+describe("statuts de traitement des attestations", () => {
   it("expose 5 statuts avec libellés et descriptions", () => {
     expect(ATTESTATION_DOMICILIATION_STATUTS_SPEC_44).toHaveLength(5);
     expect(ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE).toBe("EN COURS");

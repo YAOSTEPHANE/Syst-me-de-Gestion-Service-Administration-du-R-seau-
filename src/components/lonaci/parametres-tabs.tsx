@@ -1,12 +1,23 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Surface } from "@/components/lonaci/ui/surface";
+import {
+  BookOpenCheck,
+  LockKeyhole,
+  SlidersHorizontal,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 
 type TabDef = {
   id: string;
   label: string;
   content: ReactNode;
+  icon: LucideIcon;
 };
 
 const ACTIVE_TAB_STORAGE_KEY = "lonaci:parametres:active-tab";
@@ -36,22 +47,45 @@ export default function ParametresTabs({
   initialTabId?: string | null;
 }) {
   const tabs = useMemo<TabDef[]>(() => {
-    const items: TabDef[] = [{ id: "mon-compte", label: "Mon compte", content: comptePanel }];
+    const items: TabDef[] = [
+      { id: "mon-compte", label: "Mon compte", content: comptePanel, icon: UserRound },
+    ];
 
     if (utilisateursPanel) {
-      items.push({ id: "utilisateurs", label: "Utilisateurs", content: utilisateursPanel });
+      items.push({
+        id: "utilisateurs",
+        label: "Utilisateurs",
+        content: utilisateursPanel,
+        icon: UsersRound,
+      });
     }
     if (referentielsPanel) {
-      items.push({ id: "referentiels", label: "Référentiels", content: referentielsPanel });
+      items.push({
+        id: "referentiels",
+        label: "Référentiels",
+        content: referentielsPanel,
+        icon: BookOpenCheck,
+      });
     }
     if (supervisionPanel) {
-      items.push({ id: "supervision", label: "Supervision", content: supervisionPanel });
+      items.push({
+        id: "supervision",
+        label: "Supervision",
+        content: supervisionPanel,
+        icon: SlidersHorizontal,
+      });
     }
     if (restrictionPanel) {
-      items.push({ id: "restriction", label: "Accès", content: restrictionPanel });
+      items.push({
+        id: "restriction",
+        label: "Accès",
+        content: restrictionPanel,
+        icon: LockKeyhole,
+      });
     }
     return items;
   }, [comptePanel, utilisateursPanel, referentielsPanel, supervisionPanel, restrictionPanel]);
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
 
   /** Toujours identique SSR / premier rendu client — pas de localStorage ici (sinon erreur d’hydratation). */
   const [activeTabId, setActiveTabId] = useState(() => {
@@ -98,6 +132,12 @@ export default function ParametresTabs({
     if (typeof window === "undefined") return;
     window.localStorage.setItem(ACTIVE_TAB_STORAGE_KEY, activeTabId);
   }, [activeTabId]);
+
+  useEffect(() => {
+    if (initialTabId && VALID_TAB_IDS.has(initialTabId) && tabs.some((tab) => tab.id === initialTabId)) {
+      setActiveTabId(initialTabId);
+    }
+  }, [initialTabId, tabs]);
 
   useEffect(() => {
     let cancelled = false;
@@ -149,45 +189,95 @@ export default function ParametresTabs({
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0];
 
+  function selectTab(tabId: string) {
+    setActiveTabId(tabId);
+    const url = new URL(window.location.href);
+    url.searchParams.set("tab", tabId);
+    window.history.replaceState(window.history.state, "", url);
+  }
+
+  function onTabKeyDown(event: KeyboardEvent<HTMLButtonElement>, currentIndex: number) {
+    let nextIndex: number | null = null;
+
+    if (event.key === "ArrowRight") nextIndex = (currentIndex + 1) % tabs.length;
+    if (event.key === "ArrowLeft") nextIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = tabs.length - 1;
+
+    if (nextIndex == null) return;
+    event.preventDefault();
+    const nextTab = tabs[nextIndex];
+    if (!nextTab) return;
+    selectTab(nextTab.id);
+    tabRefs.current[nextIndex]?.focus();
+  }
+
   return (
-    <div className="space-y-4">
-      <div className="rounded-2xl border border-slate-200 bg-white/80 p-2 shadow-sm">
-        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Sections des paramètres">
-          {tabs.map((tab) => {
+    <div className="space-y-5">
+      <Surface
+        padding="sm"
+        elevated
+        className="overflow-x-auto border-slate-200 bg-white [scrollbar-width:thin]"
+      >
+        <div
+          className="flex min-w-max gap-1.5"
+          role="tablist"
+          aria-label="Sections des paramètres"
+          aria-orientation="horizontal"
+        >
+          {tabs.map((tab, index) => {
             const isActive = tab.id === activeTab.id;
+            const Icon = tab.icon;
             return (
               <button
                 key={tab.id}
+                ref={(element) => {
+                  tabRefs.current[index] = element;
+                }}
                 type="button"
                 role="tab"
+                id={`tab-${tab.id}`}
                 aria-controls={`tabpanel-${tab.id}`}
-                onClick={() => setActiveTabId(tab.id)}
-                className={`rounded-xl px-3 py-1.5 text-xs font-medium transition ${
+                aria-selected={isActive}
+                tabIndex={isActive ? 0 : -1}
+                onClick={() => selectTab(tab.id)}
+                onKeyDown={(event) => onTabKeyDown(event, index)}
+                className={`group relative inline-flex min-h-11 items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
                   isActive
-                    ? "border border-sky-300 bg-sky-50 text-sky-800 shadow-sm"
-                    : "border border-transparent bg-slate-100/70 text-slate-700 hover:bg-slate-200/70"
+                    ? "bg-[#102a43] text-white shadow-md"
+                    : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
                 }`}
               >
-                <span className="inline-flex items-center gap-1.5">
-                  {tab.label}
-                  {tab.id === "supervision" && supervisionOpenCount != null ? (
-                    <span className="rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-semibold text-rose-700">
-                      {supervisionOpenCount}
-                    </span>
-                  ) : null}
-                  {tab.id === "utilisateurs" && usersTotalCount != null ? (
-                    <span className="rounded-full bg-indigo-100 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-700">
-                      {usersTotalCount}
-                    </span>
-                  ) : null}
-                </span>
+                <Icon
+                  size={17}
+                  aria-hidden="true"
+                  className={isActive ? "text-orange-300" : "text-slate-400 group-hover:text-orange-600"}
+                />
+                {tab.label}
+                {tab.id === "supervision" && supervisionOpenCount != null ? (
+                  <Badge tone={supervisionOpenCount > 0 ? "danger" : "neutral"}>
+                    {supervisionOpenCount}
+                  </Badge>
+                ) : null}
+                {tab.id === "utilisateurs" && usersTotalCount != null ? (
+                  <Badge tone={isActive ? "warning" : "info"}>{usersTotalCount}</Badge>
+                ) : null}
+                {isActive ? (
+                  <span className="absolute inset-x-3 -bottom-1 h-0.5 rounded-full bg-orange-400" />
+                ) : null}
               </button>
             );
           })}
         </div>
-      </div>
+      </Surface>
 
-      <div role="tabpanel" id={`tabpanel-${activeTab.id}`} aria-live="polite">
+      <div
+        role="tabpanel"
+        id={`tabpanel-${activeTab.id}`}
+        aria-labelledby={`tab-${activeTab.id}`}
+        tabIndex={0}
+        className="outline-none focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-4"
+      >
         {activeTab.content}
       </div>
     </div>

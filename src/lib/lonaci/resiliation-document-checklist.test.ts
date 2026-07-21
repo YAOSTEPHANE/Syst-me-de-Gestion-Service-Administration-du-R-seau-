@@ -6,7 +6,7 @@ import {
   mergeResiliationChecklistTemplate,
 } from "@/lib/lonaci/resiliation-document-checklist";
 
-describe("résiliation document checklist spec 7.1", () => {
+describe("liste des pièces de résiliation", () => {
   it("inclut les 5 pièces communes", () => {
     expect(RESILIATION_CHECKLIST_ITEMS_SPEC_71).toHaveLength(5);
     expect(RESILIATION_CHECKLIST_ITEMS_SPEC_71.map((i) => i.id)).toContain("resiliation_demande_signee");

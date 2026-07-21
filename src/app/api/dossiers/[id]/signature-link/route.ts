@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { createDossierSignatureLink } from "@/lib/lonaci/dossier-signatures";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -12,6 +13,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
+  if (!(await findVisibleDossierById(id, auth.user))) {
+    return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+  }
   try {
     const link = await createDossierSignatureLink({
       dossierId: id,

@@ -2,6 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 
+import { deriveSuccessionVisibilityState } from "@/lib/auth/workflow-visibility";
 import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
 import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import { appendAuditLog } from "@/lib/lonaci/audit";
@@ -205,33 +206,33 @@ export async function dispatchAutomaticSuccessionStaleAlerts(): Promise<Successi
     const message = [
       `Succession ${row.reference} — aucune action depuis ${evalResult.daysInactive} jour(s) (seuil ${thresholdDays} j. après déclaration).`,
       `Déclaration il y a ${evalResult.daysSinceDeclaration} j. · prochaine étape : ${nextLabel}.`,
-      "Ouvrez le dossier pour faire avancer le workflow §10.2.",
+      "Ouvrez le dossier pour faire avancer le workflow.",
     ].join(" ");
 
-    await notifyRoleTargets("CHEF_SECTION", "Succession sans action (30 j.)", message, {
-      kind: "SUCCESSION_STALE_30D",
-      caseId,
-      reference: row.reference,
-      daysInactive: evalResult.daysInactive,
-      daysSinceDeclaration: evalResult.daysSinceDeclaration,
-      thresholdDays,
-    });
-    await notifyRoleTargets("ASSIST_CDS", "Succession sans action (30 j.)", message, {
-      kind: "SUCCESSION_STALE_30D",
-      caseId,
-      reference: row.reference,
-      daysInactive: evalResult.daysInactive,
-      daysSinceDeclaration: evalResult.daysSinceDeclaration,
-      thresholdDays,
-    });
-    await notifyRoleTargets("CHEF_SERVICE", "Succession sans action (30 j.)", message, {
-      kind: "SUCCESSION_STALE_30D",
-      caseId,
-      reference: row.reference,
-      daysInactive: evalResult.daysInactive,
-      daysSinceDeclaration: evalResult.daysSinceDeclaration,
-      thresholdDays,
-    });
+    const visibilityState = deriveSuccessionVisibilityState(row);
+    const targetRole =
+      visibilityState === "EN_ATTENTE_N1"
+        ? "CHEF_SECTION"
+        : visibilityState === "EN_ATTENTE_N2"
+          ? "ASSIST_CDS"
+          : visibilityState === "EN_ATTENTE_FINALISATION"
+            ? "CHEF_SERVICE"
+            : null;
+    if (!targetRole) continue;
+    await notifyRoleTargets(
+      targetRole,
+      "Succession sans action (30 j.)",
+      message,
+      {
+        kind: "SUCCESSION_STALE_30D",
+        caseId,
+        reference: row.reference,
+        daysInactive: evalResult.daysInactive,
+        daysSinceDeclaration: evalResult.daysSinceDeclaration,
+        thresholdDays,
+      },
+      row.agenceId,
+    );
 
     await appendAuditLog({
       entityType: "SUCCESSION",

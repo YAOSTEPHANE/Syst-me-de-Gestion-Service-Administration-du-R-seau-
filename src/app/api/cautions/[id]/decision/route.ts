@@ -71,6 +71,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         "CAUTION_PAYMENT_REFERENCE_REQUISE",
       );
     }
+    if (code === "ROLE_FORBIDDEN" || code === "CAUTION_WRONG_STATUS") {
+      return NextResponse.json({ message: "Transition non autorisee." }, { status: 403 });
+    }
     return serverError("Decision caution impossible.", "CAUTION_DECISION_FAILED");
   }
 }

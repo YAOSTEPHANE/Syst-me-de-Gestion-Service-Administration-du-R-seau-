@@ -2,6 +2,17 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { BellRing, Check, RefreshCw } from "lucide-react";
+
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
+import {
+  emitNotificationRead,
+  NOTIFICATION_READ_EVENT,
+} from "@/lib/lonaci/notification-client-events";
 
 interface NotificationItem {
   id: string;
@@ -14,7 +25,7 @@ interface NotificationItem {
 }
 
 async function fetchNotifications(): Promise<{ items: NotificationItem[]; total: number }> {
-  const response = await fetch("/api/notifications?page=1&pageSize=12", {
+  const response = await fetch("/api/notifications?page=1&pageSize=12&unreadOnly=true", {
     credentials: "include",
     cache: "no-store",
   });
@@ -56,6 +67,16 @@ export default function DashboardNotifications() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    const handleNotificationRead = (event: Event) => {
+      const notificationId = (event as CustomEvent<string>).detail;
+      setItems((current) => current.filter((item) => item.id !== notificationId));
+      setTotal((current) => Math.max(0, current - 1));
+    };
+    window.addEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead);
+    return () => window.removeEventListener(NOTIFICATION_READ_EVENT, handleNotificationRead);
+  }, []);
+
   const markRead = useCallback(async (id: string) => {
     setMarkReadError(null);
     const response = await fetch(`/api/notifications/${id}/read`, {
@@ -66,48 +87,40 @@ export default function DashboardNotifications() {
       setMarkReadError("Impossible de marquer comme lu. Réessayez.");
       return;
     }
-    setItems((current) =>
-      current.map((item) =>
-        item.id === id ? { ...item, readAt: new Date().toISOString() } : item,
-      ),
-    );
+    emitNotificationRead(id);
   }, []);
 
   const unreadCount = useMemo(() => items.filter((i) => i.readAt === null).length, [items]);
 
   return (
-    <section className="lonaci-db-notifications" aria-labelledby="dashboard-notifications-title">
-      <div className="lonaci-db-notifications-head">
-        <div className="lonaci-db-notifications-head-text">
-          <h2 id="dashboard-notifications-title" className="lonaci-db-section-title">
-            Notifications
-          </h2>
-          <p className="lonaci-db-section-subtitle">Messages système et rappels métier</p>
-        </div>
-        <div className="lonaci-db-notifications-actions">
-          {unreadCount > 0 ? (
-            <span className="lonaci-db-badge lonaci-db-badge-blue">{unreadCount} non lue{unreadCount > 1 ? "s" : ""}</span>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => void load()}
-            disabled={loading}
-            className="lonaci-db-notifications-refresh"
-          >
-            {loading ? "…" : "Actualiser"}
-          </button>
-        </div>
-      </div>
+    <Surface elevated className="lonaci-db-notifications" aria-labelledby="dashboard-notifications-title">
+      <SectionHeader
+        title={<span id="dashboard-notifications-title">Notifications</span>}
+        description="Messages système et rappels métier"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {unreadCount > 0 ? (
+              <Badge tone="brand">{unreadCount} non lue{unreadCount > 1 ? "s" : ""}</Badge>
+            ) : null}
+            <Button variant="secondary" size="sm" leadingIcon={RefreshCw} loading={loading} onClick={() => void load()}>
+              Actualiser
+            </Button>
+          </div>
+        }
+      />
 
-      {error ? <p className="lonaci-db-error-text lonaci-db-notifications-error">{error}</p> : null}
-      {markReadError ? <p className="lonaci-db-error-text lonaci-db-notifications-error">{markReadError}</p> : null}
+      {error ? <FeedbackState tone="danger" title="Notifications indisponibles" description={error} /> : null}
+      {markReadError ? <FeedbackState tone="danger" title="Mise à jour impossible" description={markReadError} /> : null}
 
       {loading && items.length === 0 && !error ? (
-        <p className="lonaci-db-muted lonaci-db-notifications-loading">Chargement des notifications…</p>
+        <Skeleton lines={3} />
       ) : null}
 
       {!loading && !error && items.length === 0 ? (
-        <p className="lonaci-db-muted lonaci-db-notifications-empty">Aucune notification pour le moment.</p>
+        <FeedbackState
+          title="Aucune notification"
+          description="Les nouveaux messages système et rappels métier apparaîtront ici."
+        />
       ) : null}
 
       {items.length > 0 ? (
@@ -129,7 +142,7 @@ export default function DashboardNotifications() {
                   ) : (
                     <p className="lonaci-db-notification-title">{item.title}</p>
                   )}
-                  {unread ? <span className="lonaci-db-notification-dot" aria-hidden /> : null}
+                  {unread ? <BellRing size={16} className="text-orange-600" aria-label="Non lue" /> : null}
                 </div>
                 <p className="lonaci-db-notification-message">{item.message}</p>
                 <div className="lonaci-db-notification-meta">
@@ -142,15 +155,16 @@ export default function DashboardNotifications() {
                     })}
                   </time>
                   {item.readAt ? (
-                    <span className="lonaci-db-notification-read">Lu</span>
+                    <Badge tone="success"><Check size={14} aria-hidden /> Lu</Badge>
                   ) : (
-                    <button
-                      type="button"
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      leadingIcon={Check}
                       onClick={() => void markRead(item.id)}
-                      className="lonaci-db-notification-mark"
                     >
                       Marquer lu
-                    </button>
+                    </Button>
                   )}
                 </div>
               </article>
@@ -161,10 +175,9 @@ export default function DashboardNotifications() {
 
       {total > items.length ? (
         <p className="lonaci-db-notifications-footer">
-          {total} au total — affichage des {items.length} plus récentes. Utilisez la cloche en haut à droite pour la
-          liste complète.
+          {total} non lues au total — affichage des {items.length} plus récentes.
         </p>
       ) : null}
-    </section>
+    </Surface>
   );
 }

@@ -1,15 +1,10 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 import QRCode from "qrcode";
 
 import { sendSmtpEmail } from "@/lib/email/smtp";
-import {
-  CAUTION_FICHE_DEFINITIVE_TITLE,
-  CAUTION_FICHE_PAYEE_MENTION,
-} from "@/lib/lonaci/caution-fiche-definitive-constants";
-import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { CAUTION_FICHE_DEFINITIVE_TITLE } from "@/lib/lonaci/caution-fiche-definitive-constants";
 import {
   type CautionEncaissementMode,
   type CautionPaymentMode,
@@ -21,6 +16,7 @@ import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import type { CautionDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
+import { renderPremiumCautionFicheDefinitivePdf } from "@/lib/pdf/caution-fiche-definitive";
 
 export {
   CAUTION_FICHE_DEFINITIVE_TITLE,
@@ -220,79 +216,9 @@ export async function renderCautionFicheDefinitiveQrPng(view: CautionFicheDefini
   return QRCode.toBuffer(payload, { type: "png", margin: 1, width: 180 });
 }
 
-function drawLonaciPdfHeader(doc: InstanceType<typeof PDFDocument>) {
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const x = doc.page.margins.left;
-  doc.save();
-  doc.rect(x, doc.y, w, 52).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44, { continued: false });
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, doc.y + 2);
-  doc.fontSize(7).text("Document officiel — module Cautions", x + 14, doc.y + 2);
-  doc.restore();
-  doc.moveDown(3.2);
-  doc.fillColor("#111827").fontSize(13).text(CAUTION_FICHE_DEFINITIVE_TITLE, { align: "center" });
-  doc.moveDown(0.4);
-  doc.fontSize(11).fillColor("#047857").text(CAUTION_FICHE_PAYEE_MENTION, { align: "center", underline: true });
-  doc.moveDown(0.8);
-}
-
-function drawFieldRow(doc: InstanceType<typeof PDFDocument>, label: string, value: string) {
-  const y = doc.y;
-  doc.fontSize(9).fillColor("#6b7280").text(label, doc.page.margins.left, y, { width: 160 });
-  doc.fontSize(10).fillColor("#111827").text(value, doc.page.margins.left + 165, y, {
-    width: doc.page.width - doc.page.margins.right - doc.page.margins.left - 170,
-    align: "right",
-  });
-  doc.moveDown(0.55);
-}
-
 export async function renderCautionFicheDefinitivePdf(view: CautionFicheDefinitiveView): Promise<Buffer> {
   const qrPng = await renderCautionFicheDefinitiveQrPng(view);
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 48, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    drawLonaciPdfHeader(doc);
-
-    doc.fontSize(9).fillColor("#374151").text(`Réf. document : ${view.numeroFicheDefinitive}`, { align: "center" });
-    doc.moveDown(0.8);
-
-    drawFieldRow(doc, "Identité", view.identiteDetail);
-    if (view.clientCode) drawFieldRow(doc, "Code client", view.clientCode);
-    if (view.contratId) drawFieldRow(doc, "Contrat", view.contratId);
-    drawFieldRow(doc, "Produit", view.produitLibelle ? `${view.produitCode} — ${view.produitLibelle}` : view.produitCode);
-    drawFieldRow(doc, CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL, view.agenceLabel);
-    drawFieldRow(doc, "Montant payé (FCFA)", view.montantFCFA.toLocaleString("fr-FR"));
-    drawFieldRow(
-      doc,
-      "Date de paiement",
-      new Date(view.datePaiement).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" }),
-    );
-    drawFieldRow(doc, "Mode de paiement", view.modeLibelle);
-    drawFieldRow(doc, "Référence de paiement", view.paymentReference);
-    if (view.numeroFicheProvisoire) {
-      drawFieldRow(doc, "Fiche provisoire (FPC)", view.numeroFicheProvisoire);
-    }
-
-    if (qrPng) {
-      doc.moveDown(0.6);
-      const qrX = doc.page.width - doc.page.margins.right - 100;
-      const qrY = doc.y;
-      doc.image(qrPng, qrX, qrY, { width: 90 });
-      doc.fontSize(7).fillColor("#6b7280").text("Vérification QR", qrX, qrY + 94, { width: 90, align: "center" });
-    }
-
-    doc.moveDown(2);
-    doc.fontSize(8).fillColor("#6b7280").text(
-      "Ce document atteste le règlement de la caution. La référence de paiement est unique et obligatoire pour tout rapprochement comptable.",
-      { align: "justify" },
-    );
-
-    doc.end();
-  });
+  return renderPremiumCautionFicheDefinitivePdf(view, qrPng);
 }
 
 export async function sendCautionFicheDefinitiveEmail(

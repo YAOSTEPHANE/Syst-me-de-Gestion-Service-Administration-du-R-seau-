@@ -2,9 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
-  findBancarisationRequestById,
   sanitizeBancarisationRequestPublic,
   validateBancarisationRequest,
 } from "@/lib/lonaci/bancarisation";
@@ -29,16 +27,6 @@ export async function POST(request: NextRequest, context: RouteContext) {
   });
   if ("error" in auth) return auth.error;
   const { id } = await context.params;
-
-  const reqDoc = await findBancarisationRequestById(id);
-  if (!reqDoc) {
-    return NextResponse.json({ message: "Demande introuvable." }, { status: 404 });
-  }
-
-  const concessionnaire = await findConcessionnaireById(reqDoc.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    return NextResponse.json({ message: "Concessionnaire introuvable." }, { status: 404 });
-  }
 
   try {
     const updated = await validateBancarisationRequest({

@@ -1,7 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Check,
+  Clipboard,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
 
+import { Badge, StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { canRole } from "@/lib/auth/rbac";
 import {
   CLIENT_CODE_PREFIX,
@@ -22,6 +40,7 @@ import {
   computeChecklistComplet,
   mergeProductChecklistTemplates,
 } from "@/lib/lonaci/produit-document-checklist";
+import { notify } from "@/lib/toast";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 
 type ListItem = {
@@ -120,13 +139,20 @@ function libelleAgenceAvecZone(a: AgenceRef): string {
   return zone ? `${base} (${zone})` : base;
 }
 
-const STATUT_TOKENS: Record<string, string> = {
-  EN_ATTENTE_N1: "border-sky-200 bg-sky-50 text-sky-900",
-  REJETE: "border-rose-200 bg-rose-50 text-rose-900",
-  DOSSIER_EN_COURS: "border-amber-200 bg-amber-50 text-amber-950",
-  ACTIF: "border-emerald-200 bg-emerald-50 text-emerald-900",
-  INACTIF: "border-slate-300 bg-slate-100 text-slate-700",
+const CLIENT_STATUS_TONES: Record<string, Tone> = {
+  EN_ATTENTE_N1: "info",
+  REJETE: "danger",
+  DOSSIER_EN_COURS: "warning",
+  ACTIF: "success",
+  INACTIF: "neutral",
 };
+
+type ClientConfirmation =
+  | { kind: "deactivate"; id: string; code: string }
+  | { kind: "validate"; id: string; code: string }
+  | { kind: "resubmit"; id: string; code: string };
+
+type ClientRejection = { id: string; code: string };
 
 export default function ClientsPanel() {
   const [items, setItems] = useState<ListItem[]>([]);
@@ -145,6 +171,10 @@ export default function ClientsPanel() {
   const [clientChecklist, setClientChecklist] = useState<DossierDocumentChecklistPayload | null>(null);
   const [meRole, setMeRole] = useState<string>("");
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<ClientConfirmation | null>(null);
+  const [rejection, setRejection] = useState<ClientRejection | null>(null);
+  const [rejectionMotif, setRejectionMotif] = useState("");
+  const [rejectionError, setRejectionError] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -217,59 +247,14 @@ export default function ClientsPanel() {
       if (filterCategorie) params.set("categorie", filterCategorie);
       if (filterAgence) params.set("agenceId", filterAgence);
       const res = await fetch(`/api/clients?${params}`, { credentials: "include", cache: "no-store" });
-      // #region agent log
-      fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-        body: JSON.stringify({
-          sessionId: "669066",
-          hypothesisId: "H3",
-          location: "clients-panel.tsx:load",
-          message: "clients panel fetch /api/clients response meta",
-          data: { ok: res.ok, status: res.status },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Chargement impossible");
       }
       const data = (await res.json()) as { items: ListItem[]; total: number };
-      // #region agent log
-      fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-        body: JSON.stringify({
-          sessionId: "669066",
-          hypothesisId: "H3",
-          location: "clients-panel.tsx:load",
-          message: "clients panel parsed JSON",
-          data: {
-            total: data.total ?? null,
-            itemsLen: Array.isArray(data.items) ? data.items.length : null,
-          },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setItems(data.items ?? []);
       setTotal(data.total ?? 0);
     } catch (e) {
-      // #region agent log
-      fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-        body: JSON.stringify({
-          sessionId: "669066",
-          hypothesisId: "H3",
-          location: "clients-panel.tsx:load",
-          message: "clients panel load error",
-          data: { err: e instanceof Error ? e.message : String(e) },
-          timestamp: Date.now(),
-        }),
-      }).catch(() => {});
-      // #endregion
       setError(e instanceof Error ? e.message : "Impossible de charger les clients.");
     } finally {
       setLoading(false);
@@ -472,30 +457,34 @@ export default function ClientsPanel() {
       setModalOpen(false);
       resetForm();
       await load();
+      notify.success("Client mis à jour.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : editingId ? "Enregistrement impossible." : "Création impossible.");
+      if (editingId) {
+        notify.error(err, "Enregistrement impossible.");
+      } else {
+        setError(err instanceof Error ? err.message : "Création impossible.");
+      }
     } finally {
       setBusyId(null);
     }
   }
 
   async function deactivate(id: string, code: string) {
-    if (!window.confirm(`Désactiver le client ${code} ?`)) return;
     setBusyId(id);
     setError(null);
     try {
       const res = await fetch(`/api/clients/${id}`, { method: "DELETE", credentials: "include" });
       if (!res.ok) throw new Error();
       await load();
-    } catch {
-      setError("Désactivation impossible.");
+      notify.success(`Client ${code} désactivé.`);
+    } catch (error) {
+      notify.error(error, "Désactivation impossible.");
     } finally {
       setBusyId(null);
     }
   }
 
   async function validateClientN1(id: string, code: string) {
-    if (!window.confirm(`Valider la création du client ${code} (N1 — Chef de section) ?`)) return;
     setBusyId(id);
     setError(null);
     try {
@@ -508,19 +497,15 @@ export default function ClientsPanel() {
         throw new Error(body?.message ?? "Validation N1 impossible");
       }
       await load();
+      notify.success(`Client ${code} validé au niveau N1.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Validation N1 impossible.");
+      notify.error(e, "Validation N1 impossible.");
     } finally {
       setBusyId(null);
     }
   }
 
-  async function rejectClientN1(id: string, code: string) {
-    const motif = window.prompt(`Motif de rejet pour le client ${code} :`);
-    if (!motif || motif.trim().length < 3) {
-      if (motif !== null) setError("Motif de rejet requis (3 caractères minimum).");
-      return;
-    }
+  async function rejectClientN1(id: string, code: string, motif: string) {
     setBusyId(id);
     setError(null);
     try {
@@ -535,15 +520,29 @@ export default function ClientsPanel() {
         throw new Error(body?.message ?? "Rejet impossible");
       }
       await load();
+      notify.success(`Client ${code} rejeté.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Rejet impossible.");
+      notify.error(e, "Rejet impossible.");
     } finally {
       setBusyId(null);
     }
   }
 
+  async function confirmClientRejection() {
+    if (!rejection) return;
+    const motif = rejectionMotif.trim();
+    if (motif.length < 3) {
+      setRejectionError("Motif de rejet requis (3 caractères minimum).");
+      return;
+    }
+    const current = rejection;
+    await rejectClientN1(current.id, current.code, motif);
+    setRejection(null);
+    setRejectionMotif("");
+    setRejectionError(null);
+  }
+
   async function resubmitClient(id: string, code: string) {
-    if (!window.confirm(`Resoumettre le client ${code} pour validation N1 ?`)) return;
     setBusyId(id);
     setError(null);
     try {
@@ -556,8 +555,9 @@ export default function ClientsPanel() {
         throw new Error(body?.message ?? "Resoumission impossible");
       }
       await load();
+      notify.success(`Client ${code} resoumis pour validation N1.`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Resoumission impossible.");
+      notify.error(e, "Resoumission impossible.");
     } finally {
       setBusyId(null);
     }
@@ -585,6 +585,82 @@ export default function ClientsPanel() {
         return p ? p.code : c;
       })
       .join(", ");
+  }
+
+  async function confirmClientAction() {
+    if (!confirmation) return;
+    const current = confirmation;
+    if (current.kind === "deactivate") {
+      await deactivate(current.id, current.code);
+    } else if (current.kind === "validate") {
+      await validateClientN1(current.id, current.code);
+    } else {
+      await resubmitClient(current.id, current.code);
+    }
+    setConfirmation(null);
+  }
+
+  function clientActions(row: ListItem, mobile = false) {
+    return (
+      <div className={`flex flex-wrap gap-2 ${mobile ? "" : "justify-end"}`}>
+        {row.statut === "EN_ATTENTE_N1" && canValidateN1 ? (
+          <Button
+            size="sm"
+            leadingIcon={Check}
+            disabled={busyId === row.id}
+            onClick={() => setConfirmation({ kind: "validate", id: row.id, code: row.code })}
+          >
+            Valider N1
+          </Button>
+        ) : null}
+        {row.statut === "EN_ATTENTE_N1" && canRejectN1 ? (
+          <Button
+            size="sm"
+            variant="danger"
+            leadingIcon={X}
+            disabled={busyId === row.id}
+            onClick={() => {
+              setRejection({ id: row.id, code: row.code });
+              setRejectionMotif("");
+              setRejectionError(null);
+            }}
+          >
+            Rejeter
+          </Button>
+        ) : null}
+        {row.statut === "REJETE" ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            leadingIcon={Send}
+            disabled={busyId === row.id}
+            onClick={() => setConfirmation({ kind: "resubmit", id: row.id, code: row.code })}
+          >
+            Resoumettre
+          </Button>
+        ) : null}
+        <Button
+          size="sm"
+          variant="secondary"
+          leadingIcon={Pencil}
+          disabled={busyId === row.id}
+          onClick={() => void openEdit(row.id)}
+        >
+          Modifier
+        </Button>
+        {canDeactivate ? (
+          <Button
+            size="sm"
+            variant="danger"
+            leadingIcon={Trash2}
+            disabled={busyId === row.id || row.statut === "INACTIF"}
+            onClick={() => setConfirmation({ kind: "deactivate", id: row.id, code: row.code })}
+          >
+            Désactiver
+          </Button>
+        ) : null}
+      </div>
+    );
   }
 
   const produitsAutorisesFields = (
@@ -648,42 +724,37 @@ export default function ClientsPanel() {
 
   return (
     <div className="space-y-4">
-      <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold text-slate-900">Clients</h2>
-            <p className="mt-1 text-sm text-slate-600">
-              Référentiel des comptes clients et tiers (distinct des concessionnaires PDV). À la création, saisissez un
-              identifiant unique par zone ({CLIENT_CODE_PREFIX}-AGENCE-…, ex. {CLIENT_CODE_PREFIX}-EDITEC-000042) — à
-              communiquer au client pour les cautions et le suivi.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => openCreate()}
-            className="rounded-lg border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-          >
+      <PageHeader
+        eyebrow="Référentiel"
+        title="Clients"
+        description={`Comptes clients et tiers, distincts des concessionnaires PDV. Identifiant unique par zone : ${CLIENT_CODE_PREFIX}-AGENCE-….`}
+        actions={
+          <Button leadingIcon={Plus} onClick={openCreate}>
             Nouveau client
-          </button>
-        </div>
-      </header>
+          </Button>
+        }
+      />
 
-      {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+      {error ? (
+        <FeedbackState tone="danger" title="Opération impossible" description={error} aria-live="assertive" />
+      ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-          <input
-            value={q}
-            onChange={(e) => {
+      <Surface elevated>
+        <FilterBar
+          search={{
+            value: q,
+            onChange: (value) => {
               setPage(1);
-              setQ(e.target.value);
-            }}
-            placeholder="Nom, raison sociale, CNI, code, téléphone…"
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-          />
+              setQ(value);
+            },
+            label: "Rechercher un client",
+            placeholder: "Nom, raison sociale, CNI, code, téléphone…",
+          }}
+          filters={
+            <>
           <select
             value={filterStatut}
-            aria-label="Filtrer par statut"
+            aria-label="Statut"
             onChange={(e) => {
               setPage(1);
               setFilterStatut(e.target.value);
@@ -699,7 +770,7 @@ export default function ClientsPanel() {
           </select>
           <select
             value={filterCategorie}
-            aria-label="Filtrer par catégorie"
+            aria-label="Catégorie"
             onChange={(e) => {
               setPage(1);
               setFilterCategorie(e.target.value);
@@ -715,7 +786,7 @@ export default function ClientsPanel() {
           </select>
           <select
             value={filterAgence}
-            aria-label="Filtrer par agence"
+            aria-label="Agence"
             onChange={(e) => {
               setPage(1);
               setFilterAgence(e.target.value);
@@ -729,47 +800,42 @@ export default function ClientsPanel() {
               </option>
             ))}
           </select>
-          <button
-            type="button"
-            onClick={() => {
+            </>
+          }
+          actions={
+            <Button
+              variant="secondary"
+              leadingIcon={RotateCcw}
+              onClick={() => {
               setPage(1);
               setQ("");
               setFilterStatut("");
               setFilterCategorie("");
               setFilterAgence("");
             }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-          >
-            Réinitialiser filtres
-          </button>
+            >
+              Réinitialiser
+            </Button>
+          }
+        />
+
+        <div className="my-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm font-semibold text-slate-700">{total} client(s)</p>
+          <Pagination
+            page={page}
+            pageCount={totalPages}
+            onPageChange={setPage}
+            label="Pagination des clients"
+          />
         </div>
 
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-medium text-slate-700">{total} client(s)</p>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Préc.
-            </button>
-            <span className="text-xs text-slate-500">
-              Page {page} / {totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage((p) => p + 1)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Suiv.
-            </button>
-          </div>
-        </div>
-
-        <div className="overflow-x-auto">
+        {loading ? (
+          <FeedbackState title="Chargement des clients" description="La liste est en cours de mise à jour." />
+        ) : items.length === 0 ? (
+          <FeedbackState title="Aucun client" description="Aucun client ne correspond aux filtres actuels." />
+        ) : (
+          <>
+        <div className="hidden overflow-x-auto md:block">
           <table className="min-w-full text-left text-sm">
             <thead>
               <tr className="border-b border-slate-200 text-xs uppercase tracking-wide text-slate-500">
@@ -785,32 +851,13 @@ export default function ClientsPanel() {
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={9} className="py-6 text-center text-slate-500">
-                    Chargement…
-                  </td>
-                </tr>
-              ) : items.length === 0 ? (
-                <tr>
-                  <td colSpan={9} className="py-6 text-center text-slate-500">
-                    Aucun client pour ces filtres.
-                  </td>
-                </tr>
-              ) : (
-                items.map((row) => (
+              {items.map((row) => (
                   <tr key={row.id} className="border-b border-slate-100">
                     <td className="py-2 pr-3 font-mono text-xs text-slate-800">{row.code}</td>
                     <td className="py-2 pr-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
-                          row.categorie === "ENTREPRISE"
-                            ? "border-violet-200 bg-violet-50 text-violet-900"
-                            : "border-slate-200 bg-slate-50 text-slate-700"
-                        }`}
-                      >
+                      <Badge tone={row.categorie === "ENTREPRISE" ? "brand" : "neutral"}>
                         {categorieLabel(row.categorie)}
-                      </span>
+                      </Badge>
                     </td>
                     <td className="py-2 pr-3 font-medium text-slate-900">
                       <div>{displayNomPrincipal(row)}</div>
@@ -834,11 +881,9 @@ export default function ClientsPanel() {
                       {formatProduitsCell(row.produitsAutorises ?? [])}
                     </td>
                     <td className="py-2 pr-3">
-                      <span
-                        className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${STATUT_TOKENS[row.statut] ?? STATUT_TOKENS.INACTIF}`}
-                      >
+                      <StatusBadge tone={CLIENT_STATUS_TONES[row.statut] ?? "neutral"}>
                         {CLIENT_STATUT_LABELS[row.statut as ClientStatut] ?? row.statut}
-                      </span>
+                      </StatusBadge>
                       {row.statut === "REJETE" && row.rejetMotif ? (
                         <p className="mt-1 max-w-[14rem] text-[11px] text-rose-800" title={row.rejetMotif}>
                           {row.rejetMotif}
@@ -846,78 +891,54 @@ export default function ClientsPanel() {
                       ) : null}
                     </td>
                     <td className="py-2 pr-3 text-right">
-                      <div className="flex flex-wrap justify-end gap-2">
-                        {row.statut === "EN_ATTENTE_N1" && canValidateN1 ? (
-                          <button
-                            type="button"
-                            disabled={busyId === row.id}
-                            onClick={() => void validateClientN1(row.id, row.code)}
-                            className="rounded border border-sky-600 bg-sky-600 px-2 py-1 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
-                          >
-                            Valider N1
-                          </button>
-                        ) : null}
-                        {row.statut === "EN_ATTENTE_N1" && canRejectN1 ? (
-                          <button
-                            type="button"
-                            disabled={busyId === row.id}
-                            onClick={() => void rejectClientN1(row.id, row.code)}
-                            className="rounded border border-rose-600 bg-rose-600 px-2 py-1 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-                          >
-                            Rejeter
-                          </button>
-                        ) : null}
-                        {row.statut === "REJETE" ? (
-                          <button
-                            type="button"
-                            disabled={busyId === row.id}
-                            onClick={() => void resubmitClient(row.id, row.code)}
-                            className="rounded border border-amber-600 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900 hover:bg-amber-100 disabled:opacity-50"
-                          >
-                            Resoumettre
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          disabled={busyId === row.id}
-                          onClick={() => void openEdit(row.id)}
-                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-800 hover:border-cyan-500 hover:bg-cyan-50/70 disabled:opacity-50"
-                        >
-                          Modifier
-                        </button>
-                        {canDeactivate ? (
-                          <button
-                            type="button"
-                            disabled={busyId === row.id || row.statut === "INACTIF"}
-                            onClick={() => void deactivate(row.id, row.code)}
-                            className="rounded border border-rose-200 bg-rose-50 px-2 py-1 text-xs font-semibold text-rose-800 hover:bg-rose-100 disabled:opacity-40"
-                          >
-                            Désactiver
-                          </button>
-                        ) : null}
-                      </div>
+                      {clientActions(row)}
                     </td>
                   </tr>
-                ))
-              )}
+                ))}
             </tbody>
           </table>
         </div>
-      </section>
+        <div className="grid gap-3 md:hidden" role="list" aria-label="Clients">
+          {items.map((row) => (
+            <article key={row.id} role="listitem" className="rounded-2xl border border-orange-200 bg-white p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="font-mono text-xs font-semibold text-orange-700">{row.code}</p>
+                  <h3 className="mt-1 text-base font-bold text-slate-950">{displayNomPrincipal(row)}</h3>
+                </div>
+                <StatusBadge tone={CLIENT_STATUS_TONES[row.statut] ?? "neutral"}>
+                  {CLIENT_STATUT_LABELS[row.statut as ClientStatut] ?? row.statut}
+                </StatusBadge>
+              </div>
+              <dl className="mt-4 grid gap-3 text-sm">
+                <div><dt className="font-semibold text-slate-500">Catégorie</dt><dd className="mt-1">{categorieLabel(row.categorie)}</dd></div>
+                <div><dt className="font-semibold text-slate-500">Contact</dt><dd className="mt-1">{[row.telephone, row.email].filter(Boolean).join(" · ") || "—"}</dd></div>
+                <div><dt className="font-semibold text-slate-500">Agence</dt><dd className="mt-1">{agenceLabel(row.agenceId)}</dd></div>
+                <div><dt className="font-semibold text-slate-500">Produits</dt><dd className="mt-1">{formatProduitsCell(row.produitsAutorises ?? [])}</dd></div>
+              </dl>
+              <div className="mt-4 border-t border-slate-100 pt-4">{clientActions(row, true)}</div>
+            </article>
+          ))}
+        </div>
+          </>
+        )}
+      </Surface>
 
-      {modalOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-4 sm:items-center"
-          role="dialog"
-          aria-modal
-          aria-labelledby="clients-modal-title"
-        >
-          <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
+      <Dialog
+        open={modalOpen}
+        onOpenChange={(open) => {
+          if (!open && !busyId) closeModal();
+        }}
+        title={createdClient ? "Client enregistré" : editingId ? "Modifier le client" : "Nouveau client"}
+        description={
+          createdClient
+            ? "Conservez et communiquez l’identifiant client."
+            : "Les libellés et règles métier restent visibles pendant la saisie."
+        }
+        size="lg"
+      >
             {createdClient ? (
               <div className="space-y-4">
-                <h3 id="clients-modal-title" className="text-base font-semibold text-emerald-900">
-                  Client enregistré
-                </h3>
                 <p className="text-sm text-slate-600">
                   Le compte de <strong className="text-slate-900">{createdClient.nomComplet}</strong> a été créé avec
                   le statut{" "}
@@ -932,38 +953,27 @@ export default function ClientsPanel() {
                     {createdClient.code}
                   </p>
                 </div>
-                <p className="text-xs text-slate-500">
-                  Référence technique interne :{" "}
-                  <span className="font-mono text-slate-700">{createdClient.id}</span>
-                </p>
                 <div className="flex flex-wrap justify-end gap-2 pt-1">
-                  <button
-                    type="button"
+                  <Button
+                    variant="secondary"
+                    leadingIcon={Clipboard}
                     onClick={() => {
                       void navigator.clipboard.writeText(createdClient.code).then(
-                        () => setError(null),
-                        () => setError("Copie du code impossible."),
+                        () => notify.success("Code client copié."),
+                        (error: unknown) => notify.error(error, "Copie du code impossible."),
                       );
                     }}
-                    className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
                   >
                     Copier le code
-                  </button>
-                  <button
-                    type="button"
-                    onClick={closeModal}
-                    className="rounded border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700"
-                  >
+                  </Button>
+                  <Button onClick={closeModal}>
                     Fermer
-                  </button>
+                  </Button>
                 </div>
               </div>
             ) : (
               <>
-                <h3 id="clients-modal-title" className="text-base font-semibold text-slate-900">
-                  {editingId ? "Modifier le client" : "Nouveau client"}
-                </h3>
-                <form onSubmit={(e) => void saveClient(e)} className="mt-4 space-y-3">
+                <form onSubmit={(e) => void saveClient(e)} className="space-y-3">
                   {editingId && editingClientCode ? (
                     <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2">
                       <p className="text-xs font-semibold uppercase tracking-wide text-indigo-800">
@@ -1315,27 +1325,115 @@ export default function ClientsPanel() {
                 </div>
               ) : null}
               <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={closeModal}
-                  className="rounded border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
-                >
+                <Button variant="secondary" onClick={closeModal}>
                   Annuler
-                </button>
-                <button
+                </Button>
+                <Button
                   type="submit"
                   disabled={Boolean(busyId)}
-                  className="rounded border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
+                  loading={Boolean(busyId)}
                 >
-                  {busyId ? "Enregistrement…" : "Enregistrer"}
-                </button>
+                  Enregistrer
+                </Button>
               </div>
             </form>
               </>
             )}
-          </div>
-        </div>
-      ) : null}
+      </Dialog>
+
+      <ConfirmDialog
+        open={confirmation !== null}
+        onOpenChange={(open) => {
+          if (!open && !busyId) setConfirmation(null);
+        }}
+        title={
+          confirmation?.kind === "deactivate"
+            ? "Désactiver le client"
+            : confirmation?.kind === "validate"
+              ? "Valider au niveau N1"
+              : "Resoumettre le client"
+        }
+        message={
+          confirmation?.kind === "deactivate"
+            ? `Le client ${confirmation.code} passera au statut inactif.`
+            : confirmation?.kind === "validate"
+              ? `Confirmer la validation N1 du client ${confirmation.code} ?`
+              : `Le client ${confirmation?.code ?? ""} sera resoumis pour validation N1.`
+        }
+        confirmLabel={
+          confirmation?.kind === "deactivate"
+            ? "Désactiver"
+            : confirmation?.kind === "validate"
+              ? "Valider N1"
+              : "Resoumettre"
+        }
+        destructive={confirmation?.kind === "deactivate"}
+        pending={Boolean(busyId)}
+        onConfirm={confirmClientAction}
+      />
+
+      <Dialog
+        open={rejection !== null}
+        onOpenChange={(open) => {
+          if (!open && !busyId) {
+            setRejection(null);
+            setRejectionMotif("");
+            setRejectionError(null);
+          }
+        }}
+        title="Rejeter le client"
+        description={`Motif de rejet pour le client ${rejection?.code ?? ""} :`}
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              disabled={Boolean(busyId)}
+              onClick={() => {
+                setRejection(null);
+                setRejectionMotif("");
+                setRejectionError(null);
+              }}
+            >
+              Annuler
+            </Button>
+            <Button
+              variant="danger"
+              loading={Boolean(busyId)}
+              onClick={() => void confirmClientRejection()}
+            >
+              Rejeter
+            </Button>
+          </>
+        }
+      >
+        <label className="block text-sm">
+          <span className="font-medium text-slate-700">
+            Motif <span className="text-rose-600">*</span>
+          </span>
+          <textarea
+            data-autofocus
+            required
+            minLength={3}
+            rows={4}
+            value={rejectionMotif}
+            disabled={Boolean(busyId)}
+            onChange={(event) => {
+              setRejectionMotif(event.target.value);
+              if (rejectionError) setRejectionError(null);
+            }}
+            aria-invalid={rejectionError ? "true" : undefined}
+            aria-describedby={rejectionError ? "client-rejection-error" : undefined}
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-rose-500/20 focus:border-rose-400 focus:ring-4 disabled:bg-slate-100"
+            placeholder="Précisez le motif du rejet…"
+          />
+        </label>
+        {rejectionError ? (
+          <p id="client-rejection-error" className="mt-2 text-sm font-medium text-rose-700" role="alert">
+            {rejectionError}
+          </p>
+        ) : null}
+      </Dialog>
     </div>
   );
 }

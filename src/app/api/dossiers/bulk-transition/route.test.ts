@@ -6,12 +6,14 @@ const {
   ensureDossierIndexesMock,
   ensureBulkTransitionLogsIndexesMock,
   appendBulkTransitionLogMock,
+  assertDossierBulkVisibilityMock,
   executeDossierBulkTransitionMock,
 } = vi.hoisted(() => ({
   requireApiAuthMock: vi.fn(),
   ensureDossierIndexesMock: vi.fn(),
   ensureBulkTransitionLogsIndexesMock: vi.fn(),
   appendBulkTransitionLogMock: vi.fn(),
+  assertDossierBulkVisibilityMock: vi.fn(),
   executeDossierBulkTransitionMock: vi.fn(),
 }));
 
@@ -25,6 +27,7 @@ vi.mock("@/lib/lonaci/dossiers", () => ({
 
 vi.mock("@/lib/lonaci/dossier-bulk-transition", () => ({
   toDossierBulkRbacAction: vi.fn(() => "UPDATE"),
+  assertDossierBulkVisibility: assertDossierBulkVisibilityMock,
   executeDossierBulkTransition: executeDossierBulkTransitionMock,
 }));
 
@@ -44,6 +47,7 @@ describe("POST /api/dossiers/bulk-transition", () => {
     ensureDossierIndexesMock.mockResolvedValue(undefined);
     ensureBulkTransitionLogsIndexesMock.mockResolvedValue(undefined);
     appendBulkTransitionLogMock.mockResolvedValue(undefined);
+    assertDossierBulkVisibilityMock.mockResolvedValue(undefined);
     executeDossierBulkTransitionMock.mockResolvedValue({
       total: 2,
       succeeded: 2,
@@ -78,5 +82,19 @@ describe("POST /api/dossiers/bulk-transition", () => {
     const res = await POST(req);
     expectResponse(res);
     expect(res.status).toBe(400);
+  });
+
+  it("rejette tout le lot avant mutation si un ID est invisible", async () => {
+    assertDossierBulkVisibilityMock.mockRejectedValue(new Error("DOSSIER_BULK_NOT_FOUND"));
+    const req = new NextRequest("http://localhost:3000/api/dossiers/bulk-transition", {
+      method: "POST",
+      body: JSON.stringify({ ids: ["visible", "invisible"], action: "SUBMIT" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    const res = await POST(req);
+    expectResponse(res);
+    expect(res.status).toBe(404);
+    expect(executeDossierBulkTransitionMock).not.toHaveBeenCalled();
+    expect(appendBulkTransitionLogMock).not.toHaveBeenCalled();
   });
 });

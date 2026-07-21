@@ -303,6 +303,10 @@ export interface CautionDocument {
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
+  /** Niveau ayant demandé la correction. Absent sur les documents historiques. */
+  correctionReturnLevel?: "N1" | "N2" | "FINALISATION" | null;
+  /** Agence dénormalisée pour les nouveaux documents; les anciens restent résolus via leur rattachement. */
+  agenceId?: string | null;
   /**
    * Référence du paiement fournie lors de la saisie.
    * (Ex: numéro de transaction, chèque, mobile money, etc.)
@@ -377,7 +381,7 @@ export interface SuccessionCaseDocument {
   ayantDroitLienParente: string | null;
   ayantDroitTelephone: string | null;
   ayantDroitEmail: string | null;
-  /** §10.1 — Checklist documentaire décès / ayants droit */
+  /** Checklist documentaire décès / ayants droit. */
   documentChecklist?: DossierDocumentChecklistPayload | null;
   documents: Array<{
     id: string;

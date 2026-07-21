@@ -1,6 +1,7 @@
 "use client";
 
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { ChecklistEditor } from "@/components/lonaci/workflow/checklist-editor";
 import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
@@ -27,6 +28,7 @@ import {
   CONTRAT_GENERATION_SUMMARY,
 } from "@/lib/lonaci/contrat-generation-constants";
 import type { DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
+import { notify } from "@/lib/toast";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 type ContratProduitRow = {
@@ -177,14 +179,14 @@ async function triggerPdfView(url: string, setError: (msg: string) => void) {
   }
 }
 
-function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
+function statutTone(statut: DossierDocumentChecklistStatut): "success" | "danger" | "warning" {
   switch (statut) {
     case "FOURNI":
-      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+      return "success";
     case "MANQUANT":
-      return "bg-rose-100 text-rose-800 border-rose-200";
+      return "danger";
     case "EN_ATTENTE":
-      return "bg-amber-100 text-amber-900 border-amber-200";
+      return "warning";
   }
 }
 
@@ -212,7 +214,6 @@ export default function DossierDocumentChecklistBlock({
   const [localStatuts, setLocalStatuts] = useState<Record<string, DossierDocumentChecklistStatut>>({});
   const [saving, setSaving] = useState(false);
   const [generatingContrat, setGeneratingContrat] = useState(false);
-  const [contratMessage, setContratMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const hasContratGenere =
     hasContratGenereProp ??
@@ -301,7 +302,6 @@ export default function DossierDocumentChecklistBlock({
 
   async function onGenererContrat() {
     setGeneratingContrat(true);
-    setContratMessage(null);
     setError(null);
     try {
       const res = await lonaciFetch(`/api/dossiers/${dossierId}/generer-contrat`, { method: "POST" });
@@ -315,7 +315,7 @@ export default function DossierDocumentChecklistBlock({
         return;
       }
       onUpdated(patchFromDossierResponse(body.dossier));
-      setContratMessage(
+      notify.success(
         body.submitted
           ? "Contrats et annexes générés — dossier soumis au circuit de validation (4 niveaux)."
           : "Contrats et annexes déjà générés — téléchargeables ci-dessous.",
@@ -547,8 +547,6 @@ export default function DossierDocumentChecklistBlock({
         </div>
       </div>
 
-      {error ? <p className="mb-2 text-xs text-rose-700">{error}</p> : null}
-      {saving ? <p className="mb-2 text-xs text-slate-500">Enregistrement…</p> : null}
       {!progress.complet ? (
         <p className="mb-2 rounded-lg border border-amber-200 bg-amber-50 px-2 py-1.5 text-[11px] text-amber-950">
           {DECHARGE_PROVISOIRE_DISCLAIMER}
@@ -603,53 +601,21 @@ export default function DossierDocumentChecklistBlock({
           ) : null}
         </div>
       )}
-      {contratMessage ? (
-        <p className="mb-2 rounded-lg border border-cyan-200 bg-cyan-50 px-2 py-1.5 text-[11px] text-cyan-900">
-          {contratMessage}
-        </p>
-      ) : null}
-
-      <ul className="space-y-2">
-        {checklist.entries.map((entry) => {
-          const statut = localStatuts[entry.itemId] ?? entry.statut;
-          return (
-            <li
-              key={entry.itemId}
-              className="flex flex-col gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-            >
-              <div>
-                <p className="text-sm font-medium text-slate-900">{entry.libelle}</p>
-                {entry.obligatoire ? (
-                  <p className="text-[10px] uppercase tracking-wide text-slate-500">Obligatoire</p>
-                ) : (
-                  <p className="text-[10px] uppercase tracking-wide text-slate-400">Facultatif</p>
-                )}
-              </div>
-              {editable ? (
-                <div className="flex flex-wrap gap-1">
-                  {DOSSIER_CHECKLIST_STATUTS.map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      disabled={saving}
-                      onClick={() => onStatutChange(entry.itemId, s)}
-                      className={`rounded-md border px-2 py-1 text-[11px] font-medium transition ${
-                        statut === s ? statutBadgeClass(s) : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <span className={`rounded-md border px-2 py-1 text-[11px] font-medium ${statutBadgeClass(statut)}`}>
-                  {DOSSIER_CHECKLIST_STATUT_LABELS[statut]}
-                </span>
-              )}
-            </li>
-          );
-        })}
-      </ul>
+      <ChecklistEditor
+        title="Pièces du dossier"
+        description="Mettez à jour le statut de chaque document attendu."
+        entries={checklist.entries}
+        statuses={DOSSIER_CHECKLIST_STATUTS}
+        statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}
+        statusTone={statutTone}
+        localStatuses={localStatuts}
+        progress={progress}
+        editable={editable}
+        saving={saving}
+        error={error}
+        onStatusChange={onStatutChange}
+        embedded
+      />
     </div>
   );
 }

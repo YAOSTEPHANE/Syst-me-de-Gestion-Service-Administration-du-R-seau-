@@ -11,10 +11,14 @@ import MonitoringEventsPanel from "@/components/lonaci/monitoring-events-panel";
 import ParametresComptePanel from "@/components/lonaci/parametres-compte-panel";
 import ParametresPanelsControls from "@/components/lonaci/parametres-panels-controls";
 import ParametresTabs from "@/components/lonaci/parametres-tabs";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 import UsersAdminPanel from "@/components/lonaci/users-admin-panel";
 import { userRequiresPasswordRotation } from "@/lib/auth/password-policy";
 import { getSessionFromCookies } from "@/lib/auth/session";
 import { findUserById } from "@/lib/lonaci/users";
+import { ChevronDown, LockKeyhole, Settings2 } from "lucide-react";
 import type { ReactNode } from "react";
 
 function ParamSection({
@@ -30,21 +34,25 @@ function ParamSection({
 }) {
   return (
     <section id={id} className="scroll-mt-28">
-      <div className="relative overflow-hidden rounded-3xl border border-slate-200/70 bg-white/80 p-4 shadow-[0_10px_30px_-15px_rgba(2,132,199,0.25)] backdrop-blur">
-        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.18),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(99,102,241,0.14),transparent_60%)]" />
-        <div className="relative space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <h2 className="text-base font-semibold tracking-tight text-slate-900">{title}</h2>
-              <p className="mt-1 text-xs text-slate-600">{description}</p>
+      <Surface
+        padding="lg"
+        elevated
+        className="relative overflow-hidden border-orange-200/70 bg-white shadow-[0_24px_70px_-42px_rgba(15,23,42,0.55)]"
+      >
+        <div className="pointer-events-none absolute inset-x-0 top-0 h-1 bg-linear-to-r from-orange-500 via-amber-400 to-orange-600" />
+        <div className="relative space-y-5">
+          <div className="flex flex-col gap-3 border-b border-slate-200/80 pb-5 sm:flex-row sm:items-start sm:justify-between">
+            <div className="max-w-3xl">
+              <h2 className="text-xl font-bold tracking-tight text-[#102a43]">{title}</h2>
+              <p className="mt-1.5 text-sm leading-6 text-slate-600">{description}</p>
             </div>
-            <div className="shrink-0 rounded-full border border-slate-200 bg-white/70 px-2 py-1 text-[11px] font-semibold text-slate-600">
+            <Badge tone="warning" className="w-fit">
               {title.split(" ")[0]}
-            </div>
+            </Badge>
           </div>
           {children}
         </div>
-      </div>
+      </Surface>
     </section>
   );
 }
@@ -66,19 +74,28 @@ function CollapsiblePanel({
     <details
       open={defaultOpen}
       data-param-panel-id={panelId}
-      className="group rounded-2xl border border-slate-200 bg-white/80 shadow-sm transition hover:shadow"
+      className="group overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm transition open:border-orange-200 open:shadow-md"
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5">
-        <div>
-          <p className="text-sm font-semibold text-slate-900">{title}</p>
-          <p className="text-xs text-slate-600">{subtitle}</p>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-4 px-4 py-3.5 outline-none transition hover:bg-orange-50/60 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-orange-500">
+        <div className="min-w-0">
+          <h3 className="text-sm font-bold text-[#102a43]">{title}</h3>
+          <p className="mt-0.5 text-xs leading-5 text-slate-600">{subtitle}</p>
         </div>
-        <span className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-medium text-slate-600">
-          <span className="group-open:hidden">Afficher</span>
-          <span className="hidden group-open:inline">Masquer</span>
+        <span className="flex shrink-0 items-center gap-2 text-xs font-semibold text-slate-600">
+          <span className="hidden sm:inline">
+            <span className="group-open:hidden">Afficher</span>
+            <span className="hidden group-open:inline">Masquer</span>
+          </span>
+          <span className="grid size-8 place-items-center rounded-full bg-[#102a43] text-white">
+            <ChevronDown
+              size={16}
+              aria-hidden="true"
+              className="transition-transform duration-200 group-open:rotate-180"
+            />
+          </span>
         </span>
       </summary>
-      <div className="border-t border-slate-200 px-3 py-3">{children}</div>
+      <div className="border-t border-slate-200 bg-slate-50/45 p-3 sm:p-4">{children}</div>
     </details>
   );
 }
@@ -93,10 +110,10 @@ function ParamSubgroup({
   children: ReactNode;
 }) {
   return (
-    <section className="space-y-2 rounded-2xl border border-slate-200/80 bg-slate-50/60 p-3">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">{title}</p>
-        <p className="mt-0.5 text-[11px] text-slate-600">{hint}</p>
+    <section className="space-y-3 rounded-2xl border border-slate-200 bg-[#f7f9fc] p-3 sm:p-4">
+      <div className="border-l-4 border-orange-500 pl-3">
+        <h3 className="text-xs font-bold uppercase tracking-[0.14em] text-[#102a43]">{title}</h3>
+        <p className="mt-1 text-xs leading-5 text-slate-600">{hint}</p>
       </div>
       <div className="space-y-3">{children}</div>
     </section>
@@ -123,19 +140,35 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
   const canAccessAdminSections = isChefService && !mustChangePassword;
 
   return (
-    <div className="space-y-6">
-      <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-linear-to-br from-sky-50/80 via-white to-indigo-50/60 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-16 h-44 w-44 rounded-full bg-sky-200/25 blur-3xl" />
-        <div className="pointer-events-none absolute -bottom-20 -left-16 h-64 w-64 rounded-full bg-indigo-200/20 blur-3xl" />
-        <div className="relative">
-          <p className="text-xs uppercase tracking-[0.16em] text-sky-700">Infinitecore Systeme</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-tight text-slate-900">Paramètres</h1>
-          <p className="mt-1 text-sm text-slate-600">
-            Compte, référentiels, droits d’accès et supervision système.
-          </p>
+    <div className="space-y-5 sm:space-y-6">
+      <Surface
+        padding="lg"
+        elevated
+        className="relative overflow-hidden border-[#102a43] bg-[#102a43] text-white shadow-[0_24px_60px_-32px_rgba(15,23,42,0.9)]"
+      >
+        <div className="pointer-events-none absolute -right-20 -top-28 size-72 rounded-full bg-orange-500/20 blur-3xl" />
+        <div className="pointer-events-none absolute inset-y-0 left-0 w-1.5 bg-orange-500" />
+        <PageHeader
+          className="relative mb-0 [&_h1]:text-white [&_p]:text-slate-300"
+          eyebrow={
+            <span className="inline-flex items-center gap-2 text-orange-300">
+              <Settings2 size={15} aria-hidden="true" />
+              LONACI
+            </span>
+          }
+          title="Paramètres"
+          description="Gérez votre compte, les référentiels, les droits d’accès et la supervision système."
+          actions={
+            <Badge tone={canAccessAdminSections ? "success" : "warning"} className="bg-white/10 text-white">
+              <LockKeyhole size={13} aria-hidden="true" />
+              {canAccessAdminSections ? "Administration active" : "Accès standard"}
+            </Badge>
+          }
+        />
+        <div className="relative mt-5 border-t border-white/10 pt-4">
           <ParametresPanelsControls />
         </div>
-      </section>
+      </Surface>
 
       <div id="parametres-content" className="space-y-6">
         <ParametresTabs
@@ -252,8 +285,8 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
                     </CollapsiblePanel>
                     <CollapsiblePanel
                       panelId="supervision-monitoring-events"
-                      title="Événements monitoring"
-                      subtitle="Liste détaillée des événements OPEN/ACK."
+                      title="Événements de supervision"
+                      subtitle="Liste détaillée des événements ouverts ou traités."
                     >
                       <MonitoringEventsPanel />
                     </CollapsiblePanel>
@@ -278,14 +311,14 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
           restrictionPanel={
             !canAccessAdminSections ? (
               isChefService && mustChangePassword ? (
-                <section className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                <Surface className="border-orange-200 bg-orange-50 text-sm text-orange-950">
                   Change d’abord ton mot de passe dans <strong>Mon compte</strong> pour réactiver les paramètres
                   d’administration avancés.
-                </section>
+                </Surface>
               ) : (
-                <section className="rounded-3xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm">
+                <Surface className="border-orange-200 bg-orange-50 text-sm text-orange-950">
                   Les paramètres d’administration avancés sont réservés au rôle <strong>CHEF_SERVICE</strong>.
-                </section>
+                </Surface>
               )
             ) : undefined
           }

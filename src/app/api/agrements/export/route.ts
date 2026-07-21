@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { ensureAgrementsIndexes, listAgrements } from "@/lib/lonaci/agrements";
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
+import { createPdfResponse, renderAgrementsExportPdf } from "@/lib/pdf";
 
 const schema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
   const result = await listAgrements({
     page: 1,
     pageSize: 20000,
+    actor: auth.user,
     ...listAgenceScopeFields(agenceScope),
     produitCode: parsed.data.produitCode?.trim() || undefined,
     statut: parsed.data.statut,
@@ -60,30 +61,17 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 40, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    doc.fontSize(16).text("Synthese Agrements", { underline: true });
-    doc.moveDown(0.5);
-    for (const row of result.items) {
-      doc
-        .fontSize(9)
-        .text(
-          `${row.reference} | ${row.produitCode} | ${new Date(row.dateReception).toLocaleDateString("fr-FR")} | ${row.statut} | ${row.referenceOfficielle}`,
-        );
-    }
-    doc.end();
-  });
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="agrements-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  const generatedAt = new Date();
+  const filters = [
+    parsed.data.agenceId ? `Agence : ${parsed.data.agenceId}` : undefined,
+    parsed.data.produitCode ? `Produit : ${parsed.data.produitCode}` : undefined,
+    parsed.data.statut ? `Statut : ${parsed.data.statut}` : undefined,
+    parsed.data.dateFrom ? `Depuis : ${new Date(parsed.data.dateFrom).toLocaleDateString("fr-FR")}` : undefined,
+    parsed.data.dateTo ? `Jusqu’au : ${new Date(parsed.data.dateTo).toLocaleDateString("fr-FR")}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const pdfBuffer = await renderAgrementsExportPdf(result.items, { generatedAt, filters });
+  return createPdfResponse(pdfBuffer, {
+    filename: `agrements-${generatedAt.getTime()}`,
   });
 }
 

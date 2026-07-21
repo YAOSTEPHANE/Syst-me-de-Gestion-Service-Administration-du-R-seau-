@@ -57,14 +57,14 @@ function baseDoc(overrides: Partial<ConcessionnaireDocument> = {}): Concessionna
   };
 }
 
-describe("parcours RIB / bancarisation (statuts 8.3)", () => {
+describe("parcours RIB et bancarisation", () => {
   it("autorise une demande RIB uniquement en NON BANCARISÉ", () => {
     expect(canCreateRibDemande(baseDoc())).toBe(true);
     expect(canCreateRibDemande(baseDoc({ statutBancarisation: "EN_ATTENTE_RIB" }))).toBe(false);
     expect(canCreateRibDemande(baseDoc({ statutBancarisation: "BANCARISE" }))).toBe(false);
   });
 
-  it("enchaîne les transitions 8.3", () => {
+  it("enchaîne les transitions de bancarisation", () => {
     expect(canAttachRib(baseDoc({ statutBancarisation: "EN_ATTENTE_RIB" }))).toBe(true);
     expect(canValidateRib(baseDoc({ statutBancarisation: "RIB_FOURNI" }))).toBe(true);
     expect(canIntegrateBancarisation(baseDoc({ statutBancarisation: "RIB_VALIDE" }))).toBe(true);

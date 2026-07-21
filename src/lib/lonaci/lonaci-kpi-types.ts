@@ -42,9 +42,23 @@ export interface LonaciKpiAlertThresholds {
   successionStaleDays: number;
 }
 
+export interface LonaciKpiWorkflowQueues {
+  dossiers: number | null;
+  cautions: number | null;
+  agrements: number | null;
+  cessions: number | null;
+  delocalisations: number | null;
+  resiliations: number | null;
+  successions: number | null;
+  bancarisation: number | null;
+  gpr: number | null;
+}
+
 export interface LonaciKpiPayload {
   alertThresholds?: LonaciKpiAlertThresholds;
   contractsMonthlyTarget?: number;
+  /** Files réellement visibles pour l'utilisateur et l'agence sélectionnée. */
+  workflowQueues: LonaciKpiWorkflowQueues;
   weekly: { contrats: { createdInWindow: number } };
   monthly: { contrats: { createdInWindow: number } };
   daily: {
@@ -59,6 +73,8 @@ export interface LonaciKpiPayload {
   produitSlices: { code: string; libelle?: string; count: number }[];
   dossierValidation: {
     contratSoumis: number;
+    dossiersValidesN1: number;
+    dossiersValidesN2: number;
     contratSoumisRetard48h: number;
     cautionsEnAttente: number;
     cautionsJ10: number;

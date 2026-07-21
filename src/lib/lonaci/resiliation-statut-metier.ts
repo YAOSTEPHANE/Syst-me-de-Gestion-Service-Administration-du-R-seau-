@@ -25,7 +25,7 @@ const VALIDATION_CIRCUIT = new Set<ResiliationWorkflowStatut>([
 ]);
 
 /**
- * Résout le statut métier 7.2 à partir du statut technique et de la checklist.
+ * Résout le statut métier à partir du statut technique et de la liste des pièces.
  */
 export function resolveResiliationStatutMetier(input: {
   statut: string;

@@ -12,7 +12,7 @@ const querySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
 });
 
-/** §9.1 — Historique complet des lots / codes par concessionnaire. */
+/** Historique complet des lots / codes par concessionnaire. */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: [...GRATTAGE_API_ROLES] });
   if ("error" in auth) return auth.error;

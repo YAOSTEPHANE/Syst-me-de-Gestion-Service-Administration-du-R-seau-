@@ -1,6 +1,10 @@
 "use client";
 
+import { useMemo, useState } from "react";
+
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import { Button } from "@/components/lonaci/ui/button";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
 import {
   DOSSIER_CHECKLIST_STATUTS,
@@ -8,7 +12,6 @@ import {
   computeChecklistProgress,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
-import { useMemo, useState } from "react";
 
 function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
   switch (statut) {
@@ -18,6 +21,10 @@ function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
       return "bg-rose-100 text-rose-800 border-rose-200";
     case "EN_ATTENTE":
       return "bg-amber-100 text-amber-900 border-amber-200";
+    default: {
+      const exhaustiveStatut: never = statut;
+      return exhaustiveStatut;
+    }
   }
 }
 
@@ -85,17 +92,20 @@ export default function ProduitDocumentChecklistEditor({
 
   if (!checklist.entries.length) {
     return (
-      <div className={`rounded-lg border border-dashed border-slate-200 bg-slate-50 p-3 ${className}`}>
+      <Surface
+        padding="sm"
+        className={`border-dashed border-slate-200 bg-slate-50 ${className}`}
+      >
         <p className="text-xs text-slate-600">
           Aucune checklist configurée pour ce produit. Paramétrez les pièces dans{" "}
           <span className="font-medium">Paramètres → Produits</span>.
         </p>
-      </div>
+      </Surface>
     );
   }
 
   return (
-    <div className={`rounded-xl border border-slate-200 bg-white p-3 ${className}`}>
+    <Surface padding="sm" className={className}>
       <DossierCompletIndicator
         complet={progress.complet}
         size="banner"
@@ -118,13 +128,14 @@ export default function ProduitDocumentChecklistEditor({
             obligatoiresTotal={progress.obligatoiresTotal}
           />
           {pdfUrl ? (
-            <button
-              type="button"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => void downloadLonaciPdf(pdfUrl, "checklist-contrat.pdf")}
-              className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50"
+              className="text-xs"
             >
               PDF checklist
-            </button>
+            </Button>
           ) : null}
         </div>
       </div>
@@ -148,16 +159,17 @@ export default function ProduitDocumentChecklistEditor({
               {editable ? (
                 <div className="flex flex-wrap gap-1">
                   {DOSSIER_CHECKLIST_STATUTS.map((s) => (
-                    <button
+                    <Button
                       key={s}
-                      type="button"
+                      variant="secondary"
+                      size="sm"
                       onClick={() => applyStatut(entry.itemId, s)}
-                      className={`rounded-md border px-2 py-1 text-[11px] font-medium transition ${
+                      className={`min-h-0 px-2 py-1 text-[11px] ${
                         statut === s ? statutBadgeClass(s) : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
                       }`}
                     >
                       {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : (
@@ -169,6 +181,6 @@ export default function ProduitDocumentChecklistEditor({
           );
         })}
       </ul>
-    </div>
+    </Surface>
   );
 }

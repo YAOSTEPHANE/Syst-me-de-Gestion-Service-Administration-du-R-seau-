@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
@@ -9,6 +8,7 @@ import { getDossierValidationSnapshot } from "@/lib/lonaci/dashboard-stats";
 import { buildReportSummary } from "@/lib/lonaci/reports";
 import { ensureSuccessionIndexes, listSuccessionStaleAlerts } from "@/lib/lonaci/succession";
 import { listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
+import { createPdfResponse, renderSupervisionExportPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   format: z.enum(["pdf", "csv", "xlsx"]).default("pdf"),
@@ -148,42 +148,28 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 24, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(14).text("Export supervision consolidee", { underline: true });
-    doc.moveDown(0.2);
-    doc.fontSize(9).text(`Genere le: ${new Date().toLocaleString("fr-FR")}`);
-    doc.moveDown(0.6);
-    doc.fontSize(11).text("SLA / Retards metier", { underline: true });
-    doc.moveDown(0.2);
-    for (const row of slaRows) {
-      doc.fontSize(9).text(`${row.module}: ${row.overdue} en retard / ${row.pending} en attente`);
-    }
-    doc.moveDown(0.6);
-    doc.fontSize(11).text("Journal d'audit (500 entrees max)", { underline: true });
-    doc.moveDown(0.2);
-    for (const row of auditLogs.items) {
-      doc
-        .fontSize(8.5)
-        .text(
-          `${new Date(row.timestamp).toLocaleString("fr-FR")} | ${row.source} | ${row.status} | ${row.code ?? "-"} | ${row.title} | actor=${row.actor ?? "-"}`,
-        );
-    }
-    if (auditLogs.items.length === 0) doc.fontSize(9).text("Aucune entree d'audit pour ces filtres.");
-    doc.end();
+  const generatedAt = new Date();
+  const agenceLabel =
+    scopeAgenceId ??
+    (scopeFields.scopeAgenceIds?.length ? scopeFields.scopeAgenceIds.join(", ") : "Toutes");
+  const pdfBuffer = await renderSupervisionExportPdf({
+    generatedAt,
+    filters: {
+      source: parsed.data.source,
+      status: parsed.data.status,
+      agence: agenceLabel,
+      slaStatus: parsed.data.slaStatus,
+      query: parsed.data.query,
+      from: parsed.data.from,
+      to: parsed.data.to,
+    },
+    slaRows,
+    auditLogs: auditLogs.items,
+    auditTotal: auditLogs.total,
+    auditLimit: 500,
   });
 
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="supervision-export-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  return createPdfResponse(pdfBuffer, {
+    filename: `supervision-export-${generatedAt.getTime()}`,
   });
 }

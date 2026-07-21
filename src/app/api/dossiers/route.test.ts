@@ -12,7 +12,7 @@ vi.mock("@/lib/auth/guards", () => ({
 }));
 
 vi.mock("@/lib/lonaci/access", () => ({
-  resolveListAgenceFilter: vi.fn(() => ({ ok: true, agenceId: undefined })),
+  resolveListAgenceFilter: vi.fn(() => ({ ok: true, agenceId: undefined, agenceIds: undefined })),
 }));
 
 vi.mock("@/lib/lonaci/dossiers", () => ({
@@ -46,6 +46,17 @@ describe("GET /api/dossiers", () => {
     const res = await GET(req);
     expectResponse(res);
     expect(res.status).toBe(200);
-    expect(listDossiersMock).toHaveBeenCalledWith(2, 50, "SOUMIS", undefined, {}, "DOS-01", "cx1", "reference", "asc");
+    expect(listDossiersMock).toHaveBeenCalledWith(
+      2,
+      50,
+      "SOUMIS",
+      undefined,
+      {},
+      { _id: "u1", role: "CHEF_SERVICE", agenceId: null },
+      "DOS-01",
+      "cx1",
+      "reference",
+      "asc",
+    );
   });
 });

@@ -1,6 +1,15 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Archive, Download, FlaskConical, RefreshCw, RotateCcw } from "lucide-react";
+
+import { Button } from "@/components/lonaci/ui/button";
+import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 type LocalBackupItem = {
   name: string;
@@ -30,12 +39,13 @@ export default function AdminLocalBackupSettings() {
   const [visible, setVisible] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [resultDetail, setResultDetail] = useState<string | null>(null);
   const [backups, setBackups] = useState<LocalBackupItem[]>([]);
   const [selectedBackup, setSelectedBackup] = useState("");
   const [restoreUploads, setRestoreUploads] = useState(true);
   const [verifyChecksum, setVerifyChecksum] = useState(true);
   const [confirmText, setConfirmText] = useState("");
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
 
   const canRestore = useMemo(
     () => selectedBackup.trim().length > 0 && confirmText.trim().toUpperCase() === "RESTAURER",
@@ -69,7 +79,7 @@ export default function AdminLocalBackupSettings() {
 
   async function createBackup() {
     setSaving(true);
-    setMessage(null);
+    setResultDetail(null);
     try {
       const res = await fetch("/api/admin/backups", {
         method: "POST",
@@ -78,10 +88,10 @@ export default function AdminLocalBackupSettings() {
       const data = (await res.json()) as { message?: string };
       if (!res.ok) throw new Error(data.message ?? "Erreur sauvegarde");
       await loadBackups();
-      setMessage(data.message ?? "Sauvegarde créée.");
+      notify.success(data.message ?? "Sauvegarde créée.");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Erreur sauvegarde";
-      setMessage(text);
+      notify.error(text);
     } finally {
       setSaving(false);
     }
@@ -90,8 +100,12 @@ export default function AdminLocalBackupSettings() {
   async function onRestoreSubmit(e: FormEvent) {
     e.preventDefault();
     if (!canRestore) return;
+    setRestoreDialogOpen(true);
+  }
+
+  async function restoreBackup() {
     setSaving(true);
-    setMessage(null);
+    setResultDetail(null);
     try {
       const res = await fetch("/api/admin/backups/restore", {
         method: "POST",
@@ -108,10 +122,14 @@ export default function AdminLocalBackupSettings() {
       const data = (await res.json()) as RestoreApiResponse;
       if (!res.ok) throw new Error(data.message ?? "Erreur restauration");
       setConfirmText("");
-      setMessage(`${data.message ?? "Restauration terminée."} Reconnectez-vous pour repartir sur une session propre.`);
+      setRestoreDialogOpen(false);
+      notify.success(data.message ?? "Restauration terminée.", {
+        description: "Reconnectez-vous pour repartir sur une session propre.",
+        duration: 8000,
+      });
     } catch (error) {
       const text = error instanceof Error ? error.message : "Erreur restauration";
-      setMessage(text);
+      notify.error(text);
     } finally {
       setSaving(false);
     }
@@ -120,7 +138,7 @@ export default function AdminLocalBackupSettings() {
   async function runDryRunRestore() {
     if (!selectedBackup) return;
     setSaving(true);
-    setMessage(null);
+    setResultDetail(null);
     try {
       const res = await fetch("/api/admin/backups/restore", {
         method: "POST",
@@ -137,14 +155,15 @@ export default function AdminLocalBackupSettings() {
       const data = (await res.json()) as RestoreApiResponse;
       if (!res.ok) throw new Error(data.message ?? "Simulation impossible");
       const integrity = data.result?.integrity;
-      setMessage(
+      setResultDetail(
         `${data.message ?? "Simulation terminée."} Collections: ${data.result?.restoredCollections ?? 0}, documents: ${
           data.result?.restoredDocuments ?? 0
         }, checksum: ${integrity?.valid ? "OK" : "KO"}.`,
       );
+      notify.success("Simulation de restauration terminée.");
     } catch (error) {
       const text = error instanceof Error ? error.message : "Erreur simulation";
-      setMessage(text);
+      notify.error(text);
     } finally {
       setSaving(false);
     }
@@ -160,49 +179,50 @@ export default function AdminLocalBackupSettings() {
   const selectedMeta = backups.find((item) => item.name === selectedBackup);
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900">Sauvegarde / restauration locale</h3>
-      <p className="mt-1 text-xs text-slate-600">
-        Sauvegarde la base locale dans le dossier <code>backups/</code>, puis restaure un snapshot complet si nécessaire.
-      </p>
+    <>
+    <Surface elevated aria-labelledby="local-backup-title">
+      <SectionHeader
+        title={<span id="local-backup-title" className="inline-flex items-center gap-2"><Archive size={19} className="text-orange-600" aria-hidden="true" />Sauvegarde et restauration locale</span>}
+        description="Copies complètes de la base et des fichiers joints, conservées dans l’espace de sauvegarde."
+      />
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-sky-200/70 bg-sky-50/50 p-3">
-        <button
-          type="button"
-          disabled={saving}
+      <div className="mt-5 flex flex-wrap items-center gap-3 rounded-2xl border border-orange-200 bg-orange-50/50 p-4" aria-busy={saving}>
+        <Button
+          loading={saving}
+          leadingIcon={Archive}
           onClick={() => void createBackup()}
-          className="rounded border border-sky-600 bg-sky-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-sky-700 disabled:opacity-60"
         >
           {saving ? "Traitement..." : "Créer une sauvegarde locale"}
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
           disabled={saving}
+          leadingIcon={RefreshCw}
           onClick={() => void loadBackups()}
-          className="rounded border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-60"
         >
           Actualiser la liste
-        </button>
-        <button
-          type="button"
+        </Button>
+        <Button
+          variant="secondary"
           disabled={saving || !selectedBackup}
+          leadingIcon={Download}
           onClick={downloadBackup}
-          className="rounded border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs text-indigo-700 hover:bg-indigo-100 disabled:opacity-60"
         >
           Télécharger l&apos;archive
-        </button>
+        </Button>
       </div>
 
-      <form onSubmit={(e) => void onRestoreSubmit(e)} className="mt-3 rounded-xl border border-rose-200/70 bg-rose-50/40 p-3">
-        <p className="text-xs font-semibold uppercase tracking-wide text-rose-700">Restauration locale</p>
-        <div className="mt-2 grid gap-3 sm:grid-cols-2">
-          <label className="block text-xs text-slate-700">
-            Sauvegarde
+      <form onSubmit={(e) => void onRestoreSubmit(e)} className="mt-4 rounded-2xl border border-rose-200 bg-rose-50/40 p-4" aria-busy={saving}>
+        <p className="text-sm font-bold text-[#13213c]">Restauration locale</p>
+        <p className="mt-1 text-xs text-rose-700">Cette opération remplace les collections existantes. Une confirmation supplémentaire sera demandée.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <FormField label="Sauvegarde" htmlFor="local-backup-select">
             <select
+              id="local-backup-select"
               value={selectedBackup}
               disabled={saving || backups.length === 0}
               onChange={(e) => setSelectedBackup(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+              className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
             >
               {backups.length === 0 ? <option value="">Aucune sauvegarde</option> : null}
               {backups.map((item) => (
@@ -211,8 +231,8 @@ export default function AdminLocalBackupSettings() {
                 </option>
               ))}
             </select>
-          </label>
-          <div className="rounded border border-slate-200 bg-white px-2 py-1.5 text-xs text-slate-600">
+          </FormField>
+          <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-600" aria-live="polite">
             {selectedMeta ? (
               <div className="space-y-0.5">
                 <p>Créée: {new Date(selectedMeta.createdAt).toLocaleString("fr-FR")}</p>
@@ -225,57 +245,71 @@ export default function AdminLocalBackupSettings() {
           </div>
         </div>
 
-        <label className="mt-3 inline-flex items-center gap-2 text-xs text-slate-700">
+        <label className="mt-4 flex items-center gap-3 text-sm text-slate-800">
           <input
             type="checkbox"
             checked={restoreUploads}
             disabled={saving}
             onChange={(e) => setRestoreUploads(e.target.checked)}
+            className="h-5 w-5 accent-orange-600"
           />
-          Restaurer aussi le dossier <code>uploads/</code>
+          Restaurer aussi les fichiers joints
         </label>
 
-        <label className="mt-2 inline-flex items-center gap-2 text-xs text-slate-700">
+        <label className="mt-3 flex items-center gap-3 text-sm text-slate-800">
           <input
             type="checkbox"
             checked={verifyChecksum}
             disabled={saving}
             onChange={(e) => setVerifyChecksum(e.target.checked)}
+            className="h-5 w-5 accent-orange-600"
           />
-          Vérifier l&apos;intégrité (checksum) avant restauration
+          Vérifier l&apos;intégrité avant restauration
         </label>
 
-        <label className="mt-3 block text-xs text-slate-700">
-          Tapez <strong>RESTAURER</strong> pour confirmer
+        <FormField className="mt-4" label={<>Tapez <strong>RESTAURER</strong> pour confirmer</>} htmlFor="local-backup-confirm" hint="La saisie doit correspondre exactement au mot indiqué.">
           <input
+            id="local-backup-confirm"
             value={confirmText}
             disabled={saving}
             onChange={(e) => setConfirmText(e.target.value)}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
             placeholder="RESTAURER"
           />
-        </label>
+        </FormField>
 
-        <div className="mt-3 flex flex-wrap items-center gap-2">
-          <button
-            type="button"
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <Button
+            variant="secondary"
             disabled={saving || !selectedBackup}
+            leadingIcon={FlaskConical}
             onClick={() => void runDryRunRestore()}
-            className="rounded border border-amber-500 bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-60"
           >
-            {saving ? "Traitement..." : "Simulation (dry-run)"}
-          </button>
-          <button
+            {saving ? "Traitement..." : "Simuler la restauration"}
+          </Button>
+          <Button
             type="submit"
+            variant="danger"
             disabled={saving || !canRestore}
-            className="rounded border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-rose-700 disabled:opacity-60"
+            leadingIcon={RotateCcw}
           >
             {saving ? "Restauration..." : "Restaurer cette sauvegarde"}
-          </button>
+          </Button>
         </div>
       </form>
 
-      {message ? <p className="mt-2 text-xs text-emerald-700">{message}</p> : null}
-    </section>
+      {resultDetail ? <FeedbackState className="mt-4" tone="success" title="Simulation terminée" description={resultDetail} aria-live="polite" /> : null}
+    </Surface>
+    <ConfirmDialog
+      open={restoreDialogOpen}
+      onOpenChange={(open) => { if (!saving) setRestoreDialogOpen(open); }}
+      title="Confirmer la restauration locale"
+      message={<>Restaurer <strong>{selectedBackup}</strong> et remplacer toutes les collections actuelles ? Cette opération est irréversible.</>}
+      confirmLabel="Restaurer définitivement"
+      destructive
+      pending={saving}
+      onConfirm={restoreBackup}
+    />
+    </>
   );
 }

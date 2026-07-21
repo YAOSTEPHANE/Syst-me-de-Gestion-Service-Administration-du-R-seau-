@@ -1,20 +1,15 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
-import {
-  CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL,
-  CAUTION_FICHE_EN_ATTENTE_MENTION,
-  CAUTION_FICHE_PROVISOIRE_TITLE,
-  getLonaciCautionBankReferences,
-} from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { getLonaciCautionBankReferences } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
-import type { CautionDocument, ConcessionnaireDocument } from "@/lib/lonaci/types";
+import type { CautionDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
+import { renderPremiumCautionFicheProvisoirePdf } from "@/lib/pdf/caution-fiche-provisoire";
 
 export {
   CAUTION_FICHE_EN_ATTENTE_MENTION,
@@ -206,114 +201,8 @@ export async function buildCautionFicheProvisoireView(
   };
 }
 
-function drawWatermark(doc: InstanceType<typeof PDFDocument>) {
-  const { width, height } = doc.page;
-  doc.save();
-  doc.opacity(0.12);
-  doc.fillColor("#b45309");
-  doc.fontSize(42);
-  const text = CAUTION_FICHE_EN_ATTENTE_MENTION;
-  doc.rotate(-35, { origin: [width / 2, height / 2] });
-  doc.text(text, width * 0.08, height * 0.38, { width: width * 0.85, align: "center" });
-  doc.restore();
-  doc.opacity(1);
-}
-
-function drawLonaciPdfHeader(doc: InstanceType<typeof PDFDocument>) {
-  const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-  const x = doc.page.margins.left;
-  doc.save();
-  doc.rect(x, doc.y, w, 52).fill("#0f3d2e");
-  doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44);
-  doc.fontSize(8).text("Loterie Nationale de Côte d’Ivoire", x + 14, doc.y + 2);
-  doc.fontSize(7).text("Document officiel — module Cautions", x + 14, doc.y + 2);
-  doc.restore();
-  doc.moveDown(3.2);
-  doc.fillColor("#111827").fontSize(13).text(CAUTION_FICHE_PROVISOIRE_TITLE, { align: "center" });
-  doc.moveDown(0.4);
-  doc
-    .fontSize(11)
-    .fillColor("#b45309")
-    .text(CAUTION_FICHE_EN_ATTENTE_MENTION, { align: "center", underline: true });
-  doc.moveDown(0.8);
-}
-
-function drawFieldRow(doc: InstanceType<typeof PDFDocument>, label: string, value: string) {
-  const y = doc.y;
-  doc.fontSize(9).fillColor("#6b7280").text(label, doc.page.margins.left, y, { width: 160 });
-  doc.fontSize(10).fillColor("#111827").text(value, doc.page.margins.left + 165, y, {
-    width: doc.page.width - doc.page.margins.right - doc.page.margins.left - 170,
-    align: "right",
-  });
-  doc.moveDown(0.55);
-}
-
 export async function renderCautionFicheProvisoirePdf(view: CautionFicheProvisoireView): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 48, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    drawWatermark(doc);
-    drawLonaciPdfHeader(doc);
-
-    doc
-      .fontSize(9)
-      .fillColor("#374151")
-      .text(`Référence dossier : ${view.numeroDossier}`, { align: "center" });
-    doc
-      .fontSize(8)
-      .fillColor("#6b7280")
-      .text(
-        `Émis le ${new Date(view.generatedAt).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
-        { align: "center" },
-      );
-    doc.moveDown(0.8);
-
-    drawFieldRow(doc, "Identité", view.identiteDetail);
-    drawFieldRow(doc, view.identifiantLabel, view.identifiantValue?.trim() || "—");
-    if (view.identiteLabel === "Client") {
-      drawFieldRow(doc, "N° CNI", view.cniNumero?.trim() || "—");
-    } else if (view.cniNumero?.trim()) {
-      drawFieldRow(doc, "N° CNI", view.cniNumero.trim());
-    }
-    drawFieldRow(doc, CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL, view.agenceLabel);
-
-    doc.moveDown(0.3);
-    doc.fontSize(10).fillColor("#111827").text("Produit(s) et montant(s) de caution due", { underline: true });
-    doc.moveDown(0.35);
-    for (const l of view.produitLignes) {
-      drawFieldRow(doc, l.libelle, `${l.montantFCFA.toLocaleString("fr-FR")} FCFA (${l.code})`);
-    }
-    if (!view.produitLignes.length) {
-      drawFieldRow(doc, "Montant caution due", `${view.montantTotalFCFA.toLocaleString("fr-FR")} FCFA`);
-    } else {
-      drawFieldRow(doc, "Total caution due", `${view.montantTotalFCFA.toLocaleString("fr-FR")} FCFA`);
-    }
-    drawFieldRow(
-      doc,
-      "Échéance indicative",
-      new Date(view.dueDate).toLocaleDateString("fr-FR", { dateStyle: "long" }),
-    );
-
-    doc.moveDown(0.6);
-    doc.fontSize(10).fillColor("#111827").text("Coordonnées bancaires LONACI", { underline: true });
-    doc.moveDown(0.35);
-    drawFieldRow(doc, "Banque", view.bank.banque);
-    drawFieldRow(doc, "Compte / RIB", view.bank.compte);
-    if (view.bank.iban) drawFieldRow(doc, "IBAN", view.bank.iban);
-    drawFieldRow(doc, "Libellé virement", `${view.bank.libelleVirement} — ${view.numeroDossier}`);
-
-    doc.moveDown(1.2);
-    doc.fontSize(8).fillColor("#6b7280").text(
-      "Ce document est une fiche provisoire : il ne vaut pas quittance de paiement. Conservez la référence dossier pour tout versement ou rapprochement.",
-      { align: "justify" },
-    );
-
-    doc.end();
-  });
+  return renderPremiumCautionFicheProvisoirePdf(view);
 }
 
 export async function buildCautionFicheProvisoireViewForConcessionnaire(

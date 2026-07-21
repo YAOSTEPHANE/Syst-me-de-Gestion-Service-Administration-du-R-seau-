@@ -1,7 +1,9 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+
+import { EntityPicker } from "@/components/lonaci/ui/entity-picker";
 
 /** Ligne renvoyée par GET /api/concessionnaires (champs utiles au métier). */
 export type ConcessionnairePickerRow = {
@@ -91,9 +93,6 @@ function normalizeItem(raw: Record<string, unknown>): ConcessionnairePickerRow |
   };
 }
 
-const defaultInputClass =
-  "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-
 export type ConcessionnaireSearchPickerProps = {
   id?: string;
   label: ReactNode;
@@ -127,135 +126,50 @@ export default function ConcessionnaireSearchPicker({
   searchPlaceholder = "Code PDV, nom, téléphone… (min. 2 caractères)",
   minQueryLength = 2,
 }: ConcessionnaireSearchPickerProps) {
-  const inputClass = [defaultInputClass, inputClassName].filter(Boolean).join(" ");
-  const [query, setQuery] = useState("");
-  const [results, setResults] = useState<ConcessionnairePickerRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const minLen = Math.max(1, minQueryLength);
-
-  useEffect(() => {
-    if (selected) {
-      setQuery(formatConcessionnairePickerLabel(selected));
-    }
-  }, [selected]);
-
-  const onQueryChange = useCallback(
-    (v: string) => {
-      setQuery(v);
-      if (selected && v.trim() !== formatConcessionnairePickerLabel(selected).trim()) {
-        onSelectedChange(null);
+  const loadOptions = useCallback(
+    async (query: string): Promise<readonly ConcessionnairePickerRow[]> => {
+      const params = new URLSearchParams({ page: "1", pageSize: "40", q: query });
+      if (statutActifOnly) params.set("statut", "ACTIF");
+      if (inscriptionFinaliseeOnly) params.set("inscriptionFinaliseeOnly", "true");
+      if (listExtraParams) {
+        for (const [key, value] of Object.entries(listExtraParams)) {
+          if (value.trim()) params.set(key, value.trim());
+        }
       }
+      const response = await fetch(`/api/concessionnaires?${params}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!response.ok) return [];
+      const data = (await response.json()) as { items?: Record<string, unknown>[] };
+      return (data.items ?? [])
+        .map(normalizeItem)
+        .filter((row): row is ConcessionnairePickerRow => row !== null);
     },
-    [onSelectedChange, selected],
+    [inscriptionFinaliseeOnly, listExtraParams, statutActifOnly],
   );
 
-  useEffect(() => {
-    if (selected) return;
-    const q = query.trim();
-    if (q.length < minLen) {
-      setResults([]);
-      return;
-    }
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      void (async () => {
-        setLoading(true);
-        try {
-          const params = new URLSearchParams({ page: "1", pageSize: "40", q });
-          if (statutActifOnly) params.set("statut", "ACTIF");
-          if (inscriptionFinaliseeOnly) params.set("inscriptionFinaliseeOnly", "true");
-          if (listExtraParams) {
-            for (const [k, v] of Object.entries(listExtraParams)) {
-              if (v.trim()) params.set(k, v.trim());
-            }
-          }
-          const res = await fetch(`/api/concessionnaires?${params}`, {
-            credentials: "include",
-            cache: "no-store",
-          });
-          if (cancelled || !res.ok) {
-            if (!cancelled) setResults([]);
-            return;
-          }
-          const data = (await res.json()) as { items: Record<string, unknown>[] };
-          const next = (data.items ?? []).map(normalizeItem).filter((x): x is ConcessionnairePickerRow => Boolean(x));
-          if (!cancelled) setResults(next);
-        } finally {
-          if (!cancelled) setLoading(false);
-        }
-      })();
-    }, 320);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, [query, selected, statutActifOnly, inscriptionFinaliseeOnly, listExtraParams, minLen]);
-
-  const selectedLabel = selected ? formatConcessionnairePickerLabel(selected) : "";
-  const showPanel =
-    query.trim().length >= minLen && (!selected || selectedLabel.trim() !== query.trim());
-
-  function pick(row: ConcessionnairePickerRow) {
-    onSelectedChange(row);
-    setQuery(formatConcessionnairePickerLabel(row));
-    setResults([]);
-  }
-
-  function clear() {
-    onSelectedChange(null);
-    setQuery("");
-    setResults([]);
-  }
-
   return (
-    <div className="grid gap-1">
-      <span className="text-xs font-medium text-slate-700">{label}</span>
-      <div className="relative">
-        <input
-          id={id}
-          type="search"
-          value={query}
-          onChange={(e) => onQueryChange(e.target.value)}
-          placeholder={searchPlaceholder}
-          autoComplete="off"
-          disabled={disabled}
-          className={inputClass}
-          aria-label="Rechercher un point de vente"
-        />
-        {showClearLink && selected ? (
-          <button
-            type="button"
-            onClick={() => clear()}
-            className="mt-1 text-[11px] font-medium text-cyan-700 underline hover:text-cyan-900"
-          >
-            Effacer la sélection
-          </button>
-        ) : null}
-      </div>
-      {loading ? <p className="text-[11px] text-slate-500">Recherche…</p> : null}
-      {showPanel && results.length > 0 ? (
-        <div
-          className="max-h-48 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-sm"
-          role="listbox"
-          aria-label="Résultats de recherche concessionnaires"
-        >
-          {results.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => pick(c)}
-              className="flex w-full flex-wrap items-baseline gap-x-2 border-b border-slate-100 px-3 py-2 text-left text-sm text-slate-800 transition-colors hover:bg-cyan-50 last:border-b-0"
-            >
-              <span className="font-mono text-xs text-slate-600">{c.codePdv}</span>
-              <span>{c.nomComplet || c.raisonSociale}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {showPanel && !loading && query.trim().length >= minLen && results.length === 0 ? (
-        <p className="text-[11px] text-slate-500">Aucun résultat.</p>
-      ) : null}
-    </div>
+    <EntityPicker
+      id={id}
+      label={label}
+      selected={selected}
+      onSelectedChange={onSelectedChange}
+      loadOptions={loadOptions}
+      getOptionKey={(row) => row.id}
+      getOptionLabel={formatConcessionnairePickerLabel}
+      renderOption={(row) => (
+        <span className="flex flex-wrap items-baseline gap-x-2">
+          <span className="font-mono text-xs text-slate-600">{row.codePdv}</span>
+          <span>{row.nomComplet || row.raisonSociale}</span>
+        </span>
+      )}
+      inputClassName={inputClassName}
+      disabled={disabled}
+      showClearLink={showClearLink}
+      searchPlaceholder={searchPlaceholder}
+      minQueryLength={minQueryLength}
+      resultsAriaLabel="Résultats de recherche concessionnaires"
+    />
   );
 }

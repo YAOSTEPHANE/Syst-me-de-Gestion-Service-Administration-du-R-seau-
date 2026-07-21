@@ -1,11 +1,17 @@
 import "server-only";
 
-import PDFDocument from "pdfkit";
-
-import {
-  DOSSIER_CHECKLIST_STATUT_LABELS,
-} from "@/lib/lonaci/produit-document-checklist";
+import { DOSSIER_CHECKLIST_STATUT_LABELS } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
+import {
+  collectPdfBuffer,
+  createPremiumPdfDocument,
+  drawBulletList,
+  drawInformationCard,
+  drawSection,
+  drawStatusBadge,
+  drawTitle,
+  finalizePremiumPages,
+} from "@/lib/pdf";
 
 export interface DossierChecklistPdfView {
   dossierReference: string;
@@ -17,41 +23,49 @@ export interface DossierChecklistPdfView {
 }
 
 export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ size: "A4", margin: 48 });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(c));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: "Checklist documents — constitution de dossier",
+      subject: `Checklist du dossier ${view.dossierReference}`,
+      creationDate: view.generatedAt,
+    },
+  });
 
-    doc.fontSize(16).fillColor("#0f172a").text("LONACI", { align: "center" });
-    doc.moveDown(0.3);
-    doc.fontSize(12).text("Checklist documents — constitution de dossier", { align: "center" });
-    doc.moveDown(1);
+  return await collectPdfBuffer(doc, () => {
+    drawTitle(
+      doc,
+      "Checklist documents — constitution de dossier",
+      `Référence dossier : ${view.dossierReference}`,
+    );
+    drawStatusBadge(
+      doc,
+      `État du dossier : ${view.checklist.complet ? "COMPLET" : "INCOMPLET"}`,
+      view.checklist.complet ? "success" : "warning",
+    );
 
-    doc.fontSize(10).fillColor("#334155");
-    doc.text(`Référence dossier : ${view.dossierReference}`);
-    doc.text(`Produit : ${view.produitCode} — ${view.produitLibelle}`);
-    doc.text(`Concessionnaire : ${view.concessionnaireLabel}`);
-    doc.text(`Généré le : ${view.generatedAt.toLocaleString("fr-FR")}`);
-    doc.moveDown(0.8);
+    drawSection(doc, "Informations du dossier");
+    drawInformationCard(doc, [
+      { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+      { label: "Concessionnaire", value: view.concessionnaireLabel },
+      { label: "Généré le", value: view.generatedAt.toLocaleString("fr-FR") },
+    ]);
 
-    const badge = view.checklist.complet ? "COMPLET" : "INCOMPLET";
-    const badgeColor = view.checklist.complet ? "#15803d" : "#b45309";
-    doc.fillColor(badgeColor).fontSize(11).text(`État du dossier : ${badge}`, { underline: true });
-    doc.moveDown(0.8);
+    drawSection(doc, "Documents à constituer");
+    const entries = view.checklist.entries.map((entry) => {
+      const oblig = entry.obligatoire ? " (obligatoire)" : "";
+      const statut = DOSSIER_CHECKLIST_STATUT_LABELS[entry.statut];
+      return `${entry.libelle}${oblig} — ${statut}`;
+    });
+    drawBulletList(
+      doc,
+      entries,
+      "Aucun document obligatoire configuré pour ce produit.",
+    );
 
-    if (!view.checklist.entries.length) {
-      doc.fillColor("#64748b").fontSize(10).text("Aucun document obligatoire configuré pour ce produit.");
-    } else {
-      doc.fillColor("#0f172a").fontSize(10);
-      for (const entry of view.checklist.entries) {
-        const oblig = entry.obligatoire ? " (obligatoire)" : "";
-        const statut = DOSSIER_CHECKLIST_STATUT_LABELS[entry.statut];
-        doc.text(`• ${entry.libelle}${oblig} — ${statut}`);
-      }
-    }
-
-    doc.end();
+    finalizePremiumPages(doc, {
+      reference: view.dossierReference,
+      issuedAt: view.generatedAt,
+      documentLabel: "CHECKLIST DOCUMENTS",
+    });
   });
 }

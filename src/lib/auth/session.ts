@@ -6,7 +6,6 @@ import { signSessionToken, verifySessionToken } from "@/lib/auth/jwt";
 import type { SessionPayload } from "@/lib/auth/jwt";
 
 export { LONACI_SESSION_COOKIE_NAME };
-export const SESSION_COOKIE_NAME = LONACI_SESSION_COOKIE_NAME;
 
 export async function createSessionCookie(payload: SessionPayload) {
   const token = await signSessionToken(payload);

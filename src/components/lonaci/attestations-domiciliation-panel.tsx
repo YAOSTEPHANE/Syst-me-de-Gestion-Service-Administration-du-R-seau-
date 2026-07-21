@@ -16,6 +16,18 @@ import {
 } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation";
+import { notify } from "@/lib/toast";
+import { Download, FilePlus2, Send, Upload } from "lucide-react";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Card, Surface } from "@/components/lonaci/ui/surface";
 
 type DemandeType = "ATTESTATION_REVENU" | "DOMICILIATION_PRODUIT";
 type DemandeStatut = "DEMANDE_RECUE" | "TRANSMIS" | "FINALISE" | "VALIDE" | "ENVOYE_CLIENT";
@@ -130,7 +142,6 @@ export default function AttestationsDomiciliationPanel() {
   );
   const [indicatorsLoading, setIndicatorsLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
@@ -157,6 +168,10 @@ export default function AttestationsDomiciliationPanel() {
   const [dateDemande, setDateDemande] = useState("");
   const [observations, setObservations] = useState("");
   const [creating, setCreating] = useState(false);
+  const [pendingAction, setPendingAction] = useState<{
+    row: DemandeItem;
+    kind: "TRANSMIS" | "FINALISE" | "VALIDE" | "ENVOYER";
+  } | null>(null);
 
   const listQueryParams = useMemo(() => {
     const params = new URLSearchParams();
@@ -249,13 +264,13 @@ export default function AttestationsDomiciliationPanel() {
         throw new Error(body?.message ?? "Création impossible");
       }
       closeCreate();
-      setToast({ type: "success", message: "Demande enregistrée (statut Demande reçue)." });
+      notify.success("Demande enregistrée (statut Demande reçue).");
       await load(1);
       void loadIndicators();
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -277,11 +292,11 @@ export default function AttestationsDomiciliationPanel() {
       }
       await load(page);
       void loadIndicators();
-      setToast({ type: "success", message: "Transition effectuée." });
+      notify.success("Transition effectuée.");
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -305,16 +320,15 @@ export default function AttestationsDomiciliationPanel() {
       }
       await load(page);
       void loadIndicators();
-      setToast({
-        type: "success",
-        message: body?.clientEmailSentTo
+      notify.success(
+        body?.clientEmailSentTo
           ? `Attestation envoyée à ${body.clientEmailSentTo} — statut Envoyé client.`
           : "Envoi client effectué.",
-      });
+      );
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setListError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setBusyId(null);
     }
@@ -344,15 +358,14 @@ export default function AttestationsDomiciliationPanel() {
       await load(1);
       void loadIndicators();
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import attestations/domiciliation terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
+      notify.success(
+        `Import attestations/domiciliation terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s), ${data?.skippedInvalidRows ?? 0} ligne(s) invalide(s)${
           data?.invalidRows?.[0] ? ` (ex: ligne ${data.invalidRows[0].index} - ${data.invalidRows[0].reason})` : ""
         }.`,
-      });
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -366,7 +379,7 @@ export default function AttestationsDomiciliationPanel() {
     "w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
   const inputClassXs =
     "rounded-lg border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
-  const dashboardTitle = "4.2 — Tableau de bord attestations";
+  const dashboardTitle = "Tableau de bord des attestations";
   const circuitEtapes = useMemo(
     () => ATTESTATION_CIRCUIT_ETAPES.filter((e, i, arr) => arr.findIndex((x) => x.step === e.step) === i),
     [],
@@ -437,593 +450,141 @@ export default function AttestationsDomiciliationPanel() {
     setReferentialsLoading(false);
   }, [createOpen, produits.length]);
 
+  function actionLabel(row: DemandeItem): string | null {
+    if (row.statut === "DEMANDE_RECUE") return "Transmettre DFC";
+    if (row.statut === "TRANSMIS") return "Finaliser (DFC)";
+    if (row.statut === "FINALISE") return "Mettre en révision";
+    if (row.statut === "VALIDE") return "Envoyer au client";
+    return null;
+  }
+
+  function requestAction(row: DemandeItem) {
+    const label = actionLabel(row);
+    if (!label) return null;
+    const kind = row.statut === "DEMANDE_RECUE" ? "TRANSMIS" : row.statut === "TRANSMIS" ? "FINALISE" : row.statut === "FINALISE" ? "VALIDE" : "ENVOYER";
+    return <Button size="sm" leadingIcon={kind === "ENVOYER" ? Send : undefined} loading={busyId === row.id} onClick={() => setPendingAction({ row, kind })}>{label}</Button>;
+  }
+
+  const columns: DataTableColumn<DemandeItem>[] = [
+    { id: "type", header: "Type", cell: (row) => <StatusBadge className={typeBadgeClass(row.type)}>{ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]}</StatusBadge> },
+    { id: "produit", header: "Produit", cell: (row) => row.produitCode ?? "—" },
+    { id: "client", header: "Concessionnaire", cell: (row) => <span className="font-mono text-xs">{row.concessionnaireId ?? "—"}</span> },
+    { id: "date", header: "Date de demande", cell: (row) => new Date(row.dateDemande).toLocaleString("fr-FR") },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statutBadgeClass(row.statut)} title={ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS[row.statut]}>{ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}</StatusBadge> },
+    { id: "delai", header: "Délai", cell: (row) => row.delaiTraitementClientJours != null ? `${row.delaiTraitementClientJours} j` : "—" },
+    { id: "observations", header: "Observations", cell: (row) => row.observations ?? "—" },
+    { id: "action", header: "Action", align: "right", cell: (row) => row.statut === "ENVOYE_CLIENT" ? (row.sentToClientAt ? new Date(row.sentToClientAt).toLocaleString("fr-FR") : "—") : requestAction(row) },
+  ];
+
   return (
-    <section className="space-y-4">
-      <div className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-r from-cyan-50 via-white to-indigo-50 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-cyan-200/45 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-12 left-20 h-40 w-40 rounded-full bg-indigo-200/30 blur-2xl" />
-        <div className="relative mb-4 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <p className="inline-flex rounded-full border border-violet-300 bg-white px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-violet-800">
-            Attestations & domiciliation
-          </p>
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-slate-900">{dashboardTitle}</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">{dashboardSubtitle}</p>
-          <div
-            className="mt-3 inline-flex rounded-xl border border-slate-200 bg-white p-0.5 shadow-sm"
-            role="tablist"
-            aria-label="Périmètre module"
-          >
-            {(
-              [
-                ["ATTESTATION_REVENU", "Attestation de revenu"],
-                ["DOMICILIATION_PRODUIT", "Domiciliation"],
-                ["ALL", "Tout"],
-              ] as const
-            ).map(([view, label]) => (
-              <button
-                key={view}
-                type="button"
-                role="tab"
-                aria-selected={moduleView === view}
-                onClick={() => onModuleViewChange(view)}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition ${
-                  moduleView === view
-                    ? "bg-violet-600 text-white shadow-sm"
-                    : "text-slate-600 hover:bg-slate-50"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-          <div className="mt-4 rounded-xl border border-slate-200 bg-white/90 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-              4.3 — Circuit de traitement
-            </p>
-            <ol className="mt-2 space-y-2">
-              {circuitEtapes.map((etape) => (
-                <li key={etape.step} className="flex gap-2 text-[11px] leading-snug text-slate-700">
-                  <span className="shrink-0 font-mono font-semibold text-violet-700">{etape.step}.</span>
-                  <span>
-                    <span className="font-semibold text-slate-900">{etape.label}</span>
-                    {" — "}
-                    {etape.description}
-                  </span>
-                </li>
-              ))}
-            </ol>
-          </div>
-          <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50/50 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-900">
-              4.4 — Statuts du traitement attestation
-            </p>
-            <div className="mt-2 overflow-x-auto">
-              <table className="w-full min-w-md text-left text-[11px]">
-                <thead>
-                  <tr className="border-b border-violet-200 text-violet-900">
-                    <th className="py-1.5 pr-3 font-semibold">Statut</th>
-                    <th className="py-1.5 font-semibold">Description</th>
-                  </tr>
-                </thead>
-                <tbody className="text-slate-700">
-                  {ATTESTATION_DOMICILIATION_STATUTS_SPEC_44.map((row) => (
-                    <tr key={row.statut} className="border-b border-violet-100/80 last:border-0">
-                      <td className="py-1.5 pr-3 align-top font-semibold whitespace-nowrap text-slate-900">
-                        {row.label}
-                      </td>
-                      <td className="py-1.5 align-top leading-snug">{row.description}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-        <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-          <a
-            href={`/api/attestations-domiciliation/export?format=excel&${exportQuery}`}
-            className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
-          >
-            Export Excel
-          </a>
-          <a
-            href={`/api/attestations-domiciliation/export?format=pdf&${exportQuery}`}
-            className="inline-flex items-center justify-center rounded-xl border border-rose-300 bg-rose-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-700"
-          >
-            Export PDF
-          </a>
-          <button
-            type="button"
-            onClick={() => setCreateOpen(true)}
-            disabled={creating}
-            className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-400 bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-600 hover:bg-cyan-600 disabled:opacity-60"
-          >
-            <span className="text-lg font-light leading-none">+</span>
-            Nouvelle demande
-          </button>
-          <button
-            type="button"
-            onClick={() => void downloadAttestationsExcelTemplate()}
-            className="inline-flex items-center justify-center rounded-xl border border-emerald-600 bg-white px-3 py-2.5 text-sm font-semibold text-emerald-700 shadow-sm transition hover:bg-emerald-50"
-          >
-            Télécharger modèle Excel
-          </button>
-          <input
-            ref={importFileInputRef}
-            type="file"
-            accept=".json,.csv,.xlsx,.xls,.pdf"
-            className="hidden"
-            onChange={(e) => void onImportFileChange(e)}
-          />
-          <button
-            type="button"
-            onClick={() => importFileInputRef.current?.click()}
-            disabled={importingFile}
-            className="inline-flex items-center justify-center rounded-xl border border-cyan-500 bg-cyan-50 px-3 py-2.5 text-sm font-semibold text-cyan-800 shadow-sm transition hover:bg-cyan-100 disabled:opacity-60"
-          >
-            {importingFile ? "Import..." : "Importer fichier vers le tableau"}
-          </button>
-        </div>
-      </div>
+    <section className="space-y-5">
+      <PageHeader
+        eyebrow="Attestations & domiciliation"
+        title={dashboardTitle}
+        description={dashboardSubtitle}
+        actions={
+          <>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/attestations-domiciliation/export?format=excel&${exportQuery}`, "_blank")}>Excel</Button>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/attestations-domiciliation/export?format=pdf&${exportQuery}`, "_blank")}>PDF</Button>
+            <Button variant="secondary" leadingIcon={Download} onClick={() => void downloadAttestationsExcelTemplate()}>Modèle Excel</Button>
+            <input ref={importFileInputRef} type="file" accept=".json,.csv,.xlsx,.xls,.pdf" className="sr-only" aria-label="Importer des attestations" onChange={(e) => void onImportFileChange(e)} />
+            <Button variant="secondary" leadingIcon={Upload} loading={importingFile} onClick={() => importFileInputRef.current?.click()}>Importer</Button>
+            <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Nouvelle demande</Button>
+          </>
+        }
+      />
 
-        <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          Tableau de bord — indicateurs clés
-          {indicatorsLoading ? " (chargement…)" : null}
-        </p>
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <article className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-              {ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}
-            </p>
-            <p className="mt-1 text-3xl font-bold text-amber-900">
-              {indicators?.enCours ?? "—"}
-            </p>
-            <p className="mt-1 text-[10px] leading-snug text-amber-800/90">
-              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.DEMANDE_RECUE}
-            </p>
-            <p className="mt-1 text-[11px] text-amber-800/80">
-              Dont {indicators?.enAttentePlus7Jours ?? "—"} &gt; 7 j
-            </p>
-          </article>
-          <article className="rounded-2xl border border-sky-200 bg-sky-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-sky-700">
-              {ATTESTATION_DOMICILIATION_STATUT_LABELS.TRANSMIS}
-            </p>
-            <p className="mt-1 text-3xl font-bold text-sky-900">{indicators?.transmisDfc ?? "—"}</p>
-            <p className="mt-1 text-[10px] leading-snug text-sky-800/90">
-              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.TRANSMIS}
-            </p>
-          </article>
-          <article className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">
-              {ATTESTATION_DOMICILIATION_STATUT_LABELS.FINALISE}
-            </p>
-            <p className="mt-1 text-3xl font-bold text-emerald-900">{indicators?.finalise ?? "—"}</p>
-            <p className="mt-1 text-[10px] leading-snug text-emerald-800/90">
-              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.FINALISE}
-            </p>
-          </article>
-          <article className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
-              {ATTESTATION_DOMICILIATION_STATUT_LABELS.VALIDE}
-            </p>
-            <p className="mt-1 text-3xl font-bold text-indigo-950">{indicators?.valide ?? "—"}</p>
-            <p className="mt-1 text-[10px] leading-snug text-indigo-800/90">
-              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.VALIDE}
-            </p>
-          </article>
-          <article className="rounded-2xl border border-violet-200 bg-violet-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-800">
-              {ATTESTATION_DOMICILIATION_STATUT_LABELS.ENVOYE_CLIENT}
-            </p>
-            <p className="mt-1 text-3xl font-bold text-violet-950">{indicators?.envoyeClient ?? "—"}</p>
-            <p className="mt-1 text-[10px] leading-snug text-violet-800/90">
-              {ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS.ENVOYE_CLIENT}
-            </p>
-          </article>
-        </div>
-        <div className="mt-3 grid gap-3 lg:grid-cols-3">
-          <article className="rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-800">
-              Nombre de demandes
-            </p>
-            <p className="mt-1 text-3xl font-bold text-indigo-950">
-              {indicators?.nombreDemandes ?? "—"}
-            </p>
-            <p className="mt-1 text-[11px] text-indigo-900/80">
-              En cours et traitées — filtrable par période et par agence.
-            </p>
-          </article>
-          <article className="rounded-2xl border border-cyan-200 bg-cyan-50 p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
-              Temps de traitement
-            </p>
-            <p className="mt-1 text-3xl font-bold text-cyan-950">
-              {indicators?.tempsTraitementMoyenClientJours != null
-                ? `${indicators.tempsTraitementMoyenClientJours} j`
-                : "—"}
-            </p>
-            <p className="mt-1 text-[11px] text-cyan-900/80">
-              Moyenne soumission → client
-              {indicators?.tempsTraitementEchantillon
-                ? ` (${indicators.tempsTraitementEchantillon} dossier(s))`
-                : ""}
-            </p>
-          </article>
-          <article className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-600">Activité du mois</p>
-            <p className="mt-2 text-sm text-slate-800">
-              Nouvelles : <span className="font-semibold">{indicators?.createdThisMonth ?? "—"}</span>
-            </p>
-            <p className="text-sm text-slate-800">
-              Finalisées : <span className="font-semibold">{indicators?.finaliseThisMonth ?? "—"}</span>
-            </p>
-            {indicators?.tauxFinalisationClientPct != null ? (
-              <p className="mt-1 text-[11px] text-slate-500">
-                Taux envoyé client : {indicators.tauxFinalisationClientPct} %
-              </p>
-            ) : null}
-          </article>
-        </div>
-      </div>
-
-      <div className="grid gap-2 rounded-xl border border-slate-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-6">
-        <select
-          aria-label="Filtre type"
-          value={filterType}
-          onChange={(e) => {
-            const next = e.target.value as "" | DemandeType;
-            setFilterType(next);
-            setModuleView(
-              next === "ATTESTATION_REVENU"
-                ? "ATTESTATION_REVENU"
-                : next === "DOMICILIATION_PRODUIT"
-                  ? "DOMICILIATION_PRODUIT"
-                  : "ALL",
-            );
-          }}
-          className={inputClassXs}
-        >
-          <option value="">Tous types</option>
-          <option value="ATTESTATION_REVENU">
-            {ATTESTATION_DOMICILIATION_TYPE_LABELS.ATTESTATION_REVENU}
-          </option>
-          <option value="DOMICILIATION_PRODUIT">
-            {ATTESTATION_DOMICILIATION_TYPE_LABELS.DOMICILIATION_PRODUIT}
-          </option>
-        </select>
-        <div className="min-w-0">
-          <ClientSearchPicker
-            label={<span className="sr-only">Client (filtre)</span>}
-            selected={filterClient}
-            onSelectedChange={setFilterClient}
-            filter="linkedPdv"
-            inputClassName={inputClassXs}
-            showClearLink
-            searchPlaceholder="Filtrer par client…"
-          />
-        </div>
-        <select
-          aria-label="Filtre statut"
-          value={filterStatut}
-          onChange={(e) => setFilterStatut(e.target.value as "" | DemandeStatut)}
-          className={inputClassXs}
-        >
-          <option value="">Tous statuts</option>
-          <option value="DEMANDE_RECUE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}</option>
-          <option value="TRANSMIS">{ATTESTATION_DOMICILIATION_STATUT_LABELS.TRANSMIS}</option>
-          <option value="FINALISE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.FINALISE}</option>
-          <option value="VALIDE">{ATTESTATION_DOMICILIATION_STATUT_LABELS.VALIDE}</option>
-          <option value="ENVOYE_CLIENT">{ATTESTATION_DOMICILIATION_STATUT_LABELS.ENVOYE_CLIENT}</option>
-        </select>
-        <select
-          aria-label="Filtre agence"
-          value={filterAgenceId}
-          onChange={(e) => setFilterAgenceId(e.target.value)}
-          className={inputClassXs}
-        >
-          <option value="">Toutes agences</option>
-          {agences.map((a) => (
-            <option key={a.id} value={a.id}>
-              {a.libelle}
-            </option>
+      <Surface>
+        <SectionHeader title="Périmètre et circuit" description="Suivez séparément les attestations, les domiciliations ou la vue consolidée." />
+        <div className="flex flex-wrap gap-2" role="tablist" aria-label="Périmètre module">
+          {([["ATTESTATION_REVENU", "Attestation de revenu"], ["DOMICILIATION_PRODUIT", "Domiciliation"], ["ALL", "Tout"]] as const).map(([view, label]) => (
+            <Button key={view} variant={moduleView === view ? "primary" : "secondary"} size="sm" role="tab" aria-selected={moduleView === view} onClick={() => onModuleViewChange(view)}>{label}</Button>
           ))}
-        </select>
-        <input
-          aria-label="Date début"
-          type="date"
-          value={filterDateFrom}
-          onChange={(e) => setFilterDateFrom(e.target.value)}
-          className={inputClassXs}
-        />
-        <input
-          aria-label="Date fin"
-          type="date"
-          value={filterDateTo}
-          onChange={(e) => setFilterDateTo(e.target.value)}
-          className={inputClassXs}
-        />
-      </div>
-
-      <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
-        <span>
-          {total} entrée(s) · page {page}/{totalPages}
-        </span>
-        <button
-          type="button"
-          disabled={page <= 1}
-          onClick={() => void load(page - 1)}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Précédent
-        </button>
-        <button
-          type="button"
-          disabled={page >= totalPages}
-          onClick={() => void load(page + 1)}
-          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 shadow-sm transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          Suivant
-        </button>
-      </div>
-
-      {toast ? (
-        <div
-          className={`fixed left-1/2 top-4 z-[100] w-[min(calc(100vw-2rem),28rem)] -translate-x-1/2 rounded-lg border px-3 py-2.5 text-sm shadow-lg ${
-            toast.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-          role="status"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span className="min-w-0 font-medium">{toast.message}</span>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              className="shrink-0 text-xs underline opacity-80 hover:opacity-100"
-            >
-              Fermer
-            </button>
-          </div>
         </div>
-      ) : null}
+        <ol className="mt-4 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {circuitEtapes.map((etape) => <li key={etape.step} className="rounded-xl border border-orange-100 bg-orange-50/50 p-3 text-sm"><strong>{etape.step}. {etape.label}</strong><p className="mt-1 text-xs text-slate-600">{etape.description}</p></li>)}
+        </ol>
+      </Surface>
 
-      {listError ? <p className="text-sm text-rose-700">{listError}</p> : null}
-      {loading ? (
-        <p className="text-sm text-slate-500">Chargement…</p>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-          <table className="w-full border-collapse text-left text-sm">
-            <thead className="bg-slate-50 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-              <tr>
-                <th className="px-3 py-2.5">Type</th>
-                <th className="px-3 py-2.5">Produit</th>
-                <th className="px-3 py-2.5">Concessionnaire</th>
-                <th className="px-3 py-2.5">Date demande</th>
-                <th className="px-3 py-2.5">Statut</th>
-                <th className="px-3 py-2.5">Temps trait. (j)</th>
-                <th className="px-3 py-2.5">Observations</th>
-                <th className="px-3 py-2.5 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((row) => (
-                <tr key={row.id} className="border-t border-slate-100 hover:bg-cyan-50/30">
-                  <td className="px-3 py-2.5">
-                    <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${typeBadgeClass(row.type)}`}>
-                      {ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 font-mono text-xs">{row.produitCode ?? "—"}</td>
-                  <td className="px-3 py-2.5 font-mono text-[11px]">{row.concessionnaireId ?? "—"}</td>
-                  <td className="px-3 py-2.5 whitespace-nowrap text-xs">
-                    {new Date(row.dateDemande).toLocaleString("fr-FR")}
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span
-                      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${statutBadgeClass(row.statut)}`}
-                      title={ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS[row.statut]}
-                    >
-                      {ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 whitespace-nowrap text-xs text-slate-700">
-                    {row.delaiTraitementClientJours != null
-                      ? `${row.delaiTraitementClientJours} j`
-                      : "—"}
-                  </td>
-                  <td className="px-3 py-2.5 max-w-[22rem] truncate text-xs text-slate-700">
-                    {row.observations ?? "—"}
-                  </td>
-                  <td className="px-3 py-2.5 text-right">
-                    {row.statut === "DEMANDE_RECUE" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "TRANSMIS")}
-                        className="inline-flex items-center justify-center rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Transmettre DFC"}
-                      </button>
-                    ) : row.statut === "TRANSMIS" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "FINALISE")}
-                        className="inline-flex items-center justify-center rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-emerald-700 hover:bg-emerald-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Finaliser (DFC)"}
-                      </button>
-                    ) : row.statut === "FINALISE" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void transition(row.id, "VALIDE")}
-                        className="inline-flex items-center justify-center rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-indigo-700 hover:bg-indigo-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Mettre en révision"}
-                      </button>
-                    ) : row.statut === "VALIDE" ? (
-                      <button
-                        disabled={busyId === row.id}
-                        onClick={() => void envoyerAuClient(row.id)}
-                        className="inline-flex items-center justify-center rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold leading-tight text-white shadow-sm transition hover:border-violet-700 hover:bg-violet-700 disabled:opacity-60"
-                      >
-                        {busyId === row.id ? "..." : "Envoyer (SMTP)"}
-                      </button>
-                    ) : row.statut === "ENVOYE_CLIENT" ? (
-                      <span className="text-[11px] text-violet-800" title={row.clientEmailSentTo ?? undefined}>
-                        {row.sentToClientAt
-                          ? new Date(row.sentToClientAt).toLocaleString("fr-FR")
-                          : "—"}
-                      </span>
-                    ) : (
-                      <span className="text-xs text-slate-400">—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-              {!items.length ? (
-                <tr>
-                  <td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-500">
-                    Aucune entrée.
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
+      <Surface>
+        <SectionHeader title="Indicateurs clés" description={indicatorsLoading ? "Actualisation en cours…" : "Volumes et délais selon les filtres actifs."} />
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <Card title={ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}><strong className="text-2xl">{indicators?.enCours ?? "—"}</strong></Card>
+          <Card title={ATTESTATION_DOMICILIATION_STATUT_LABELS.TRANSMIS}><strong className="text-2xl">{indicators?.transmisDfc ?? "—"}</strong></Card>
+          <Card title={ATTESTATION_DOMICILIATION_STATUT_LABELS.FINALISE}><strong className="text-2xl">{indicators?.finalise ?? "—"}</strong></Card>
+          <Card title={ATTESTATION_DOMICILIATION_STATUT_LABELS.VALIDE}><strong className="text-2xl">{indicators?.valide ?? "—"}</strong></Card>
+          <Card title={ATTESTATION_DOMICILIATION_STATUT_LABELS.ENVOYE_CLIENT}><strong className="text-2xl">{indicators?.envoyeClient ?? "—"}</strong></Card>
         </div>
-      )}
+      </Surface>
 
-      {createOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/60"
-            aria-label="Fermer"
-            onClick={closeCreate}
-            disabled={creating}
+      <FilterBar
+        aria-label="Filtres des attestations et domiciliations"
+        filters={
+          <>
+            <FormField label="Type"><select value={filterType} onChange={(e) => { const next = e.target.value as "" | DemandeType; setFilterType(next); setModuleView(next || "ALL"); }}><option value="">Tous les types</option><option value="ATTESTATION_REVENU">Attestation de revenu</option><option value="DOMICILIATION_PRODUIT">Domiciliation produit</option></select></FormField>
+            <div className="min-w-56"><ClientSearchPicker label="Client" selected={filterClient} onSelectedChange={setFilterClient} filter="linkedPdv" inputClassName={inputClassXs} showClearLink searchPlaceholder="Rechercher un client" /></div>
+            <FormField label="Statut"><select value={filterStatut} onChange={(e) => setFilterStatut(e.target.value as "" | DemandeStatut)}><option value="">Tous les statuts</option>{ATTESTATION_DOMICILIATION_STATUTS_SPEC_44.map((row) => <option key={row.statut} value={row.statut}>{row.label}</option>)}</select></FormField>
+            <FormField label="Agence"><select value={filterAgenceId} onChange={(e) => setFilterAgenceId(e.target.value)}><option value="">Toutes les agences</option>{agences.map((a) => <option key={a.id} value={a.id}>{a.libelle}</option>)}</select></FormField>
+            <FormField label="Du"><input type="date" value={filterDateFrom} onChange={(e) => setFilterDateFrom(e.target.value)} /></FormField>
+            <FormField label="Au"><input type="date" value={filterDateTo} onChange={(e) => setFilterDateTo(e.target.value)} /></FormField>
+          </>
+        }
+      />
+
+      {listError ? <FeedbackState tone="danger" title="Chargement impossible" description={listError} /> : null}
+      <Surface padding="none" elevated>
+        {loading ? <Skeleton lines={6} /> : (
+          <DataTable
+            rows={items}
+            columns={columns}
+            rowKey={(row) => row.id}
+            caption="Demandes d’attestation et de domiciliation"
+            getRowLabel={(row) => `${ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]} du ${new Date(row.dateDemande).toLocaleDateString("fr-FR")}`}
+            mobileCard={(row) => (
+              <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
+                <div className="flex items-start justify-between gap-3"><div><strong>{ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]}</strong><p className="mt-1 text-sm text-slate-600">{row.produitCode ?? "Sans produit"}</p></div><StatusBadge className={statutBadgeClass(row.statut)}>{ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}</StatusBadge></div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Date de demande</dt><dd className="mt-1 font-medium">{new Date(row.dateDemande).toLocaleString("fr-FR")}</dd></div><div><dt className="text-slate-500">Délai</dt><dd className="mt-1 font-medium">{row.delaiTraitementClientJours != null ? `${row.delaiTraitementClientJours} j` : "—"}</dd></div></dl>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{requestAction(row)}</div>
+              </article>
+            )}
           />
-          <div className="relative z-10 flex max-h-[84vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-gradient-to-r from-cyan-50 via-white to-indigo-50 px-4 py-2.5">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">Nouvelle demande</h3>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
-                  Soumission agent — statut initial : {ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}.
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={creating}
-                onClick={closeCreate}
-                className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
+        )}
+      </Surface>
+      <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">{total} demande(s)</p><Pagination page={page} pageCount={totalPages} onPageChange={(next) => void load(next)} label="Pagination des attestations" /></div>
 
-            <form noValidate onSubmit={onCreate} className="flex min-h-0 flex-1 flex-col">
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
-                {createError ? (
-                  <div
-                    className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900"
-                    role="alert"
-                  >
-                    {createError}
-                  </div>
-                ) : null}
+      <Dialog
+        open={createOpen}
+        onOpenChange={(open) => { if (!open && !creating) closeCreate(); }}
+        title="Nouvelle demande"
+        description={`Statut initial : ${ATTESTATION_DOMICILIATION_STATUT_LABELS.DEMANDE_RECUE}.`}
+        size="lg"
+        footer={<><Button variant="secondary" disabled={creating} onClick={closeCreate}>Annuler</Button><Button type="submit" form="attestation-create-form" loading={creating}>Créer la demande</Button></>}
+      >
+        {createError ? <FeedbackState tone="danger" title="Création impossible" description={createError} /> : null}
+        <form id="attestation-create-form" noValidate onSubmit={onCreate} className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Type" required className="sm:col-span-2"><select required value={type} onChange={(e) => setType(e.target.value as DemandeType)}><option value="ATTESTATION_REVENU">Attestation de revenu</option><option value="DOMICILIATION_PRODUIT">Domiciliation produit</option></select></FormField>
+          <div className="sm:col-span-2"><ClientSearchPicker key={`attestation-create-${createOpen}`} label="Client Lonaci" selected={createClient} onSelectedChange={(row) => { setCreateClient(row); const picked = pickProduitCodeFromClient(row, produits.filter((p) => p.actif).map((p) => p.code)); if (picked) setProduitCode(picked); }} filter="linkedPdv" inputClassName={inputClass} searchPlaceholder="Rechercher un client" /></div>
+          <FormField label="Produit concerné" error={referentialsError}><select value={produitCode} onChange={(e) => setProduitCode(e.target.value)} disabled={referentialsLoading}><option value="">Aucun produit</option>{produits.filter((p) => p.actif).map((p) => <option key={p.code} value={p.code}>{p.code} — {p.libelle}</option>)}</select></FormField>
+          <FormField label="Date de la demande" required><input ref={dateInputRef} required type="datetime-local" value={dateDemande} onChange={(e) => setDateDemande(e.target.value)} /></FormField>
+          <FormField label="Observations" className="sm:col-span-2"><textarea value={observations} onChange={(e) => setObservations(e.target.value)} rows={3} /></FormField>
+        </form>
+      </Dialog>
 
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <label className="grid gap-1 sm:col-span-2">
-                    <span className="text-xs font-medium text-slate-700">Type *</span>
-                    <select required value={type} onChange={(e) => setType(e.target.value as DemandeType)} className={inputClass}>
-                      <option value="ATTESTATION_REVENU">ATTESTATION_REVENU</option>
-                      <option value="DOMICILIATION_PRODUIT">DOMICILIATION_PRODUIT</option>
-                    </select>
-                  </label>
-
-                  <ClientSearchPicker
-                    key={`attestation-create-${createOpen}`}
-                    label={<span className="text-xs font-medium text-slate-700">Client Lonaci</span>}
-                    selected={createClient}
-                    onSelectedChange={(r) => {
-                      setCreateClient(r);
-                      const codes = produits.filter((p) => p.actif).map((p) => p.code);
-                      const picked = pickProduitCodeFromClient(r, codes);
-                      if (picked) setProduitCode(picked);
-                    }}
-                    filter="linkedPdv"
-                    inputClassName={inputClass}
-                    searchPlaceholder="Rechercher un client…"
-                  />
-
-                  <label className="grid gap-1 sm:col-span-2">
-                    <span className="text-xs font-medium text-slate-700">Produit concerné</span>
-                    <select
-                      value={produitCode}
-                      onChange={(e) => setProduitCode(e.target.value)}
-                      className={inputClass}
-                      disabled={referentialsLoading}
-                    >
-                      <option value="">{referentialsLoading ? "Chargement des référentiels…" : "Aucun produit"}</option>
-                      {produits
-                        .filter((p) => p.actif)
-                        .map((p) => (
-                          <option key={p.code} value={p.code}>
-                            {p.code} — {p.libelle}
-                          </option>
-                        ))}
-                    </select>
-                    {referentialsError ? <span className="text-[11px] leading-4 text-rose-700">{referentialsError}</span> : null}
-                  </label>
-
-                  <label className="grid gap-1">
-                    <span className="text-xs font-medium text-slate-700">Date de la demande *</span>
-                    <input
-                      ref={dateInputRef}
-                      required
-                      type="datetime-local"
-                      value={dateDemande}
-                      onChange={(e) => setDateDemande(e.target.value)}
-                      className={inputClass}
-                    />
-                  </label>
-
-                  <label className="grid gap-1 sm:col-span-2">
-                    <span className="text-xs font-medium text-slate-700">Observations</span>
-                    <textarea
-                      value={observations}
-                      onChange={(e) => setObservations(e.target.value)}
-                      rows={3}
-                      className={inputClass}
-                      placeholder="Zone observations (optionnel)"
-                    />
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5">
-                <button
-                  type="button"
-                  onClick={closeCreate}
-                  disabled={creating}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-                <button
-                  type="submit"
-                  disabled={creating}
-                  className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
-                >
-                  {creating ? "Enregistrement…" : "Créer"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      ) : null}
+      <ConfirmDialog
+        open={pendingAction !== null}
+        onOpenChange={(open) => { if (!open && !busyId) setPendingAction(null); }}
+        title="Confirmer l’action"
+        description={pendingAction ? actionLabel(pendingAction.row) ?? undefined : undefined}
+        message="Cette action fera avancer le dossier dans son workflow. Vérifiez les informations avant de confirmer."
+        confirmLabel="Confirmer"
+        pending={busyId !== null}
+        onConfirm={async () => {
+          if (!pendingAction) return;
+          if (pendingAction.kind === "ENVOYER") await envoyerAuClient(pendingAction.row.id);
+          else await transition(pendingAction.row.id, pendingAction.kind);
+          setPendingAction(null);
+        }}
+      />
     </section>
   );
 }
-

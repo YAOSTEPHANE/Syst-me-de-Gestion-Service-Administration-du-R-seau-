@@ -3,13 +3,23 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Bell,
+  ChevronLeft,
+  ChevronRight,
+  LogOut,
+  Menu,
+  Search,
+  Star,
+  UserRound,
+  UserRoundPlus,
+  X,
+} from "lucide-react";
+import {
   useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
-  type CSSProperties,
   type ReactNode,
 } from "react";
 
@@ -17,18 +27,17 @@ import { LonaciKpiProvider, useLonaciKpi } from "@/components/lonaci/lonaci-kpi-
 import {
   LONACI_NAV,
   LonaciNavIcon,
+  isLonaciNavItemActive,
   lonaciNavBadgeClass,
   type LonaciNavItem,
 } from "@/components/lonaci/lonaci-nav";
 import NotificationBell from "@/components/lonaci/notification-bell";
 import ShellAgenceFilterDropdown from "@/components/lonaci/shell-agence-filter-dropdown";
+import { LonaciBrand } from "@/components/lonaci/ui/brand";
+import { IconButton } from "@/components/lonaci/ui/button";
 import { canRole, type RbacAction, type RbacResource } from "@/lib/auth/rbac";
 import { LONACI_ROLES, getLonaciRoleLabel, type LonaciRole } from "@/lib/lonaci/constants";
 import { lonaciShellHeader } from "@/lib/lonaci/lonaci-shell-header";
-
-type NavIconLinkStyle = CSSProperties & {
-  "--lonaci-nav-icon-color"?: string;
-};
 
 const SIDEBAR_STORAGE_KEY = "lonaci-sidebar-collapsed";
 const SIDEBAR_STORE_EVENT = "lonaci:sidebar-collapsed";
@@ -54,10 +63,6 @@ function getSidebarCollapsedSnapshot(): boolean {
   } catch {
     return false;
   }
-}
-
-function getSidebarCollapsedServerSnapshot(): boolean {
-  return false;
 }
 
 /** Réponses 401 de `requireApiAuth` : session remplacée, expirée ou cookie absent — renvoyer vers la connexion. */
@@ -93,6 +98,19 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
     const nativeFetch = window.fetch.bind(window);
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       const res = await nativeFetch(input, init);
+      const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
+      const requestUrl =
+        typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
+      if (res.ok && !["GET", "HEAD", "OPTIONS"].includes(method)) {
+        try {
+          const apiUrl = new URL(requestUrl, window.location.origin);
+          if (apiUrl.origin === window.location.origin && apiUrl.pathname.startsWith("/api/")) {
+            window.dispatchEvent(new Event("lonaci:data-changed"));
+          }
+        } catch {
+          // Une URL non analysable ne doit pas faire échouer la requête métier.
+        }
+      }
       if (res.status !== 401 && res.status !== 403) return res;
       const url =
         typeof input === "string" ? input : input instanceof Request ? input.url : input.toString();
@@ -126,13 +144,16 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       apiFetchGuardRef.current = false;
     };
   }, []);
-  const { kpi } = useLonaciKpi();
+  const { kpi, refresh: refreshKpi } = useLonaciKpi();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const sidebarCollapsed = useSyncExternalStore(
-    subscribeSidebarCollapsed,
-    getSidebarCollapsedSnapshot,
-    getSidebarCollapsedServerSnapshot,
-  );
+  const [sidebarCollapsed, setSidebarCollapsedState] = useState(false);
+
+  useEffect(() => {
+    const syncPreference = () => setSidebarCollapsedState(getSidebarCollapsedSnapshot());
+    syncPreference();
+    return subscribeSidebarCollapsed(syncPreference);
+  }, []);
+
   const setSidebarCollapsed = useCallback((next: boolean) => {
     try {
       window.localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? "1" : "0");
@@ -149,6 +170,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
   const [favoriteModuleHrefs, setFavoriteModuleHrefs] = useState<string[]>([]);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const mobileDrawerRef = useRef<HTMLElement | null>(null);
   const inactivityTimeoutRef = useRef<number | null>(null);
 
   useEffect(() => {
@@ -172,11 +196,45 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!mobileMenuOpen) return;
+    const drawer = mobileDrawerRef.current;
+    const opener = mobileMenuButtonRef.current;
+    const previousActive = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const focusableSelector =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+    const focusFirst = () => {
+      const first = drawer?.querySelector<HTMLElement>(focusableSelector);
+      first?.focus();
+    };
+    const frame = window.requestAnimationFrame(focusFirst);
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileMenuOpen(false);
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMobileMenuOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !drawer) return;
+      const focusable = Array.from(drawer.querySelectorAll<HTMLElement>(focusableSelector));
+      if (focusable.length === 0) {
+        event.preventDefault();
+        drawer.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", onKeyDown);
+      (previousActive ?? opener)?.focus();
+    };
   }, [mobileMenuOpen]);
 
   useEffect(() => {
@@ -252,32 +310,16 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (!rule || !role) return true;
       return canRole({ role, resource: rule.resource, action: rule.action }).allowed;
     });
-    const palette = [
-      "#0ea5e9", // sky
-      "#10b981", // emerald
-      "#f59e0b", // amber
-      "#ef4444", // red
-      "#8b5cf6", // violet
-      "#6366f1", // indigo
-      "#14b8a6", // teal
-      "#22c55e", // green
-      "#3b82f6", // blue
-      "#f97316", // orange
-      "#a855f7", // purple
-      "#64748b", // slate
-    ];
-
-    return visibleNav.map((item: LonaciNavItem, idx: number) => {
-      const active = !item.disabled && pathname === item.href;
+    return visibleNav.map((item: LonaciNavItem) => {
+      const active = !item.disabled && isLonaciNavItemActive(pathname ?? "/", item.href);
       let badgeCount: number | null = null;
-      if (kpi && item.badge === "contracts") badgeCount = kpi.dossierValidation.contratSoumis;
-      if (kpi && item.badge === "cautions") badgeCount = kpi.daily.cautions.enAttente;
-      if (kpi && item.badge === "succession") badgeCount = kpi.dossierValidation.successionOuverts;
+      if (kpi && item.badge === "dossiers") badgeCount = kpi.workflowQueues.dossiers;
+      if (kpi && item.badge === "cautions") badgeCount = kpi.workflowQueues.cautions;
+      if (kpi && item.badge === "succession") badgeCount = kpi.workflowQueues.successions;
       if (kpi && item.badge === "pdv") badgeCount = kpi.dossierValidation.pdvNonFinalise;
-      if (kpi && item.badge === "agrements") badgeCount = kpi.dossierValidation.agrementsEnAttente;
-      if (kpi && item.badge === "bancarisation") badgeCount = kpi.bancarisation.enCours + kpi.bancarisation.nonBancarise;
-      const iconColor = palette[idx % palette.length];
-      return { item, active, badgeCount, iconColor };
+      if (kpi && item.badge === "agrements") badgeCount = kpi.workflowQueues.agrements;
+      if (kpi && item.badge === "bancarisation") badgeCount = kpi.workflowQueues.bancarisation;
+      return { item, active, badgeCount };
     });
   }, [pathname, kpi, meUser?.role]);
 
@@ -392,6 +434,8 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!userMenuOpen) return;
+    const firstItem = userMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
+    firstItem?.focus();
 
     const onMouseDown = (event: MouseEvent) => {
       const el = userMenuRef.current;
@@ -402,7 +446,10 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setUserMenuOpen(false);
+      if (event.key === "Escape") {
+        setUserMenuOpen(false);
+        userMenuButtonRef.current?.focus();
+      }
     };
 
     window.addEventListener("mousedown", onMouseDown);
@@ -431,48 +478,39 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <aside className="lonaci-db-sidebar">
           <div className="lonaci-db-sidebar-brand">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo" suppressHydrationWarning>
-                IC
-              </div>
-              <div>
-                <div className="lonaci-db-logo-title">Infinitecore Système</div>
-              </div>
-              <button
-                type="button"
+              <LonaciBrand inverse compact={sidebarCollapsed} />
+              <IconButton
+                icon={sidebarCollapsed ? ChevronRight : ChevronLeft}
+                label={sidebarCollapsed ? "Déplier le menu" : "Replier le menu"}
                 className="lonaci-db-sidebar-toggle"
-                aria-label={sidebarCollapsed ? "Déplier le menu" : "Replier le menu"}
                 title={`${sidebarCollapsed ? "Déplier" : "Replier"} le menu (Ctrl/Cmd+B)`}
                 onClick={() => setSidebarCollapsed(!getSidebarCollapsedSnapshot())}
-              >
-                <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                  <path d={sidebarCollapsed ? "M9 6l6 6-6 6" : "M15 6l-6 6 6 6"} />
-                </svg>
-              </button>
+              />
             </div>
           </div>
 
           <nav className="lonaci-db-nav">
             {!sidebarCollapsed ? (
-              <div className="mb-3 px-2">
+              <div className="lonaci-db-nav-search">
+                <Search size={15} aria-hidden="true" />
                 <input
                   value={navQuery}
                   onChange={(e) => setNavQuery(e.target.value)}
                   placeholder="Rechercher un module..."
-                  className="w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900"
                   aria-label="Rechercher un module"
                 />
               </div>
             ) : null}
             {!sidebarCollapsed && recentModules.length > 0 ? (
-              <div className="mb-3 px-2">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Récents</div>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="lonaci-db-nav-shortcuts">
+                <div className="lonaci-db-nav-shortcuts-title">Récents</div>
+                <div className="lonaci-db-nav-shortcuts-list">
                   {recentModules.slice(0, 4).map(({ item }) => (
                     <Link
                       key={`recent-${item.href}`}
                       href={item.href}
                       onClick={() => rememberRecentModule(item.href)}
-                      className="rounded-full border border-slate-300 bg-white px-2 py-0.5 text-[11px] text-slate-700 hover:bg-slate-50"
+                      className="lonaci-db-nav-shortcut"
                     >
                       {item.label}
                     </Link>
@@ -481,15 +519,15 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               </div>
             ) : null}
             {!sidebarCollapsed && favoriteModules.length > 0 ? (
-              <div className="mb-3 px-2">
-                <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Favoris</div>
-                <div className="flex flex-wrap gap-1.5">
+              <div className="lonaci-db-nav-shortcuts">
+                <div className="lonaci-db-nav-shortcuts-title">Favoris</div>
+                <div className="lonaci-db-nav-shortcuts-list">
                   {favoriteModules.slice(0, 6).map(({ item }) => (
                     <Link
                       key={`favorite-${item.href}`}
                       href={item.href}
                       onClick={() => rememberRecentModule(item.href)}
-                      className="rounded-full border border-amber-300 bg-amber-50 px-2 py-0.5 text-[11px] text-amber-800 hover:bg-amber-100"
+                      className="lonaci-db-nav-shortcut lonaci-db-nav-shortcut--favorite"
                     >
                       ★ {item.label}
                     </Link>
@@ -497,44 +535,43 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 </div>
               </div>
             ) : null}
-            {filteredNavItems.map(({ item, showSection, active, badgeCount, iconColor }) => (
+            {filteredNavItems.map(({ item, showSection, active, badgeCount }) => (
               <div key={`${item.href}-${item.label}`}>
                 {!sidebarCollapsed && showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
                 {item.disabled ? (
                   <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled" title={sidebarCollapsed ? item.label : undefined}>
-                    <LonaciNavIcon label={item.label} />
+                    <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                     <span className="lonaci-db-nav-label">{item.label}</span>
                   </span>
                 ) : (
-                  <Link
-                    href={item.href}
-                    className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
-                    style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
-                    title={sidebarCollapsed ? item.label : undefined}
-                    onClick={() => rememberRecentModule(item.href)}
-                  >
-                    <LonaciNavIcon label={item.label} />
-                    <span className="lonaci-db-nav-label">{item.label}</span>
+                  <div className="lonaci-db-nav-row">
+                    <Link
+                      href={item.href}
+                      className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
+                      title={sidebarCollapsed ? item.label : undefined}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => rememberRecentModule(item.href)}
+                    >
+                      <LonaciNavIcon icon={item.icon} color={item.iconColor} />
+                      <span className="lonaci-db-nav-label">{item.label}</span>
+                      {active && item.href === "/dashboard" ? <span className="lonaci-db-nav-active-dot" /> : null}
+                      {badgeCount && badgeCount > 0 && item.badge ? (
+                        <span className={`lonaci-db-nav-badge ${lonaciNavBadgeClass(item.badge)}`}>{badgeCount}</span>
+                      ) : null}
+                    </Link>
                     {!sidebarCollapsed ? (
                       <button
                         type="button"
-                        className="ml-auto rounded px-1 text-[11px] text-slate-400 hover:text-amber-600"
+                        className="lonaci-db-nav-favorite"
                         title={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
                         aria-label={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
-                        onClick={(event) => {
-                          event.preventDefault();
-                          event.stopPropagation();
-                          toggleFavoriteModule(item.href);
-                        }}
+                        aria-pressed={favoriteModuleHrefs.includes(item.href)}
+                        onClick={() => toggleFavoriteModule(item.href)}
                       >
-                        {favoriteModuleHrefs.includes(item.href) ? "★" : "☆"}
+                        <Star size={14} fill={favoriteModuleHrefs.includes(item.href) ? "currentColor" : "none"} aria-hidden="true" />
                       </button>
                     ) : null}
-                    {active && item.href === "/dashboard" ? <span className="lonaci-db-nav-active-dot" /> : null}
-                    {badgeCount && badgeCount > 0 && item.badge ? (
-                      <span className={`lonaci-db-nav-badge ${lonaciNavBadgeClass(item.badge)}`}>{badgeCount}</span>
-                    ) : null}
-                  </Link>
+                  </div>
                 )}
               </div>
             ))}
@@ -544,14 +581,15 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         <div className="lonaci-db-main">
           <header className="lonaci-db-header">
             <button
+              ref={mobileMenuButtonRef}
               type="button"
               className="lonaci-db-mobile-menu-btn"
               aria-label="Ouvrir le menu"
+              aria-controls="lonaci-mobile-drawer"
+              aria-expanded={mobileMenuOpen}
               onClick={() => setMobileMenuOpen(true)}
             >
-              <svg width="16" height="16" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                <path d="M3 6h18M3 12h18M3 18h18" />
-              </svg>
+              <Menu size={18} aria-hidden="true" />
             </button>
             <div className="lonaci-db-header-grow">
               <div className="lonaci-db-header-title">{title}</div>
@@ -559,14 +597,16 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 {sub}
               </div>
             </div>
-            <ShellAgenceFilterDropdown value={agenceKey} onChange={setAgenceKey} />
+            <ShellAgenceFilterDropdown
+              value={agenceKey}
+              onChange={(nextAgenceId) => {
+                setAgenceKey(nextAgenceId);
+                void refreshKpi(nextAgenceId);
+              }}
+            />
             <NotificationBell
               triggerClassName="lonaci-db-notif-btn"
-              triggerContent={
-                <svg width="15" height="15" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path d="M18 8A6 6 0 006 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0" />
-                </svg>
-              }
+              triggerContent={<Bell size={17} aria-hidden="true" />}
             />
             <div className="lonaci-db-header-user-menu-wrap" ref={userMenuRef}>
               <div className="lonaci-db-header-user">
@@ -578,10 +618,13 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                 </div>
 
                 <button
+                  ref={userMenuButtonRef}
                   type="button"
                   className="lonaci-db-avatar-btn"
                   aria-haspopup="menu"
                   aria-label="Menu utilisateur"
+                  aria-expanded={userMenuOpen}
+                  aria-controls="lonaci-user-menu"
                   onClick={() => setUserMenuOpen((v) => !v)}
                   disabled={loggingOut}
                 >
@@ -590,7 +633,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               </div>
 
               {userMenuOpen ? (
-                <div className="lonaci-db-user-menu" role="menu" aria-label="Menu utilisateur">
+                <div id="lonaci-user-menu" className="lonaci-db-user-menu" role="menu" aria-label="Menu utilisateur">
                   <div className="lonaci-db-user-menu-head">Utilisateur</div>
                   <button
                     type="button"
@@ -601,6 +644,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                       router.push("/parametres");
                     }}
                   >
+                    <UserRound size={16} aria-hidden="true" />
                     Mon compte
                   </button>
                   {meUser?.role === "CHEF_SERVICE" ? (
@@ -613,6 +657,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                         router.push("/parametres?createUser=1");
                       }}
                     >
+                      <UserRoundPlus size={16} aria-hidden="true" />
                       Créer un utilisateur
                     </button>
                   ) : null}
@@ -623,6 +668,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
                     onClick={() => void handleLogout()}
                     disabled={loggingOut}
                   >
+                    <LogOut size={16} aria-hidden="true" />
                     {loggingOut ? "Déconnexion..." : "Déconnexion"}
                   </button>
                 </div>
@@ -642,6 +688,8 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
             ? "lonaci-db-mobile-overlay lonaci-db-mobile-overlay-open"
             : "lonaci-db-mobile-overlay"
         }
+        aria-hidden={!mobileMenuOpen}
+        inert={!mobileMenuOpen ? true : undefined}
       >
         <button
           type="button"
@@ -650,6 +698,12 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
           onClick={() => setMobileMenuOpen(false)}
         />
         <aside
+          id="lonaci-mobile-drawer"
+          ref={mobileDrawerRef}
+          role="dialog"
+          aria-modal={mobileMenuOpen ? "true" : undefined}
+          aria-label="Navigation principale"
+          tabIndex={-1}
           className={
             mobileMenuOpen
               ? "lonaci-db-mobile-drawer lonaci-db-mobile-drawer-open"
@@ -658,13 +712,7 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         >
           <div className="lonaci-db-mobile-drawer-head">
             <div className="lonaci-db-sidebar-brand-inner">
-              <div className="lonaci-db-logo" suppressHydrationWarning>
-                IC
-              </div>
-              <div>
-                <div className="lonaci-db-logo-title">Infinitecore Système Service et Administration</div>
-                <div className="lonaci-db-logo-sub">Réseau</div>
-              </div>
+              <LonaciBrand inverse />
             </div>
             <button
               type="button"
@@ -672,58 +720,55 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
               aria-label="Fermer le menu"
               onClick={() => setMobileMenuOpen(false)}
             >
-              <svg width="14" height="14" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24">
-                <path d="M18 6L6 18M6 6l12 12" />
-              </svg>
+              <X size={18} aria-hidden="true" />
             </button>
           </div>
           <nav className="lonaci-db-mobile-nav">
-            <div className="mb-2 px-1">
+            <div className="lonaci-db-nav-search">
+              <Search size={15} aria-hidden="true" />
               <input
                 value={navQuery}
                 onChange={(e) => setNavQuery(e.target.value)}
                 placeholder="Rechercher un module..."
-                className="w-full rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs text-slate-900"
                 aria-label="Rechercher un module"
               />
             </div>
-            {filteredNavItems.map(({ item, showSection, active, badgeCount, iconColor }) => (
+            {filteredNavItems.map(({ item, showSection, active, badgeCount }) => (
               <div key={`mobile-${item.href}-${item.label}`}>
                 {showSection ? <div className="lonaci-db-nav-section">{item.section}</div> : null}
                 {item.disabled ? (
                   <span className="lonaci-db-nav-item lonaci-db-nav-item-disabled">
-                    <LonaciNavIcon label={item.label} />
+                    <LonaciNavIcon icon={item.icon} color={item.iconColor} />
                     <span>{item.label}</span>
                   </span>
                 ) : (
-                  <Link
-                    href={item.href}
-                    className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
-                    style={{ "--lonaci-nav-icon-color": iconColor } as NavIconLinkStyle}
-                    onClick={() => {
-                      rememberRecentModule(item.href);
-                      setMobileMenuOpen(false);
-                    }}
-                  >
-                    <LonaciNavIcon label={item.label} />
-                    <span>{item.label}</span>
-                    <button
-                      type="button"
-                      className="ml-auto rounded px-1 text-[11px] text-slate-400 hover:text-amber-600"
-                      title={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
-                      aria-label={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        toggleFavoriteModule(item.href);
+                  <div className="lonaci-db-nav-row">
+                    <Link
+                      href={item.href}
+                      className={active ? "lonaci-db-nav-item lonaci-db-active" : "lonaci-db-nav-item"}
+                      aria-current={active ? "page" : undefined}
+                      onClick={() => {
+                        rememberRecentModule(item.href);
+                        setMobileMenuOpen(false);
                       }}
                     >
-                      {favoriteModuleHrefs.includes(item.href) ? "★" : "☆"}
+                      <LonaciNavIcon icon={item.icon} color={item.iconColor} />
+                      <span>{item.label}</span>
+                      {badgeCount && badgeCount > 0 && item.badge ? (
+                        <span className={`lonaci-db-nav-badge ${lonaciNavBadgeClass(item.badge)}`}>{badgeCount}</span>
+                      ) : null}
+                    </Link>
+                    <button
+                      type="button"
+                      className="lonaci-db-nav-favorite"
+                      title={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
+                      aria-label={favoriteModuleHrefs.includes(item.href) ? "Retirer des favoris" : "Ajouter aux favoris"}
+                      aria-pressed={favoriteModuleHrefs.includes(item.href)}
+                      onClick={() => toggleFavoriteModule(item.href)}
+                    >
+                      <Star size={14} fill={favoriteModuleHrefs.includes(item.href) ? "currentColor" : "none"} aria-hidden="true" />
                     </button>
-                    {badgeCount && badgeCount > 0 && item.badge ? (
-                      <span className={`lonaci-db-nav-badge ${lonaciNavBadgeClass(item.badge)}`}>{badgeCount}</span>
-                    ) : null}
-                  </Link>
+                  </div>
                 )}
               </div>
             ))}

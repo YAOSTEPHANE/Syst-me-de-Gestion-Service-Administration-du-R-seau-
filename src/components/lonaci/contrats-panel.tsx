@@ -1,12 +1,20 @@
 "use client";
 
+import { Download, FilePlus2, RefreshCw } from "lucide-react";
+
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Card, Surface } from "@/components/lonaci/ui/surface";
 import {
   hideDossierN1N2ForChefService,
   listDossierTransitionActionsForUi,
   userCanApproveDossierAtEtape,
   userCanPerformDossierTransitionAtEtape,
-  userMayPerformDossierTransition,
-  userMayPatchDossierPayload,
   type DossierTransitionAction,
 } from "@/lib/auth/dossier-transition-rbac";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
@@ -17,6 +25,7 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
+import { notify } from "@/lib/toast";
 import ClientSearchPicker, {
   pickAgenceIdFromClient,
   pickProduitCodeFromClient,
@@ -370,7 +379,6 @@ export default function ContratsPanel() {
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   /** Erreurs du formulaire « Nouveau contrat » : affichées dans la modale (les toasts passent sous le backdrop z-50). */
   const [createFormError, setCreateFormError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const [selectedClient, setSelectedClient] = useState<ClientOption | null>(null);
 
@@ -482,6 +490,8 @@ export default function ContratsPanel() {
   const [decisionDossierId, setDecisionDossierId] = useState<string | null>(null);
   const [decisionEtape, setDecisionEtape] = useState<string>("FINALISE");
   const [decisionMotif, setDecisionMotif] = useState("");
+  const [transitionConfirmMessage, setTransitionConfirmMessage] = useState<string | null>(null);
+  const transitionConfirmResolverRef = useRef<((confirmed: boolean) => void) | null>(null);
 
   const agencesTriees = useMemo(
     () => [...agences].sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" })),
@@ -675,13 +685,6 @@ export default function ContratsPanel() {
   }, [listReloadTick]);
 
   const lonaciClientId = selectedClient?.id ?? "";
-  const produitLabelByCode = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of produits) {
-      map.set(p.code, p.libelle);
-    }
-    return map;
-  }, [produits]);
 
   useEffect(() => {
     void (async () => {
@@ -810,7 +813,7 @@ export default function ContratsPanel() {
 
     const fail = (message: string) => {
       setCreateFormError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     };
 
     if (!selectedClient) {
@@ -857,7 +860,6 @@ export default function ContratsPanel() {
     }
 
     setCreating(true);
-    setToast(null);
     try {
       const body: Record<string, unknown> = {
         lonaciClientId: selectedClient.id,
@@ -909,12 +911,12 @@ export default function ContratsPanel() {
           : resBody?.checklistRequired
             ? `Dossier créé en brouillon pour ${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}. Complétez la checklist documents puis soumettez-le.`
             : `Dossier contrat créé en brouillon (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}). Soumettez-le depuis le tableau pour lancer la validation.`;
-      setToast({ type: "success", message: successMsg });
+      notify.success(successMsg);
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -939,14 +941,13 @@ export default function ContratsPanel() {
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
 
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import contrats terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
-      });
+      notify.success(
+        `Import contrats terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
       setCreateFormError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -962,7 +963,11 @@ export default function ContratsPanel() {
       comment?: string;
     },
   ) {
-    if (!window.confirm(payload.confirmMessage)) return false;
+    const confirmed = await new Promise<boolean>((resolve) => {
+      transitionConfirmResolverRef.current = resolve;
+      setTransitionConfirmMessage(payload.confirmMessage);
+    });
+    if (!confirmed) return false;
 
     setDossierActionBusyId(dossierId);
     try {
@@ -984,17 +989,23 @@ export default function ContratsPanel() {
         throw new Error(body?.message ?? "Validation impossible.");
       }
 
-      setToast({ type: "success", message: payload.successMessage });
+      notify.success(payload.successMessage);
       window.dispatchEvent(new Event("lonaci:data-imported"));
       closeDecision();
       return true;
     } catch (err) {
-      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
       return false;
     } finally {
       setDossierActionBusyId(null);
     }
-    return false;
+  }
+
+  function resolveTransitionConfirmation(confirmed: boolean) {
+    const resolve = transitionConfirmResolverRef.current;
+    transitionConfirmResolverRef.current = null;
+    setTransitionConfirmMessage(null);
+    resolve?.(confirmed);
   }
 
   async function generateClientSignatureLink(dossierId: string) {
@@ -1018,12 +1029,12 @@ export default function ContratsPanel() {
 
       if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(url);
-        setToast({ type: "success", message: "Lien de signature copié dans le presse-papiers." });
+        notify.success("Lien de signature copié dans le presse-papiers.");
       } else {
-        setToast({ type: "success", message: `Lien de signature: ${url}` });
+        notify.info(`Lien de signature: ${url}`);
       }
     } catch (err) {
-      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
     } finally {
       setSignatureLinkBusyId(null);
     }
@@ -1059,7 +1070,7 @@ export default function ContratsPanel() {
     if (!decisionDossierId) return;
     const motif = decisionMotif.trim();
     if (!motif) {
-      setToast({ type: "error", message: "Le motif est obligatoire pour rejeter." });
+      notify.error("Le motif est obligatoire pour rejeter.");
       return;
     }
 
@@ -1077,10 +1088,7 @@ export default function ContratsPanel() {
     if (!decisionDossierId) return;
     const motif = decisionMotif.trim();
     if (!motif) {
-      setToast({
-        type: "error",
-        message: "Le motif est obligatoire pour retourner pour correction.",
-      });
+      notify.error("Le motif est obligatoire pour retourner pour correction.");
       return;
     }
 
@@ -1126,14 +1134,13 @@ export default function ContratsPanel() {
     setViewContrat(null);
   }
 
-  async function openDossierRecapPdf(dossierId: string, reference: string) {
+  async function openDossierRecapPdf(dossierId: string) {
     try {
       await openLonaciPdfInTab(dossierRecapPdfUrl(dossierId));
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
-      });
+      notify.error(
+        friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
+      );
     }
   }
 
@@ -1141,10 +1148,7 @@ export default function ContratsPanel() {
     try {
       await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId, produitCode));
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."));
     }
   }
 
@@ -1152,10 +1156,7 @@ export default function ContratsPanel() {
     try {
       await openLonaciPdfInTab(annexeOfficiellePdfUrl(dossierId, produitCode));
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF annexe indisponible."),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "PDF annexe indisponible."));
     }
   }
 
@@ -1185,10 +1186,7 @@ export default function ContratsPanel() {
         };
       } | null;
       if (!res.ok || !body?.dossier) {
-        setToast({
-          type: "error",
-          message: friendlyErrorMessage(body?.message ?? "Chargement de la checklist impossible."),
-        });
+        notify.error(friendlyErrorMessage(body?.message ?? "Chargement de la checklist impossible."));
         setChecklistModalContrat(null);
         return;
       }
@@ -1205,7 +1203,7 @@ export default function ContratsPanel() {
       setChecklistModalAnnexeArchive(body.dossier.annexeArchive);
       setChecklistModalContratsParProduit(body.dossier.contratsParProduit);
     } catch {
-      setToast({ type: "error", message: "Erreur réseau lors du chargement de la checklist." });
+      notify.error("Erreur réseau lors du chargement de la checklist.");
       setChecklistModalContrat(null);
     } finally {
       setChecklistModalLoading(false);
@@ -1246,12 +1244,12 @@ export default function ContratsPanel() {
     if (!editContratId) return;
     const raw = editDateEffet.trim();
     if (!raw) {
-      setToast({ type: "error", message: "La date d'effet est obligatoire." });
+      notify.error("La date d'effet est obligatoire.");
       return;
     }
     const date = new Date(`${raw}T12:00:00`);
     if (Number.isNaN(date.getTime())) {
-      setToast({ type: "error", message: "Date d'effet invalide." });
+      notify.error("Date d'effet invalide.");
       return;
     }
 
@@ -1271,11 +1269,11 @@ export default function ContratsPanel() {
       if (!res.ok) {
         throw new Error(body?.message ?? "Modification contrat impossible.");
       }
-      setToast({ type: "success", message: "Contrat modifié avec succès." });
+      notify.success("Contrat modifié avec succès.");
       window.dispatchEvent(new Event("lonaci:data-imported"));
       closeEditContrat();
     } catch (err) {
-      setToast({ type: "error", message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur") });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
     } finally {
       setEditSaving(false);
     }
@@ -1328,95 +1326,30 @@ export default function ContratsPanel() {
   const resileCount = chartsData?.statusCounts.resile ?? 0;
   const activeRatio = portfolioTotal > 0 ? Math.round((activeCount / portfolioTotal) * 100) : 0;
   const resileRatio = portfolioTotal > 0 ? Math.round((resileCount / portfolioTotal) * 100) : 0;
+  const listPageCount = Math.max(1, Math.ceil(listTotal / listPageSize));
   return (
     <div className="min-w-0 space-y-5">
-      <section className="relative overflow-hidden rounded-3xl border border-cyan-200 bg-gradient-to-r from-slate-900 via-slate-800 to-cyan-900 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-cyan-300/20 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-sky-300/20 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-cyan-100">
-              Référentiel
-            </p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Contrats</h2>
-            <p className="mt-1 text-sm text-cyan-100/90">
-              Supervision des dossiers contrats, validation multi-étapes et export opérationnel.
-            </p>
-          </div>
-          <div className="flex w-full flex-wrap items-center justify-end gap-2 sm:w-auto">
-            <button
-              type="button"
+      <PageHeader
+        eyebrow="Référentiel"
+        title="Contrats"
+        description="Supervision des dossiers contrats, validation multi-étapes et export opérationnel."
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              leadingIcon={Download}
               onClick={() => window.location.assign("/api/contrats/export?format=excel")}
-              className="inline-flex items-center justify-center rounded-xl border border-emerald-300 bg-emerald-600 px-3 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-700"
             >
-              Excel
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              disabled={refLoading}
-              className="inline-flex items-center justify-center gap-2 rounded-xl border border-cyan-300 bg-cyan-500 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-200 hover:bg-cyan-400 disabled:opacity-50"
-            >
-              <span className="text-lg font-light leading-none">+</span>
+              Export Excel
+            </Button>
+            <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)} disabled={refLoading}>
               Nouveau contrat
-            </button>
-          </div>
-        </div>
-      </section>
+            </Button>
+          </>
+        }
+      />
 
-      {toast ? (
-        toast.type === "success" ? (
-          <div
-            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-sm text-emerald-900 shadow-lg"
-            role="status"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                <span
-                  className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-sm"
-                  aria-hidden
-                >
-                  <svg className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path
-                      fillRule="evenodd"
-                      d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                </span>
-                <span className="min-w-0 pt-1 font-medium leading-snug">{toast.message}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setToast(null)}
-                className="shrink-0 text-xs underline text-emerald-800"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div
-            className="fixed bottom-4 right-4 z-[100] w-[min(calc(100vw-2rem),28rem)] rounded-lg border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-900 shadow-lg"
-            role="alert"
-          >
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex min-w-0 flex-1 items-start gap-2.5">
-                <span className="min-w-0 pt-1 font-medium leading-snug">{toast.message}</span>
-              </div>
-              <button
-                type="button"
-                onClick={() => setToast(null)}
-                className="shrink-0 text-xs underline text-rose-800"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        )
-      ) : null}
-
-      <section className="mt-6 overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
+      <Surface padding="none" elevated className="mt-6 overflow-hidden">
         <div className="relative border-b border-slate-200 bg-gradient-to-r from-slate-900 via-slate-800 to-cyan-900 px-4 py-4 sm:px-5">
           <div className="pointer-events-none absolute -right-12 -top-10 h-36 w-36 rounded-full bg-cyan-400/20 blur-2xl" />
           <h3 className="relative text-sm font-semibold text-white">Pilotage contrats</h3>
@@ -1426,9 +1359,13 @@ export default function ContratsPanel() {
         </div>
 
         {chartsError ? (
-          <div className="m-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
-            {chartsError}
-          </div>
+          <FeedbackState
+            title="Indicateurs indisponibles"
+            description={chartsError}
+            tone="danger"
+            className="m-4"
+            aria-live="assertive"
+          />
         ) : null}
 
         <div className="grid gap-3 border-b border-slate-100 bg-slate-50/70 p-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -1506,7 +1443,7 @@ export default function ContratsPanel() {
           <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-700">Portefeuille contrats</h4>
             {chartsLoading ? (
-              <p className="mt-3 text-sm text-slate-500">Chargement des indicateurs…</p>
+              <Skeleton lines={3} className="mt-3" />
             ) : (
               <>
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -1532,10 +1469,10 @@ export default function ContratsPanel() {
         <div className="border-t border-slate-100 p-4 sm:p-5">
           <ContratEtatMensuelProduitAgenceMatrix domIdPrefix="contrats-etat-matrix" months={12} />
         </div>
-      </section>
+      </Surface>
 
       {meRole === "CHEF_SERVICE" ? (
-        <section className="rounded-2xl border border-violet-200 bg-violet-50/40 shadow-sm">
+        <Card padding="none" elevated className="overflow-hidden border-violet-200 bg-violet-50/40">
           <div className="border-b border-violet-200/90 px-4 py-3 sm:px-5">
             <h3 className="text-sm font-semibold text-violet-950">Dossiers à finaliser (signature / création contrat)</h3>
             <p className="mt-0.5 text-xs text-violet-900/85">
@@ -1550,13 +1487,14 @@ export default function ContratsPanel() {
               </div>
             ) : (
               <table className="w-full min-w-[720px] border-collapse text-left text-sm">
+                <caption className="sr-only">Dossiers contrats en attente de finalisation et de signature</caption>
                 <thead>
                   <tr className="border-b border-violet-200/80 text-[11px] font-semibold uppercase tracking-wide text-violet-900/80">
-                    <th className="px-3 py-2">Réf. dossier</th>
-                    <th className="px-3 py-2">Produit</th>
-                    <th className="px-3 py-2">Date op.</th>
-                    <th className="px-3 py-2">MAJ</th>
-                    <th className="px-3 py-2 text-right">Actions</th>
+                    <th scope="col" className="px-3 py-2">Réf. dossier</th>
+                    <th scope="col" className="px-3 py-2">Produit</th>
+                    <th scope="col" className="px-3 py-2">Date op.</th>
+                    <th scope="col" className="px-3 py-2">MAJ</th>
+                    <th scope="col" className="px-3 py-2 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1597,7 +1535,7 @@ export default function ContratsPanel() {
                           </Link>
                           <button
                             type="button"
-                            onClick={() => void openDossierRecapPdf(row.dossierId, row.reference)}
+                            onClick={() => void openDossierRecapPdf(row.dossierId)}
                             className="text-xs font-medium text-violet-800 underline hover:text-violet-950"
                           >
                             Récap.
@@ -1637,30 +1575,30 @@ export default function ContratsPanel() {
               </table>
             )}
           </div>
-        </section>
+        </Card>
       ) : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-        <div className="border-b border-slate-200 px-4 py-3 sm:px-5">
-          <h3 className="text-sm font-semibold text-slate-900">Registre des contrats</h3>
-          <p className="mt-0.5 text-xs text-slate-600">
+      <Surface padding="none" elevated className="overflow-hidden">
+        <SectionHeader
+          className="border-b border-slate-200 px-4 py-3 sm:px-5"
+          title="Registre des contrats"
+          description={
+            <>
             Filtres produit, agence, statut contrat, période (mois en cours sur la date d’effet ou plage), étape du dossier
             lié. Périmètre agence appliqué côté serveur.
-          </p>
-        </div>
+            </>
+          }
+        />
 
-        <div className="flex flex-col gap-3 border-b border-slate-100 bg-gradient-to-r from-slate-50 to-cyan-50/30 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-end sm:gap-3 sm:px-5">
-          <label className="grid w-full min-w-0 gap-1 sm:w-auto sm:min-w-[140px] sm:max-w-[200px] sm:flex-1">
-            <span className="text-[11px] font-medium text-slate-600">Réf.</span>
-            <input
-              type="search"
-              value={listRefQuery}
-              onChange={(e) => setListRefQuery(e.target.value)}
-              placeholder="Contient…"
-              className={inputClass}
-              aria-label="Filtrer par référence"
-            />
-          </label>
+        <FilterBar
+          className="border-b border-slate-100"
+          search={{
+            value: listRefQuery,
+            onChange: setListRefQuery,
+            label: "Filtrer par référence",
+            placeholder: "Référence du contrat…",
+          }}
+          filters={<div className="contents">
           <label className="grid w-full min-w-0 gap-1 sm:w-auto sm:min-w-[140px] sm:max-w-[200px]">
             <span className="text-[11px] font-medium text-slate-600">Produit</span>
             <select
@@ -1782,30 +1720,31 @@ export default function ContratsPanel() {
               <option value="REJETE">Rejeté</option>
             </select>
           </label>
-          <button
-            type="button"
-            onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
-            className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700"
-          >
-            Actualiser
-          </button>
-        </div>
+          </div>}
+          actions={
+            <Button
+              size="sm"
+              leadingIcon={RefreshCw}
+              onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
+            >
+              Actualiser
+            </Button>
+          }
+        />
 
         <div className="p-2 sm:p-0">
           {listError ? (
-            <div className="m-4 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-900">
-              {listError}
-            </div>
+            <FeedbackState
+              title="Chargement impossible"
+              description={listError}
+              tone="danger"
+              className="m-4"
+              aria-live="assertive"
+            />
           ) : null}
           {listLoading ? (
             <div className="px-4 py-6 sm:px-5">
-              <div className="space-y-2 animate-pulse">
-                <div className="h-9 rounded-lg bg-slate-100" />
-                <div className="h-9 rounded-lg bg-slate-100" />
-                <div className="h-9 rounded-lg bg-slate-100" />
-                <div className="h-9 rounded-lg bg-slate-100" />
-              </div>
-              <p className="mt-3 text-center text-xs text-slate-500">Chargement des contrats…</p>
+              <Skeleton lines={4} />
             </div>
           ) : !listError && contratsListe.length === 0 ? (
             <div className="px-4 py-8 text-center sm:px-5">
@@ -1814,16 +1753,17 @@ export default function ContratsPanel() {
             </div>
           ) : (
             <div className="w-full overflow-hidden rounded-b-2xl">
-              <table className="w-full border-collapse text-left text-sm">
+              <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                <caption className="sr-only">Registre des contrats selon les filtres actifs</caption>
                 <thead>
                   <tr className="border-b border-slate-200 bg-slate-100/90 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
-                    <th className="px-3 py-2.5 sm:px-4">Réf.</th>
-                    <th className="px-3 py-2.5 sm:px-4">Client</th>
-                    <th className="px-3 py-2.5 sm:px-4">Type</th>
-                    <th className="px-3 py-2.5 sm:px-4">Date dépôt</th>
-                    <th className="px-3 py-2.5 sm:px-4">Statut</th>
-                    <th className="px-3 py-2.5 sm:px-4">Dossier</th>
-                    <th className="px-3 py-2.5 text-right sm:px-4">Action</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Réf.</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Client</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Type</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Date dépôt</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Statut</th>
+                    <th scope="col" className="px-3 py-2.5 sm:px-4">Dossier</th>
+                    <th scope="col" className="px-3 py-2.5 text-right sm:px-4">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1868,12 +1808,12 @@ export default function ContratsPanel() {
                           {formatShortDate(c.dateDepot ?? c.createdAt)}
                         </td>
                         <td className="px-3 py-2.5 text-slate-800 sm:px-4">
-                          <span
+                          <StatusBadge
                             title={statutDescription}
                             className={`inline-flex max-w-[11rem] rounded-full border px-2 py-0.5 text-[11px] font-semibold leading-tight ${statutBadgeClass}`}
                           >
                             {statutLabel}
-                          </span>
+                          </StatusBadge>
                         </td>
                         <td className="px-3 py-2.5 sm:px-4">
                           {c.hasDocumentChecklist ? (
@@ -1906,12 +1846,11 @@ export default function ContratsPanel() {
                                     `/api/dossiers/${c.dossierId}/decharge-definitive/pdf`,
                                     `decharge-definitive-${c.reference}.pdf`,
                                   ).catch((err) =>
-                                    setToast({
-                                      type: "error",
-                                      message: friendlyErrorMessage(
+                                    notify.error(
+                                      friendlyErrorMessage(
                                         err instanceof Error ? err.message : "Téléchargement impossible.",
                                       ),
-                                    }),
+                                    ),
                                   )
                                 }
                                 className="inline-flex items-center justify-center rounded-lg border border-emerald-500 bg-emerald-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-emerald-900 shadow-sm transition hover:bg-emerald-100"
@@ -1928,12 +1867,11 @@ export default function ContratsPanel() {
                                     `/api/dossiers/${c.dossierId}/courrier-comptabilite/pdf`,
                                     `courrier-comptabilite-${c.reference}.pdf`,
                                   ).catch((err) =>
-                                    setToast({
-                                      type: "error",
-                                      message: friendlyErrorMessage(
+                                    notify.error(
+                                      friendlyErrorMessage(
                                         err instanceof Error ? err.message : "Téléchargement impossible.",
                                       ),
-                                    }),
+                                    ),
                                   )
                                 }
                                 className="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-blue-900 shadow-sm transition hover:bg-blue-100"
@@ -1950,12 +1888,11 @@ export default function ContratsPanel() {
                                     `/api/dossiers/${c.dossierId}/decharge-contrat/pdf?produitCode=${encodeURIComponent(c.produitCode)}`,
                                     `decharge-contrat-client-${c.reference}.pdf`,
                                   ).catch((err) =>
-                                    setToast({
-                                      type: "error",
-                                      message: friendlyErrorMessage(
+                                    notify.error(
+                                      friendlyErrorMessage(
                                         err instanceof Error ? err.message : "Téléchargement impossible.",
                                       ),
-                                    }),
+                                    ),
                                   )
                                 }
                                 className="inline-flex items-center justify-center rounded-lg border border-blue-600 bg-blue-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-blue-900 shadow-sm transition hover:bg-blue-100"
@@ -1965,7 +1902,7 @@ export default function ContratsPanel() {
                             ) : null}
                             <button
                               type="button"
-                              onClick={() => void openDossierRecapPdf(c.dossierId, c.reference)}
+                              onClick={() => void openDossierRecapPdf(c.dossierId)}
                               title="Récapitulatif dossier (historique validations)"
                               className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-indigo-800 shadow-sm transition hover:bg-indigo-100"
                             >
@@ -2052,12 +1989,15 @@ export default function ContratsPanel() {
             <span>
               {listTotal} contrat{listTotal > 1 ? "s" : ""}
             </span>
-            {listTotal > listPageSize ? (
-              <span className="text-slate-500">Affichage limité à {listPageSize} lignes.</span>
-            ) : null}
+            <Pagination
+              page={listPage}
+              pageCount={listPageCount}
+              onPageChange={setListPage}
+              label="Pagination du registre des contrats"
+            />
           </div>
         ) : null}
-      </section>
+      </Surface>
 
       {editContratOpen && editContratId ? (
         <div
@@ -2293,7 +2233,7 @@ export default function ContratsPanel() {
                 <button
                   type="button"
                   onClick={() =>
-                    void openDossierRecapPdf(viewContrat.dossierId, viewContrat.reference)
+                    void openDossierRecapPdf(viewContrat.dossierId)
                   }
                   className="rounded-lg border border-indigo-300 bg-indigo-50 px-3 py-1.5 text-xs font-semibold text-indigo-800 hover:bg-indigo-100"
                 >
@@ -2326,12 +2266,11 @@ export default function ContratsPanel() {
                         }`,
                         `decharge-contrat-client-${viewContrat.reference}.pdf`,
                       ).catch((err) =>
-                        setToast({
-                          type: "error",
-                          message: friendlyErrorMessage(
+                        notify.error(
+                          friendlyErrorMessage(
                             err instanceof Error ? err.message : "Téléchargement impossible.",
                           ),
-                        }),
+                        ),
                       )
                     }
                     className="rounded-lg border border-blue-600 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-blue-900 hover:bg-blue-100"
@@ -2851,6 +2790,18 @@ export default function ContratsPanel() {
           </div>
         </div>
       ) : null}
+
+      <ConfirmDialog
+        open={transitionConfirmMessage !== null}
+        onOpenChange={(open) => {
+          if (!open) resolveTransitionConfirmation(false);
+        }}
+        title="Confirmer la transition"
+        description="Cette action met à jour l’étape du workflow du dossier."
+        message={transitionConfirmMessage ?? ""}
+        confirmLabel="Confirmer"
+        onConfirm={() => resolveTransitionConfirmation(true)}
+      />
     </div>
   );
 }

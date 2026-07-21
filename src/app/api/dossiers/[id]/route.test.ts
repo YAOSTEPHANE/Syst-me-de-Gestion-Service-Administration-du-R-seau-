@@ -20,6 +20,7 @@ vi.mock("@/lib/auth/guards", () => ({
 vi.mock("@/lib/lonaci/dossiers", () => ({
   ensureDossierIndexes: ensureDossierIndexesMock,
   findDossierById: vi.fn(async () => null),
+  findVisibleDossierById: vi.fn(async () => ({ _id: "d1", status: "BROUILLON" })),
   patchContratDossierPayload: patchContratDossierPayloadMock,
   buildDossierContratStatutMetierFields: buildDossierContratStatutMetierFieldsMock,
 }));

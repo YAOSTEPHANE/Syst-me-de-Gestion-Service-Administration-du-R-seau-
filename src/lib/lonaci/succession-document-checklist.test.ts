@@ -6,8 +6,8 @@ import {
   isSuccessionChecklistComplete,
 } from "@/lib/lonaci/succession-document-checklist";
 
-describe("succession document checklist spec 10.1", () => {
-  it("contient les 6 pièces de la spec", () => {
+describe("liste des pièces de succession", () => {
+  it("contient les six pièces attendues", () => {
     expect(SUCCESSION_CHECKLIST_ITEMS_SPEC_101.length).toBe(6);
     expect(SUCCESSION_CHECKLIST_ITEMS_SPEC_101.map((i) => i.id)).toContain(
       "succession_acte_deces_officiel",

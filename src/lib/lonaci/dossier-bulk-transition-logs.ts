@@ -1,5 +1,7 @@
 import { ObjectId } from "mongodb";
 
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
+import type { UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "dossier_bulk_transition_logs";
@@ -58,44 +60,64 @@ export async function appendBulkTransitionLog(input: {
   });
 }
 
-export async function listBulkTransitionLogs(params: {
-  page: number;
-  pageSize: number;
-  actorUserId?: string;
-  action?: string;
-  failedOnly?: boolean;
-}) {
+export async function listVisibleBulkTransitionLogs(
+  params: {
+    page: number;
+    pageSize: number;
+    actorUserId?: string;
+    action?: string;
+    failedOnly?: boolean;
+  },
+  actor: UserDocument,
+) {
   const db = await getDatabase();
   const filter: Record<string, unknown> = {};
-  if (params.actorUserId?.trim()) {
-    filter.actorUserId = params.actorUserId.trim();
-  }
-  if (params.action?.trim()) {
-    filter.action = params.action.trim();
-  }
-  if (params.failedOnly) {
-    filter.failed = { $gt: 0 };
-  }
+  if (params.actorUserId?.trim()) filter.actorUserId = params.actorUserId.trim();
+  if (params.action?.trim()) filter.action = params.action.trim();
+  if (params.failedOnly) filter.failed = { $gt: 0 };
+  const rows = await db
+    .collection<BulkTransitionLogDoc>(COLLECTION)
+    .find(filter)
+    .sort({ createdAt: -1 })
+    .limit(5_000)
+    .toArray();
+
+  const visibleItems = (
+    await Promise.all(
+      rows.map(async (row): Promise<BulkTransitionLogItem | null> => {
+        const visibility = await Promise.all(
+          (row.resultSample ?? []).map(async (result) => ({
+            result,
+            visible: Boolean(await findVisibleDossierById(result.id, actor)),
+          })),
+        );
+        const resultSample = visibility
+          .filter((entry) => entry.visible)
+          .map((entry) => entry.result);
+        if (resultSample.length === 0) return null;
+        const succeeded = resultSample.filter((result) => result.ok).length;
+        return {
+          id: row._id?.toHexString() ?? "",
+          actorUserId: row.actorUserId,
+          action: row.action,
+          total: resultSample.length,
+          succeeded,
+          failed: resultSample.length - succeeded,
+          comment: row.comment ?? null,
+          resultSample,
+          createdAt: row.createdAt.toISOString(),
+        };
+      }),
+    )
+  ).filter((item): item is BulkTransitionLogItem => item !== null);
+
   const skip = (params.page - 1) * params.pageSize;
-  const col = db.collection<BulkTransitionLogDoc>(COLLECTION);
-  const [total, rows] = await Promise.all([
-    col.countDocuments(filter),
-    col.find(filter).sort({ createdAt: -1 }).skip(skip).limit(params.pageSize).toArray(),
-  ]);
-
-  const items: BulkTransitionLogItem[] = rows.map((row) => ({
-    id: row._id?.toHexString() ?? "",
-    actorUserId: row.actorUserId,
-    action: row.action,
-    total: row.total,
-    succeeded: row.succeeded,
-    failed: row.failed,
-    comment: row.comment ?? null,
-    resultSample: row.resultSample ?? [],
-    createdAt: row.createdAt.toISOString(),
-  }));
-
-  return { items, total, page: params.page, pageSize: params.pageSize };
+  return {
+    items: visibleItems.slice(skip, skip + params.pageSize),
+    total: visibleItems.length,
+    page: params.page,
+    pageSize: params.pageSize,
+  };
 }
 
 export async function findBulkTransitionLogById(id: string): Promise<BulkTransitionLogItem | null> {

@@ -148,7 +148,7 @@ export const CAUTION_PAYMENT_MODES = [
 export type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
 
 /**
- * Statuts techniques en base. Le statut affiché métier (spec 2.3) est calculé via
+ * Statuts techniques enregistrés en base. Le statut métier affiché est calculé via
  * `resolveCautionStatutMetier` : EN_ATTENTE | PAYEE | EN_RETARD | EXONEREE.
  */
 export const CAUTION_STATUSES = [
@@ -190,7 +190,7 @@ export const ATTESTATION_DOMICILIATION_TYPE_LABELS: Record<
   DOMICILIATION_PRODUIT: "Domiciliation produit",
 };
 
-/** Libellés spec 4.4 — statuts du traitement attestation. */
+/** Libellés des statuts du traitement des attestations. */
 export const ATTESTATION_DOMICILIATION_STATUT_LABELS: Record<
   AttestationDomiciliationStatus,
   string
@@ -198,12 +198,12 @@ export const ATTESTATION_DOMICILIATION_STATUT_LABELS: Record<
   DEMANDE_RECUE: "EN COURS",
   TRANSMIS: "TRANSMIS DFC",
   FINALISE: "FINALISÉ DFC",
-  /** Code technique `VALIDE` — affichage métier « EN RÉVISION » (spec 4.4). */
+  /** Le code technique `VALIDE` est affiché comme « EN RÉVISION ». */
   VALIDE: "EN RÉVISION",
   ENVOYE_CLIENT: "ENVOYÉ CLIENT",
 };
 
-/** Descriptions spec 4.4 — statuts du traitement attestation. */
+/** Descriptions des statuts du traitement des attestations. */
 export const ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS: Record<
   AttestationDomiciliationStatus,
   string
@@ -215,7 +215,7 @@ export const ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS: Record<
   ENVOYE_CLIENT: "Attestation transmise au client par le Chef de Service",
 };
 
-/** Liste ordonnée spec 4.4 pour affichage (tableau de bord, aide). */
+/** Liste ordonnée destinée au tableau de bord et à l’aide. */
 export const ATTESTATION_DOMICILIATION_STATUTS_SPEC_44 = ATTESTATION_DOMICILIATION_STATUSES.map(
   (statut) => ({
     statut,
@@ -231,14 +231,7 @@ export function getAttestationDomiciliationStatutLabel(statut: string): string {
   return statut;
 }
 
-export function getAttestationDomiciliationStatutDescription(statut: string): string {
-  if ((ATTESTATION_DOMICILIATION_STATUSES as readonly string[]).includes(statut)) {
-    return ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS[statut as AttestationDomiciliationStatus];
-  }
-  return "";
-}
-
-/** Spec 4.3 — circuit de traitement (étapes 11 à 16). */
+/** Circuit de traitement, des étapes 11 à 16. */
 export const ATTESTATION_CIRCUIT_ETAPES = [
   {
     step: 11,
@@ -331,7 +324,7 @@ export const CONCESSIONNAIRE_STATUT_LABELS: Record<ConcessionnaireStatut, string
   SUCCESSION_EN_COURS: "Succession en cours",
 };
 
-/** 8.3 — Statuts unifiés de la bancarisation (collecte RIB → intégration paiement) */
+/** Statuts unifiés de la bancarisation, de la collecte du RIB à l’intégration du paiement. */
 export const BANCARISATION_STATUTS = [
   "NON_BANCARISE",
   "EN_ATTENTE_RIB",
@@ -364,30 +357,12 @@ export const BANCARISATION_STATUTS_SPEC_83 = BANCARISATION_STATUTS.map((statut) 
   description: BANCARISATION_STATUT_DESCRIPTIONS[statut],
 }));
 
-/** Sous-ensemble RIB (phases 8.1) — alias des statuts 8.3 */
+/** Sous-ensemble consacré au RIB, défini comme alias des statuts de bancarisation. */
 export const RIB_ETATS = ["EN_ATTENTE_RIB", "RIB_FOURNI", "RIB_VALIDE"] as const;
 
 export type RibEtat = (typeof RIB_ETATS)[number];
 
-export const RIB_ETAT_LABELS: Record<RibEtat, string> = {
-  EN_ATTENTE_RIB: BANCARISATION_STATUT_LABELS.EN_ATTENTE_RIB,
-  RIB_FOURNI: BANCARISATION_STATUT_LABELS.RIB_FOURNI,
-  RIB_VALIDE: BANCARISATION_STATUT_LABELS.RIB_VALIDE,
-};
-
-export const RIB_ETATS_SPEC_81 = BANCARISATION_STATUTS_SPEC_83.filter((row) =>
-  (RIB_ETATS as readonly string[]).includes(row.statut),
-);
-
-/** 8.2 — Intégration : RIB VALIDÉ → BANCARISÉ */
-export const BANCARISATION_INTEGRATION_SPEC_82 = {
-  fromStatut: "RIB_VALIDE" as const,
-  toStatut: "BANCARISE" as const,
-  label: BANCARISATION_STATUT_LABELS.BANCARISE,
-  description: BANCARISATION_STATUT_DESCRIPTIONS.BANCARISE,
-} as const;
-
-/** §9.1 — Statuts lot / code grattage */
+/** Statuts lot / code grattage. */
 export const SCRATCH_CODE_STATUTS = ["GENERE", "ATTRIBUE", "ACTIF", "EPUISE"] as const;
 
 export type ScratchCodeStatut = (typeof SCRATCH_CODE_STATUTS)[number];
@@ -402,7 +377,7 @@ export const SCRATCH_CODE_STATUT_LABELS: Record<ScratchCodeStatut, string> = {
 /** Seuil par défaut alerte rupture de stock (codes non attribués). */
 export const GRATTAGE_STOCK_ALERT_DEFAULT = 50;
 
-/** §9.3 — Statuts contrat grattage */
+/** Statuts contrat grattage. */
 export const GRATTAGE_CONTRAT_STATUTS = ["EN_COURS", "SUSPENDU", "RESILIE", "EXPIRE"] as const;
 
 export type GrattageContratStatut = (typeof GRATTAGE_CONTRAT_STATUTS)[number];
@@ -422,7 +397,7 @@ export const GRATTAGE_CONTRAT_STATUTS_SPEC_93 = GRATTAGE_CONTRAT_STATUTS.map((st
 /** Opérations interdites sauf lecture / notes service (règles MVP) */
 export const CONCESSIONNAIRE_STATUTS_BLOQUANTS = ["INACTIF", "RESILIE", "DECEDE"] as const;
 
-/** Décès et ayants droit — 5 étapes séquentielles (§10.2, étapes métier 17 à 21). */
+/** Décès et ayants droit — 5 étapes métier séquentielles, de 17 à 21. */
 export const SUCCESSION_STEPS = [
   "DECLARATION_DECES",
   "IDENTIFICATION_AYANT_DROIT",
@@ -433,15 +408,7 @@ export const SUCCESSION_STEPS = [
 
 export type SuccessionStep = (typeof SUCCESSION_STEPS)[number];
 
-/** Numéros métier affichés (spec §10.2). */
-export const SUCCESSION_STEP_NUMBERS: Record<SuccessionStep, number> = {
-  DECLARATION_DECES: 17,
-  IDENTIFICATION_AYANT_DROIT: 18,
-  PIECES_JUSTIFICATIVES: 19,
-  VERIFICATION_JURIDIQUE: 20,
-  DECISION: 21,
-};
-
+/** Numéros métier affichés. */
 export const SUCCESSION_CASE_STATUSES = ["OUVERT", "CLOTURE"] as const;
 export type SuccessionCaseStatus = (typeof SUCCESSION_CASE_STATUSES)[number];
 
@@ -453,11 +420,11 @@ export const SUCCESSION_STEP_LABELS: Record<SuccessionStep, string> = {
   DECISION: "21. Décision finale",
 };
 
-/** Descriptions §10.2 pour aide contextuelle et stepper. */
+/** Descriptions pour l’aide contextuelle et le stepper. */
 export const SUCCESSION_STEP_DESCRIPTIONS: Record<SuccessionStep, string> = {
   DECLARATION_DECES: "Saisie par l'agent avec pièces initiales (acte de décès).",
   IDENTIFICATION_AYANT_DROIT: "Constitution du dossier de succession — ayant droit identifié.",
-  PIECES_JUSTIFICATIVES: "Contrôle de la checklist §10.1 — validations N1 (chef de section) et N2 (assistant CDS).",
+  PIECES_JUSTIFICATIVES: "Contrôle de la checklist — validations N1 (chef de section) et N2 (assistant CDS).",
   VERIFICATION_JURIDIQUE: "Chef de service — validation de conformité OHADA.",
   DECISION: "Transfert du contrat à l'ayant droit ou résiliation du point de vente.",
 };

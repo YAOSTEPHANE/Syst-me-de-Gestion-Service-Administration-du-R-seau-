@@ -25,7 +25,7 @@ const VALIDATION_CIRCUIT = new Set<CessionWorkflowStatut>([
 ]);
 
 /**
- * Résout le statut métier 5.4 à partir du statut technique, de la checklist et de la génération d'acte.
+ * Résout le statut métier à partir du statut technique, de la liste des pièces et de la génération de l’acte.
  */
 export function resolveCessionStatutMetier(input: {
   kind?: "CESSION" | "DELOCALISATION" | "CESSION_DELOCALISATION" | null;
@@ -95,7 +95,7 @@ export function cessionStatutMetierFields(input: {
   };
 }
 
-/** Libellé affiché pour un dossier rejeté (hors spec 5.4). */
+/** Libellé affiché pour un dossier rejeté, en dehors du parcours métier principal. */
 export const CESSION_REJETEE_DISPLAY_LABEL = "REJETÉE";
 export const CESSION_REJETEE_DESCRIPTION = "Dossier rejeté dans le circuit de validation";
 

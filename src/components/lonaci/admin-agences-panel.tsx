@@ -1,8 +1,19 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import { Building2, Download, Pencil, Plus, Power, Save, Trash2, X } from "lucide-react";
 
+import { Badge, StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
+import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import type { AgenceZoneGeographique } from "@/lib/lonaci/types";
+import { notify } from "@/lib/toast";
 
 interface AgenceRow {
   _id: string;
@@ -11,6 +22,8 @@ interface AgenceRow {
   zoneGeographique: AgenceZoneGeographique;
   actif: boolean;
 }
+
+const PAGE_SIZE = 8;
 
 function libelleZoneGeographique(z: AgenceZoneGeographique): string {
   return z === "ABIDJAN" ? "Abidjan" : "Intérieur";
@@ -33,8 +46,11 @@ export default function AdminAgencesPanel() {
   const [savingEditId, setSavingEditId] = useState<string | null>(null);
   const [togglingActifId, setTogglingActifId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AgenceRow | null>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
+  const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -73,7 +89,6 @@ export default function AdminAgencesPanel() {
   async function onCreate(e: FormEvent) {
     e.preventDefault();
     setError(null);
-    setSuccess(null);
     const c = code.trim();
     const l = libelle.trim();
     if (c.length < 2 || l.length < 2) {
@@ -92,14 +107,14 @@ export default function AdminAgencesPanel() {
         | { message?: string; agence?: AgenceRow; issues?: { message: string }[] }
         | null;
       if (res.status === 409) {
-        setError(body?.message ?? "Ce code agence existe déjà.");
+        notify.error(body?.message ?? "Ce code agence existe déjà.");
         return;
       }
       if (!res.ok) {
         const msg =
           body?.message ??
           (body?.issues?.[0]?.message ? `Données invalides : ${body.issues[0].message}` : "Création impossible.");
-        setError(msg);
+        notify.error(msg);
         return;
       }
       if (body?.agence?._id) {
@@ -111,9 +126,9 @@ export default function AdminAgencesPanel() {
       setLibelle("");
       setCreateZone("INTERIEUR");
       setCreateActif(true);
-      setSuccess(`Agence « ${body?.agence?.code ?? c} » créée.`);
+      notify.success(`Agence « ${body?.agence?.code ?? c} » créée.`);
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setCreating(false);
     }
@@ -121,7 +136,6 @@ export default function AdminAgencesPanel() {
 
   function startEdit(a: AgenceRow) {
     setError(null);
-    setSuccess(null);
     setEditingId(a._id);
     setEditCode(a.code);
     setEditLibelle(a.libelle);
@@ -141,7 +155,6 @@ export default function AdminAgencesPanel() {
   async function saveEdit() {
     if (!editingId) return;
     setError(null);
-    setSuccess(null);
     const c = editCode.trim();
     const l = editLibelle.trim();
     if (c.length < 2 || l.length < 2) {
@@ -158,11 +171,11 @@ export default function AdminAgencesPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; agence?: AgenceRow } | null;
       if (res.status === 409) {
-        setError(body?.message ?? "Ce code agence est déjà utilisé.");
+        notify.error(body?.message ?? "Ce code agence est déjà utilisé.");
         return;
       }
       if (!res.ok) {
-        setError(body?.message ?? "Enregistrement impossible.");
+        notify.error(body?.message ?? "Enregistrement impossible.");
         return;
       }
       if (body?.agence?._id) {
@@ -171,7 +184,7 @@ export default function AdminAgencesPanel() {
             .map((row) => (row._id === body.agence!._id ? body.agence! : row))
             .sort((a, b) => a.code.localeCompare(b.code, "fr")),
         );
-        setSuccess(`Agence « ${body.agence.code} » mise à jour.`);
+        notify.success(`Agence « ${body.agence.code} » mise à jour.`);
         window.dispatchEvent(new Event("lonaci:data-imported"));
       } else {
         await load();
@@ -179,7 +192,7 @@ export default function AdminAgencesPanel() {
       }
       cancelEdit();
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setSavingEditId(null);
     }
@@ -188,7 +201,6 @@ export default function AdminAgencesPanel() {
   async function patchAgenceActif(a: AgenceRow, actif: boolean) {
     if (editingId) return;
     setError(null);
-    setSuccess(null);
     setTogglingActifId(a._id);
     try {
       const res = await fetch(`/api/admin/agences/${encodeURIComponent(a._id)}`, {
@@ -204,35 +216,29 @@ export default function AdminAgencesPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string; agence?: AgenceRow } | null;
       if (!res.ok) {
-        setError(body?.message ?? "Mise à jour du statut impossible.");
+        notify.error(body?.message ?? "Mise à jour du statut impossible.");
         return;
       }
       if (body?.agence?._id) {
         setAgences((prev) =>
           prev.map((row) => (row._id === body.agence!._id ? body.agence! : row)).sort((a, b) => a.code.localeCompare(b.code, "fr")),
         );
-        setSuccess(`Agence « ${a.code} » : ${actif ? "active" : "inactive"}.`);
+        notify.success(`Agence « ${a.code} » : ${actif ? "active" : "inactive"}.`);
         window.dispatchEvent(new Event("lonaci:data-imported"));
       } else {
         await load();
         window.dispatchEvent(new Event("lonaci:data-imported"));
       }
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setTogglingActifId(null);
     }
   }
 
-  async function requestDelete(a: AgenceRow) {
+  async function deleteAgence(a: AgenceRow) {
     if (editingId) return;
-    const confirmed = window.confirm(
-      `Supprimer définitivement l’agence « ${a.code} — ${a.libelle} » ?\n\n` +
-        `Action irréversible. Elle n’est possible que si aucun PDV, utilisateur, dossier ou autre enregistrement n’y est rattaché.`,
-    );
-    if (!confirmed) return;
     setError(null);
-    setSuccess(null);
     setDeletingId(a._id);
     try {
       const res = await fetch(`/api/admin/agences/${encodeURIComponent(a._id)}`, {
@@ -241,23 +247,24 @@ export default function AdminAgencesPanel() {
       });
       const body = (await res.json().catch(() => null)) as { message?: string } | null;
       if (res.status === 409) {
-        setError(body?.message ?? "Suppression impossible : l’agence est encore utilisée.");
+        notify.error(body?.message ?? "Suppression impossible : l’agence est encore utilisée.");
         return;
       }
       if (res.status === 404) {
-        setError(body?.message ?? "Agence introuvable.");
+        notify.error(body?.message ?? "Agence introuvable.");
         await load();
         return;
       }
       if (!res.ok) {
-        setError(body?.message ?? "Suppression impossible.");
+        notify.error(body?.message ?? "Suppression impossible.");
         return;
       }
       setAgences((prev) => prev.filter((row) => row._id !== a._id));
-      setSuccess(`Agence « ${a.code} » supprimée.`);
+      notify.success(`Agence « ${a.code} » supprimée.`);
       window.dispatchEvent(new Event("lonaci:data-imported"));
+      setDeleteTarget(null);
     } catch {
-      setError("Erreur réseau ou serveur.");
+      notify.error("Erreur réseau ou serveur.");
     } finally {
       setDeletingId(null);
     }
@@ -266,132 +273,137 @@ export default function AdminAgencesPanel() {
   if (loading || !visible) return null;
 
   const inputClass =
-    "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
+    "lonaci-ui-input";
+  const query = search.trim().toLocaleLowerCase("fr");
+  const filtered = agences.filter((agence) => {
+    if (statusFilter === "ACTIVE" && !agence.actif) return false;
+    if (statusFilter === "INACTIVE" && agence.actif) return false;
+    return !query || `${agence.code} ${agence.libelle}`.toLocaleLowerCase("fr").includes(query);
+  });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, pageCount);
+  const pageRows = filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE);
+  const activeCount = agences.filter((agence) => agence.actif).length;
+  const busy = editingId !== null || deletingId !== null || togglingActifId !== null || savingEditId !== null;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-900">Agences (référentiel)</h3>
-          <p className="mt-1 text-xs text-slate-600">
-            Création et modification réservées au <strong>chef de service</strong>. Le code est normalisé en majuscules.
-            Les liens métier (utilisateurs, PDV…) utilisent l’identifiant technique de l’agence. La zone (Abidjan /
-            intérieur) sert aux matrices contrats et rapports : sans champ en base, l’ancienne règle (libellé « abidjan »
-            ou code <code className="rounded bg-slate-100 px-0.5 font-mono">^ABJ</code>) s’applique encore jusqu’à
-            enregistrement explicite.             La suppression n’est autorisée que si aucun enregistrement n’y est rattaché. Une agence inactive reste
-            visible ici mais disparaît des sélecteurs métier (création PDV, filtres) qui ne listent que les agences
-            actives.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => window.open("/api/admin/agences/export", "_blank", "noopener,noreferrer")}
-          className="rounded-lg border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-100"
-        >
-          Export PDF
-        </button>
-      </div>
+    <section className="space-y-4">
+      <PageHeader
+        eyebrow="Administration · Référentiel"
+        title="Agences"
+        description="Gérez les agences, leur zone géographique et leur disponibilité dans les parcours métier."
+        actions={
+          <Button
+            variant="secondary"
+            leadingIcon={Download}
+            onClick={() => window.open("/api/admin/agences/export", "_blank", "noopener,noreferrer")}
+          >
+            Export PDF
+          </Button>
+        }
+      />
 
-      <form
-        onSubmit={onCreate}
-        className="mt-4 grid gap-3 rounded-xl border border-emerald-200/70 bg-emerald-50/40 p-3 sm:grid-cols-[1fr_2fr_minmax(9rem,auto)_minmax(8rem,auto)_auto] sm:items-end"
-      >
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Code agence *</span>
+      <Surface padding="lg" elevated>
+        <SectionHeader
+          title="Nouvelle agence"
+          description="Le code est automatiquement normalisé en majuscules. Création réservée au chef de service."
+        />
+        <form onSubmit={onCreate} className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-5 xl:items-end">
+          <FormField label="Code agence" htmlFor="agence-code" required>
           <input
+            id="agence-code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Ex. ABIDJAN"
             maxLength={32}
             className={inputClass}
             autoComplete="off"
-            aria-label="Code agence"
           />
-        </label>
-        <label className="grid gap-1 sm:col-span-1">
-          <span className="text-xs font-medium text-slate-700">Libellé *</span>
+          </FormField>
+          <FormField label="Libellé" htmlFor="agence-libelle" required>
           <input
+            id="agence-libelle"
             value={libelle}
             onChange={(e) => setLibelle(e.target.value)}
             placeholder="Ex. Agence Abidjan Centre"
             maxLength={200}
             className={inputClass}
-            aria-label="Libellé agence"
           />
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Zone *</span>
+          </FormField>
+          <FormField label="Zone" htmlFor="agence-zone" required>
           <select
+            id="agence-zone"
             value={createZone}
             onChange={(e) => setCreateZone(e.target.value as AgenceZoneGeographique)}
             className={inputClass}
-            aria-label="Zone géographique agence"
           >
             <option value="ABIDJAN">Abidjan</option>
             <option value="INTERIEUR">Intérieur</option>
           </select>
-        </label>
-        <label className="grid gap-1">
-          <span className="text-xs font-medium text-slate-700">Statut *</span>
+          </FormField>
+          <FormField label="Statut" htmlFor="agence-statut" required>
           <select
+            id="agence-statut"
             value={createActif ? "true" : "false"}
             onChange={(e) => setCreateActif(e.target.value === "true")}
             className={inputClass}
-            aria-label="Statut actif à la création"
           >
             <option value="true">Actif</option>
             <option value="false">Inactif</option>
           </select>
-        </label>
-        <button
-          type="submit"
-          disabled={creating}
-          className="w-full rounded-lg border border-emerald-600 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition hover:border-emerald-700 hover:bg-emerald-700 disabled:opacity-50 sm:w-auto"
-        >
-          {creating ? "Création…" : "Créer l’agence"}
-        </button>
-      </form>
+          </FormField>
+          <Button type="submit" leadingIcon={Plus} loading={creating}>Créer l’agence</Button>
+        </form>
+      </Surface>
 
       {error ? (
-        <p className="mt-3 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-900">{error}</p>
-      ) : null}
-      {success ? (
-        <p className="mt-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          {success}
-        </p>
+        <FeedbackState tone="danger" title="Action impossible" description={error} />
       ) : null}
 
-      <div className="mt-5 overflow-x-auto rounded-lg border border-slate-200">
-        <table className="w-full min-w-[520px] border-collapse text-left text-xs">
+      <Surface padding="none" elevated className="lonaci-ui-data-table">
+        <div className="grid gap-3 border-b border-slate-200 p-4 sm:grid-cols-3">
+          <div><p className="text-xs text-slate-500">Total</p><p className="text-xl font-semibold text-slate-950">{agences.length}</p></div>
+          <div><p className="text-xs text-slate-500">Actives</p><p className="text-xl font-semibold text-emerald-700">{activeCount}</p></div>
+          <div><p className="text-xs text-slate-500">Inactives</p><p className="text-xl font-semibold text-slate-700">{agences.length - activeCount}</p></div>
+        </div>
+        <FilterBar
+          className="border-b border-slate-200"
+          search={{ value: search, onChange: (value) => { setSearch(value); setPage(1); }, placeholder: "Code ou libellé…", label: "Rechercher une agence" }}
+          filters={
+            <FormField label="Statut" htmlFor="agence-filter-status" className="min-w-44">
+              <select id="agence-filter-status" value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value as typeof statusFilter); setPage(1); }} className={inputClass}>
+                <option value="ALL">Tous les statuts</option>
+                <option value="ACTIVE">Actives</option>
+                <option value="INACTIVE">Inactives</option>
+              </select>
+            </FormField>
+          }
+          actions={<Badge tone="info">{filtered.length} résultat{filtered.length > 1 ? "s" : ""}</Badge>}
+        />
+        {pageRows.length === 0 ? (
+          <FeedbackState className="m-4" title="Aucune agence" description="Aucune agence ne correspond aux critères actuels." />
+        ) : (
+          <>
+          <div className="lonaci-ui-table-scroll lonaci-ui-table-scroll--has-mobile">
+        <table>
+          <caption className="lonaci-ui-sr-only">Référentiel des agences</caption>
           <thead>
-            <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
-              <th className="px-3 py-2 font-semibold">Code</th>
-              <th className="px-3 py-2 font-semibold">Libellé</th>
-              <th className="px-3 py-2 font-semibold">Zone</th>
-              <th className="px-3 py-2 font-semibold">Statut</th>
-              <th className="px-3 py-2 font-mono font-normal text-slate-500">ID</th>
-              <th className="px-3 py-2 font-semibold">Actions</th>
+            <tr>
+              <th>Code</th><th>Libellé</th><th>Zone</th><th>Statut</th><th>ID</th><th>Actions</th>
             </tr>
           </thead>
-          <tbody className="text-slate-800">
-            {agences.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-slate-500">
-                  Aucune agence en base.
-                </td>
-              </tr>
-            ) : (
-              agences.map((a) => {
+          <tbody>
+              {pageRows.map((a) => {
                 const isEditing = editingId === a._id;
                 return (
-                  <tr key={a._id} className="border-b border-slate-100 last:border-b-0">
-                    <td className="px-3 py-2 align-top">
+                  <tr key={a._id}>
+                    <td>
                       {isEditing ? (
                         <input
                           value={editCode}
                           onChange={(e) => setEditCode(e.target.value)}
                           maxLength={32}
-                          className={`${inputClass} w-full min-w-[7rem] font-mono text-xs`}
+                          className={`${inputClass} min-w-28 font-mono`}
                           aria-label={`Code agence ${a._id}`}
                           autoComplete="off"
                         />
@@ -399,132 +411,166 @@ export default function AdminAgencesPanel() {
                         <span className="font-mono font-medium">{a.code}</span>
                       )}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td>
                       {isEditing ? (
                         <input
                           value={editLibelle}
                           onChange={(e) => setEditLibelle(e.target.value)}
                           maxLength={200}
-                          className={`${inputClass} w-full min-w-[10rem] text-xs`}
+                          className={`${inputClass} min-w-44`}
                           aria-label={`Libellé agence ${a._id}`}
                         />
                       ) : (
                         a.libelle
                       )}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td>
                       {isEditing ? (
                         <select
                           value={editZone}
                           onChange={(e) => setEditZone(e.target.value as AgenceZoneGeographique)}
-                          className={`${inputClass} w-full min-w-[8rem] text-xs`}
+                          className={`${inputClass} min-w-32`}
                           aria-label={`Zone agence ${a._id}`}
                         >
                           <option value="ABIDJAN">Abidjan</option>
                           <option value="INTERIEUR">Intérieur</option>
                         </select>
                       ) : (
-                        <span className="text-slate-700">{libelleZoneGeographique(a.zoneGeographique)}</span>
+                        <Badge tone="info">{libelleZoneGeographique(a.zoneGeographique)}</Badge>
                       )}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td>
                       {isEditing ? (
                         <select
                           value={editActif ? "true" : "false"}
                           onChange={(e) => setEditActif(e.target.value === "true")}
-                          className={`${inputClass} w-full min-w-[7rem] text-xs`}
+                          className={`${inputClass} min-w-28`}
                           aria-label={`Statut agence ${a._id}`}
                         >
                           <option value="true">Actif</option>
                           <option value="false">Inactif</option>
                         </select>
                       ) : (
-                        <div className="flex flex-col gap-1.5">
-                          {a.actif ? (
-                            <span className="w-fit rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-900">
-                              Actif
-                            </span>
-                          ) : (
-                            <span className="w-fit rounded-full bg-slate-200 px-2 py-0.5 text-[11px] font-semibold text-slate-800">
-                              Inactif
-                            </span>
-                          )}
-                          <button
-                            type="button"
+                        <div className="flex items-center gap-2">
+                          <StatusBadge tone={a.actif ? "success" : "neutral"}>{a.actif ? "Actif" : "Inactif"}</StatusBadge>
+                          <IconButton
+                            icon={Power}
+                            label={a.actif ? "Rendre inactive" : "Rendre active"}
+                            size="sm"
                             onClick={() => void patchAgenceActif(a, !a.actif)}
-                            disabled={
-                              editingId !== null ||
-                              togglingActifId !== null ||
-                              deletingId !== null ||
-                              savingEditId !== null
-                            }
-                            className="w-fit rounded-md border border-slate-300 bg-white px-2 py-0.5 text-[10px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                          >
-                            {togglingActifId === a._id
-                              ? "…"
-                              : a.actif
-                                ? "Rendre inactif"
-                                : "Rendre actif"}
-                          </button>
+                            disabled={busy}
+                          />
                         </div>
                       )}
                     </td>
                     <td
-                      className="max-w-32 truncate px-3 py-2 align-top font-mono text-[10px] text-slate-500"
+                      className="max-w-32 truncate font-mono text-xs text-slate-500"
                       title={a._id}
                     >
                       {a._id}
                     </td>
-                    <td className="px-3 py-2 align-top">
+                    <td>
                       {isEditing ? (
-                        <div className="flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
+                        <div className="flex gap-1">
+                          <IconButton
+                            icon={Save}
+                            label="Enregistrer l’agence"
+                            variant="primary"
                             disabled={savingEditId !== null}
                             onClick={() => void saveEdit()}
-                            className="rounded-md border border-emerald-600 bg-emerald-600 px-2 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
-                          >
-                            {savingEditId === a._id ? "Enregistrement…" : "Enregistrer"}
-                          </button>
-                          <button
-                            type="button"
+                          />
+                          <IconButton
+                            icon={X}
+                            label="Annuler la modification"
                             disabled={savingEditId !== null}
                             onClick={cancelEdit}
-                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-                          >
-                            Annuler
-                          </button>
+                          />
                         </div>
                       ) : (
-                        <div className="flex flex-wrap gap-1.5">
-                          <button
-                            type="button"
+                        <div className="flex gap-1">
+                          <IconButton
+                            icon={Pencil}
+                            label={`Modifier ${a.code}`}
                             onClick={() => startEdit(a)}
                             disabled={editingId !== null || deletingId !== null || togglingActifId !== null}
-                            className="rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-40"
                             title={editingId !== null ? "Terminez l’édition en cours" : undefined}
-                          >
-                            Modifier
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void requestDelete(a)}
+                          />
+                          <IconButton
+                            icon={Trash2}
+                            label={`Supprimer ${a.code}`}
+                            variant="danger"
+                            onClick={() => setDeleteTarget(a)}
                             disabled={editingId !== null || deletingId !== null || togglingActifId !== null}
-                            className="rounded-md border border-rose-300 bg-rose-50 px-2 py-1 text-[11px] font-semibold text-rose-800 hover:bg-rose-100 disabled:opacity-40"
                             title="Supprimer si l’agence n’est plus utilisée"
-                          >
-                            {deletingId === a._id ? "Suppression…" : "Supprimer"}
-                          </button>
+                          />
                         </div>
                       )}
                     </td>
                   </tr>
                 );
-              })
-            )}
+              })}
           </tbody>
         </table>
       </div>
+      <div className="lonaci-ui-table-mobile" role="list" aria-label="Référentiel des agences">
+        {pageRows.map((a) => (
+          <Surface key={a._id} padding="md" elevated>
+            {editingId === a._id ? (
+              <div className="grid gap-3">
+                <FormField label="Code" htmlFor={`mobile-agence-code-${a._id}`} required>
+                  <input id={`mobile-agence-code-${a._id}`} value={editCode} onChange={(event) => setEditCode(event.target.value)} maxLength={32} className={inputClass} />
+                </FormField>
+                <FormField label="Libellé" htmlFor={`mobile-agence-libelle-${a._id}`} required>
+                  <input id={`mobile-agence-libelle-${a._id}`} value={editLibelle} onChange={(event) => setEditLibelle(event.target.value)} maxLength={200} className={inputClass} />
+                </FormField>
+                <div className="grid grid-cols-2 gap-3">
+                  <FormField label="Zone" htmlFor={`mobile-agence-zone-${a._id}`} required>
+                    <select id={`mobile-agence-zone-${a._id}`} value={editZone} onChange={(event) => setEditZone(event.target.value as AgenceZoneGeographique)} className={inputClass}>
+                      <option value="ABIDJAN">Abidjan</option><option value="INTERIEUR">Intérieur</option>
+                    </select>
+                  </FormField>
+                  <FormField label="Statut" htmlFor={`mobile-agence-status-${a._id}`} required>
+                    <select id={`mobile-agence-status-${a._id}`} value={editActif ? "true" : "false"} onChange={(event) => setEditActif(event.target.value === "true")} className={inputClass}>
+                      <option value="true">Actif</option><option value="false">Inactif</option>
+                    </select>
+                  </FormField>
+                </div>
+                <div className="flex justify-end gap-2">
+                  <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={savingEditId !== null}>Annuler</Button>
+                  <Button size="sm" leadingIcon={Save} onClick={() => void saveEdit()} loading={savingEditId === a._id}>Enregistrer</Button>
+                </div>
+              </div>
+            ) : (
+            <>
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex gap-3"><Building2 className="mt-0.5 text-cyan-700" size={20} /><div><p className="font-mono text-sm font-semibold">{a.code}</p><p className="text-sm text-slate-600">{a.libelle}</p></div></div>
+              <StatusBadge tone={a.actif ? "success" : "neutral"}>{a.actif ? "Actif" : "Inactif"}</StatusBadge>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-2"><Badge tone="info">{libelleZoneGeographique(a.zoneGeographique)}</Badge><div className="flex gap-1">
+              <IconButton icon={Power} label={a.actif ? "Rendre inactive" : "Rendre active"} size="sm" onClick={() => void patchAgenceActif(a, !a.actif)} disabled={busy} />
+              <IconButton icon={Pencil} label={`Modifier ${a.code}`} size="sm" onClick={() => startEdit(a)} disabled={busy} />
+              <IconButton icon={Trash2} label={`Supprimer ${a.code}`} size="sm" variant="danger" onClick={() => setDeleteTarget(a)} disabled={busy} />
+            </div></div>
+            </>
+            )}
+          </Surface>
+        ))}
+      </div>
+      <div className="p-4"><Pagination page={currentPage} pageCount={pageCount} onPageChange={setPage} label="Pagination des agences" /></div>
+      </>
+        )}
+      </Surface>
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        onOpenChange={(open) => { if (!open && deletingId === null) setDeleteTarget(null); }}
+        title="Supprimer définitivement l’agence ?"
+        description={deleteTarget ? `${deleteTarget.code} — ${deleteTarget.libelle}` : undefined}
+        message="Cette action est irréversible et n’est possible que si aucun PDV, utilisateur, dossier ou autre enregistrement n’est rattaché à cette agence."
+        confirmLabel="Supprimer l’agence"
+        destructive
+        pending={deleteTarget !== null && deletingId === deleteTarget._id}
+        onConfirm={async () => { if (deleteTarget) await deleteAgence(deleteTarget); }}
+      />
     </section>
   );
 }

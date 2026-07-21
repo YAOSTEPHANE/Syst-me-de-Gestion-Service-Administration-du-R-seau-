@@ -37,8 +37,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     await transitionAgrement({
       id,
       target: parsed.data.target,
-      role: auth.user.role,
-      actorId: auth.user._id ?? "",
+      actor: auth.user,
     });
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (error) {

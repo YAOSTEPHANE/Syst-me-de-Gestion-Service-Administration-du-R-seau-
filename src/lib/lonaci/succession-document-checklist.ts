@@ -12,7 +12,7 @@ import type {
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** §10.1 — Circuit documentaire décès et ayants droit. */
+/** Circuit documentaire décès et ayants droit. */
 export const SUCCESSION_CHECKLIST_ITEMS_SPEC_101: ProduitDocumentChecklistItem[] = [
   {
     id: "succession_acte_deces_officiel",

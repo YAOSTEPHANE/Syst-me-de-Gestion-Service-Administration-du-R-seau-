@@ -6,6 +6,7 @@ import {
   buildCourrierComptabiliteFromCautionId,
   renderCourrierComptabiliteClientPdf,
 } from "@/lib/lonaci/courrier-comptabilite-client";
+import { findVisibleCautionById } from "@/lib/lonaci/sprint4";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -18,6 +19,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
+  if (!(await findVisibleCautionById(id, auth.user))) {
+    return notFound("Courrier comptabilité indisponible.", "COURRIER_COMPTABILITE_NOT_FOUND");
+  }
   try {
     const view = await buildCourrierComptabiliteFromCautionId(id);
     if (!view) {

@@ -1,4 +1,4 @@
-/** Statuts métier affichés (spec 3.5 — gestion des contrats). */
+/** Statuts métier affichés pour la gestion des contrats. */
 export const CONTRAT_STATUTS_METIER = [
   "DOSSIER_INCOMPLET",
   "DOSSIER_COMPLET",
@@ -17,7 +17,7 @@ export const CONTRAT_STATUT_METIER_LABELS: Record<ContratStatutMetier, string> =
   RESILIE: "Résilié",
 };
 
-/** Libellés affichés en UI (spec 3.5 — majuscules métier). */
+/** Libellés métier affichés en majuscules dans l’interface. */
 export const CONTRAT_STATUT_METIER_DISPLAY_LABELS: Record<ContratStatutMetier, string> = {
   DOSSIER_INCOMPLET: "DOSSIER INCOMPLET",
   DOSSIER_COMPLET: "DOSSIER COMPLET",

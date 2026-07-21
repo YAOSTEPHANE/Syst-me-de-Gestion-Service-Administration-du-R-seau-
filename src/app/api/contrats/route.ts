@@ -27,9 +27,13 @@ import {
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
-import { createDossier, ensureDossierIndexes, transitionDossier } from "@/lib/lonaci/dossiers";
 import {
-  extendContratDossierWithProduit,
+  createDossier,
+  ensureDossierIndexes,
+  listVisibleDossierIds,
+  transitionDossier,
+} from "@/lib/lonaci/dossiers";
+import {
   extendContratDossierWithProduits,
   findEditableContratDossierForParty,
   getDossierProduitCodes,
@@ -170,20 +174,12 @@ export async function GET(request: NextRequest) {
 
   const db = await getDatabase();
 
-  let dossierIdsAllowlist: string[] | null = null;
-  if (parsed.data.dossierStatus) {
-    const rows = await db
-      .collection<{ _id: ObjectId }>("dossiers")
-      .find({
-        deletedAt: null,
-        type: "CONTRAT_ACTUALISATION",
-        status: parsed.data.dossierStatus,
-      })
-      .project({ _id: 1 })
-      .limit(2000)
-      .toArray();
-    dossierIdsAllowlist = rows.map((r) => r._id.toHexString());
-  }
+  const dossierIdsAllowlist = await listVisibleDossierIds(
+    auth.user,
+    agenceRestriction,
+    "CONTRAT_ACTUALISATION",
+    parsed.data.dossierStatus,
+  );
 
   let dateEffetFrom: Date | undefined;
   let dateEffetTo: Date | undefined;

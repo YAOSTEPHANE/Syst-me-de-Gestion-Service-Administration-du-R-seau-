@@ -35,7 +35,7 @@ const listSchema = z.object({
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) {
     return auth.error;
@@ -56,6 +56,7 @@ export async function GET(request: NextRequest) {
     parsed.data.status,
     parsed.data.type,
     agenceRestriction,
+    auth.user,
     parsed.data.q,
     parsed.data.concessionnaireId,
     parsed.data.sortField,

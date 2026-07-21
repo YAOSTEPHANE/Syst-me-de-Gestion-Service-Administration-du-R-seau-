@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import PDFDocument from "pdfkit";
 
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
 import { ensureConcessionnaireIndexes, searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { createPdfResponse, renderConcessionnairesExportPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -57,36 +57,6 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   return `\uFEFF${header.map(escapeCell).join(",")}\n${lines.join("\n")}`;
 }
 
-function toPdfBuffer(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]) {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 30, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(14).text("Export Concessionnaires", { underline: true });
-    doc.moveDown(0.5);
-    doc.fontSize(10).text(`Total: ${rows.length} | Date: ${new Date().toLocaleString("fr-FR")}`);
-    doc.moveDown(1);
-
-    rows.forEach((r, idx) => {
-      const codes =
-        [r.codeTerminal && `Term.: ${r.codeTerminal}`, r.codeConcessionnaire && `Cons.: ${r.codeConcessionnaire}`]
-          .filter(Boolean)
-          .join(" · ") || "—";
-      const line = `${idx + 1}. ${r.codePdv} - ${r.nomComplet || r.raisonSociale} | ${codes} | CNI: ${
-        r.cniNumero ?? "—"
-      } | Tel: ${r.telephonePrincipal ?? "—"} | Statut: ${r.statut} | Agence: ${r.agenceId ?? "—"}`;
-      doc.fontSize(8.5).text(line);
-      if (doc.y > 780) {
-        doc.addPage();
-      }
-    });
-    doc.end();
-  });
-}
-
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
     roles: [...LONACI_ROLES],
@@ -125,13 +95,31 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const pdf = await toPdfBuffer(result.items);
-  return new NextResponse(new Uint8Array(pdf), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="concessionnaires-${Date.now()}.pdf"`,
-    },
+  const generatedAt = new Date();
+  const filters = [
+    parsed.data.q ? `Recherche : ${parsed.data.q}` : undefined,
+    parsed.data.agenceId ? `Agence : ${parsed.data.agenceId}` : undefined,
+    parsed.data.produitCode ? `Produit : ${parsed.data.produitCode}` : undefined,
+    parsed.data.statut ? `Statut : ${parsed.data.statut}` : undefined,
+    parsed.data.statutBancarisation
+      ? `Bancarisation : ${parsed.data.statutBancarisation}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const pdf = await renderConcessionnairesExportPdf(
+    result.items.map((row) => ({
+      codePdv: row.codePdv,
+      codeTerminal: row.codeTerminal,
+      codeConcessionnaire: row.codeConcessionnaire,
+      nom: row.nomComplet || row.raisonSociale,
+      cniNumero: row.cniNumero,
+      telephonePrincipal: row.telephonePrincipal,
+      agenceId: row.agenceId,
+      statut: row.statut,
+    })),
+    { generatedAt, filters },
+  );
+  return createPdfResponse(pdf, {
+    filename: `concessionnaires-${generatedAt.getTime()}`,
   });
 }
 

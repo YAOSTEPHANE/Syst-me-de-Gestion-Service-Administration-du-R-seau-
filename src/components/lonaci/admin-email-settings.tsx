@@ -1,13 +1,20 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Clock3, MailCheck, Save } from "lucide-react";
+
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 export default function AdminEmailSettings() {
   const [visible, setVisible] = useState(false);
   const [enabled, setEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
   const [target, setTarget] = useState(20);
   const [supervisionCronEnabled, setSupervisionCronEnabled] = useState(false);
   const [supervisionFormat, setSupervisionFormat] = useState<"pdf" | "csv" | "xlsx">("pdf");
@@ -61,7 +68,6 @@ export default function AdminEmailSettings() {
 
   async function save(next: boolean) {
     setSaving(true);
-    setMessage(null);
     try {
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
@@ -72,9 +78,9 @@ export default function AdminEmailSettings() {
       if (!res.ok) throw new Error("Sauvegarde impossible");
       const data = (await res.json()) as { criticalWorkflowEmailEnabled: boolean };
       setEnabled(data.criticalWorkflowEmailEnabled);
-      setMessage("Paramètre enregistré.");
+      notify.success("Paramètre enregistré.");
     } catch {
-      setMessage("Erreur lors de la sauvegarde.");
+      notify.error("Erreur lors de la sauvegarde.");
     } finally {
       setSaving(false);
     }
@@ -82,7 +88,6 @@ export default function AdminEmailSettings() {
 
   async function saveTarget(next: number) {
     setSaving(true);
-    setMessage(null);
     try {
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
@@ -93,9 +98,9 @@ export default function AdminEmailSettings() {
       if (!res.ok) throw new Error("Sauvegarde impossible");
       const data = (await res.json()) as { dashboardContractsMonthlyTarget?: number };
       setTarget(data.dashboardContractsMonthlyTarget ?? next);
-      setMessage("Objectif dashboard enregistré.");
+      notify.success("Objectif dashboard enregistré.");
     } catch {
-      setMessage("Erreur lors de la sauvegarde de l'objectif.");
+      notify.error("Erreur lors de la sauvegarde de l'objectif.");
     } finally {
       setSaving(false);
     }
@@ -107,7 +112,6 @@ export default function AdminEmailSettings() {
     nextHourUtc: number,
   ) {
     setSaving(true);
-    setMessage(null);
     try {
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
@@ -132,9 +136,9 @@ export default function AdminEmailSettings() {
       setSupervisionHourUtc(data.supervisionExportCronHourUtc ?? nextHourUtc);
       setLastSupervisionRunAt(data.supervisionExportLastRunAt ?? null);
       setLastSupervisionStatus(data.supervisionExportLastStatus ?? null);
-      setMessage("Parametres export supervision enregistres.");
+      notify.success("Paramètres d’export supervision enregistrés.");
     } catch {
-      setMessage("Erreur lors de la sauvegarde de l'export supervision.");
+      notify.error("Erreur lors de la sauvegarde de l’export supervision.");
     } finally {
       setSaving(false);
     }
@@ -143,12 +147,16 @@ export default function AdminEmailSettings() {
   if (loading || !visible) return null;
 
   return (
-    <section className="mt-6 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900">Paramètres email (Chef(fe) de service)</h3>
-      <p className="mt-1 text-xs text-slate-600">
-        Active ou désactive l’envoi SMTP des alertes workflow (dossiers, résiliations, digest cron).
-      </p>
-      <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-xl border border-sky-200/80 bg-sky-50/50 px-3 py-2 text-sm text-slate-700">
+    <Surface elevated className="mt-6" aria-labelledby="email-settings-title">
+      <SectionHeader
+        title={<span id="email-settings-title" className="inline-flex items-center gap-2"><MailCheck size={19} className="text-orange-600" aria-hidden="true" />Paramètres email</span>}
+        description="Réservé au Chef(fe) de service · Alertes workflow et exports de supervision."
+      />
+      <label className="mt-5 flex cursor-pointer items-center justify-between gap-4 rounded-2xl border border-orange-200 bg-orange-50/50 p-4 text-sm font-medium text-slate-800">
+        <span>
+          <span className="block">Emails critiques</span>
+          <span className="mt-1 block text-xs font-normal text-slate-600">Dossiers, résiliations et digest planifiés.</span>
+        </span>
         <input
           type="checkbox"
           checked={enabled}
@@ -158,36 +166,46 @@ export default function AdminEmailSettings() {
             setEnabled(v);
             void save(v);
           }}
+          className="h-5 w-5 accent-orange-600"
         />
-        Emails critiques activés
       </label>
-      <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
-        <p className="mb-2 text-xs text-slate-600">Objectif mensuel contrats (dashboard)</p>
-        <div className="flex items-center gap-2">
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+        <FormField label="Objectif mensuel de contrats" htmlFor="dashboard-contract-target" hint="Valeur affichée sur le tableau de bord, de 1 à 10 000.">
+          <div className="flex flex-wrap items-center gap-3">
           <input
+            id="dashboard-contract-target"
             type="number"
-            aria-label="Objectif mensuel contrats"
             min={1}
             max={10000}
             value={target}
             disabled={saving}
             onChange={(e) => setTarget(Number(e.target.value) || 1)}
-            className="w-28 rounded border border-slate-300 bg-white px-2 py-1 text-sm text-slate-700"
+            className="min-h-11 w-32 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-          <button
-            type="button"
-            disabled={saving}
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={saving}
+            leadingIcon={Save}
             onClick={() => void saveTarget(target)}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
             Enregistrer
-          </button>
+          </Button>
+          </div>
+        </FormField>
         </div>
-      </div>
 
-      <div className="mt-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2">
-        <p className="mb-2 text-xs font-semibold text-violet-800">Export supervision planifie (cron journalier)</p>
-        <label className="inline-flex items-center gap-2 text-xs text-slate-700">
+      <div className="mt-4 rounded-2xl border border-orange-200 bg-linear-to-br from-orange-50 to-white p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="inline-flex items-center gap-2 text-sm font-bold text-[#13213c]"><Clock3 size={17} className="text-orange-600" aria-hidden="true" />Export supervision planifié</p>
+            <p className="mt-1 text-xs text-slate-600">Génération quotidienne selon l’heure UTC configurée.</p>
+          </div>
+          <StatusBadge tone={lastSupervisionStatus === "OK" ? "success" : lastSupervisionStatus === "ERROR" ? "danger" : "neutral"}>
+            {lastSupervisionStatus ?? "Jamais exécuté"}
+          </StatusBadge>
+        </div>
+        <label className="mt-4 flex items-center gap-2 text-sm font-medium text-slate-800">
           <input
             type="checkbox"
             checked={supervisionCronEnabled}
@@ -197,11 +215,14 @@ export default function AdminEmailSettings() {
               setSupervisionCronEnabled(v);
               void saveSupervisionCron(v, supervisionFormat, supervisionHourUtc);
             }}
+            className="h-5 w-5 accent-orange-600"
           />
-          Activer la generation automatique
+          Activer la génération automatique
         </label>
-        <div className="mt-2 flex items-center gap-2">
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          <FormField label="Format d’envoi" htmlFor="supervision-export-format">
           <select
+            id="supervision-export-format"
             value={supervisionFormat}
             disabled={saving}
             onChange={(e) => {
@@ -209,17 +230,17 @@ export default function AdminEmailSettings() {
               setSupervisionFormat(v);
               void saveSupervisionCron(supervisionCronEnabled, v, supervisionHourUtc);
             }}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-            aria-label="Format export supervision planifie"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           >
             <option value="pdf">PDF</option>
             <option value="csv">CSV</option>
             <option value="xlsx">XLSX</option>
           </select>
-          <span className="text-xs text-slate-600">Format envoi automatique</span>
-        </div>
-        <div className="mt-2 flex items-center gap-2">
+          </FormField>
+          <FormField label="Heure d’exécution UTC" htmlFor="supervision-export-hour" hint={`Exécution attendue à ${String(supervisionHourUtc).padStart(2, "0")}:00 UTC.`}>
+          <div className="flex flex-wrap items-center gap-2">
           <input
+            id="supervision-export-hour"
             type="number"
             min={0}
             max={23}
@@ -230,25 +251,24 @@ export default function AdminEmailSettings() {
               const next = Number.isFinite(raw) ? Math.min(23, Math.max(0, raw)) : 6;
               setSupervisionHourUtc(next);
             }}
-            className="w-20 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700"
-            aria-label="Heure UTC execution supervision"
+            className="min-h-11 w-24 rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-          <button
-            type="button"
-            disabled={saving}
+          <Button
+            size="sm"
+            variant="secondary"
+            loading={saving}
+            leadingIcon={Save}
             onClick={() => void saveSupervisionCron(supervisionCronEnabled, supervisionFormat, supervisionHourUtc)}
-            className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-50"
           >
-            Sauver heure UTC
-          </button>
-          <span className="text-xs text-slate-600">Execution attendue a {String(supervisionHourUtc).padStart(2, "0")}:00 UTC</span>
+            Enregistrer l’heure
+          </Button>
+          </div>
+          </FormField>
         </div>
-        <p className="mt-2 text-[11px] text-slate-600">
-          Dernier run: {lastSupervisionRunAt ? new Date(lastSupervisionRunAt).toLocaleString("fr-FR") : "jamais"} | Statut:{" "}
-          {lastSupervisionStatus ?? "N/A"}
+        <p className="mt-4 text-xs text-slate-600" aria-live="polite">
+          Dernière exécution : {lastSupervisionRunAt ? new Date(lastSupervisionRunAt).toLocaleString("fr-FR") : "jamais"}
         </p>
       </div>
-      {message ? <p className="mt-2 text-xs text-emerald-600">{message}</p> : null}
-    </section>
+    </Surface>
   );
 }

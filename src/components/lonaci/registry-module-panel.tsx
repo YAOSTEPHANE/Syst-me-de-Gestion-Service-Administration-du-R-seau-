@@ -1,9 +1,21 @@
 "use client";
 
 import ClientSearchPicker, { type ClientPickerRow } from "@/components/lonaci/client-search-picker";
+import { Download, FilePlus2, Pencil, RotateCcw, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 
 import { LONACI_AGENCES } from "@/components/lonaci/lonaci-nav";
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 type RegistryModule = "AGREMENT" | "CESSION" | "GPR";
 
@@ -45,6 +57,7 @@ export default function RegistryModulePanel({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; reference: string } | null>(null);
   const [editTitre, setEditTitre] = useState("");
   const [editCommentaire, setEditCommentaire] = useState("");
   const [q, setQ] = useState("");
@@ -93,7 +106,6 @@ export default function RegistryModulePanel({
     e.preventDefault();
     if (!titre.trim()) return;
     setCreating(true);
-    setError(null);
     try {
       const res = await fetch("/api/lonaci-registries", {
         method: "POST",
@@ -115,8 +127,9 @@ export default function RegistryModulePanel({
       setCommentaire("");
       setStatut(defaultStatut);
       await load();
-    } catch {
-      setError("Création impossible.");
+      notify.success("Entrée créée.");
+    } catch (error) {
+      notify.error(error, "Création impossible.");
     } finally {
       setCreating(false);
     }
@@ -124,7 +137,6 @@ export default function RegistryModulePanel({
 
   async function patchStatut(id: string, next: string) {
     setBusyId(id);
-    setError(null);
     try {
       const res = await fetch(`/api/lonaci-registries/${id}`, {
         method: "PATCH",
@@ -134,8 +146,9 @@ export default function RegistryModulePanel({
       });
       if (!res.ok) throw new Error();
       await load();
-    } catch {
-      setError("Mise à jour impossible.");
+      notify.success("Statut mis à jour.");
+    } catch (error) {
+      notify.error(error, "Mise à jour impossible.");
     } finally {
       setBusyId(null);
     }
@@ -149,7 +162,6 @@ export default function RegistryModulePanel({
       return;
     }
     setBusyId(editingId);
-    setError(null);
     try {
       const res = await fetch(`/api/lonaci-registries/${editingId}`, {
         method: "PATCH",
@@ -165,18 +177,16 @@ export default function RegistryModulePanel({
       setEditTitre("");
       setEditCommentaire("");
       await load();
-    } catch {
-      setError("Mise à jour impossible.");
+      notify.success("Entrée mise à jour.");
+    } catch (error) {
+      notify.error(error, "Mise à jour impossible.");
     } finally {
       setBusyId(null);
     }
   }
 
-  async function deleteEntry(id: string, reference: string) {
-    const ok = window.confirm(`Supprimer l'entrée ${reference} ?`);
-    if (!ok) return;
+  async function deleteEntry(id: string) {
     setBusyId(id);
-    setError(null);
     try {
       const res = await fetch(`/api/lonaci-registries/${id}`, {
         method: "DELETE",
@@ -184,8 +194,10 @@ export default function RegistryModulePanel({
       });
       if (!res.ok) throw new Error();
       await load();
-    } catch {
-      setError("Suppression impossible.");
+      notify.success("Entrée supprimée.");
+      setDeleteTarget(null);
+    } catch (error) {
+      notify.error(error, "Suppression impossible.");
     } finally {
       setBusyId(null);
     }
@@ -193,7 +205,6 @@ export default function RegistryModulePanel({
 
   async function exportCsv() {
     setExporting(true);
-    setError(null);
     try {
       const params = new URLSearchParams({
         module,
@@ -236,49 +247,112 @@ export default function RegistryModulePanel({
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
-    } catch {
-      setError("Export CSV impossible.");
+      notify.success("Export CSV généré.");
+    } catch (error) {
+      notify.error(error, "Export CSV impossible.");
     } finally {
       setExporting(false);
     }
   }
 
+  const columns: readonly DataTableColumn<Row>[] = [
+    {
+      id: "reference",
+      header: "Référence",
+      cell: (row) => <span className="font-mono text-xs font-semibold text-slate-700">{row.reference}</span>,
+    },
+    {
+      id: "titre",
+      header: "Titre",
+      cell: (row) => (
+        <div>
+          <strong className="text-slate-950">{row.titre}</strong>
+          {row.commentaire ? <p className="mt-1 text-xs text-slate-500">{row.commentaire}</p> : null}
+        </div>
+      ),
+    },
+    { id: "agence", header: "Agence", cell: (row) => row.agenceId ?? "—" },
+    {
+      id: "statut",
+      header: "Statut",
+      cell: (row) => <StatusBadge tone="brand">{row.statut}</StatusBadge>,
+    },
+    {
+      id: "updatedAt",
+      header: "Mise à jour",
+      cell: (row) => new Date(row.updatedAt).toLocaleString("fr-FR"),
+    },
+    {
+      id: "actions",
+      header: "Actions",
+      cell: (row) => (
+        <div className="flex min-w-70 flex-wrap items-center gap-2">
+          <select
+            aria-label={`Changer le statut pour ${row.reference}`}
+            value={row.statut}
+            disabled={busyId === row.id}
+            onChange={(event) => void patchStatut(row.id, event.target.value)}
+            className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm"
+          >
+            {statuts.map((value) => <option key={value}>{value}</option>)}
+          </select>
+          <Button
+            size="sm"
+            variant="secondary"
+            leadingIcon={Pencil}
+            disabled={busyId === row.id}
+            onClick={() => {
+              setEditingId(row.id);
+              setEditTitre(row.titre);
+              setEditCommentaire(row.commentaire ?? "");
+            }}
+          >
+            Modifier
+          </Button>
+          <Button
+            size="sm"
+            variant="danger"
+            leadingIcon={Trash2}
+            disabled={busyId === row.id}
+            onClick={() => setDeleteTarget({ id: row.id, reference: row.reference })}
+          >
+            Supprimer
+          </Button>
+        </div>
+      ),
+    },
+  ];
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       {!omitSectionHeader ? (
-        <header className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-          <p className="mt-1 text-sm text-slate-600">{description}</p>
-        </header>
+        <PageHeader eyebrow={`Registre ${module}`} title={title} description={description} />
       ) : null}
 
-      <form onSubmit={onCreate} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <p className="mb-3 text-xs font-medium uppercase tracking-wide text-slate-500">Nouvelle entrée</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="sm:col-span-2 block text-sm">
-            <span className="text-slate-600">Titre / objet</span>
+      <Surface elevated>
+        <SectionHeader title="Nouvelle entrée" description="Ajoutez un dossier au registre sans quitter le module." />
+        <form onSubmit={onCreate} className="grid gap-4 sm:grid-cols-2">
+          <FormField label="Titre / objet" required className="sm:col-span-2">
             <input
               required
               value={titre}
               onChange={(e) => setTitre(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm"
             />
-          </label>
+          </FormField>
           <div className="sm:col-span-2">
             <ClientSearchPicker
-              label={<span className="text-slate-600">Client Lonaci (optionnel)</span>}
+              label={<span className="font-semibold text-slate-900">Client Lonaci (optionnel)</span>}
               selected={createClient}
               onSelectedChange={setCreateClient}
               filter="contrat"
               searchPlaceholder="Rechercher un client…"
             />
           </div>
-          <label className="block text-sm">
-            <span className="text-slate-600">Agence</span>
+          <FormField label="Agence">
             <select
               value={agenceId}
               onChange={(e) => setAgenceId(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             >
               <option value="">—</option>
               {LONACI_AGENCES.filter((a) => a.value).map((a) => (
@@ -287,13 +361,11 @@ export default function RegistryModulePanel({
                 </option>
               ))}
             </select>
-          </label>
-          <label className="block text-sm">
-            <span className="text-slate-600">Statut initial</span>
+          </FormField>
+          <FormField label="Statut initial">
             <select
               value={statut}
               onChange={(e) => setStatut(e.target.value)}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             >
               {statuts.map((s) => (
                 <option key={s} value={s}>
@@ -301,46 +373,40 @@ export default function RegistryModulePanel({
                 </option>
               ))}
             </select>
-          </label>
-          <label className="sm:col-span-2 block text-sm">
-            <span className="text-slate-600">Commentaire</span>
+          </FormField>
+          <FormField label="Commentaire" className="sm:col-span-2">
             <textarea
               value={commentaire}
               onChange={(e) => setCommentaire(e.target.value)}
               rows={2}
-              className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
             />
-          </label>
-        </div>
-        <button
-          type="submit"
-          disabled={creating}
-          className="mt-3 rounded-lg border border-indigo-600 bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
-        >
-          {creating ? "Enregistrement…" : "Enregistrer"}
-        </button>
-      </form>
+          </FormField>
+          <div className="sm:col-span-2">
+            <Button type="submit" leadingIcon={FilePlus2} loading={creating}>Enregistrer</Button>
+          </div>
+        </form>
+      </Surface>
 
-      {error ? <p className="text-sm text-rose-700">{error}</p> : null}
+      {error ? <FeedbackState tone="danger" title="Le registre est indisponible" description={error} /> : null}
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="mb-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          <input
-            value={q}
-            onChange={(e) => {
-              setPage(1);
-              setQ(e.target.value);
-            }}
-            placeholder="Recherche référence, titre, commentaire"
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-          />
+      <Surface elevated>
+        <SectionHeader title={`Registre (${total})`} description="Recherche, mise à jour, export et pagination." />
+        <FilterBar
+          search={{
+            value: q,
+            onChange: (value) => { setPage(1); setQ(value); },
+            placeholder: "Référence, titre ou commentaire",
+          }}
+          filters={
+            <>
           <select
+            aria-label="Filtrer par statut"
             value={filterStatut}
             onChange={(e) => {
               setPage(1);
               setFilterStatut(e.target.value);
             }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm"
           >
             <option value="">Tous les statuts</option>
             {statuts.map((s) => (
@@ -350,12 +416,13 @@ export default function RegistryModulePanel({
             ))}
           </select>
           <select
+            aria-label="Filtrer par agence"
             value={filterAgence}
             onChange={(e) => {
               setPage(1);
               setFilterAgence(e.target.value);
             }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 text-sm"
           >
             <option value="">Toutes les agences</option>
             {LONACI_AGENCES.filter((a) => a.value).map((a) => (
@@ -364,183 +431,90 @@ export default function RegistryModulePanel({
               </option>
             ))}
           </select>
-          <button
-            type="button"
+            </>
+          }
+          actions={<>
+          <Button
+            variant="secondary"
+            size="sm"
+            leadingIcon={RotateCcw}
             onClick={() => {
               setPage(1);
               setQ("");
               setFilterStatut("");
               setFilterAgence("");
             }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50"
           >
-            Réinitialiser filtres
-          </button>
+            Réinitialiser
+          </Button>
+          <Button leadingIcon={Download} size="sm" loading={exporting} disabled={loading} onClick={() => void exportCsv()}>
+            Exporter CSV
+          </Button>
+          </>}
+        />
+
+        <div className="mt-4" aria-live="polite" aria-busy={loading}>
+          {loading ? <Skeleton lines={6} /> : (
+            <DataTable
+              rows={items}
+              columns={columns}
+              rowKey={(row) => row.id}
+              caption={`Registre ${module}`}
+              getRowLabel={(row) => `${row.reference}, ${row.titre}`}
+              mobileCard={(row) => (
+                <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div><p className="font-mono text-xs text-slate-500">{row.reference}</p><h3 className="font-bold text-slate-950">{row.titre}</h3></div>
+                    <StatusBadge tone="brand">{row.statut}</StatusBadge>
+                  </div>
+                  <p className="mt-2 text-sm text-slate-600">{row.commentaire ?? "Aucun commentaire"}</p>
+                  <p className="mt-2 text-xs text-slate-500">{row.agenceId ?? "Sans agence"} · {new Date(row.updatedAt).toLocaleString("fr-FR")}</p>
+                  <div className="mt-4">{columns[5]?.cell(row)}</div>
+                </article>
+              )}
+            />
+          )}
         </div>
+        <div className="mt-4"><Pagination page={page} pageCount={totalPages} onPageChange={setPage} label={`Pages du registre ${module}`} /></div>
+      </Surface>
 
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm font-medium text-slate-700">Registre ({total})</p>
-          <div className="flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={loading || exporting}
-              onClick={() => void exportCsv()}
-              className="rounded border border-emerald-300 bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"
-            >
-              {exporting ? "Export..." : "Exporter CSV"}
-            </button>
-            <button
-              type="button"
-              disabled={page <= 1 || loading}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Préc.
-            </button>
-            <span className="text-xs text-slate-500">
-              {page}/{totalPages}
-            </span>
-            <button
-              type="button"
-              disabled={page >= totalPages || loading}
-              onClick={() => setPage((p) => p + 1)}
-              className="rounded border border-slate-300 px-2 py-1 text-xs text-slate-700 hover:bg-slate-100 disabled:opacity-40"
-            >
-              Suiv.
-            </button>
-          </div>
-        </div>
-
-        {loading ? (
-          <p className="text-sm text-slate-500">Chargement…</p>
-        ) : items.length === 0 ? (
-          <p className="text-sm text-slate-500">Aucune entrée pour l’instant.</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] text-left text-sm">
-              <thead>
-                <tr className="border-b border-slate-200 text-xs uppercase text-slate-500">
-                  <th className="pb-2 pr-3">Réf.</th>
-                  <th className="pb-2 pr-3">Titre</th>
-                  <th className="pb-2 pr-3">Agence</th>
-                  <th className="pb-2 pr-3">Statut</th>
-                  <th className="pb-2 pr-3">Maj</th>
-                  <th className="pb-2">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((row) => (
-                  <tr key={row.id} className="border-b border-slate-100">
-                    <td className="py-2 pr-3 font-mono text-xs text-slate-700">{row.reference}</td>
-                    <td className="py-2 pr-3 text-slate-900">
-                      <div className="font-medium">{row.titre}</div>
-                      {row.commentaire ? <div className="text-xs text-slate-500">{row.commentaire}</div> : null}
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-slate-600">{row.agenceId ?? "—"}</td>
-                    <td className="py-2 pr-3">
-                      <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-700">{row.statut}</span>
-                    </td>
-                    <td className="py-2 pr-3 text-xs text-slate-500">
-                      {new Date(row.updatedAt).toLocaleString("fr-FR")}
-                    </td>
-                    <td className="py-2">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <select
-                          aria-label={`Changer le statut pour ${row.reference}`}
-                          value={row.statut}
-                          disabled={busyId === row.id}
-                          onChange={(e) => void patchStatut(row.id, e.target.value)}
-                          className="max-w-[180px] rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
-                        >
-                          {statuts.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          type="button"
-                          disabled={busyId === row.id}
-                          onClick={() => {
-                            setEditingId(row.id);
-                            setEditTitre(row.titre);
-                            setEditCommentaire(row.commentaire ?? "");
-                          }}
-                          className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-                        >
-                          Modifier
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busyId === row.id}
-                          onClick={() => void deleteEntry(row.id, row.reference)}
-                          className="rounded border border-rose-300 bg-rose-50 px-2 py-1 text-xs text-rose-700 hover:bg-rose-100 disabled:opacity-40"
-                        >
-                          Supprimer
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-
-      {editingId ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true">
-          <button
-            type="button"
-            aria-label="Fermer la fenêtre d'édition"
-            className="absolute inset-0 bg-slate-900/40"
-            onClick={() => {
-              if (busyId === editingId) return;
-              setEditingId(null);
-            }}
-          />
-          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white p-4 shadow-xl">
-            <h3 className="text-sm font-semibold text-slate-900">Modifier l’entrée</h3>
-            <div className="mt-3 grid gap-3">
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Titre</span>
+      <Dialog
+        open={Boolean(editingId)}
+        onOpenChange={(open) => { if (!open && busyId !== editingId) setEditingId(null); }}
+        title="Modifier l’entrée"
+        description="Mettez à jour le titre et le commentaire."
+        footer={<>
+          <Button variant="secondary" disabled={busyId === editingId} onClick={() => setEditingId(null)}>Annuler</Button>
+          <Button leadingIcon={Save} loading={busyId === editingId} onClick={() => void saveEdit()}>Enregistrer</Button>
+        </>}
+      >
+        <div className="grid gap-4">
+              <FormField label="Titre" required>
                 <input
                   value={editTitre}
                   onChange={(e) => setEditTitre(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                 />
-              </label>
-              <label className="grid gap-1">
-                <span className="text-xs text-slate-600">Commentaire</span>
+              </FormField>
+              <FormField label="Commentaire">
                 <textarea
                   rows={3}
                   value={editCommentaire}
                   onChange={(e) => setEditCommentaire(e.target.value)}
-                  className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
                 />
-              </label>
-            </div>
-            <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button
-                type="button"
-                disabled={busyId === editingId}
-                onClick={() => setEditingId(null)}
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-40"
-              >
-                Annuler
-              </button>
-              <button
-                type="button"
-                disabled={busyId === editingId}
-                onClick={() => void saveEdit()}
-                className="rounded border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
-              >
-                {busyId === editingId ? "Enregistrement..." : "Enregistrer"}
-              </button>
-            </div>
-          </div>
+              </FormField>
         </div>
-      ) : null}
+      </Dialog>
+
+      <ConfirmDialog
+        open={Boolean(deleteTarget)}
+        onOpenChange={(open) => { if (!open && busyId !== deleteTarget?.id) setDeleteTarget(null); }}
+        title="Supprimer l’entrée"
+        message={<>L’entrée <strong>{deleteTarget?.reference}</strong> sera supprimée définitivement.</>}
+        confirmLabel="Supprimer"
+        destructive
+        pending={busyId === deleteTarget?.id}
+        onConfirm={() => deleteTarget ? deleteEntry(deleteTarget.id) : undefined}
+      />
     </div>
   );
 }

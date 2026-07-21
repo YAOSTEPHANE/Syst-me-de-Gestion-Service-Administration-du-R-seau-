@@ -1,10 +1,72 @@
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { describe, expect, it } from "vitest";
 
 import {
   parseContratsGeneresPayload,
   referenceAnnexeFromContrat,
+  renderAnnexeDocumentPdf,
+  renderContratDocumentPdf,
   summarizeContratsParProduit,
+  type AnnexeDocumentView,
+  type ContratDocumentView,
 } from "@/lib/lonaci/contrat-document";
+
+async function readPdf(buffer: Buffer): Promise<{ pageCount: number; pages: string[] }> {
+  const loadingTask = getDocument({
+    data: new Uint8Array(buffer),
+    useSystemFonts: true,
+  });
+  const pdf = await loadingTask.promise;
+  const pages: string[] = [];
+  for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber += 1) {
+    const page = await pdf.getPage(pageNumber);
+    const content = await page.getTextContent();
+    pages.push(
+      content.items
+        .map((item) => ("str" in item ? item.str : ""))
+        .filter(Boolean)
+        .join(" "),
+    );
+  }
+  await pdf.destroy();
+  return { pageCount: pages.length, pages };
+}
+
+function createContratView(): ContratDocumentView {
+  return {
+    dossierReference: "DOS-2026-0042",
+    contratReference: "CONTRAT-LOTO-2026-07-0001",
+    generatedAt: new Date("2026-07-21T08:00:00.000Z"),
+    dateEffet: new Date("2026-08-01T09:30:00.000Z"),
+    operationType: "NOUVEAU",
+    produitCode: "LOTO",
+    produitLibelle: "Loto",
+    paymentReference: "PAY-2026-00042",
+    cautionReferenceLabel: "CAU-2026-00042",
+    concessionnaire: {
+      nomComplet: "Awa Koné",
+      raisonSociale: "Établissements Awa",
+      codePdv: "PDV-0042",
+      codeTerminal: "T-42",
+      codeConcessionnaire: "CC-42",
+      cniNumero: "CI012345",
+      email: "awa@example.ci",
+      telephone: "+225 01 02 03 04 05",
+      adresse: "42 avenue de la Paix",
+      ville: "Abidjan",
+      codePostal: null,
+      agenceLabel: "Agence Abidjan Centre",
+    },
+    documentsFournis: Array.from(
+      { length: 58 },
+      (_, index) => `Pièce métier fournie numéro ${index + 1}`,
+    ),
+    documentsAnnexeAssocies: ["Plan de localisation", "Attestation complémentaire"],
+    signedAt: new Date("2026-07-21T08:30:00.000Z"),
+    signerName: "Chef de Service",
+    finalized: true,
+  };
+}
 
 describe("referenceAnnexeFromContrat", () => {
   it("dérive la référence annexe depuis le contrat", () => {
@@ -90,5 +152,47 @@ describe("summarizeContratsParProduit", () => {
       contratArchive: true,
       annexeArchive: true,
     });
+  });
+});
+
+describe("rendus PDF contrat et annexe", () => {
+  it("préserve le contenu métier du contrat sur plusieurs pages", async () => {
+    const parsed = await readPdf(await renderContratDocumentPdf(createContratView()));
+    const text = parsed.pages.join(" ");
+
+    expect(parsed.pageCount).toBeGreaterThan(1);
+    expect(text).toContain("CONTRAT DE CONCESSION");
+    expect(text).toContain("CONTRAT SIGNÉ ET ARCHIVÉ");
+    expect(text).toContain("CONTRAT-LOTO-2026-07-0001");
+    expect(text).toContain("PAY-2026-00042");
+    expect(text).toContain("Signature électronique");
+    expect(text).toContain("Chef de Service");
+    expect(text).toContain("Pièce métier fournie numéro 58");
+    for (const [index, page] of parsed.pages.entries()) {
+      expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
+    }
+  });
+
+  it("préserve les références et le comportement brouillon de l’annexe", async () => {
+    const contrat = createContratView();
+    const annexe: AnnexeDocumentView = {
+      ...contrat,
+      finalized: false,
+      signedAt: null,
+      signerName: null,
+      annexeReference: "ANNEXE-LOTO-2026-07-0001",
+      contratParentReference: contrat.contratReference,
+    };
+    const parsed = await readPdf(await renderAnnexeDocumentPdf(annexe));
+    const text = parsed.pages.join(" ");
+
+    expect(text).toContain("ANNEXE AU CONTRAT DE CONCESSION");
+    expect(text).toContain("PROJET D’ANNEXE");
+    expect(text).toContain("ANNEXE-LOTO-2026-07-0001");
+    expect(text).toContain("CONTRAT-LOTO-2026-07-0001");
+    expect(text).toContain("Cette annexe accompagne le contrat");
+    for (const [index, page] of parsed.pages.entries()) {
+      expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
+    }
   });
 });

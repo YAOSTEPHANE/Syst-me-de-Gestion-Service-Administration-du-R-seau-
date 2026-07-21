@@ -1,13 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   buildDossierDechargeProvisoireView,
   renderDossierDechargeProvisoirePdf,
 } from "@/lib/lonaci/dossier-decharge-provisoire";
-import { findDossierById } from "@/lib/lonaci/dossiers";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -15,15 +14,15 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) {
     return auth.error;
   }
 
   const { id } = await context.params;
-  const dossier = await findDossierById(id);
-  if (!dossier || dossier.deletedAt) {
+  const dossier = await findVisibleDossierById(id, auth.user);
+  if (!dossier) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
   if (dossier.type !== "CONTRAT_ACTUALISATION") {
@@ -31,8 +30,8 @@ export async function GET(request: NextRequest, context: RouteContext) {
   }
 
   const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt || !canReadConcessionnaire(auth.user, concessionnaire)) {
-    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
+  if (!concessionnaire || concessionnaire.deletedAt) {
+    return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
 
   const view = await buildDossierDechargeProvisoireView(id);

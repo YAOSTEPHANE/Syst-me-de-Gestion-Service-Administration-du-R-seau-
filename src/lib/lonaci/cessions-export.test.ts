@@ -5,7 +5,7 @@ import {
   buildCessionsExportFiltersSummary,
 } from "@/lib/lonaci/cessions-export";
 
-describe("cessions export spec 5.3", () => {
+describe("export des demandes de cession", () => {
   it("résume les filtres pour l'en-tête PDF", () => {
     const summary = buildCessionsExportFiltersSummary({
       kind: "CESSION",

@@ -3,11 +3,17 @@ import { createReadStream } from "node:fs";
 import path from "node:path";
 import { ObjectId } from "mongodb";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+} from "@/lib/auth/workflow-visibility";
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { markActiveContratAsResilieForProduct } from "@/lib/lonaci/contracts";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
-import { notifyRoleTargets } from "@/lib/lonaci/notifications";
+import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { listProduits } from "@/lib/lonaci/referentials";
+import type { ListAgenceRestriction } from "@/lib/lonaci/list-agence-restriction";
 import {
   buildResiliationDocumentChecklist,
   isResiliationChecklistComplete,
@@ -138,6 +144,43 @@ function mapRow(row: ResiliationStored, documentChecklist: DossierDocumentCheckl
   };
 }
 
+async function canAccessResiliation(row: ResiliationStored, actor: UserDocument): Promise<boolean> {
+  if (
+    !actor._id ||
+    !isWorkflowDocumentVisible({
+      workflow: "RESILIATIONS",
+      role: actor.role,
+      userId: actor._id,
+      creatorId: row.createdByUserId,
+      status: row.statut,
+    })
+  ) {
+    return false;
+  }
+  const concessionnaire = await findConcessionnaireById(row.concessionnaireId);
+  return Boolean(
+    concessionnaire &&
+    !concessionnaire.deletedAt &&
+    canReadConcessionnaire(actor, concessionnaire),
+  );
+}
+
+async function concessionnaireIdsForAgenceScope(
+  restriction: ListAgenceRestriction,
+): Promise<string[] | null> {
+  const agenceIds = restriction.agenceIds?.length
+    ? restriction.agenceIds
+    : restriction.agenceId
+      ? [restriction.agenceId]
+      : null;
+  if (!agenceIds) return null;
+  const rows = await prisma.concessionnaire.findMany({
+    where: { deletedAt: null, agenceId: { in: agenceIds } },
+    select: { id: true },
+  });
+  return rows.map((row) => row.id);
+}
+
 export async function ensureResiliationIndexes() {
   const db = await getDatabase();
   await db.collection<ResiliationStored>(COLLECTION).createIndexes([
@@ -218,6 +261,7 @@ export async function createResiliation(input: {
       produitCode: doc.produitCode,
       statut: doc.statut,
     },
+    (await findConcessionnaireById(input.concessionnaireId))?.agenceId ?? null,
   );
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: created.insertedId });
   if (!row) throw new Error("RESILIATION_NOT_FOUND");
@@ -254,6 +298,9 @@ export async function addResiliationAttachment(input: {
 export async function listResiliations(input: {
   page: number;
   pageSize: number;
+  actor: UserDocument;
+  agenceId?: string;
+  agenceIds?: string[];
   statut?: ResiliationStatus;
   concessionnaireId?: string;
   produitCode?: string;
@@ -263,7 +310,22 @@ export async function listResiliations(input: {
   const db = await getDatabase();
   const filter: Record<string, unknown> = { deletedAt: null };
   if (input.statut) filter.statut = input.statut;
-  if (input.concessionnaireId) filter.concessionnaireId = input.concessionnaireId;
+  const scopedConcessionnaireIds = await concessionnaireIdsForAgenceScope(input);
+  if (input.concessionnaireId) {
+    filter.concessionnaireId =
+      scopedConcessionnaireIds && !scopedConcessionnaireIds.includes(input.concessionnaireId)
+        ? { $in: [] }
+        : input.concessionnaireId;
+  } else if (scopedConcessionnaireIds) {
+    filter.concessionnaireId = { $in: scopedConcessionnaireIds };
+  }
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "RESILIATIONS",
+    role: input.actor.role,
+    userId: input.actor._id ?? "",
+    statusField: "statut",
+  });
+  filter.$and = visibility ? [visibility] : [{ _id: { $in: [] } }];
   if (input.produitCode) filter.produitCode = input.produitCode.trim().toUpperCase();
   if (input.dateFrom || input.dateTo) {
     const range: Record<string, Date> = {};
@@ -286,7 +348,11 @@ export async function listResiliations(input: {
   };
 }
 
-function ensureResiliationTransitionAllowed(role: string, from: ResiliationStatus, target: ResiliationStatus) {
+export function assertResiliationTransitionAllowed(
+  role: string,
+  from: ResiliationStatus,
+  target: ResiliationStatus,
+) {
   if (from === "DOSSIER_RECU" && target === "CONTROLE_CHEF_SECTION") {
     if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
     return;
@@ -300,7 +366,14 @@ function ensureResiliationTransitionAllowed(role: string, from: ResiliationStatu
     return;
   }
   if (target === "REJETEE") {
-    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    const expectedRole = from === "DOSSIER_RECU"
+      ? "CHEF_SECTION"
+      : from === "CONTROLE_CHEF_SECTION"
+        ? "ASSIST_CDS"
+        : from === "VALIDATION_N2"
+          ? "CHEF_SERVICE"
+          : null;
+    if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   throw new Error("INVALID_TRANSITION");
@@ -362,17 +435,17 @@ async function finalizeResiliation(input: {
     },
   });
   const reasonSuffix = input.commentaire?.trim() ? ` | motif ${input.commentaire.trim()}` : "";
-  await notifyRoleTargets(
-    "ASSIST_CDS",
-    "Résiliation finalisée",
-    `Opération résiliation | référence ${input.resiliationId} | ${row.produitCode} résilié | acteur ${actionBy}.${reasonSuffix}`,
-    {
+  await sendNotification({
+    userId: row.createdByUserId,
+    title: "Résiliation finalisée",
+    message: `Opération résiliation | référence ${input.resiliationId} | ${row.produitCode} résilié | acteur ${actionBy}.${reasonSuffix}`,
+    metadata: {
       resiliationId: input.resiliationId,
       concessionnaireId: row.concessionnaireId,
       produitCode: row.produitCode,
       statut: "RESILIE",
     },
-  );
+  });
 }
 
 export async function transitionResiliation(input: {
@@ -388,13 +461,15 @@ export async function transitionResiliation(input: {
 
   const db = await getDatabase();
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) throw new Error("RESILIATION_NOT_FOUND");
+  if (!row || !(await canAccessResiliation(row, input.actor))) {
+    throw new Error("RESILIATION_NOT_FOUND");
+  }
   if (row.statut === "RESILIE" || row.statut === "REJETEE") {
     if (input.target === row.statut) return;
     throw new Error("INVALID_TRANSITION");
   }
 
-  ensureResiliationTransitionAllowed(input.actor.role, row.statut, input.target);
+  assertResiliationTransitionAllowed(input.actor.role, row.statut, input.target);
 
   if (input.target === "CONTROLE_CHEF_SECTION") {
     const checklist = await ensureRowDocumentChecklist(row);
@@ -429,6 +504,7 @@ export async function transitionResiliation(input: {
       "Résiliation : validation N2 attendue",
       `Opération résiliation | référence ${input.id} | validation N2 attendue | acteur ${actionBy}.`,
       { resiliationId: input.id, produitCode: row.produitCode },
+      (await findConcessionnaireById(row.concessionnaireId))?.agenceId ?? null,
     );
   }
   if (input.target === "VALIDATION_N2") {
@@ -437,6 +513,7 @@ export async function transitionResiliation(input: {
       "Résiliation : validation finale attendue",
       `Opération résiliation | référence ${input.id} | validation Chef de Service attendue | acteur ${actionBy}.`,
       { resiliationId: input.id, produitCode: row.produitCode },
+      (await findConcessionnaireById(row.concessionnaireId))?.agenceId ?? null,
     );
   }
 
@@ -459,11 +536,14 @@ export async function validateResiliation(input: {
   });
 }
 
-export async function getResiliationById(id: string): Promise<ResiliationListItem | null> {
+export async function getResiliationById(
+  id: string,
+  actor: UserDocument,
+): Promise<ResiliationListItem | null> {
   if (!ObjectId.isValid(id)) return null;
   const db = await getDatabase();
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(id), deletedAt: null });
-  if (!row) return null;
+  if (!row || !(await canAccessResiliation(row, actor))) return null;
   const documentChecklist = await ensureRowDocumentChecklist(row);
   return mapRow(row, documentChecklist);
 }
@@ -471,12 +551,14 @@ export async function getResiliationById(id: string): Promise<ResiliationListIte
 export async function patchResiliationDocumentChecklist(input: {
   id: string;
   entries: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
-  actorId: string;
+  actor: UserDocument;
 }): Promise<ResiliationListItem> {
   if (!ObjectId.isValid(input.id)) throw new Error("RESILIATION_NOT_FOUND");
   const db = await getDatabase();
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) throw new Error("RESILIATION_NOT_FOUND");
+  if (!row || !(await canAccessResiliation(row, input.actor))) {
+    throw new Error("RESILIATION_NOT_FOUND");
+  }
   if (row.statut === "RESILIE" || row.statut === "REJETEE") throw new Error("RESILIATION_ALREADY_VALIDATED");
 
   const current = await ensureRowDocumentChecklist(row);
@@ -489,7 +571,7 @@ export async function patchResiliationDocumentChecklist(input: {
       $set: {
         documentChecklist: next,
         updatedAt: now,
-        updatedByUserId: input.actorId,
+        updatedByUserId: input.actor._id ?? "",
       },
     },
   );
@@ -498,20 +580,16 @@ export async function patchResiliationDocumentChecklist(input: {
   return mapRow(updated, next);
 }
 
-export async function getResiliationAttachment(input: { id: string; attachmentId: string }) {
-  if (!ObjectId.isValid(input.id)) return null;
-  const db = await getDatabase();
-  const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) return null;
-  return row.attachments.find((a) => a.id === input.attachmentId) ?? null;
-}
-
 /** Pièce jointe + PDV pour contrôle d’accès sur la route de téléchargement. */
-export async function getResiliationAttachmentWithConcessionnaire(input: { id: string; attachmentId: string }) {
+export async function getResiliationAttachmentWithConcessionnaire(input: {
+  id: string;
+  attachmentId: string;
+  actor: UserDocument;
+}) {
   if (!ObjectId.isValid(input.id)) return null;
   const db = await getDatabase();
   const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
-  if (!row) return null;
+  if (!row || !(await canAccessResiliation(row, input.actor))) return null;
   const attachment = row.attachments.find((a) => a.id === input.attachmentId);
   if (!attachment) return null;
   return { attachment, concessionnaireId: row.concessionnaireId };

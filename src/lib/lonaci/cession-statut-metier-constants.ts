@@ -1,4 +1,4 @@
-/** Statuts métier affichés (spec 5.4 — cession). */
+/** Statuts métier affichés pour une cession. */
 export const CESSION_STATUTS_METIER = [
   "EN_CONSTITUTION",
   "DOSSIER_COMPLET",
@@ -9,7 +9,7 @@ export const CESSION_STATUTS_METIER = [
 
 export type CessionStatutMetier = (typeof CESSION_STATUTS_METIER)[number];
 
-/** Libellés affichés en UI (spec 5.4 — majuscules métier). */
+/** Libellés métier affichés en majuscules dans l’interface. */
 export const CESSION_STATUT_METIER_DISPLAY_LABELS: Record<CessionStatutMetier, string> = {
   EN_CONSTITUTION: "EN CONSTITUTION",
   DOSSIER_COMPLET: "DOSSIER COMPLET",
@@ -18,7 +18,7 @@ export const CESSION_STATUT_METIER_DISPLAY_LABELS: Record<CessionStatutMetier, s
   CESSION_FINALISEE: "CESSION FINALISÉE",
 };
 
-/** Descriptions spec 5.4. */
+/** Descriptions des statuts métier de cession. */
 export const CESSION_STATUT_METIER_DESCRIPTIONS: Record<CessionStatutMetier, string> = {
   EN_CONSTITUTION: "Dossier en cours — Checklist incomplète",
   DOSSIER_COMPLET: "Tous les documents fournis — Prêt pour validation",
@@ -27,7 +27,7 @@ export const CESSION_STATUT_METIER_DESCRIPTIONS: Record<CessionStatutMetier, str
   CESSION_FINALISEE: "Transfert effectif — Concessionnaire mis à jour",
 };
 
-/** Liste ordonnée spec 5.4 pour affichage (tableau de bord, aide). */
+/** Liste ordonnée destinée au tableau de bord et à l’aide. */
 export const CESSION_STATUTS_SPEC_54 = CESSION_STATUTS_METIER.map((statut) => ({
   statut,
   label: CESSION_STATUT_METIER_DISPLAY_LABELS[statut],

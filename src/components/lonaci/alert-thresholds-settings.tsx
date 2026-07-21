@@ -1,6 +1,13 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { Save, ShieldAlert } from "lucide-react";
+
+import { Button } from "@/components/lonaci/ui/button";
+import { FormField } from "@/components/lonaci/ui/form-field";
+import { SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
+import { notify } from "@/lib/toast";
 
 export default function AlertThresholdsSettings() {
   const [visible, setVisible] = useState(false);
@@ -11,7 +18,6 @@ export default function AlertThresholdsSettings() {
   const [successionDays, setSuccessionDays] = useState(30);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void (async () => {
@@ -56,7 +62,6 @@ export default function AlertThresholdsSettings() {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setSaving(true);
-    setMessage(null);
     try {
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
@@ -71,9 +76,9 @@ export default function AlertThresholdsSettings() {
         }),
       });
       if (!res.ok) throw new Error();
-      setMessage("Seuils enregistrés.");
+      notify.success("Seuils enregistrés.");
     } catch {
-      setMessage("Erreur lors de la sauvegarde.");
+      notify.error("Erreur lors de la sauvegarde.");
     } finally {
       setSaving(false);
     }
@@ -82,78 +87,77 @@ export default function AlertThresholdsSettings() {
   if (loading || !visible) return null;
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h3 className="text-sm font-semibold text-slate-900">Seuils d&apos;alerte (Chef(fe) de service)</h3>
-      <p className="mt-1 text-xs text-slate-600">
-        Paramètres de référence pour les indicateurs du tableau de bord et les futures relances automatiques.
-      </p>
-      <form onSubmit={(e) => void onSubmit(e)} className="mt-4 grid gap-3 rounded-xl border border-amber-200/70 bg-amber-50/40 p-3 sm:grid-cols-2 lg:grid-cols-3">
-        <label className="block text-sm text-slate-700">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Cautions : délai max (jours)</span>
+    <Surface elevated aria-labelledby="alert-thresholds-title">
+      <SectionHeader
+        title={<span id="alert-thresholds-title" className="inline-flex items-center gap-2"><ShieldAlert size={19} className="text-orange-600" aria-hidden="true" />Seuils d&apos;alerte</span>}
+        description="Réservé au Chef(fe) de service · Références des indicateurs et relances automatiques."
+      />
+      <form onSubmit={(e) => void onSubmit(e)} className="mt-5 grid gap-4 rounded-2xl border border-orange-200 bg-orange-50/40 p-4 sm:grid-cols-2 lg:grid-cols-3" aria-busy={saving}>
+        <FormField label="Cautions : délai maximal" htmlFor="alert-caution-days" hint="Nombre de jours, de 1 à 365.">
           <input
+            id="alert-caution-days"
             type="number"
             min={1}
             max={365}
             value={cautionDays}
             onChange={(e) => setCautionDays(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-        </label>
-        <label className="block text-sm text-slate-700">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Dossiers sans action (heures)</span>
+        </FormField>
+        <FormField label="Dossiers sans action" htmlFor="alert-idle-hours" hint="Nombre d’heures, de 1 à 168.">
           <input
+            id="alert-idle-hours"
             type="number"
             min={1}
             max={168}
             value={idleHours}
             onChange={(e) => setIdleHours(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-        </label>
-        <label className="block text-sm text-slate-700">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Intégration PDV : délai max (jours)</span>
+        </FormField>
+        <FormField label="Intégration PDV : délai maximal" htmlFor="alert-pdv-days" hint="Nombre de jours, de 1 à 90.">
           <input
+            id="alert-pdv-days"
             type="number"
             min={1}
             max={90}
             value={pdvDays}
             onChange={(e) => setPdvDays(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-        </label>
-        <label className="block text-sm text-slate-700">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Agrément SOUMIS sans MAJ (jours)</span>
+        </FormField>
+        <FormField label="Agrément soumis sans mise à jour" htmlFor="alert-agrement-days" hint="Nombre de jours, de 1 à 90.">
           <input
+            id="alert-agrement-days"
             type="number"
             min={1}
             max={90}
             value={agrementDays}
             onChange={(e) => setAgrementDays(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-        </label>
-        <label className="block text-sm text-slate-700">
-          <span className="text-xs uppercase tracking-wide text-slate-500">Succession sans activité (jours)</span>
+        </FormField>
+        <FormField label="Succession sans activité" htmlFor="alert-succession-days" hint="Nombre de jours, de 1 à 365.">
           <input
+            id="alert-succession-days"
             type="number"
             min={1}
             max={365}
             value={successionDays}
             onChange={(e) => setSuccessionDays(Number(e.target.value))}
-            className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            className="min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 text-sm text-slate-950"
           />
-        </label>
+        </FormField>
         <div className="sm:col-span-2 lg:col-span-3">
-          <button
+          <Button
             type="submit"
-            disabled={saving}
-            className="rounded border border-amber-600 bg-amber-50 px-4 py-2 text-sm font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
+            loading={saving}
+            leadingIcon={Save}
           >
             {saving ? "Enregistrement…" : "Sauvegarder"}
-          </button>
+          </Button>
         </div>
       </form>
-      {message ? <p className="mt-2 text-xs text-emerald-600">{message}</p> : null}
-    </section>
+    </Surface>
   );
 }

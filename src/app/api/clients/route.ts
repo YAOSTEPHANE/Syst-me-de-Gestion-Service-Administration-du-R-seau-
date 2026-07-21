@@ -82,40 +82,12 @@ const listQuerySchema = z.object({
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request);
   if ("error" in auth) {
-    // #region agent log
-    fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-      body: JSON.stringify({
-        sessionId: "669066",
-        hypothesisId: "H1",
-        location: "api/clients/route.ts:GET",
-        message: "clients GET blocked by auth",
-        data: { status: auth.error?.status ?? -1 },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     return auth.error;
   }
 
   const raw = Object.fromEntries(request.nextUrl.searchParams.entries());
   const parsed = listQuerySchema.safeParse(raw);
   if (!parsed.success) {
-    // #region agent log
-    fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-      body: JSON.stringify({
-        sessionId: "669066",
-        hypothesisId: "H1",
-        location: "api/clients/route.ts:GET",
-        message: "clients GET list query parse failed",
-        data: { issues: parsed.error.issues.length },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
 
@@ -132,81 +104,20 @@ export async function GET(request: NextRequest) {
       : agenceScope.agenceId;
 
   const readerScope = await buildClientAgenceReadScopeWhere(auth.user);
-  let scopeJson = "";
-  try {
-    scopeJson = JSON.stringify(readerScope).slice(0, 700);
-  } catch {
-    scopeJson = "(unserializable)";
-  }
-  // #region agent log
-  fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-    body: JSON.stringify({
-      sessionId: "669066",
-      hypothesisId: "H2",
-      location: "api/clients/route.ts:GET",
-      message: "clients GET readerScope and user scope inputs",
-      data: {
-        role: auth.user.role,
-        hasAgenceId: Boolean(auth.user.agenceId?.trim()),
-        agencesAutoriseesLen: auth.user.agencesAutorisees?.length ?? 0,
-        readerScopeJson: scopeJson,
-        query: { page: parsed.data.page, pageSize: parsed.data.pageSize, statut: parsed.data.statut ?? null },
-      },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
-
-  let result: Awaited<ReturnType<typeof searchClients>>;
-  try {
-    result = await searchClients({
-      page: parsed.data.page,
-      pageSize: parsed.data.pageSize,
-      q: parsed.data.q,
-      statut: parsed.data.statut,
-      categorie: parsed.data.categorie,
-      eligibleForCaution: parsed.data.eligibleForCaution === "true",
-      eligibleForContrat: parsed.data.eligibleForContrat === "true",
-      eligibleForPromotion: parsed.data.eligibleForPromotion === "true",
-      linkedToConcessionnaire: parsed.data.linkedToConcessionnaire === "true",
-      agenceId: clientAgenceFilter,
-      readerScope,
-      includeDeleted,
-    });
-  } catch (err) {
-    // #region agent log
-    fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-      body: JSON.stringify({
-        sessionId: "669066",
-        hypothesisId: "H5",
-        location: "api/clients/route.ts:GET",
-        message: "clients GET searchClients threw",
-        data: { err: err instanceof Error ? err.message : String(err) },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {});
-    // #endregion
-    throw err;
-  }
-
-  // #region agent log
-  fetch("http://127.0.0.1:27772/ingest/4bb0b21c-00fd-438b-b24a-787fe0e18287", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "669066" },
-    body: JSON.stringify({
-      sessionId: "669066",
-      hypothesisId: "H2",
-      location: "api/clients/route.ts:GET",
-      message: "clients GET searchClients result",
-      data: { total: result.total, itemsLen: result.items.length },
-      timestamp: Date.now(),
-    }),
-  }).catch(() => {});
-  // #endregion
+  const result = await searchClients({
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    q: parsed.data.q,
+    statut: parsed.data.statut,
+    categorie: parsed.data.categorie,
+    eligibleForCaution: parsed.data.eligibleForCaution === "true",
+    eligibleForContrat: parsed.data.eligibleForContrat === "true",
+    eligibleForPromotion: parsed.data.eligibleForPromotion === "true",
+    linkedToConcessionnaire: parsed.data.linkedToConcessionnaire === "true",
+    agenceId: clientAgenceFilter,
+    readerScope,
+    includeDeleted,
+  });
 
   return NextResponse.json({
     ...result,

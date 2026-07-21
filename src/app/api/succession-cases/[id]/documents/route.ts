@@ -2,14 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
-import { badRequest, forbidden, notFound } from "@/lib/api/error-responses";
+import { badRequest, notFound } from "@/lib/api/error-responses";
 import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { canReadConcessionnaire } from "@/lib/lonaci/access";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import {
   addSuccessionDocument,
   ensureSuccessionIndexes,
-  findSuccessionCaseById,
+  findVisibleSuccessionCaseById,
 } from "@/lib/lonaci/succession";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
@@ -49,16 +47,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
   }
   const { id } = paramsParsed.data;
   await ensureSuccessionIndexes();
-  const successionCase = await findSuccessionCaseById(id);
+  const successionCase = await findVisibleSuccessionCaseById(id, auth.user);
   if (!successionCase) {
     return notFound("CASE_NOT_FOUND", "CASE_NOT_FOUND");
-  }
-  const conc = await findConcessionnaireById(successionCase.concessionnaireId);
-  if (!conc || conc.deletedAt) {
-    return notFound("CONCESSIONNAIRE_NOT_FOUND", "CONCESSIONNAIRE_NOT_FOUND");
-  }
-  if (!canReadConcessionnaire(auth.user, conc)) {
-    return forbidden("AGENCE_FORBIDDEN", "AGENCE_FORBIDDEN");
   }
 
   const form = await request.formData().catch(() => null);

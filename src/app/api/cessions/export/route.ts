@@ -1,15 +1,16 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import {
   buildCessionsExportFiltersSummary,
-  renderCessionsListPdf,
 } from "@/lib/lonaci/cessions-export";
 import { ensureCessionIndexes, listCessionsForExport } from "@/lib/lonaci/cessions";
 import { listAgences } from "@/lib/lonaci/referentials";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { createPdfResponse } from "@/lib/pdf";
+import { renderCessionsListPdf } from "@/lib/pdf/cessions-list";
 
 const schema = z.object({
   format: z.enum(["pdf"]).default("pdf"),
@@ -35,10 +36,10 @@ function parseFilterDate(value: string | undefined, endOfDay: boolean): Date | u
   return d;
 }
 
-/** Spec 5.3 — export PDF de la liste filtrée des demandes de cession. */
+/** Exporte en PDF la liste filtrée des demandes de cession. */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -61,6 +62,7 @@ export async function GET(request: NextRequest) {
   const produitCode = parsed.data.produitCode?.trim() || undefined;
 
   const { exportRows, truncated } = await listCessionsForExport({
+    actor: auth.user,
     kind,
     statut,
     produitCode,
@@ -94,12 +96,7 @@ export async function GET(request: NextRequest) {
   );
 
   const stamp = new Date().toISOString().slice(0, 10);
-  return new NextResponse(new Uint8Array(pdf), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="cessions-liste-${stamp}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  return createPdfResponse(pdf, {
+    filename: `cessions-liste-${stamp}.pdf`,
   });
 }

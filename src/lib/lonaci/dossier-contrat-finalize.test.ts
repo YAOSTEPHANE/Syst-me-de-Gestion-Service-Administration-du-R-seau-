@@ -130,4 +130,23 @@ describe("finalizeDossierContratActualisation", () => {
     }
     expect(transitionDossierMock).not.toHaveBeenCalled();
   });
+
+  it("finalise le dossier lorsqu’un contrat existe déjà", async () => {
+    findContratsByDossierIdMock.mockResolvedValue([
+      { id: "ct1", reference: "REF-1", produitCode: "LOTO" },
+    ]);
+    transitionDossierMock.mockResolvedValue({ ...baseDossier, status: "FINALISE" });
+
+    const result = await finalizeDossierContratActualisation({
+      dossierId: "d1",
+      actor,
+    });
+
+    expect(result.ok).toBe(true);
+    expect(transitionDossierMock).toHaveBeenCalledWith("d1", "FINALISE", actor, null);
+    if (result.ok) {
+      expect(result.dossier.status).toBe("FINALISE");
+      expect(result.alreadyHadContrat).toBe(true);
+    }
+  });
 });

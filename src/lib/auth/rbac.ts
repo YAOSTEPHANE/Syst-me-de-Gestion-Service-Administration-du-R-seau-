@@ -439,7 +439,7 @@ export const ROLE_MODULE_PERMISSION_MATRIX: RoleModulePermissionRow[] = [
     },
   },
   {
-    module: "Checklist décès §10.1",
+    module: "Checklist décès",
     permissions: {
       AGENT: "A, S",
       CHEF_SECTION: "C, S",

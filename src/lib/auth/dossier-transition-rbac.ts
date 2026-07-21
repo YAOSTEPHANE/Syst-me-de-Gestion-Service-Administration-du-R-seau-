@@ -125,6 +125,20 @@ export function userCanPerformDossierTransitionAtEtape(
 ): boolean {
   if (!dossierEtapeAllowsAction(etape, action)) return false;
   if (hideDossierN1N2ForChefService(role, action)) return false;
+  const step = normalizeDossierWorkflowEtape(etape);
+
+  // Une seule décision négative par étape, réservée au valideur courant.
+  // Après avoir validé son niveau, l'ancien valideur ne doit plus pouvoir agir.
+  if (action === "REJECT") {
+    return step === "SOUMIS" && role === "CHEF_SECTION" && userMayPerformDossierTransition(role, action);
+  }
+  if (action === "RETURN_PREVIOUS") {
+    const ownsCurrentStep =
+      (step === "VALIDE_N1" && role === "ASSIST_CDS") ||
+      (step === "VALIDE_N2" && role === "CHEF_SERVICE");
+    return ownsCurrentStep && userMayPerformDossierTransition(role, action);
+  }
+
   return userMayPerformDossierTransition(role, action);
 }
 
@@ -143,12 +157,13 @@ export function listDossierBulkActionsForUi(
   statusFilter?: string | null,
 ): DossierTransitionAction[] {
   return DOSSIER_TRANSITION_ACTIONS.filter((action) => {
-    if (hideDossierN1N2ForChefService(role, action)) return false;
-    if (!userMayPerformDossierTransition(role, action)) return false;
     if (statusFilter) {
-      return dossierEtapeAllowsAction(statusFilter, action);
+      return userCanPerformDossierTransitionAtEtape(role, statusFilter, action);
     }
-    return true;
+    // Sans filtre d'étape, ne pas proposer une décision de retour ambiguë en lot.
+    if (action === "REJECT" || action === "RETURN_PREVIOUS") return false;
+    if (hideDossierN1N2ForChefService(role, action)) return false;
+    return userMayPerformDossierTransition(role, action);
   });
 }
 

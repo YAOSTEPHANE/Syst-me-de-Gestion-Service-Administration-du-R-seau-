@@ -13,7 +13,7 @@ import type {
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** Spec 5.2 — pièces obligatoires communes à toute demande de cession. */
+/** Pièces obligatoires communes à toute demande de cession. */
 export const CESSION_CHECKLIST_ITEMS_SPEC_52: ProduitDocumentChecklistItem[] = [
   {
     id: "cession_identite_parties",

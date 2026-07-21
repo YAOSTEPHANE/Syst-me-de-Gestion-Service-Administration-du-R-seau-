@@ -80,7 +80,7 @@ describe("Chef de section - Validation N1", () => {
       { resource: "CAUTIONS", action: "VALIDATE_N1" as const },
       { resource: "AGREMENTS", action: "VALIDATE_N1" as const },
       { resource: "CESSIONS", action: "VALIDATE_N1" as const },
-    ];
+    ] as const;
 
     for (const c of cases) {
       const r = canRole({ role: "CHEF_SECTION", resource: c.resource, action: c.action });
@@ -143,6 +143,7 @@ describe("Chef de section - Validation N1", () => {
           immutableAfterFinal: false,
           contratId: "c1",
           lonaciClientId: null,
+          agenceId: null,
         }),
         updateOne: updateOneMock,
       }),
@@ -212,8 +213,7 @@ describe("Chef de section - Validation N1", () => {
       transitionAgrement({
         id: validObjectId,
         target: "CONTROLE",
-        role: "CHEF_SECTION",
-        actorId: chefSection._id ?? "",
+        actor: chefSection,
       }),
     ).resolves.toBeUndefined();
     expect(updateOneMock).toHaveBeenCalled();
@@ -221,12 +221,18 @@ describe("Chef de section - Validation N1", () => {
 
   it("transitionCession : SAISIE_AGENT -> CONTROLE_CHEF_SECTION (N1) autorisé au chef de section", async () => {
     const updateOneMock = vi.fn().mockResolvedValue({ modifiedCount: 1 });
+    findConcessionnaireByIdMock.mockResolvedValue({
+      _id: validObjectId,
+      agenceId: null,
+      deletedAt: null,
+    });
     getDatabaseMock.mockResolvedValue({
       collection: () => ({
         findOne: vi.fn().mockResolvedValue({
           _id: validObjectId,
           statut: "SAISIE_AGENT",
           kind: "DELOCALISATION",
+          concessionnaireId: validObjectId,
           reference: "CESS-001",
           commentaire: null,
           documentChecklist: { entries: [], complet: true },
@@ -276,10 +282,16 @@ describe("Chef de section - Validation N1", () => {
 
   it("transitionResiliation : DOSSIER_RECU -> CONTROLE_CHEF_SECTION (N1) autorisé au chef de section", async () => {
     const updateOneMock = vi.fn().mockResolvedValue({ modifiedCount: 1 });
+    findConcessionnaireByIdMock.mockResolvedValue({
+      _id: validObjectId,
+      agenceId: null,
+      deletedAt: null,
+    });
     getDatabaseMock.mockResolvedValue({
       collection: () => ({
         findOne: vi.fn().mockResolvedValue({
           _id: validObjectId,
+          concessionnaireId: validObjectId,
           statut: "DOSSIER_RECU",
           produitCode: "LOTO",
           commentaire: null,

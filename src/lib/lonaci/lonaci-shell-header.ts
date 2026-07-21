@@ -88,17 +88,17 @@ export function lonaciShellHeader(
   if (pathname.startsWith("/attestations-domiciliation")) {
     return {
       title: "Attestations & domiciliation",
-      sub: `Tableau de bord 4.2 · circuit 4.3 · statuts 4.4 · ${dl}`,
+      sub: `Suivi des demandes et du circuit de traitement · ${dl}`,
     };
   }
   if (pathname.startsWith("/cessions")) {
-      return {
-        title: "Cessions & délocalisations",
-        sub: `Cession 5.x · délocalisation 6.1–6.3 · ${dl}`,
-      };
+    return {
+      title: "Cessions & délocalisations",
+      sub: `Actes, checklists et suivi des opérations · ${dl}`,
+    };
   }
   if (pathname.startsWith("/resiliations")) {
-    return { title: "Résiliations", sub: `Checklist 7.1 · clôture de contrats · ${dl}` };
+    return { title: "Résiliations", sub: `Checklist et clôture de contrats · ${dl}` };
   }
   if (pathname.startsWith("/succession")) {
     const o = kpi?.dossierValidation.successionOuverts;
@@ -115,13 +115,13 @@ export function lonaciShellHeader(
     };
   }
   if (pathname.startsWith("/contrats-grattage")) {
-    return { title: "Contrats grattage", sub: `§9.3 Liste, statuts et export PDF · ${dl}` };
+    return { title: "Contrats grattage", sub: `Liste, statuts et export PDF · ${dl}` };
   }
   if (pathname.startsWith("/dispatcher")) {
     return { title: "Dispatcher codes grattage", sub: `Distribution, stocks et alertes · ${dl}` };
   }
   if (pathname.startsWith("/gpr")) {
-    return { title: "Création de code grattage", sub: `§9.1 GPR, lots et codes · ${dl}` };
+    return { title: "Création de code grattage", sub: `GPR, lots et codes · ${dl}` };
   }
   if (pathname.startsWith("/rapports") && !pathname.startsWith("/rapports/print")) {
     return { title: "Rapports", sub: `Analyse & exports · ${dl}` };
@@ -139,5 +139,5 @@ export function lonaciShellHeader(
     return { title: "Carte PDV", sub: `Vue géographique · ${dl}` };
   }
 
-  return { title: "Infinitecore Systeme", sub: dl };
+  return { title: "LONACI", sub: dl };
 }

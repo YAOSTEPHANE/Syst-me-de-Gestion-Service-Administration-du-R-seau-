@@ -1,10 +1,8 @@
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
 import {
   GRATTAGE_CONTRAT_STATUT_LABELS,
   type GrattageContratStatut,
-  GRATTAGE_CONTRAT_STATUTS,
 } from "@/lib/lonaci/constants";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import type { UserDocument } from "@/lib/lonaci/types";
@@ -16,9 +14,6 @@ import { prisma } from "@/lib/prisma";
 const GRATTAGE_CONTRATS_COLLECTION = "grattage_contrats";
 const COUNTERS_COLLECTION = "counters";
 const GRATTAGE_CONTRAT_COUNTER_ID = "grattage_contrat_ref";
-
-export const GRATTAGE_CONTRAT_STATUSES = GRATTAGE_CONTRAT_STATUTS;
-export type GrattageContratStatus = GrattageContratStatut;
 
 type StoredGrattageContrat = {
   _id: ObjectId;
@@ -334,53 +329,4 @@ export async function listGrattageContratsForExport(params: {
     page += 1;
   }
   return all;
-}
-
-export function buildGrattageContratsPdfBuffer(rows: GrattageContratListItem[]): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 32, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(14).text("Liste des contrats grattage (§9.3)", { underline: true });
-    doc.moveDown(0.4);
-    doc.fontSize(9).text(`Généré le ${new Date().toLocaleString("fr-FR")} · ${rows.length} contrat(s)`);
-    doc.moveDown(0.8);
-
-    const colWidths = [70, 55, 120, 50, 55, 55, 55];
-    const headers = ["Référence", "Code PDV", "Concessionnaire", "Produit", "Statut", "Début", "Fin"];
-    let y = doc.y;
-    doc.fontSize(8).font("Helvetica-Bold");
-    headers.forEach((h, i) => {
-      doc.text(h, 32 + colWidths.slice(0, i).reduce((a, b) => a + b, 0), y, { width: colWidths[i], continued: false });
-    });
-    y += 14;
-    doc.font("Helvetica");
-
-    for (const r of rows) {
-      if (y > 520) {
-        doc.addPage();
-        y = 40;
-      }
-      const cells = [
-        r.reference,
-        r.codePdv,
-        r.raisonSociale.slice(0, 40),
-        r.produitCode,
-        r.statutLabel,
-        new Date(r.dateDebut).toLocaleDateString("fr-FR"),
-        r.dateFin ? new Date(r.dateFin).toLocaleDateString("fr-FR") : "—",
-      ];
-      cells.forEach((cell, i) => {
-        doc.text(cell, 32 + colWidths.slice(0, i).reduce((a, b) => a + b, 0), y, {
-          width: colWidths[i],
-          continued: false,
-        });
-      });
-      y += 12;
-    }
-    doc.end();
-  });
 }

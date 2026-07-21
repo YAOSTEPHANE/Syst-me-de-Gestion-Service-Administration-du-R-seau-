@@ -1,6 +1,7 @@
 import { ObjectId } from "mongodb";
 
 import type { LonaciRole, NotificationDocument } from "@/lib/lonaci/types";
+import { userMatchesAgence } from "@/lib/lonaci/access";
 import { getDatabase } from "@/lib/mongodb";
 import { listActiveUsersByRole } from "@/lib/lonaci/users";
 
@@ -27,6 +28,7 @@ export async function ensureNotificationIndexes() {
   const db = await getDatabase();
   await db.collection<StoredNotification>(COLLECTION).createIndexes([
     { key: { userId: 1, createdAt: -1 }, name: "idx_user_created" },
+    { key: { userId: 1, readAt: 1, createdAt: -1 }, name: "idx_user_read_created" },
     { key: { roleTarget: 1, createdAt: -1 }, name: "idx_role_created" },
     { key: { readAt: 1 }, name: "idx_readAt" },
   ]);
@@ -61,8 +63,13 @@ export async function notifyRoleTargets(
   title: string,
   message: string,
   metadata?: Record<string, unknown>,
+  targetAgenceId?: string | null,
 ) {
-  const users = await listActiveUsersByRole(role);
+  const roleUsers = await listActiveUsersByRole(role);
+  const users =
+    targetAgenceId === undefined
+      ? roleUsers
+      : roleUsers.filter((user) => userMatchesAgence(user, targetAgenceId));
   await Promise.all(
     users.map((user) =>
       sendNotification({
@@ -76,11 +83,17 @@ export async function notifyRoleTargets(
   );
 }
 
-export async function listMyNotifications(userId: string, page: number, pageSize: number) {
+export async function listMyNotifications(
+  userId: string,
+  page: number,
+  pageSize: number,
+  unreadOnly = false,
+) {
   const db = await getDatabase();
   const skip = (page - 1) * pageSize;
   const col = db.collection<StoredNotification>(COLLECTION);
-  const filter = { userId };
+  const filter: { userId: string; readAt?: null } = { userId };
+  if (unreadOnly) filter.readAt = null;
   const [total, rows] = await Promise.all([
     col.countDocuments(filter),
     col.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).toArray(),

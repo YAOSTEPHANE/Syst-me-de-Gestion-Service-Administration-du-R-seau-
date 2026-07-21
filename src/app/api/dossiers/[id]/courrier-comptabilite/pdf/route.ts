@@ -6,6 +6,7 @@ import {
   buildCourrierComptabiliteFromDossierId,
   renderCourrierComptabiliteClientPdf,
 } from "@/lib/lonaci/courrier-comptabilite-client";
+import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -13,13 +14,16 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) {
     return auth.error;
   }
 
   const { id } = await context.params;
+  if (!(await findVisibleDossierById(id, auth.user))) {
+    return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+  }
   try {
     const readable = await assertCourrierComptabiliteDossierReadable(id, auth.user);
     if (!readable) {

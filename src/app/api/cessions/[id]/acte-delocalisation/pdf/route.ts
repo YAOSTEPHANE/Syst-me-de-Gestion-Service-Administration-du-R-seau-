@@ -2,17 +2,21 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { notFound, serverError } from "@/lib/api/error-responses";
 import { buildActeDelocalisationView, renderActeDelocalisationPdf } from "@/lib/lonaci/acte-delocalisation";
-import { ensureCessionIndexes, markActeDelocalisationGenere } from "@/lib/lonaci/cessions";
+import {
+  ensureCessionIndexes,
+  getCessionById,
+  markActeDelocalisationGenere,
+} from "@/lib/lonaci/cessions";
 import { requireApiAuth } from "@/lib/auth/guards";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
 }
 
-/** Spec 6.1 / 6.2 — acte de délocalisation (PDF). */
+/** Génère l’acte de délocalisation au format PDF. */
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -20,6 +24,10 @@ export async function GET(request: NextRequest, context: RouteContext) {
   await ensureCessionIndexes();
 
   try {
+    const visible = await getCessionById(id, auth.user);
+    if (!visible || (visible.kind !== "DELOCALISATION" && visible.kind !== "CESSION_DELOCALISATION")) {
+      return notFound("Demande de délocalisation introuvable.", "ACTE_DELOCALISATION_NOT_FOUND");
+    }
     const view = await buildActeDelocalisationView(id);
     if (!view) {
       return notFound("Demande de délocalisation introuvable.", "ACTE_DELOCALISATION_NOT_FOUND");

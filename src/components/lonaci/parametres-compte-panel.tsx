@@ -1,8 +1,14 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { Surface } from "@/components/lonaci/ui/surface";
 import { getLonaciRoleLabel } from "@/lib/lonaci/constants";
+import { notify } from "@/lib/toast";
+import { KeyRound, LockKeyhole, Mail, MapPin, ShieldCheck, UserRound } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 
 interface MeUser {
   id: string;
@@ -78,7 +84,7 @@ export default function ParametresComptePanel() {
         window.location.href = "/login";
       }, 1200);
     } catch (err) {
-      setPwdError(err instanceof Error ? err.message : "Erreur");
+      notify.error(err, "Changement du mot de passe impossible.");
     } finally {
       setPwdBusy(false);
     }
@@ -93,152 +99,142 @@ export default function ParametresComptePanel() {
   }
 
   const showRotation = Boolean(user.needsPasswordChange || motDePasseObligatoire);
+  const inputClassName =
+    "min-h-11 w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-sm text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/20";
 
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6">
-      <h2 className="text-lg font-semibold text-slate-900">Mon compte</h2>
-      <p className="mt-1 text-sm text-slate-600">
-        Consultation du profil. La gestion des autres utilisateurs et des e-mails SMTP est réservée au rôle{" "}
-        <span className="text-amber-700">Chef(fe) de service</span>.
-      </p>
-      <p className="mt-2 text-xs text-slate-500">
-        Politique de sécurité : le mot de passe doit être renouvelé au moins une fois par mois civil (référence UTC,
-        à partir du 1er de chaque mois).
-      </p>
+    <div className="space-y-4">
+      <Surface padding="lg" className="border-slate-200 bg-[#f7f9fc]">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid size-12 shrink-0 place-items-center rounded-2xl bg-[#102a43] text-orange-300 shadow-sm">
+              <UserRound size={23} aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase tracking-[0.14em] text-orange-700">Profil connecté</p>
+              <p className="truncate text-lg font-bold text-[#102a43]">
+                {user.prenom} {user.nom}
+              </p>
+            </div>
+          </div>
+          <Badge tone="brand" className="w-fit">
+            <ShieldCheck size={14} aria-hidden="true" />
+            {getLonaciRoleLabel(user.role)}
+          </Badge>
+        </div>
 
-      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
-        <div>
-          <dt className="text-slate-600">Nom</dt>
-          <dd className="text-slate-700">
-            {user.prenom} {user.nom}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-slate-600">Email</dt>
-          <dd className="font-mono text-slate-700">{user.email}</dd>
-        </div>
-        <div>
-          <dt className="text-slate-600">Rôle</dt>
-          <dd className="text-slate-700">{getLonaciRoleLabel(user.role)}</dd>
-        </div>
-        <div>
-          <dt className="text-slate-600">Agence</dt>
-          <dd className="text-slate-700">{user.agenceId ?? "—"}</dd>
-        </div>
-      </dl>
+        <dl className="mt-5 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <dt className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+              <Mail size={15} aria-hidden="true" className="text-orange-600" />
+              Adresse e-mail
+            </dt>
+            <dd className="mt-1 break-all text-sm font-semibold text-[#102a43]">{user.email}</dd>
+          </div>
+          <div className="rounded-xl border border-slate-200 bg-white p-3">
+            <dt className="flex items-center gap-2 text-xs font-semibold text-slate-500">
+              <MapPin size={15} aria-hidden="true" className="text-orange-600" />
+              Agence
+            </dt>
+            <dd className="mt-1 text-sm font-semibold text-[#102a43]">{user.agenceId ?? "—"}</dd>
+          </div>
+        </dl>
 
-      {showRotation ? (
-        <div className="mt-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
-          <h3 className="text-sm font-semibold text-amber-900">Renouvellement du mot de passe requis</h3>
-          <p className="mt-1 text-xs text-amber-950/80">
-            Vous devez définir un nouveau mot de passe pour continuer à utiliser l’application (session fermée après
-            validation).
+        <div className="mt-4 flex gap-2 rounded-xl border border-orange-200 bg-orange-50 p-3 text-xs leading-5 text-orange-950">
+          <LockKeyhole size={17} aria-hidden="true" className="mt-0.5 shrink-0 text-orange-700" />
+          <p>
+            La gestion des autres utilisateurs et des e-mails SMTP est réservée au rôle Chef(fe) de service. Le mot
+            de passe doit être renouvelé au moins une fois par mois civil (référence UTC).
           </p>
-          <form onSubmit={onChangePassword} className="mt-3 grid max-w-md gap-2">
-            <label className="grid gap-1">
-              <span className="text-xs text-slate-700">Mot de passe actuel</span>
-              <input
-                type="password"
-                autoComplete="current-password"
-                value={currentPassword}
-                onChange={(e) => setCurrentPassword(e.target.value)}
-                required
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              />
-            </label>
-            <label className="grid gap-1">
-              <span className="text-xs text-slate-700">Nouveau mot de passe (min. 8 caractères)</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-                required
-                minLength={8}
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              />
-            </label>
-            <label className="grid gap-1">
-              <span className="text-xs text-slate-700">Confirmation</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                minLength={8}
-                className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-              />
-            </label>
-            {pwdError ? <p className="text-xs text-rose-700">{pwdError}</p> : null}
-            {pwdInfo ? <p className="text-xs text-emerald-800">{pwdInfo}</p> : null}
-            <button
-              type="submit"
-              disabled={pwdBusy}
-              className="mt-1 w-fit rounded-lg bg-amber-700 px-4 py-2 text-sm font-medium text-white hover:bg-amber-800 disabled:opacity-50"
-            >
-              {pwdBusy ? "Enregistrement…" : "Enregistrer le nouveau mot de passe"}
-            </button>
-          </form>
         </div>
-      ) : (
-        <p className="mt-6 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          Mot de passe à jour pour le mois civil en cours. Vous pouvez le modifier ici à tout moment en utilisant le
-          formulaire ci-dessous si besoin.
-        </p>
-      )}
+      </Surface>
 
-      {!showRotation ? (
-        <form onSubmit={onChangePassword} className="mt-4 grid max-w-md gap-2 border-t border-slate-100 pt-4">
-          <p className="text-xs font-medium text-slate-700">Changer le mot de passe (optionnel)</p>
-          <label className="grid gap-1">
-            <span className="text-xs text-slate-600">Mot de passe actuel</span>
+      <Surface
+        padding="lg"
+        elevated={showRotation}
+        className={showRotation ? "border-orange-300 bg-orange-50/60" : "border-slate-200 bg-white"}
+      >
+        <div className="flex flex-col gap-3 border-b border-slate-200 pb-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h3 className="flex items-center gap-2 text-base font-bold text-[#102a43]">
+              <KeyRound size={19} aria-hidden="true" className="text-orange-600" />
+              {showRotation ? "Renouvellement requis" : "Sécurité du compte"}
+            </h3>
+            <p className="mt-1 text-xs leading-5 text-slate-600">
+              {showRotation
+                ? "Définissez un nouveau mot de passe pour continuer à utiliser l’application."
+                : "Votre mot de passe est à jour. Vous pouvez le modifier à tout moment."}
+            </p>
+          </div>
+          <Badge tone={showRotation ? "warning" : "success"} className="w-fit">
+            {showRotation ? "Action requise" : "À jour"}
+          </Badge>
+        </div>
+
+        <form onSubmit={onChangePassword} className="mt-5 grid max-w-xl gap-4">
+          <label className="grid gap-1.5">
+            <span className="text-xs font-semibold text-slate-700">Mot de passe actuel</span>
             <input
               type="password"
               autoComplete="current-password"
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
-              className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              required={showRotation}
+              className={inputClassName}
             />
           </label>
-          <label className="grid gap-1">
-            <span className="text-xs text-slate-600">Nouveau mot de passe</span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              minLength={8}
-              className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-          <label className="grid gap-1">
-            <span className="text-xs text-slate-600">Confirmation</span>
-            <input
-              type="password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              minLength={8}
-              className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            />
-          </label>
-          {pwdError ? <p className="text-xs text-rose-700">{pwdError}</p> : null}
-          {pwdInfo ? <p className="text-xs text-emerald-800">{pwdInfo}</p> : null}
-          <button
+          <div className="grid gap-4 sm:grid-cols-2">
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-700">Nouveau mot de passe</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                required={showRotation}
+                minLength={8}
+                aria-describedby="password-requirements"
+                className={inputClassName}
+              />
+            </label>
+            <label className="grid gap-1.5">
+              <span className="text-xs font-semibold text-slate-700">Confirmation</span>
+              <input
+                type="password"
+                autoComplete="new-password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                required={showRotation}
+                minLength={8}
+                className={inputClassName}
+              />
+            </label>
+          </div>
+          <p id="password-requirements" className="text-xs text-slate-500">
+            Utilisez au minimum 8 caractères.
+          </p>
+
+          <div aria-live="polite">
+            {pwdError ? <p className="text-xs font-medium text-rose-700">{pwdError}</p> : null}
+            {pwdInfo ? <p className="text-xs font-medium text-emerald-800">{pwdInfo}</p> : null}
+          </div>
+          <Button
             type="submit"
+            variant={showRotation ? "primary" : "secondary"}
+            leadingIcon={ShieldCheck}
+            loading={pwdBusy}
             disabled={
-              pwdBusy ||
-              !currentPassword.trim() ||
-              newPassword.trim().length < 8 ||
-              newPassword.trim() !== confirmPassword.trim()
+              !showRotation &&
+              (!currentPassword.trim() ||
+                newPassword.trim().length < 8 ||
+                newPassword.trim() !== confirmPassword.trim())
             }
-            className="w-fit rounded-lg border border-slate-400 bg-white px-4 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-50"
+            className="w-full justify-center sm:w-fit"
           >
-            {pwdBusy ? "…" : "Mettre à jour"}
-          </button>
+            {showRotation ? "Enregistrer le nouveau mot de passe" : "Mettre à jour"}
+          </Button>
         </form>
-      ) : null}
-    </section>
+      </Surface>
+    </div>
   );
 }

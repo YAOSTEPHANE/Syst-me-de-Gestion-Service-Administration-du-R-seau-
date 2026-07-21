@@ -1,4 +1,4 @@
-/** Statuts métier succession — §10.3 */
+/** Statuts métier succession. */
 export const SUCCESSION_STATUTS_METIER = [
   "DECLARE",
   "DOSSIER_COMPLET",

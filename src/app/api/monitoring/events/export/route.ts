@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureMonitoringEventsIndexes, listMonitoringEvents } from "@/lib/observability/events";
+import { createPdfResponse, renderMonitoringEventsPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   code: z.string().optional(),
@@ -27,44 +27,16 @@ export async function GET(request: NextRequest) {
     status: parsed.data.status,
   });
 
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 24, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(14).text("Export monitoring events", { underline: true });
-    doc.moveDown(0.3);
-    doc
-      .fontSize(9)
-      .text(
-        `Filtres: code=${parsed.data.code ?? "ALL"} status=${parsed.data.status ?? "ALL"} | total=${result.items.length}`,
-      );
-    doc.fontSize(9).text(`Genere le: ${new Date().toLocaleString("fr-FR")}`);
-    doc.moveDown(0.6);
-
-    for (const row of result.items) {
-      doc
-        .fontSize(8.6)
-        .text(
-          `${new Date(row.createdAt).toLocaleString("fr-FR")} | ${row.code} | ${row.status} | cible=${row.roleTarget} | ${row.title} | ${row.message}`,
-        );
-    }
-
-    if (result.items.length === 0) {
-      doc.fontSize(9).text("Aucun evenement pour ces filtres.");
-    }
-
-    doc.end();
+  const generatedAt = new Date();
+  const pdfBuffer = await renderMonitoringEventsPdf({
+    generatedAt,
+    filters: parsed.data,
+    events: result.items,
+    total: result.total,
+    limit: 5000,
   });
 
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="monitoring-events-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
-    },
+  return createPdfResponse(pdfBuffer, {
+    filename: `monitoring-events-${generatedAt.getTime()}`,
   });
 }

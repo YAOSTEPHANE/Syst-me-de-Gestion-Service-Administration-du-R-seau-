@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import {
+  deriveSuccessionVisibilityState,
+  isWorkflowDocumentVisible,
+} from "@/lib/auth/workflow-visibility";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { SUCCESSION_STEPS } from "@/lib/lonaci/constants";
@@ -14,7 +18,7 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -24,13 +28,26 @@ export async function GET(request: NextRequest, context: RouteContext) {
   if (!doc) {
     return NextResponse.json({ message: "CASE_NOT_FOUND" }, { status: 404 });
   }
+  const successionState = deriveSuccessionVisibilityState(doc);
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "SUCCESSIONS",
+      role: auth.user.role,
+      userId: auth.user._id ?? "",
+      creatorId: doc.createdByUserId,
+      status: doc.status,
+      successionState,
+    })
+  ) {
+    return NextResponse.json({ message: "CASE_NOT_FOUND" }, { status: 404 });
+  }
 
   const conc = await findConcessionnaireById(doc.concessionnaireId);
   if (!conc || conc.deletedAt) {
     return NextResponse.json({ message: "CONCESSIONNAIRE_NOT_FOUND" }, { status: 404 });
   }
   if (!canReadConcessionnaire(auth.user, conc)) {
-    return NextResponse.json({ message: "AGENCE_FORBIDDEN" }, { status: 403 });
+    return NextResponse.json({ message: "CASE_NOT_FOUND" }, { status: 404 });
   }
 
   const stepHistory = Array.isArray(doc.stepHistory) ? doc.stepHistory : [];

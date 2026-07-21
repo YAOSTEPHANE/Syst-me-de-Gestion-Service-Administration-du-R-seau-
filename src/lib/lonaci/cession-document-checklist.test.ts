@@ -7,7 +7,7 @@ import {
 } from "@/lib/lonaci/cession-document-checklist";
 import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 
-describe("cession document checklist spec 5.2", () => {
+describe("liste des pièces de cession", () => {
   it("inclut les 4 pièces communes", () => {
     expect(CESSION_CHECKLIST_ITEMS_SPEC_52).toHaveLength(4);
     expect(CESSION_CHECKLIST_ITEMS_SPEC_52.map((i) => i.id)).toContain("cession_identite_parties");

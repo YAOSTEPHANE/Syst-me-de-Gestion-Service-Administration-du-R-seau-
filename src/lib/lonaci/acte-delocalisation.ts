@@ -1,12 +1,25 @@
 import "server-only";
 
 import { ObjectId } from "mongodb";
-import PDFDocument from "pdfkit";
 
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { formatAgenceLibelle, loadAgenceLibelleMap, type AgenceLibelleDoc } from "@/lib/lonaci/zones-abidjan";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { getDatabase } from "@/lib/mongodb";
+import {
+  collectPdfBuffer,
+  contentWidth,
+  createPremiumPdfDocument,
+  drawInformationCard,
+  drawSection,
+  drawTitle,
+  ensureSpace,
+  finalizePremiumPages,
+  PDF_COLORS,
+  PDF_SPACING,
+  PDF_TYPOGRAPHY,
+  type PdfField,
+} from "@/lib/pdf";
 
 export const ACTE_DELOCALISATION_TITLE = "ACTE DE DÉLOCALISATION";
 
@@ -99,71 +112,80 @@ export async function buildActeDelocalisationView(cessionId: string): Promise<Ac
 }
 
 export async function renderActeDelocalisationPdf(view: ActeDelocalisationView): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 48, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    const w = doc.page.width - doc.page.margins.left - doc.page.margins.right;
-    const x = doc.page.margins.left;
-    doc.save();
-    doc.rect(x, doc.y, w, 52).fill("#0e7490");
-    doc.fillColor("#ffffff").fontSize(11).text("LONACI", x + 14, doc.y - 44);
-    doc.fontSize(8).text("Loterie Nationale de Côte d'Ivoire", x + 14, doc.y + 2);
-    doc.fontSize(7).text("Module Délocalisation — document officiel (spec 6.1 / 6.2)", x + 14, doc.y + 2);
-    doc.restore();
-    doc.moveDown(3.2);
-    doc.fillColor("#111827").fontSize(14).text(ACTE_DELOCALISATION_TITLE, { align: "center", underline: true });
-    doc.moveDown(0.8);
-
-    doc.fontSize(9).fillColor("#374151").text(`Référence dossier : ${view.reference}`, { align: "center" });
-    if (view.linkedOperationId) {
-      doc.text(`Opération liée (traçabilité 6.2) : ${view.linkedOperationId}`, { align: "center" });
-    }
-    doc.text(
-      `Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })}`,
-      { align: "center" },
-    );
-    doc.moveDown(1);
-
-    doc.fontSize(10).fillColor("#0e7490").text("Concessionnaire concerné", { underline: true });
-    doc.moveDown(0.35);
-    doc.fontSize(9).fillColor("#111827").text(`${view.nomComplet}${view.codePdv ? ` (${view.codePdv})` : ""}`);
-    if (view.produitCode) {
-      doc.text(
-        `Produit (contrat conservé) : ${view.produitLibelle ? `${view.produitCode} — ${view.produitLibelle}` : view.produitCode}`,
-      );
-    }
-    doc.moveDown(0.6);
-
-    doc.fontSize(10).fillColor("#0e7490").text("Ancienne implantation", { underline: true });
-    doc.moveDown(0.3);
-    doc.fontSize(9).fillColor("#111827").text(`Adresse : ${view.ancienneAdresse}`);
-    doc.text(`Agence / zone : ${view.ancienneAgenceLabel}`);
-    doc.moveDown(0.6);
-
-    doc.fontSize(10).fillColor("#0e7490").text("Nouvelle implantation", { underline: true });
-    doc.moveDown(0.3);
-    doc.fontSize(9).fillColor("#111827").text(`Adresse : ${view.nouvelleAdresse}`);
-    doc.text(`Agence / zone : ${view.nouvelleAgenceLabel}`);
-    doc.text(`Coordonnées GPS : ${view.nouvelleGps.lat.toFixed(6)}, ${view.nouvelleGps.lng.toFixed(6)}`);
-    doc.moveDown(0.6);
-
-    doc.fontSize(9).text(`Motif : ${view.motif}`);
-    doc.moveDown(1);
-    doc.fontSize(8).fillColor("#374151").text(
-      [
-        "Le présent acte atteste la demande de délocalisation du point de vente vers la nouvelle zone",
-        "géographique indiquée, en conservation du contrat et des droits associés au produit.",
-        "",
-        "Ce document est généré automatiquement. Il ne vaut exécution définitive qu'après validation",
-        "par le Chef de Section puis le Chef de Service.",
-      ].join("\n"),
-      { align: "justify" },
+  const issuedAt = new Date(view.emisLe);
+  const doc = createPremiumPdfDocument({
+    metadata: {
+      title: ACTE_DELOCALISATION_TITLE,
+      subject: `Acte de délocalisation ${view.reference}`,
+      creationDate: issuedAt,
+    },
+  });
+  return collectPdfBuffer(doc, () => {
+    drawTitle(
+      doc,
+      ACTE_DELOCALISATION_TITLE,
+      `Référence dossier : ${view.reference} · Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })}`,
     );
 
-    doc.end();
+    const partyFields: PdfField[] = [
+      { label: "Concessionnaire", value: view.nomComplet },
+      { label: "Code PDV", value: view.codePdv ?? "—" },
+      ...(view.produitCode
+        ? [
+            {
+              label: "Produit (contrat conservé)",
+              value: view.produitLibelle
+                ? `${view.produitCode} — ${view.produitLibelle}`
+                : view.produitCode,
+            },
+          ]
+        : []),
+      ...(view.linkedOperationId
+        ? [{ label: "Opération liée", value: view.linkedOperationId }]
+        : []),
+    ];
+    drawSection(doc, "Concessionnaire concerné");
+    drawInformationCard(doc, partyFields);
+
+    drawSection(doc, "Ancienne implantation");
+    drawInformationCard(doc, [
+      { label: "Adresse", value: view.ancienneAdresse },
+      { label: "Agence / zone", value: view.ancienneAgenceLabel },
+    ]);
+
+    drawSection(doc, "Nouvelle implantation");
+    drawInformationCard(doc, [
+      { label: "Adresse", value: view.nouvelleAdresse },
+      { label: "Agence / zone", value: view.nouvelleAgenceLabel },
+      {
+        label: "Coordonnées GPS",
+        value: `${view.nouvelleGps.lat.toFixed(6)}, ${view.nouvelleGps.lng.toFixed(6)}`,
+      },
+    ]);
+
+    drawSection(doc, "Motif");
+    drawInformationCard(doc, [{ label: "Motif déclaré", value: view.motif }]);
+
+    const legalText = [
+      "Le présent acte atteste la demande de délocalisation du point de vente vers la nouvelle zone",
+      "géographique indiquée, en conservation du contrat et des droits associés au produit.",
+      "",
+      "Ce document est généré automatiquement. Il ne vaut exécution définitive qu'après validation",
+      "par le Chef de Section puis le Chef de Service.",
+    ].join("\n");
+    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.label);
+    ensureSpace(
+      doc,
+      doc.heightOfString(legalText, { width: contentWidth(doc) }) + PDF_SPACING.md,
+    );
+    doc
+      .fillColor(PDF_COLORS.ink)
+      .text(legalText, { width: contentWidth(doc), align: "justify" });
+
+    finalizePremiumPages(doc, {
+      reference: view.reference,
+      issuedAt,
+      documentLabel: "ACTE DE DÉLOCALISATION",
+    });
   });
 }

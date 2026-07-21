@@ -8,10 +8,9 @@ import { CONTRAT_OPERATION_TYPES } from "@/lib/lonaci/constants";
 import {
   buildDossierContratStatutMetierFields,
   ensureDossierIndexes,
-  findDossierById,
+  findVisibleDossierById,
   patchContratDossierPayload,
 } from "@/lib/lonaci/dossiers";
-import { assertDossierPartyReadable, contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
 import type { DossierDocument } from "@/lib/lonaci/types";
 
 interface RouteContext {
@@ -77,26 +76,16 @@ const patchDossierPayloadSchema = z
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) {
     return auth.error;
   }
 
   const { id } = await context.params;
-  const dossier = await findDossierById(id);
-  if (!dossier || dossier.deletedAt) {
+  const dossier = await findVisibleDossierById(id, auth.user);
+  if (!dossier) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
-  }
-
-  const party = contratPartyFromDossier(dossier);
-  if (!party) {
-    return NextResponse.json({ message: "Dossier sans rattachement client ou PDV." }, { status: 404 });
-  }
-  try {
-    await assertDossierPartyReadable(party, auth.user);
-  } catch {
-    return NextResponse.json({ message: "Acces refuse." }, { status: 403 });
   }
 
   const statutFields = await buildDossierContratStatutMetierFields(dossier);
@@ -119,6 +108,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const { id } = await context.params;
   await ensureDossierIndexes();
+  const visible = await findVisibleDossierById(id, auth.user);
+  if (!visible) {
+    return notFound("Dossier introuvable.");
+  }
 
   try {
     const updated = await patchContratDossierPayload(id, parsed.data, auth.user);

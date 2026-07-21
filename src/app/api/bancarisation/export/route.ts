@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { BANCARISATION_STATUTS, LONACI_ROLES } from "@/lib/lonaci/constants";
+import { listBancarisationRequests } from "@/lib/lonaci/bancarisation";
 import { searchConcessionnaires } from "@/lib/lonaci/concessionnaires";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { createPdfResponse, renderBancarisationExportPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   format: z.enum(["excel", "pdf"]).default("excel"),
@@ -33,31 +34,6 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   return `\uFEFF${header.map(esc).join(",")}\n${body.join("\n")}`;
 }
 
-function toPdfBuffer(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]) {
-  return new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 30, size: "A4" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (c: Buffer) => chunks.push(Buffer.from(c)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-    doc.fontSize(14).text("Export Bancarisation", { underline: true });
-    doc.moveDown(0.5);
-    doc.fontSize(10).text(`Total: ${rows.length} | Date: ${new Date().toLocaleString("fr-FR")}`);
-    doc.moveDown(1);
-    rows.forEach((r, i) => {
-      doc
-        .fontSize(8.5)
-        .text(
-          `${i + 1}. ${r.codePdv} | ${r.nomComplet || r.raisonSociale} | ${r.statutBancarisation} | ${
-            r.compteBancaire ?? "—"
-          } | ${r.banqueEtablissement ?? "—"}`,
-        );
-      if (doc.y > 780) doc.addPage();
-    });
-    doc.end();
-  });
-}
-
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: [...LONACI_ROLES] });
   if ("error" in auth) return auth.error;
@@ -70,17 +46,34 @@ export async function GET(request: NextRequest) {
   const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
   if (!agenceScope.ok) return agenceScope.response;
 
-  const result = await searchConcessionnaires({
-    page: 1,
-    pageSize: 5000,
-    statutBancarisation: parsed.data.statutBancarisation,
-    produitCode: parsed.data.produitCode,
-    ...listAgenceScopeFields(agenceScope),
-    includeDeleted: false,
-  });
+  const scopeFields = listAgenceScopeFields(agenceScope);
+  const [result, requests] = await Promise.all([
+    searchConcessionnaires({
+      page: 1,
+      pageSize: 5000,
+      statutBancarisation: parsed.data.statutBancarisation,
+      produitCode: parsed.data.produitCode,
+      ...scopeFields,
+      includeDeleted: false,
+    }),
+    listBancarisationRequests({
+      page: 1,
+      pageSize: 10_000,
+      statut: parsed.data.statutBancarisation,
+      scopeAgenceId: scopeFields.scopeAgenceId,
+      scopeAgenceIds: scopeFields.scopeAgenceIds,
+      visibility: auth.user,
+    }),
+  ]);
+  const visibleConcessionnaireIds = new Set(
+    requests.items.map((item) => item.concessionnaireId),
+  );
+  const rows = result.items.filter((item) =>
+    visibleConcessionnaireIds.has(item._id ?? ""),
+  );
 
   if (parsed.data.format === "excel") {
-    const csv = toCsv(result.items);
+    const csv = toCsv(rows);
     return new NextResponse(csv, {
       status: 200,
       headers: {
@@ -89,12 +82,27 @@ export async function GET(request: NextRequest) {
       },
     });
   }
-  const pdf = await toPdfBuffer(result.items);
-  return new NextResponse(new Uint8Array(pdf), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="bancarisation-${Date.now()}.pdf"`,
-    },
+  const generatedAt = new Date();
+  const filters = [
+    parsed.data.agenceId ? `Agence : ${parsed.data.agenceId}` : undefined,
+    parsed.data.produitCode ? `Produit : ${parsed.data.produitCode}` : undefined,
+    parsed.data.statutBancarisation
+      ? `Statut : ${parsed.data.statutBancarisation}`
+      : undefined,
+  ].filter((value): value is string => Boolean(value));
+  const pdf = await renderBancarisationExportPdf(
+    rows.map((row) => ({
+      codePdv: row.codePdv,
+      nom: row.nomComplet || row.raisonSociale,
+      statutBancarisation: row.statutBancarisation,
+      compteBancaire: row.compteBancaire,
+      banqueEtablissement: row.banqueEtablissement,
+      agenceId: row.agenceId,
+      produitsAutorises: row.produitsAutorises,
+    })),
+    { generatedAt, filters },
+  );
+  return createPdfResponse(pdf, {
+    filename: `bancarisation-${generatedAt.getTime()}`,
   });
 }

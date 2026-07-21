@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { listAgenceScopeFields, requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { resolveFormPartyIds } from "@/lib/lonaci/client-party-resolve";
 import {
   createGprRegistration,
   ensureGprGrattageIndexes,
@@ -16,6 +18,7 @@ const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(GPR_REGISTRATION_STATUSES).optional(),
+  agenceId: z.string().optional(),
 });
 
 const createSchema = z
@@ -36,14 +39,24 @@ const createSchema = z
   });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, { roles: [...GPR_ADMIN_ROLES] });
+  const auth = await requireApiAuth(request, { roles: [...GPR_ADMIN_ROLES, "AUDITEUR"] });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
     return zodBadRequest(parsed.error, "Parametres invalides");
   }
   await ensureGprGrattageIndexes();
-  const data = await listGprRegistrations(parsed.data);
+  const agenceScope = requireListAgenceScope(auth.user, parsed.data.agenceId);
+  if (!agenceScope.ok) return agenceScope.response;
+  const scopeFields = listAgenceScopeFields(agenceScope);
+  const data = await listGprRegistrations({
+    page: parsed.data.page,
+    pageSize: parsed.data.pageSize,
+    status: parsed.data.status,
+    scopeAgenceId: scopeFields.scopeAgenceId,
+    scopeAgenceIds: scopeFields.scopeAgenceIds,
+    visibility: auth.user,
+  });
   return NextResponse.json(data, { status: 200 });
 }
 
@@ -55,7 +68,6 @@ export async function POST(request: NextRequest) {
     return zodBadRequest(parsed.error);
   }
   await ensureGprGrattageIndexes();
-  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
   let concessionnaireId: string;
   try {
     const party = await resolveFormPartyIds({

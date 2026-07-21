@@ -5,11 +5,12 @@ import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-ag
 import { requireApiAuth } from "@/lib/auth/guards";
 import { GRATTAGE_CONTRAT_STATUTS } from "@/lib/lonaci/constants";
 import {
-  buildGrattageContratsPdfBuffer,
   ensureGrattageContratIndexes,
   listGrattageContratsForExport,
 } from "@/lib/lonaci/grattage-contrats";
 import { GRATTAGE_CONTRAT_ROLES } from "@/lib/lonaci/grattage-access";
+import { createPdfResponse } from "@/lib/pdf";
+import { renderGrattageContratsPdf } from "@/lib/pdf/grattage-contrats";
 
 const querySchema = z.object({
   format: z.enum(["pdf"]).default("pdf"),
@@ -18,7 +19,7 @@ const querySchema = z.object({
   statut: z.enum(GRATTAGE_CONTRAT_STATUTS).optional(),
 });
 
-/** §9.3 — Export PDF de la liste des contrats grattage. */
+/** Export PDF de la liste des contrats grattage. */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: [...GRATTAGE_CONTRAT_ROLES] });
   if ("error" in auth) return auth.error;
@@ -37,13 +38,9 @@ export async function GET(request: NextRequest) {
     ...listAgenceScopeFields(agenceScope),
   });
 
-  const buffer = await buildGrattageContratsPdfBuffer(rows);
-  const filename = `contrats-grattage-${Date.now()}.pdf`;
-  return new NextResponse(new Uint8Array(buffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-    },
+  const issuedAt = new Date();
+  const buffer = await renderGrattageContratsPdf(rows, issuedAt);
+  return createPdfResponse(buffer, {
+    filename: `contrats-grattage-${issuedAt.toISOString().slice(0, 10)}.pdf`,
   });
 }

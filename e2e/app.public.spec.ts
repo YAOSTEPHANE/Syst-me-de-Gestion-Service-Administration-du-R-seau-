@@ -4,7 +4,7 @@ test.describe("Routes publiques", () => {
   test("la racine redirige vers la connexion", async ({ page }) => {
     await page.goto("/");
     await expect(page).toHaveURL(/\/login/);
-    await expect(page.getByRole("heading", { name: "Connexion sécurisée" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Heureux de vous revoir" })).toBeVisible();
   });
 
   test("la page de connexion affiche le formulaire", async ({ page }) => {

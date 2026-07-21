@@ -27,13 +27,13 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
   const { id } = await context.params;
   await ensureCessionIndexes();
-  const item = await getCessionById(id);
+  const item = await getCessionById(id, auth.user);
   if (!item) {
     return NextResponse.json({ message: "Cession introuvable" }, { status: 404 });
   }
@@ -57,7 +57,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const item = await patchCessionDocumentChecklist({
       id,
       entries: parsed.data.documentChecklist,
-      actorId: auth.user._id ?? "",
+      actor: auth.user,
     });
     return NextResponse.json({ item }, { status: 200 });
   } catch (e) {

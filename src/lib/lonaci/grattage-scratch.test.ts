@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { canTransitionScratchLot } from "@/lib/lonaci/gpr-grattage";
 
-describe("canTransitionScratchLot (§9.1 / §9.2)", () => {
+describe("canTransitionScratchLot", () => {
   it("autorise le dispatcher à attribuer un lot", () => {
     expect(canTransitionScratchLot("DISPATCHER", "GENERE", "ATTRIBUE")).toBe(true);
   });

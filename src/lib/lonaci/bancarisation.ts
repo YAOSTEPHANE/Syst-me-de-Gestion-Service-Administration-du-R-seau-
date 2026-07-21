@@ -1,6 +1,12 @@
 import { ObjectId } from "mongodb";
 import { Prisma } from "@prisma/client";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+  isWorkflowStageAssignedToRole,
+} from "@/lib/auth/workflow-visibility";
+import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import { restrictionToMongoAgenceFilter, restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
 import { type BancarisationStatut } from "@/lib/lonaci/constants";
 import {
@@ -14,6 +20,7 @@ import type {
   BancarisationRequestStatus,
   UserDocument,
 } from "@/lib/lonaci/types";
+import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -126,6 +133,7 @@ export async function listBancarisationRequests(input: {
   agenceId?: string;
   scopeAgenceId?: string;
   scopeAgenceIds?: string[];
+  visibility?: Pick<UserDocument, "_id" | "role">;
 }) {
   const col = await getBancarisationRequestsCollection();
   const where: Record<string, unknown> = {};
@@ -136,11 +144,21 @@ export async function listBancarisationRequests(input: {
   if (agenceFilter) where.agenceId = agenceFilter;
   if (input.status) where.status = input.status;
   if (input.statut) where.nouveauStatut = input.statut;
+  const visibilityFilter = input.visibility
+    ? buildWorkflowVisibilityMongoFilter({
+        workflow: "BANCARISATION",
+        role: input.visibility.role,
+        userId: input.visibility._id ?? "",
+      })
+    : null;
+  const effectiveWhere: Record<string, unknown> = visibilityFilter
+    ? { $and: [where, visibilityFilter] }
+    : where;
 
   const skip = (input.page - 1) * input.pageSize;
   const [total, rows] = await Promise.all([
-    col.countDocuments(where),
-    col.find(where).sort({ createdAt: -1 }).skip(skip).limit(input.pageSize).toArray(),
+    col.countDocuments(effectiveWhere),
+    col.find(effectiveWhere).sort({ createdAt: -1 }).skip(skip).limit(input.pageSize).toArray(),
   ]);
   return { total, items: rows.map(mapRequest) };
 }
@@ -157,6 +175,7 @@ const BANCARISATION_PENDING_STATUSES = ["SOUMIS", "VALIDE_N1", "VALIDE_N2"] as c
 export async function countBancarisationRequestsByStatus(
   scopeAgenceId?: string | null,
   scopeAgenceIds?: string[],
+  actor?: Pick<UserDocument, "_id" | "role">,
 ) {
   const col = await getBancarisationRequestsCollection();
   const match: Record<string, unknown> = {};
@@ -165,8 +184,19 @@ export async function countBancarisationRequestsByStatus(
     agenceIds: scopeAgenceIds,
   });
   if (agenceFilter) match.agenceId = agenceFilter;
+  const visibility = actor
+    ? buildWorkflowVisibilityMongoFilter({
+        workflow: "BANCARISATION",
+        role: actor.role,
+        userId: actor._id ?? "",
+      })
+    : null;
+  const effectiveMatch = visibility ? { $and: [match, visibility] } : match;
   const rows = await col
-    .aggregate<{ _id: string; c: number }>([{ $match: match }, { $group: { _id: "$status", c: { $sum: 1 } } }])
+    .aggregate<{ _id: string; c: number }>([
+      { $match: effectiveMatch },
+      { $group: { _id: "$status", c: { $sum: 1 } } },
+    ])
     .toArray();
   const out: Record<string, number> = {
     SOUMIS: 0,
@@ -193,6 +223,25 @@ export async function validateBancarisationRequest(input: {
   const objectId = new ObjectId(input.requestId);
   const existing = await col.findOne({ _id: objectId });
   if (!existing) throw new Error("REQUEST_NOT_FOUND");
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "BANCARISATION",
+      role: input.actor.role,
+      userId: input.actor._id ?? "",
+      creatorId: existing.createdByUserId,
+      status: existing.status,
+    })
+  ) {
+    throw new Error("REQUEST_NOT_FOUND");
+  }
+  const concessionnaire = await findConcessionnaireById(existing.concessionnaireId);
+  if (
+    !concessionnaire ||
+    concessionnaire.deletedAt ||
+    !canReadConcessionnaire(input.actor, concessionnaire)
+  ) {
+    throw new Error("REQUEST_NOT_FOUND");
+  }
   if (!BANCARISATION_PENDING_STATUSES.includes(existing.status as (typeof BANCARISATION_PENDING_STATUSES)[number])) {
     if (existing.status === "VALIDE" || existing.status === "REJETE") throw new Error("REQUEST_NOT_PENDING");
     throw new Error("REQUEST_NOT_PENDING");
@@ -200,11 +249,17 @@ export async function validateBancarisationRequest(input: {
 
   const now = new Date();
   const actorRole = input.actor.role;
+  if (
+    !isWorkflowStageAssignedToRole({
+      workflow: "BANCARISATION",
+      role: actorRole,
+      status: existing.status,
+    })
+  ) {
+    throw new Error("FORBIDDEN_TRANSITION");
+  }
 
   if (input.decision === "REJETER") {
-    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(actorRole)) {
-      throw new Error("FORBIDDEN_TRANSITION");
-    }
     await col.updateOne(
       { _id: objectId },
       {
@@ -298,12 +353,28 @@ export async function validateBancarisationRequest(input: {
 export async function bancarisationCountersByAgenceProduit(
   scopeAgenceId?: string,
   scopeAgenceIds?: string[],
+  actor?: Pick<UserDocument, "_id" | "role">,
 ) {
+  const requests = await listBancarisationRequests({
+    page: 1,
+    pageSize: 10_000,
+    scopeAgenceId,
+    scopeAgenceIds,
+    visibility: actor,
+  });
+  const visibleConcessionnaireIds = [
+    ...new Set(requests.items.map((request) => request.concessionnaireId)),
+  ];
+  if (visibleConcessionnaireIds.length === 0) return [];
   const agenceWhere = restrictionToPrismaAgenceWhere({
     agenceId: scopeAgenceId,
     agenceIds: scopeAgenceIds,
   });
-  const where: Prisma.ConcessionnaireWhereInput = { deletedAt: null, ...agenceWhere };
+  const where: Prisma.ConcessionnaireWhereInput = {
+    id: { in: visibleConcessionnaireIds },
+    deletedAt: null,
+    ...agenceWhere,
+  };
   const rows = await prisma.concessionnaire.findMany({
     where,
     select: {

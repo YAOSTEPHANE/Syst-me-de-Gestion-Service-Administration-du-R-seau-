@@ -1,16 +1,27 @@
 "use client";
 
 import Link from "next/link";
+import { Download, FileCheck2, PauseCircle, PlayCircle, RotateCcw, XCircle } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
+import { KpiCard } from "@/components/lonaci/ui/dashboard-cards";
+import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 import {
   GRATTAGE_CONTRAT_STATUT_LABELS,
   GRATTAGE_CONTRAT_STATUTS_SPEC_93,
   type GrattageContratStatut,
 } from "@/lib/lonaci/constants";
+import { notify } from "@/lib/toast";
 
 type RefAgence = { id: string; code: string; libelle: string };
-type RefProduit = { code: string; libelle: string; actif: boolean };
 
 type ContratRow = {
   id: string;
@@ -27,11 +38,11 @@ type ContratRow = {
   createdAt: string;
 };
 
-function statutBadgeClass(statut: GrattageContratStatut) {
-  if (statut === "EN_COURS") return "border-emerald-300 bg-emerald-100 text-emerald-900";
-  if (statut === "SUSPENDU") return "border-amber-300 bg-amber-100 text-amber-900";
-  if (statut === "RESILIE") return "border-rose-300 bg-rose-100 text-rose-900";
-  return "border-slate-300 bg-slate-100 text-slate-800";
+function statutTone(statut: GrattageContratStatut): Tone {
+  if (statut === "EN_COURS") return "success";
+  if (statut === "SUSPENDU") return "warning";
+  if (statut === "RESILIE") return "danger";
+  return "neutral";
 }
 
 export default function ContratsGrattagePanel() {
@@ -40,6 +51,13 @@ export default function ContratsGrattagePanel() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [transitionTarget, setTransitionTarget] = useState<{
+    id: string;
+    reference: string;
+    statut: GrattageContratStatut;
+  } | null>(null);
 
   const [filterAgenceId, setFilterAgenceId] = useState("");
   const [filterConcessionnaireId, setFilterConcessionnaireId] = useState("");
@@ -57,7 +75,7 @@ export default function ContratsGrattagePanel() {
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ page: "1", pageSize: "50" });
+      const params = new URLSearchParams({ page: String(page), pageSize: "20" });
       if (filterAgenceId) params.set("agenceId", filterAgenceId);
       if (filterConcessionnaireId.trim()) params.set("concessionnaireId", filterConcessionnaireId.trim());
       if (filterStatut) params.set("statut", filterStatut);
@@ -71,7 +89,7 @@ export default function ContratsGrattagePanel() {
     } finally {
       setLoading(false);
     }
-  }, [filterAgenceId, filterConcessionnaireId, filterStatut]);
+  }, [filterAgenceId, filterConcessionnaireId, filterStatut, page]);
 
   useEffect(() => {
     void (async () => {
@@ -92,19 +110,26 @@ export default function ContratsGrattagePanel() {
   }, [loadList]);
 
   async function onTransition(id: string, targetStatut: GrattageContratStatut) {
-    setError(null);
-    const res = await fetch(`/api/grattage-contrats/${encodeURIComponent(id)}/statut`, {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ targetStatut, comment: null }),
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as { message?: string } | null;
-      setError(body?.message ?? "Transition refusée");
-      return;
+    setBusyId(id);
+    try {
+      const res = await fetch(`/api/grattage-contrats/${encodeURIComponent(id)}/statut`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetStatut, comment: null }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        throw new Error(body?.message ?? "Transition refusée");
+      }
+      await loadList();
+      notify.success(`Contrat passé au statut « ${GRATTAGE_CONTRAT_STATUT_LABELS[targetStatut]} ».`);
+      setTransitionTarget(null);
+    } catch (error) {
+      notify.error(error, "Transition du contrat impossible.");
+    } finally {
+      setBusyId(null);
     }
-    await loadList();
   }
 
   const kpis = useMemo(() => {
@@ -116,164 +141,95 @@ export default function ContratsGrattagePanel() {
     return byStatut;
   }, [items]);
 
+  const totalPages = Math.max(1, Math.ceil(total / 20));
+  const transitionActions = (row: ContratRow) => (
+    <div className="flex flex-wrap gap-2">
+      {row.statut === "EN_COURS" ? (
+        <>
+          <Button size="sm" variant="secondary" leadingIcon={PauseCircle} disabled={busyId === row.id} onClick={() => setTransitionTarget({ id: row.id, reference: row.reference, statut: "SUSPENDU" })}>Suspendre</Button>
+          <Button size="sm" variant="danger" leadingIcon={XCircle} disabled={busyId === row.id} onClick={() => setTransitionTarget({ id: row.id, reference: row.reference, statut: "RESILIE" })}>Résilier</Button>
+        </>
+      ) : null}
+      {row.statut === "SUSPENDU" ? (
+        <Button size="sm" leadingIcon={PlayCircle} disabled={busyId === row.id} onClick={() => setTransitionTarget({ id: row.id, reference: row.reference, statut: "EN_COURS" })}>Reprendre</Button>
+      ) : null}
+    </div>
+  );
+  const columns: readonly DataTableColumn<ContratRow>[] = [
+    { id: "reference", header: "Référence", cell: (row) => <span className="font-mono text-xs font-semibold">{row.reference}</span> },
+    { id: "pdv", header: "Point de vente", cell: (row) => <div><span className="font-mono text-xs text-slate-500">{row.codePdv}</span><strong className="block">{row.raisonSociale}</strong></div> },
+    { id: "produit", header: "Produit", cell: (row) => row.produitCode },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge tone={statutTone(row.statut)}>{row.statutLabel}</StatusBadge> },
+    { id: "debut", header: "Début", cell: (row) => new Date(row.dateDebut).toLocaleDateString("fr-FR") },
+    { id: "fin", header: "Fin", cell: (row) => row.dateFin ? new Date(row.dateFin).toLocaleDateString("fr-FR") : "—" },
+    { id: "actions", header: "Actions", cell: transitionActions },
+  ];
+
   return (
     <div className="space-y-6">
-      <header className="rounded-2xl border border-teal-200 bg-gradient-to-br from-teal-50 via-white to-cyan-50 p-6 shadow-sm">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-800">§9.3 Contrat grattage</p>
-        <h1 className="mt-1 text-xl font-semibold text-slate-900">Liste et cycle de vie des contrats grattage</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          Filtres par agence, concessionnaire et statut. Export PDF. Création automatique à la validation GPR finale (
-          <Link href="/gpr" className="text-teal-700 underline">
-            module GPR
-          </Link>
-          ).
-        </p>
-      </header>
+      <PageHeader
+        eyebrow="Contrats grattage"
+        title="Liste et cycle de vie des contrats"
+        description={<>Filtres par agence, concessionnaire et statut. Création automatique à la validation GPR finale (<Link href="/gpr" className="font-semibold text-orange-700 underline">module GPR</Link>).</>}
+        actions={<a href={exportHref} className="lonaci-ui-button lonaci-ui-button--primary lonaci-ui-button--md"><Download size={18} aria-hidden="true" />Exporter en PDF</a>}
+      />
 
-      {error ? (
-        <p className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800" role="alert">
-          {error}
-        </p>
-      ) : null}
+      {error ? <FeedbackState tone="danger" title="Chargement impossible" description={error} action={<Button variant="secondary" onClick={() => void loadList()}>Réessayer</Button>} /> : null}
 
-      <section className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        {GRATTAGE_CONTRAT_STATUTS_SPEC_93.map((s) => (
-          <article key={s.statut} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
-            <p className="text-[11px] font-medium text-slate-600">{s.label}</p>
-            <p className="mt-1 text-xl font-semibold text-slate-900">{kpis[s.statut] ?? 0}</p>
-          </article>
-        ))}
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4" aria-label="Indicateurs des contrats">
+        {GRATTAGE_CONTRAT_STATUTS_SPEC_93.map((item) => <KpiCard key={item.statut} label={item.label} value={kpis[item.statut] ?? 0} icon={FileCheck2} />)}
       </section>
 
-      <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
-          <div className="grid gap-2 sm:grid-cols-3">
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium text-slate-700">Agence</span>
-              <select
-                value={filterAgenceId}
-                onChange={(e) => setFilterAgenceId(e.target.value)}
-                className="rounded-lg border border-slate-300 px-2 py-2"
-              >
-                <option value="">Toutes</option>
-                {agences.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.libelle}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium text-slate-700">ID concessionnaire</span>
-              <input
-                value={filterConcessionnaireId}
-                onChange={(e) => setFilterConcessionnaireId(e.target.value)}
-                placeholder="Filtrer par PDV"
-                className="rounded-lg border border-slate-300 px-2 py-2 font-mono text-[11px]"
-              />
-            </label>
-            <label className="grid gap-1 text-xs">
-              <span className="font-medium text-slate-700">Statut</span>
-              <select
-                value={filterStatut}
-                onChange={(e) => setFilterStatut(e.target.value as "" | GrattageContratStatut)}
-                className="rounded-lg border border-slate-300 px-2 py-2"
-              >
-                <option value="">Tous</option>
-                {GRATTAGE_CONTRAT_STATUTS_SPEC_93.map((s) => (
-                  <option key={s.statut} value={s.statut}>
-                    {s.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <a
-            href={exportHref}
-            className="inline-flex items-center justify-center rounded-lg border border-teal-300 bg-teal-600 px-3 py-2 text-xs font-semibold text-white hover:bg-teal-700"
-          >
-            Export PDF
-          </a>
+      <Surface elevated>
+        <SectionHeader title="Registre des contrats" description={`${total} contrat(s) · ${items.length} affiché(s) sur cette page`} />
+        <FilterBar
+          filters={<>
+            <select aria-label="Filtrer par agence" value={filterAgenceId} onChange={(event) => { setPage(1); setFilterAgenceId(event.target.value); }} className="min-h-11 rounded-lg border border-slate-300 bg-white px-3">
+              <option value="">Toutes les agences</option>
+              {agences.map((agence) => <option key={agence.id} value={agence.id}>{agence.libelle}</option>)}
+            </select>
+            <input aria-label="Filtrer par identifiant concessionnaire" value={filterConcessionnaireId} onChange={(event) => { setPage(1); setFilterConcessionnaireId(event.target.value); }} placeholder="ID concessionnaire" className="min-h-11 rounded-lg border border-slate-300 bg-white px-3 font-mono text-xs" />
+            <select aria-label="Filtrer par statut" value={filterStatut} onChange={(event) => { setPage(1); setFilterStatut(event.target.value as "" | GrattageContratStatut); }} className="min-h-11 rounded-lg border border-slate-300 bg-white px-3">
+              <option value="">Tous les statuts</option>
+              {GRATTAGE_CONTRAT_STATUTS_SPEC_93.map((item) => <option key={item.statut} value={item.statut}>{item.label}</option>)}
+            </select>
+          </>}
+          actions={<Button variant="secondary" size="sm" leadingIcon={RotateCcw} onClick={() => { setPage(1); setFilterAgenceId(""); setFilterConcessionnaireId(""); setFilterStatut(""); }}>Réinitialiser</Button>}
+        />
+        <div className="mt-4" aria-live="polite" aria-busy={loading}>
+          {loading ? <Skeleton lines={7} /> : (
+            <DataTable
+              rows={items}
+              columns={columns}
+              rowKey={(row) => row.id}
+              caption="Contrats grattage"
+              getRowLabel={(row) => `${row.reference}, ${row.raisonSociale}`}
+              mobileCard={(row) => (
+                <article className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <div><p className="font-mono text-xs text-slate-500">{row.reference}</p><h3 className="font-bold">{row.raisonSociale}</h3><p className="text-sm text-slate-600">{row.codePdv} · {row.produitCode}</p></div>
+                    <StatusBadge tone={statutTone(row.statut)}>{row.statutLabel}</StatusBadge>
+                  </div>
+                  <p className="mt-3 text-xs text-slate-500">Du {new Date(row.dateDebut).toLocaleDateString("fr-FR")} au {row.dateFin ? new Date(row.dateFin).toLocaleDateString("fr-FR") : "—"}</p>
+                  <div className="mt-4">{transitionActions(row)}</div>
+                </article>
+              )}
+            />
+          )}
         </div>
+        <div className="mt-4"><Pagination page={page} pageCount={totalPages} onPageChange={setPage} label="Pages des contrats grattage" /></div>
+      </Surface>
 
-        <p className="mt-3 text-xs text-slate-600">
-          {loading ? "Chargement…" : `${total} contrat(s) · page affichée : ${items.length}`}
-        </p>
-
-        <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full min-w-[900px] text-left text-xs">
-            <thead>
-              <tr className="border-b border-slate-200 bg-slate-100 text-slate-700">
-                <th className="px-3 py-2">Référence</th>
-                <th className="px-3 py-2">PDV</th>
-                <th className="px-3 py-2">Produit</th>
-                <th className="px-3 py-2">Statut</th>
-                <th className="px-3 py-2">Début</th>
-                <th className="px-3 py-2">Fin</th>
-                <th className="px-3 py-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((row) => (
-                <tr key={row.id} className="border-b border-slate-100 bg-white">
-                  <td className="px-3 py-2 font-mono text-[11px]">{row.reference}</td>
-                  <td className="px-3 py-2">
-                    <span className="font-mono text-[11px] text-slate-600">{row.codePdv}</span>
-                    <br />
-                    <span className="text-slate-900">{row.raisonSociale}</span>
-                  </td>
-                  <td className="px-3 py-2">{row.produitCode}</td>
-                  <td className="px-3 py-2">
-                    <span
-                      className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-medium ${statutBadgeClass(row.statut)}`}
-                    >
-                      {row.statutLabel}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2">{new Date(row.dateDebut).toLocaleDateString("fr-FR")}</td>
-                  <td className="px-3 py-2">
-                    {row.dateFin ? new Date(row.dateFin).toLocaleDateString("fr-FR") : "—"}
-                  </td>
-                  <td className="px-3 py-2">
-                    <div className="flex flex-wrap gap-1">
-                      {row.statut === "EN_COURS" ? (
-                        <>
-                          <button
-                            type="button"
-                            onClick={() => void onTransition(row.id, "SUSPENDU")}
-                            className="rounded border border-amber-300 bg-amber-500 px-2 py-0.5 text-[10px] font-medium text-white"
-                          >
-                            Suspendre
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void onTransition(row.id, "RESILIE")}
-                            className="rounded border border-rose-300 bg-rose-600 px-2 py-0.5 text-[10px] font-medium text-white"
-                          >
-                            Résilier
-                          </button>
-                        </>
-                      ) : null}
-                      {row.statut === "SUSPENDU" ? (
-                        <button
-                          type="button"
-                          onClick={() => void onTransition(row.id, "EN_COURS")}
-                          className="rounded border border-emerald-300 bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white"
-                        >
-                          Reprendre
-                        </button>
-                      ) : null}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {!loading && items.length === 0 ? (
-            <p className="px-3 py-6 text-center text-xs text-slate-500">Aucun contrat grattage.</p>
-          ) : null}
-        </div>
-      </section>
+      <ConfirmDialog
+        open={Boolean(transitionTarget)}
+        onOpenChange={(open) => { if (!open && busyId !== transitionTarget?.id) setTransitionTarget(null); }}
+        title="Confirmer le changement de statut"
+        message={<>Passer le contrat <strong>{transitionTarget?.reference}</strong> au statut « {transitionTarget ? GRATTAGE_CONTRAT_STATUT_LABELS[transitionTarget.statut] : ""} » ?</>}
+        confirmLabel="Confirmer"
+        destructive={transitionTarget?.statut === "RESILIE"}
+        pending={busyId === transitionTarget?.id}
+        onConfirm={() => transitionTarget ? onTransition(transitionTarget.id, transitionTarget.statut) : undefined}
+      />
     </div>
   );
 }

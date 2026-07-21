@@ -8,9 +8,13 @@ import {
   listDossierBulkActionsForUi,
   listDossierTransitionActionsForUi,
   userMayPatchDossierPayload,
-  userMayPerformDossierTransition,
   type DossierTransitionAction,
 } from "@/lib/auth/dossier-transition-rbac";
+import { isWorkflowDocumentVisible } from "@/lib/auth/workflow-visibility";
+import {
+  getRoleWorkflowFilterStatuses,
+  parseLonaciRole,
+} from "@/lib/lonaci/workflow-ui-policy";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -21,7 +25,24 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { formatDossierOperationLabel, formatDossierTypeDetail } from "@/lib/lonaci/dossier-labels";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
-import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
+import { openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
+import { notify } from "@/lib/toast";
+import {
+  Download,
+  Eye,
+  FileText,
+  RefreshCw,
+  RotateCcw,
+} from "lucide-react";
+
+import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
+import { PageHeader } from "@/components/lonaci/ui/headers";
+import { Pagination } from "@/components/lonaci/ui/pagination";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 type DossierStatus =
   | "BROUILLON"
@@ -72,6 +93,7 @@ interface DossierItem {
   updatedAt: string;
   hasDocumentChecklist?: boolean;
   checklistComplet?: boolean | null;
+  createdByUserId?: string;
   statutMetier?: ContratStatutMetier;
   statutMetierLabel?: string;
   statutMetierDescription?: string;
@@ -102,6 +124,14 @@ interface DossierListResponse {
   total: number;
   page: number;
   pageSize: number;
+}
+
+interface DossierTransitionResponse {
+  dossier?: {
+    id: string;
+    status: DossierStatus;
+    updatedAt: string | Date;
+  };
 }
 
 interface DossierDetailItem {
@@ -211,22 +241,14 @@ function statusLabel(status: DossierStatus): string {
   }
 }
 
-function statusBadgeClass(status: DossierStatus): string {
-  switch (status) {
-    case "BROUILLON":
-      return "border-slate-300 bg-slate-100 text-slate-700";
-    case "SOUMIS":
-      return "border-sky-200 bg-sky-50 text-sky-700";
-    case "VALIDE_N1":
-      return "border-indigo-200 bg-indigo-50 text-indigo-700";
-    case "VALIDE_N2":
-      return "border-violet-200 bg-violet-50 text-violet-700";
-    case "FINALISE":
-      return "border-emerald-200 bg-emerald-50 text-emerald-700";
-    case "REJETE":
-      return "border-rose-200 bg-rose-50 text-rose-700";
-  }
-}
+const DOSSIER_STATUS_TONES: Record<DossierStatus, Tone> = {
+  BROUILLON: "neutral",
+  SOUMIS: "info",
+  VALIDE_N1: "brand",
+  VALIDE_N2: "brand",
+  FINALISE: "success",
+  REJETE: "danger",
+};
 
 function confirmMessage(action: TransitionAction): string | null {
   if (action === "FINALIZE") {
@@ -241,9 +263,6 @@ export default function DossiersPanel() {
   const [statusFilter, setStatusFilter] = useState<DossierStatus | "ALL">("ALL");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(
-    null,
-  );
   const [items, setItems] = useState<DossierItem[]>([]);
   const [actionBusyId, setActionBusyId] = useState<string | null>(null);
   const loadInFlightRef = useRef(false);
@@ -253,6 +272,7 @@ export default function DossiersPanel() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("desc");
   const [highlightedDossierId, setHighlightedDossierId] = useState<string | null>(null);
   const [meRole, setMeRole] = useState<string | null>(null);
+  const [meUserId, setMeUserId] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
   const [serverTotal, setServerTotal] = useState(0);
@@ -272,6 +292,11 @@ export default function DossiersPanel() {
   const [bulkReplaySelectionBusy, setBulkReplaySelectionBusy] = useState(false);
   const [bulkReplayMode, setBulkReplayMode] = useState<ReplayMode>("FAILED_ONLY");
   const [bulkReplayCommentOverride, setBulkReplayCommentOverride] = useState("");
+  const [transitionConfirmation, setTransitionConfirmation] = useState<{
+    id: string;
+    action: TransitionAction;
+  } | null>(null);
+  const [replaySelectionConfirmationOpen, setReplaySelectionConfirmationOpen] = useState(false);
   const [meReplayKey, setMeReplayKey] = useState<string | null>(null);
   const fieldClass =
     "rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-cyan-500/20 placeholder:text-slate-400 focus:ring-2 focus:ring-cyan-500";
@@ -298,10 +323,7 @@ export default function DossiersPanel() {
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de chargement");
       setError(message);
-      setToast({
-        type: "error",
-        message,
-      });
+      notify.error(message);
     } finally {
       setLoading(false);
       loadInFlightRef.current = false;
@@ -314,15 +336,10 @@ export default function DossiersPanel() {
       if (row && dossierSubmitBlockedByChecklist(row)) {
         const msg = friendlyErrorMessage("DOSSIER_CHECKLIST_INCOMPLETE");
         setError(msg);
-        setToast({ type: "error", message: msg });
+        notify.error(msg);
         return false;
       }
     }
-    const message = confirmMessage(action);
-    if (message && !window.confirm(message)) {
-      return;
-    }
-
     setActionBusyId(id);
     try {
       const body: { action: TransitionAction; comment?: string | null } = { action };
@@ -339,13 +356,57 @@ export default function DossiersPanel() {
           | null;
         throw new Error(body?.message ?? "Transition impossible");
       }
+
+      const result = (await response.json().catch(() => null)) as DossierTransitionResponse | null;
+      const transitioned = result?.dossier;
+      if (transitioned) {
+        const updatedAt =
+          transitioned.updatedAt instanceof Date
+            ? transitioned.updatedAt.toISOString()
+            : transitioned.updatedAt;
+        const currentItem = items.find((item) => item.id === transitioned.id);
+        const parsedRole = parseLonaciRole(meRole);
+        const leavesVisibleQueue =
+          !parsedRole ||
+          !isWorkflowDocumentVisible({
+            workflow: "DOSSIERS",
+            role: parsedRole,
+            userId: meUserId,
+            creatorId: currentItem?.createdByUserId,
+            status: transitioned.status,
+          });
+        const leavesActiveFilter =
+          (statusFilter !== "ALL" && transitioned.status !== statusFilter) ||
+          leavesVisibleQueue;
+
+        setItems((current) => {
+          const updated = current.map((item) =>
+            item.id === transitioned.id
+              ? { ...item, status: transitioned.status, updatedAt }
+              : item,
+          );
+          return leavesActiveFilter
+            ? updated.filter((item) => item.id !== transitioned.id)
+            : updated;
+        });
+        if (leavesActiveFilter) {
+          setServerTotal((current) => Math.max(0, current - 1));
+        }
+        setSelectedIds((current) => current.filter((selectedId) => selectedId !== transitioned.id));
+        setDetailItem((current) =>
+          current?.id === transitioned.id
+            ? { ...current, status: transitioned.status, updatedAt }
+            : current,
+        );
+      }
+
       await load();
-      setToast({ type: "success", message: "Transition effectuée avec succès." });
+      notify.success("Transition effectuée avec succès.");
       return true;
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de transition");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
       return false;
     } finally {
       setActionBusyId(null);
@@ -373,12 +434,9 @@ export default function DossiersPanel() {
       const body = (await res.json()) as { dossier: DossierDetailItem };
       setDetailItem(body.dossier);
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(
-          err instanceof Error ? err.message : "Erreur de chargement du détail",
-        ),
-      });
+      notify.error(
+        friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de chargement du détail"),
+      );
       setDetailOpen(false);
     } finally {
       setDetailLoading(false);
@@ -389,10 +447,9 @@ export default function DossiersPanel() {
     try {
       await openLonaciPdfInTab(dossierRecapPdfUrl(dossierId));
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
-      });
+      notify.error(
+        friendlyErrorMessage(err instanceof Error ? err.message : "PDF récapitulatif indisponible."),
+      );
     }
   }
 
@@ -400,10 +457,7 @@ export default function DossiersPanel() {
     try {
       await openLonaciPdfInTab(contratOfficielPdfUrl(dossierId));
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "PDF contrat indisponible."));
     }
   }
 
@@ -425,7 +479,7 @@ export default function DossiersPanel() {
     if (!decisionDossierId || !decisionAction) return;
     const trimmed = decisionComment.trim();
     if (!trimmed) {
-      setToast({ type: "error", message: "Motif/commentaire obligatoire." });
+      notify.error("Motif/commentaire obligatoire.");
       return;
     }
 
@@ -470,6 +524,7 @@ export default function DossiersPanel() {
           user?: { role?: string; _id?: string; id?: string; email?: string };
         };
         setMeRole(d.user?.role ?? null);
+        setMeUserId(String(d.user?._id ?? d.user?.id ?? ""));
         const rawKey = d.user?._id ?? d.user?.id ?? d.user?.email ?? d.user?.role ?? "anonymous";
         setMeReplayKey(String(rawKey));
       } catch {
@@ -506,6 +561,14 @@ export default function DossiersPanel() {
     () => listDossierBulkActionsForUi(meRole, statusFilter === "ALL" ? null : statusFilter),
     [meRole, statusFilter],
   );
+  const visibleDossierStatuses = useMemo(
+    () => getRoleWorkflowFilterStatuses("DOSSIERS", parseLonaciRole(meRole)),
+    [meRole],
+  );
+  useEffect(() => {
+    if (statusFilter === "ALL" || visibleDossierStatuses.includes(statusFilter)) return;
+    setStatusFilter("ALL");
+  }, [statusFilter, visibleDossierStatuses]);
 
   useEffect(() => {
     if (!bulkActionsForUi.includes(bulkAction)) {
@@ -564,10 +627,7 @@ export default function DossiersPanel() {
     const selectedLogs = bulkLogs.filter((log) => selectedBulkLogIds.includes(log.id));
     if (!selectedLogs.some((log) => isSensitiveReplayAction(log.action))) return;
     setBulkReplayMode("FAILED_ONLY");
-    setToast({
-      type: "error",
-      message: "Retour automatique en mode échecs seuls: commentaire explicite manquant.",
-    });
+    notify.warning("Retour automatique en mode échecs seuls: commentaire explicite manquant.");
   }, [bulkReplayCommentOverride, bulkReplayMode, bulkLogs, selectedBulkLogIds]);
 
   const filteredItems = useMemo(() => items, [items]);
@@ -588,7 +648,7 @@ export default function DossiersPanel() {
   async function runBulkTransition() {
     if (!selectedIds.length || bulkBusy) return;
     if ((bulkAction === "REJECT" || bulkAction === "RETURN_PREVIOUS") && !bulkComment.trim()) {
-      setToast({ type: "error", message: "Commentaire obligatoire pour cette action en lot." });
+      notify.error("Commentaire obligatoire pour cette action en lot.");
       return;
     }
 
@@ -616,21 +676,20 @@ export default function DossiersPanel() {
         .filter((row) => !row.ok)
         .slice(0, 3)
         .map((row) => `${row.id}: ${row.message}`);
-      setToast({
-        type: report.failed === 0 ? "success" : "error",
-        message:
-          report.failed === 0
-            ? `${report.succeeded}/${report.total} dossier(s) mis à jour.`
-            : `${report.succeeded}/${report.total} réussi(s), ${report.failed} échec(s). ${firstFailures.join(" | ")}`,
-      });
+      const reportMessage =
+        report.failed === 0
+          ? `${report.succeeded}/${report.total} dossier(s) mis à jour.`
+          : `${report.succeeded}/${report.total} réussi(s), ${report.failed} échec(s). ${firstFailures.join(" | ")}`;
+      if (report.failed === 0) {
+        notify.success(reportMessage);
+      } else {
+        notify.warning(reportMessage);
+      }
       setSelectedIds([]);
       await load();
       await loadBulkLogs();
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur transition bulk"),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur transition bulk"));
     } finally {
       setBulkBusy(false);
     }
@@ -653,10 +712,7 @@ export default function DossiersPanel() {
     const replayComment = bulkReplayCommentOverride.trim();
     const log = bulkLogs.find((row) => row.id === logId);
     if (bulkReplayMode === "ALL_SAMPLE" && !replayComment && log && isSensitiveReplayAction(log.action)) {
-      setToast({
-        type: "error",
-        message: "Mode échantillon complet bloqué: ajoutez un commentaire explicite de rejeu.",
-      });
+      notify.error("Mode échantillon complet bloqué: ajoutez un commentaire explicite de rejeu.");
       return;
     }
     setBulkLogsReplayBusyId(logId);
@@ -674,20 +730,19 @@ export default function DossiersPanel() {
         throw new Error((body as { message?: string } | null)?.message ?? "Rejeu impossible");
       }
       const report = body as BulkTransitionResponse;
-      setToast({
-        type: report.failed === 0 ? "success" : "error",
-        message:
-          report.failed === 0
-            ? `Rejeu réussi: ${report.succeeded}/${report.total}.`
-            : `Rejeu partiel: ${report.succeeded}/${report.total}, ${report.failed} échec(s).`,
-      });
+      const reportMessage =
+        report.failed === 0
+          ? `Rejeu réussi: ${report.succeeded}/${report.total}.`
+          : `Rejeu partiel: ${report.succeeded}/${report.total}, ${report.failed} échec(s).`;
+      if (report.failed === 0) {
+        notify.success(reportMessage);
+      } else {
+        notify.warning(reportMessage);
+      }
       await load();
       await loadBulkLogs();
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu"),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu"));
     } finally {
       setBulkLogsReplayBusyId(null);
     }
@@ -699,17 +754,9 @@ export default function DossiersPanel() {
     const selectedLogs = bulkLogs.filter((log) => selectedBulkLogIds.includes(log.id));
     const hasSensitiveSelected = selectedLogs.some((log) => isSensitiveReplayAction(log.action));
     if (bulkReplayMode === "ALL_SAMPLE" && hasSensitiveSelected && !replayComment) {
-      setToast({
-        type: "error",
-        message: "Mode échantillon complet bloqué: commentaire explicite requis pour les actions sensibles.",
-      });
-      return;
-    }
-    if (
-      !window.confirm(
-        `Confirmer le rejeu (${bulkReplayMode === "FAILED_ONLY" ? "échecs seuls" : "échantillon complet"}) pour ${selectedBulkLogIds.length} journal(aux) sélectionné(s) ?`,
-      )
-    ) {
+      notify.error(
+        "Mode échantillon complet bloqué: commentaire explicite requis pour les actions sensibles.",
+      );
       return;
     }
     setBulkReplaySelectionBusy(true);
@@ -741,24 +788,22 @@ export default function DossiersPanel() {
       await load();
       await loadBulkLogs();
       if (failedLogs > 0) {
-        setToast({
-          type: "error",
-          message: `Rejeu terminé avec incidents: ${failedLogs} journal(aux) non rejoué(s), ${totalSucceeded}/${totalTotal} dossier(s) réussi(s).`,
-        });
+        notify.warning(
+          `Rejeu terminé avec incidents: ${failedLogs} journal(aux) non rejoué(s), ${totalSucceeded}/${totalTotal} dossier(s) réussi(s).`,
+        );
       } else {
-        setToast({
-          type: totalFailed === 0 ? "success" : "error",
-          message:
-            totalFailed === 0
-              ? `Rejeu groupé réussi: ${totalSucceeded}/${totalTotal}.`
-              : `Rejeu groupé partiel: ${totalSucceeded}/${totalTotal}, ${totalFailed} échec(s).`,
-        });
+        const reportMessage =
+          totalFailed === 0
+            ? `Rejeu groupé réussi: ${totalSucceeded}/${totalTotal}.`
+            : `Rejeu groupé partiel: ${totalSucceeded}/${totalTotal}, ${totalFailed} échec(s).`;
+        if (totalFailed === 0) {
+          notify.success(reportMessage);
+        } else {
+          notify.warning(reportMessage);
+        }
       }
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu groupé"),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de rejeu groupé"));
     } finally {
       setBulkReplaySelectionBusy(false);
     }
@@ -776,24 +821,75 @@ export default function DossiersPanel() {
     return () => window.clearTimeout(timeout);
   }, [referenceFilter, filteredItems, loading]);
 
+  function dossierActions(item: DossierItem) {
+    const transitions = listDossierTransitionActionsForUi(meRole, item.status);
+    return (
+      <div className="flex flex-wrap gap-2">
+        {transitions.map((action) => {
+          const submitBlocked = action === "SUBMIT" && dossierSubmitBlockedByChecklist(item);
+          return (
+            <Button
+              key={action}
+              size="sm"
+              variant={action === "REJECT" ? "danger" : "secondary"}
+              disabled={actionBusyId === item.id || submitBlocked}
+              title={
+                submitBlocked
+                  ? "Checklist documents incomplète — marquez tous les documents obligatoires comme Fourni"
+                  : undefined
+              }
+              onClick={() => {
+                if (action === "REJECT" || action === "RETURN_PREVIOUS") {
+                  openDecision(item.id, action);
+                } else if (confirmMessage(action)) {
+                  setTransitionConfirmation({ id: item.id, action });
+                } else {
+                  void transition(item.id, action);
+                }
+              }}
+            >
+              {actionLabel(action)}
+            </Button>
+          );
+        })}
+        {transitions.length === 0 ? <span className="self-center text-xs text-slate-400">Aucune transition</span> : null}
+        <Button size="sm" variant="secondary" leadingIcon={Eye} onClick={() => void openDetail(item.id)}>
+          Détail
+        </Button>
+        <Button size="sm" variant="secondary" leadingIcon={Download} onClick={() => void openDossierRecapPdf(item.id)}>
+          Récap.
+        </Button>
+        {dossierHasContratGenere(item.payload) ? (
+          <Button size="sm" leadingIcon={FileText} onClick={() => void openContratOfficielPdf(item.id)}>
+            Contrat
+          </Button>
+        ) : null}
+      </div>
+    );
+  }
+
   return (
-    <section className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs uppercase tracking-[0.16em] text-cyan-700">Infinitecore Systeme</p>
-          <h2 className="mt-1 text-2xl font-semibold text-slate-900">Gestion des contrats — dossiers</h2>
-          <p className="mt-1 max-w-3xl text-xs text-slate-600">
-            Checklist documents par produit, décharges provisoire et définitive, génération du contrat puis circuit
-            de validation en 4 niveaux ; à la finalisation par le Chef de Service, le client devient concessionnaire actif.
-          </p>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:flex lg:flex-wrap lg:items-center">
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Recherche ref/statut/type/client"
-            className={`w-full lg:w-72 ${fieldClass}`}
-          />
+    <div className="space-y-4">
+      <PageHeader
+        eyebrow="Gestion des contrats"
+        title="Dossiers"
+        description="Checklist documentaire, génération du contrat et circuit de validation en quatre niveaux."
+        actions={
+          <Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void load()}>
+            Actualiser
+          </Button>
+        }
+      />
+      <Surface elevated>
+      <FilterBar
+        search={{
+          value: search,
+          onChange: setSearch,
+          label: "Rechercher un dossier",
+          placeholder: "Référence, statut, type ou client…",
+        }}
+        filters={
+          <>
           <select
             value={sortField}
             onChange={(e) => setSortField(e.target.value as SortField)}
@@ -820,19 +916,12 @@ export default function DossiersPanel() {
             className={fieldClass}
           >
             <option value="ALL">Tous</option>
-            <option value="BROUILLON">BROUILLON</option>
-            <option value="SOUMIS">SOUMIS</option>
-            <option value="VALIDE_N1">VALIDE_N1</option>
-            <option value="VALIDE_N2">VALIDE_N2</option>
-            <option value="FINALISE">FINALISE</option>
+            {visibleDossierStatuses.map((status) => (
+              <option key={status} value={status}>
+                {status}
+              </option>
+            ))}
           </select>
-          <button
-            type="button"
-            onClick={() => void load()}
-            className="inline-flex items-center justify-center rounded-xl border border-cyan-600 bg-cyan-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700"
-          >
-            Actualiser
-          </button>
           <select
             value={pageSize}
             onChange={(e) => setPageSize(Number(e.target.value))}
@@ -843,8 +932,19 @@ export default function DossiersPanel() {
             <option value={50}>50 / page</option>
             <option value={100}>100 / page</option>
           </select>
-        </div>
-      </div>
+          </>
+        }
+        actions={
+          <Button variant="secondary" leadingIcon={RotateCcw} onClick={() => {
+            setSearch("");
+            setStatusFilter("ALL");
+            setSortField("updatedAt");
+            setSortOrder("desc");
+          }}>
+            Réinitialiser
+          </Button>
+        }
+      />
 
       <div className="mb-4 flex flex-wrap items-center gap-2 text-xs text-slate-500">
         <span>{totalVisible} dossier(s) affiché(s)</span>
@@ -902,7 +1002,7 @@ export default function DossiersPanel() {
                 bulkReplaySelectionBusy ||
                 (bulkReplayMode === "ALL_SAMPLE" && allSampleBlockedForSelection)
               }
-              onClick={() => void replaySelectedBulkFailures()}
+              onClick={() => setReplaySelectionConfirmationOpen(true)}
               className="rounded border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 hover:bg-amber-100 disabled:opacity-50"
             >
               {bulkReplaySelectionBusy
@@ -1126,31 +1226,14 @@ export default function DossiersPanel() {
         <p className="mb-4 text-xs text-emerald-700">Filtre référence actif: {referenceFilter}</p>
       ) : null}
 
-      {loading ? <p className="text-sm text-slate-500">Chargement...</p> : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
-      {toast ? (
-        <div
-          className={`mb-3 rounded-lg border px-3 py-2 text-sm ${
-            toast.type === "success"
-              ? "border-emerald-200 bg-emerald-50 text-emerald-900"
-              : "border-rose-200 bg-rose-50 text-rose-900"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span>{toast.message}</span>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              className="text-xs opacity-80 hover:opacity-100"
-            >
-              Fermer
-            </button>
-          </div>
-        </div>
+      {loading ? <FeedbackState title="Chargement des dossiers" description="Actualisation de la file de travail…" /> : null}
+      {error ? (
+        <FeedbackState className="mb-3" tone="danger" title="Chargement impossible" description={error} aria-live="assertive" />
       ) : null}
 
       {!loading ? (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
+        <div>
+        <div className="hidden overflow-x-auto rounded-xl border border-slate-200 md:block">
           <table className="min-w-full text-left text-sm">
             <thead className="bg-slate-50 text-slate-600">
               <tr>
@@ -1209,9 +1292,9 @@ export default function DossiersPanel() {
                     </button>
                   </td>
                   <td className="px-3 py-2.5">
-                    <span className={`rounded-full border px-2 py-0.5 text-xs ${statusBadgeClass(item.status)}`}>
+                    <StatusBadge tone={DOSSIER_STATUS_TONES[item.status]}>
                       {statusLabel(item.status)}
-                    </span>
+                    </StatusBadge>
                   </td>
                   <td className="px-3 py-2.5">
                     {item.type === "CONTRAT_ACTUALISATION" && item.statutMetier ? (
@@ -1255,60 +1338,7 @@ export default function DossiersPanel() {
                   </td>
                   <td className="px-3 py-2.5">{new Date(item.updatedAt).toLocaleString()}</td>
                   <td className="px-3 py-2.5">
-                    <div className="flex flex-wrap gap-2">
-                      {listDossierTransitionActionsForUi(meRole, item.status).map((action) => {
-                          const submitBlocked =
-                            action === "SUBMIT" && dossierSubmitBlockedByChecklist(item);
-                          return (
-                          <button
-                            key={action}
-                            type="button"
-                            disabled={actionBusyId === item.id || submitBlocked}
-                            title={
-                              submitBlocked
-                                ? "Checklist documents incomplète — marquez tous les documents obligatoires comme Fourni"
-                                : undefined
-                            }
-                            onClick={() => {
-                              if (action === "REJECT" || action === "RETURN_PREVIOUS") {
-                                openDecision(item.id, action);
-                                return;
-                              }
-                              void transition(item.id, action);
-                            }}
-                            className="rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-60"
-                          >
-                            {actionLabel(action)}
-                          </button>
-                          );
-                        })}
-                      {listDossierTransitionActionsForUi(meRole, item.status).length === 0 ? (
-                        <span className="text-xs text-slate-400">Aucune action</span>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => void openDetail(item.id)}
-                        className="rounded-lg border border-indigo-300 bg-white px-2.5 py-1.5 text-xs font-medium text-indigo-700 shadow-sm transition hover:bg-indigo-50"
-                      >
-                        Détail
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void openDossierRecapPdf(item.id)}
-                        className="rounded-lg border border-emerald-600 bg-white px-2.5 py-1.5 text-xs font-medium text-emerald-700 shadow-sm transition hover:bg-emerald-50"
-                      >
-                        Récap.
-                      </button>
-                      {dossierHasContratGenere(item.payload) ? (
-                        <button
-                          type="button"
-                          onClick={() => void openContratOfficielPdf(item.id)}
-                          className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-900"
-                        >
-                          Contrat
-                        </button>
-                      ) : null}
-                    </div>
+                    {dossierActions(item)}
                   </td>
                 </tr>
               ))}
@@ -1321,70 +1351,66 @@ export default function DossiersPanel() {
               ) : null}
             </tbody>
           </table>
-          <div className="flex items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-3 py-2">
-            <button
-              type="button"
-              disabled={page <= 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Précédent
-            </button>
-            <button
-              type="button"
-              disabled={page >= totalPages}
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              className="rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50"
-            >
-              Suivant
-            </button>
+          <div className="flex items-center justify-end border-t border-slate-200 bg-slate-50 px-3 py-3">
+            <Pagination page={page} pageCount={totalPages} onPageChange={setPage} label="Pagination des dossiers" />
           </div>
+        </div>
+        <div className="grid gap-3 md:hidden" role="list" aria-label="Dossiers">
+          {filteredItems.length === 0 ? (
+            <FeedbackState title="Aucun dossier" description="Aucun dossier ne correspond aux critères actuels." />
+          ) : filteredItems.map((item) => (
+            <article
+              key={item.id}
+              id={`dossier-mobile-${item.id}`}
+              role="listitem"
+              className={`rounded-2xl border bg-white p-4 shadow-sm ${highlightedDossierId === item.id ? "border-emerald-300 bg-emerald-50" : "border-orange-200"}`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <button type="button" onClick={() => void openDetail(item.id)} className="min-h-11 text-left font-mono text-sm font-bold text-orange-700">
+                  {item.reference}
+                </button>
+                <StatusBadge tone={DOSSIER_STATUS_TONES[item.status]}>{statusLabel(item.status)}</StatusBadge>
+              </div>
+              <dl className="mt-3 grid gap-3 text-sm">
+                <div><dt className="font-semibold text-slate-500">Opération</dt><dd className="mt-1">{formatDossierOperationLabel(item.type, item.payload)}</dd></div>
+                <div><dt className="font-semibold text-slate-500">Client / concessionnaire</dt><dd className="mt-1 break-all font-mono text-xs">{item.lonaciClientId ?? item.concessionnaireId ?? "—"}</dd></div>
+                <div><dt className="font-semibold text-slate-500">Mise à jour</dt><dd className="mt-1">{new Date(item.updatedAt).toLocaleString("fr-FR")}</dd></div>
+              </dl>
+              <div className="mt-4 border-t border-slate-100 pt-4">{dossierActions(item)}</div>
+            </article>
+          ))}
+          <Pagination page={page} pageCount={totalPages} onPageChange={setPage} label="Pagination mobile des dossiers" />
+        </div>
         </div>
       ) : null}
 
-      {decisionOpen && decisionDossierId && decisionAction ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="decision-dossier-title"
-        >
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
-            aria-label="Fermer"
-            disabled={actionBusyId === decisionDossierId}
-            onClick={closeDecision}
-          />
-          <div className="relative z-10 flex max-h-[78vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-3 py-1.5">
-              <div>
-                <h3
-                  id="decision-dossier-title"
-                  className="text-sm font-semibold text-slate-900"
-                >
-                    {decisionAction === "REJECT"
-                      ? "Rejet du dossier (retour brouillon)"
-                      : "Retour pour correction"}
-                </h3>
-                <p className="mt-0.5 text-[11px] leading-4 text-slate-600">
-                    {decisionAction === "REJECT"
-                      ? "Motif/commentaire obligatoire. Le dossier repassera à l’étape Brouillon."
-                      : "Motif/commentaire requis pour cette action."}
-                </p>
-              </div>
-              <button
-                type="button"
-                disabled={actionBusyId === decisionDossierId}
-                onClick={closeDecision}
-                className="rounded-lg border border-slate-300 px-2.5 py-1 text-sm text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                ×
-              </button>
-            </div>
-
-            <div className="flex min-h-0 flex-1 flex-col px-3 py-2">
+      <Dialog
+        open={decisionOpen && Boolean(decisionDossierId) && Boolean(decisionAction)}
+        onOpenChange={(next) => {
+          if (!next && actionBusyId !== decisionDossierId) closeDecision();
+        }}
+        title={decisionAction === "REJECT" ? "Rejet du dossier" : "Retour pour correction"}
+        description={
+          decisionAction === "REJECT"
+            ? "Motif obligatoire. Le dossier repassera à l’étape Brouillon."
+            : "Un motif est requis pour retourner le dossier."
+        }
+        size="sm"
+        footer={
+          <>
+            <Button variant="secondary" onClick={closeDecision} disabled={actionBusyId === decisionDossierId}>
+              Annuler
+            </Button>
+            <Button
+              variant={decisionAction === "REJECT" ? "danger" : "primary"}
+              disabled={actionBusyId === decisionDossierId || !decisionComment.trim()}
+              onClick={() => void submitDecision()}
+            >
+              Confirmer
+            </Button>
+          </>
+        }
+      >
               <label className="grid gap-1">
                 <span className="text-xs font-medium text-slate-700">Motif / commentaire</span>
                 <textarea
@@ -1395,55 +1421,15 @@ export default function DossiersPanel() {
                   className="w-full rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] leading-4 text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400"
                 />
               </label>
+      </Dialog>
 
-              <div className="mt-3 flex flex-wrap justify-end gap-2">
-                <button
-                  type="button"
-                  disabled={actionBusyId === decisionDossierId || !decisionComment.trim()}
-                  onClick={() => void submitDecision()}
-                  className="rounded-lg border border-slate-900 bg-slate-900 px-2.5 py-1 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 disabled:opacity-60"
-                >
-                  Confirmer
-                </button>
-                <button
-                  type="button"
-                  disabled={actionBusyId === decisionDossierId}
-                  onClick={closeDecision}
-                  className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-50"
-                >
-                  Annuler
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {detailOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="dossier-detail-title">
-          <button
-            type="button"
-            className="absolute inset-0 bg-slate-900/50 backdrop-blur-[2px]"
-            aria-label="Fermer"
-            onClick={() => setDetailOpen(false)}
-          />
-          <div className="relative z-10 flex max-h-[82vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
-            <div className="flex items-start justify-between gap-3 border-b border-slate-200 px-4 py-2">
-              <div>
-                <h3 id="dossier-detail-title" className="text-sm font-semibold text-slate-900">
-                  Détail dossier
-                </h3>
-                <p className="text-xs text-slate-600">Consultation complète et historique des transitions.</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setDetailOpen(false)}
-                className="rounded-lg border border-slate-300 px-2 py-0.5 text-sm text-slate-600"
-              >
-                ×
-              </button>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+      <Dialog
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+        title="Détail dossier"
+        description="Consultation complète et historique des transitions."
+        size="lg"
+      >
               {detailLoading ? <p className="text-sm text-slate-500">Chargement du détail...</p> : null}
               {!detailLoading && detailItem ? (
                 <div className="space-y-3">
@@ -1507,7 +1493,7 @@ export default function DossiersPanel() {
                           statutMetierLabel: d.statutMetierLabel,
                           statutMetierDescription: d.statutMetierDescription,
                         });
-                        setToast({ type: "success", message: "Dossier actualisé." });
+                        notify.success("Dossier actualisé.");
                         void load();
                       }}
                     />
@@ -1558,10 +1544,40 @@ export default function DossiersPanel() {
                   </div>
                 </div>
               ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </section>
+      </Dialog>
+
+      <ConfirmDialog
+        open={transitionConfirmation !== null}
+        onOpenChange={(next) => {
+          if (!next && !actionBusyId) setTransitionConfirmation(null);
+        }}
+        title="Finaliser le dossier"
+        message={transitionConfirmation ? confirmMessage(transitionConfirmation.action) ?? "Confirmer cette transition ?" : ""}
+        confirmLabel="Finaliser"
+        pending={Boolean(actionBusyId)}
+        onConfirm={async () => {
+          if (!transitionConfirmation) return;
+          const current = transitionConfirmation;
+          await transition(current.id, current.action);
+          setTransitionConfirmation(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={replaySelectionConfirmationOpen}
+        onOpenChange={(next) => {
+          if (!next && !bulkReplaySelectionBusy) setReplaySelectionConfirmationOpen(false);
+        }}
+        title="Rejouer la sélection"
+        message={`Confirmer le rejeu (${bulkReplayMode === "FAILED_ONLY" ? "échecs seuls" : "échantillon complet"}) pour ${selectedBulkLogIds.length} journal(aux) ?`}
+        confirmLabel="Rejouer"
+        pending={bulkReplaySelectionBusy}
+        onConfirm={async () => {
+          await replaySelectedBulkFailures();
+          setReplaySelectionConfirmationOpen(false);
+        }}
+      />
+      </Surface>
+    </div>
   );
 }

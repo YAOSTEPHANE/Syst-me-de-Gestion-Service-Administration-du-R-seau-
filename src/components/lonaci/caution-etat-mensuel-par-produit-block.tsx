@@ -1,7 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Pencil, RotateCcw, Save, ShieldCheck } from "lucide-react";
 
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
+import { FeedbackState } from "@/components/lonaci/ui/feedback-state";
+import { Card } from "@/components/lonaci/ui/surface";
 import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
 import {
   displayEtatRowMetrics,
@@ -311,9 +316,15 @@ export function CautionEtatMensuelParProduitBlock({
   const showBody = rows.length > 0;
 
   return (
-    <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <div className="border-b border-slate-100 bg-amber-50/60 px-4 py-3">
-        <h3 className="text-sm font-semibold text-slate-900">État des cautions par produit (par mois)</h3>
+    <Card
+      title="État des cautions par produit"
+      description="Suivi mensuel des attendus, encaissements et écarts."
+      action={<ShieldCheck className="text-orange-600" size={20} aria-hidden="true" />}
+      padding="none"
+      elevated
+      className="overflow-hidden"
+    >
+      <div className="border-b border-orange-100 bg-orange-50/60 px-4 py-3">
         <p className="mt-1 text-xs text-slate-600">
           {months <= 1
             ? "Dernier mois calendaire."
@@ -364,12 +375,28 @@ export function CautionEtatMensuelParProduitBlock({
             supprime la saisie admin.
           </p>
         ) : null}
-        {attendusEditError ? <p className="mt-2 text-xs text-red-800">{attendusEditError}</p> : null}
-        {hint ? <p className="mt-2 text-xs text-amber-900">{hint}</p> : null}
+        {attendusEditError ? (
+          <FeedbackState
+            title="Modification impossible"
+            description={attendusEditError}
+            tone="danger"
+            className="mt-3"
+            aria-live="assertive"
+          />
+        ) : null}
+        {hint ? (
+          <FeedbackState
+            title="Données indisponibles"
+            description={hint}
+            tone="warning"
+            className="mt-3"
+            aria-live="polite"
+          />
+        ) : null}
       </div>
       <div className="max-h-[min(40rem,60vh)] overflow-auto p-3 sm:p-4">
         {!showBody && !hint ? (
-          <p className="text-sm text-slate-500">Aucune ligne à afficher.</p>
+          <FeedbackState title="Aucune ligne à afficher" description="Aucune caution ne correspond à cette période." />
         ) : !showBody ? null : (
           <div className="space-y-5">
             {sections.map((sec) => {
@@ -399,16 +426,15 @@ export function CautionEtatMensuelParProduitBlock({
                     }`}
                   >
                     <span className="flex items-center gap-2">
-                      <span
-                        className={`inline-block h-0 w-0 border-y-[5px] border-y-transparent border-l-[6px] transition-transform ${
-                          isOpen ? "rotate-90 border-l-amber-800" : "border-l-slate-500"
-                        }`}
-                        aria-hidden
+                      <ChevronDown
+                        size={16}
+                        className={`shrink-0 text-orange-700 transition-transform ${isOpen ? "rotate-180" : ""}`}
+                        aria-hidden="true"
                       />
                       <span className="text-sm font-semibold capitalize text-slate-900">{sec.moisLabel}</span>
-                      <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                      <Badge>
                         {sec.rows.length} produit{sec.rows.length !== 1 ? "s" : ""}
-                      </span>
+                      </Badge>
                     </span>
                     <span className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-right">
                       <span className="font-mono text-xs text-slate-500">{sec.yearMonth}</span>
@@ -431,19 +457,22 @@ export function CautionEtatMensuelParProduitBlock({
                   >
                     {isOpen ? (
                       <table className="w-full min-w-[700px] border-collapse text-left text-[11px] text-slate-800">
-                        {prorataUsed ? (
-                          <caption className="caption-bottom px-0 pb-2 text-left text-[10px] leading-snug text-slate-600">
+                        <caption className="caption-bottom px-0 pb-2 text-left text-[10px] leading-snug text-slate-600">
+                          État mensuel des cautions par produit pour {sec.moisLabel}.{" "}
+                          {prorataUsed ? (
+                            <>
                             * Cautions non encaissées (FCFA) : attendu − encaissées du mois sur la ligne. Nombre à
                             encaisser : arrondi(attendu FCFA ÷ encaissées FCFA) ; si encaissées = 0, stock au prorata.
                             Écart (cautions) : à encaisser affiché − encaissées. % ref. dossiers : pourcentage de cet
                             écart (ligne ÷ somme des écarts du mois ; « — » si somme = 0). Résumé mois replié : mêmes
                             totaux + écart cautions. Les encaissements restent les montants réels.
-                          </caption>
-                        ) : null}
+                            </>
+                          ) : null}
+                        </caption>
                         <thead className="bg-white text-slate-600">
                           <tr className="border-b border-slate-200">
-                            <th className="whitespace-nowrap px-2 py-2 font-semibold">Produit</th>
-                            <th
+                            <th scope="col" className="whitespace-nowrap px-2 py-2 font-semibold">Produit</th>
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title={
                                 allowAdminAttendusMontants
@@ -453,34 +482,34 @@ export function CautionEtatMensuelParProduitBlock({
                             >
                               {"Attendus\nmontants\ncautions (FCFA)"}
                             </th>
-                            <th
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title="Arrondi(attendu FCFA ÷ cautions encaissées FCFA du mois) ; si encaissées = 0 : stock au prorata"
                             >
                               {"Nombre de\ncautions à\nencaisser"}
                             </th>
-                            <th
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title="Montants réels des cautions payées dans le mois (non proratisés)"
                             >
                               {"Cautions\nencaissées\n(FCFA)"}
                             </th>
-                            <th className="whitespace-pre-line px-2 py-2 font-semibold leading-tight">
+                            <th scope="col" className="whitespace-pre-line px-2 py-2 font-semibold leading-tight">
                               {"Nombre de\ncautions\nencaissées"}
                             </th>
-                            <th
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title="Attendus montants cautions (FCFA) − cautions encaissées (FCFA) du mois sur la ligne"
                             >
                               {"Cautions\nnon\nencaissées (FCFA)"}
                             </th>
-                            <th
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title="Nombre de cautions à encaisser − nombre de cautions encaissées"
                             >
                               {"Écart"}
                             </th>
-                            <th
+                            <th scope="col"
                               className="whitespace-pre-line px-2 py-2 font-semibold leading-tight"
                               title="% ref. dossiers = pourcentage de l’Écart (cautions) : écart ligne ÷ somme des écarts du mois. Un seul produit et écart ≠ 0 ⇒ 100 %. Somme des écarts = 0 ⇒ —. Total mois : pas de %."
                             >
@@ -504,10 +533,10 @@ export function CautionEtatMensuelParProduitBlock({
                               attendusRawNeedsSave(rk, r.montantAttendusCautions, attendusPendingRawByKey);
                             return (
                             <tr key={`${r.yearMonth}-${r.produitCode}`} className="border-t border-slate-100">
-                              <td className="px-2 py-1.5 align-top">
+                              <th scope="row" className="px-2 py-1.5 text-left align-top font-normal">
                                 <span className="font-mono text-[10px] font-semibold">{r.produitCode}</span>
                                 <span className="mt-0.5 block text-[10px] text-slate-600">{r.libelle}</span>
-                              </td>
+                              </th>
                               <td className="px-2 py-1.5 align-top">
                                 {allowAdminAttendusMontants ? (
                                   <div className="flex flex-col gap-0.5">
@@ -542,9 +571,10 @@ export function CautionEtatMensuelParProduitBlock({
                                           }}
                                         />
                                         {showEnregistrerBtn ? (
-                                          <button
-                                            type="button"
-                                            className="shrink-0 rounded border border-amber-600 bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm hover:bg-amber-600 disabled:opacity-50"
+                                          <Button
+                                            size="sm"
+                                            leadingIcon={Save}
+                                            className="shrink-0"
                                             title="Enregistrer ce montant en base (équivalent à quitter le champ ou Entrée)"
                                             disabled={savingAttendusKey === rk}
                                             onClick={() => {
@@ -557,18 +587,19 @@ export function CautionEtatMensuelParProduitBlock({
                                             }}
                                           >
                                             Enregistrer
-                                          </button>
+                                          </Button>
                                         ) : null}
                                         {r.attendusMontantsSource === "ADMIN" ? (
-                                          <button
-                                            type="button"
-                                            className="rounded border border-slate-200 bg-white px-1 py-0.5 text-[10px] text-slate-600 opacity-100 transition-opacity hover:bg-slate-50 sm:opacity-0 sm:group-hover/att-edit:opacity-100 sm:group-focus-within/att-edit:opacity-100"
+                                          <IconButton
+                                            icon={RotateCcw}
+                                            label="Réinitialiser le montant attendu"
+                                            size="sm"
+                                            variant="secondary"
+                                            className="opacity-100 transition-opacity sm:opacity-0 sm:group-hover/att-edit:opacity-100 sm:group-focus-within/att-edit:opacity-100"
                                             title="Réinitialiser : supprimer la saisie admin et utiliser le total calculé depuis les dossiers"
                                             disabled={savingAttendusKey === rk}
                                             onClick={() => void resetAttendusMontantsSaisi(r.yearMonth, r.produitCode)}
-                                          >
-                                            ↺
-                                          </button>
+                                          />
                                         ) : null}
                                       </span>
                                     ) : (
@@ -577,25 +608,28 @@ export function CautionEtatMensuelParProduitBlock({
                                           {r.montantAttendusCautions.toLocaleString("fr-FR")}
                                         </span>
                                         <span className="inline-flex items-center gap-1 opacity-100 transition-opacity duration-150 sm:opacity-0 sm:group-hover/att-consult:opacity-100 sm:group-focus-within/att-consult:opacity-100">
-                                          <button
-                                            type="button"
-                                            className="shrink-0 rounded border border-slate-300 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                                          <Button
+                                            size="sm"
+                                            variant="secondary"
+                                            leadingIcon={Pencil}
+                                            className="shrink-0"
                                             title="Modifier le montant attendu"
                                             disabled={savingAttendusKey === rk}
                                             onClick={() => openAttendusEdit(rk)}
                                           >
                                             Modifier
-                                          </button>
+                                          </Button>
                                           {r.attendusMontantsSource === "ADMIN" ? (
-                                            <button
-                                              type="button"
-                                              className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-[10px] font-semibold text-slate-600 shadow-sm hover:bg-slate-50 disabled:opacity-50"
+                                            <Button
+                                              size="sm"
+                                              variant="ghost"
+                                              leadingIcon={RotateCcw}
                                               title="Réinitialiser : supprimer la saisie admin et utiliser le total calculé depuis les dossiers"
                                               disabled={savingAttendusKey === rk}
                                               onClick={() => void resetAttendusMontantsSaisi(r.yearMonth, r.produitCode)}
                                             >
                                               Réinitialiser
-                                            </button>
+                                            </Button>
                                           ) : null}
                                         </span>
                                       </div>
@@ -662,6 +696,6 @@ export function CautionEtatMensuelParProduitBlock({
           </div>
         )}
       </div>
-    </section>
+    </Card>
   );
 }

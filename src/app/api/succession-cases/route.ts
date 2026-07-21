@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { apiError, badRequest } from "@/lib/api/error-responses";
 import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { listFilterConcessionnaireId, resolveFormPartyIds } from "@/lib/lonaci/client-party-resolve";
 import { SUCCESSION_STATUTS_METIER } from "@/lib/lonaci/succession-statut-metier";
 import {
   createSuccessionCase,
@@ -57,7 +58,7 @@ export async function GET(request: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse;
 
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -68,7 +69,6 @@ export async function GET(request: NextRequest) {
 
   await ensureSuccessionIndexes();
   const agenceRestriction = concessionnaireListAgenceRestriction(auth.user);
-  const { listFilterConcessionnaireId } = await import("@/lib/lonaci/client-party-resolve");
   const concessionnaireFilter = await listFilterConcessionnaireId({
     lonaciClientId: parsed.data.lonaciClientId,
     concessionnaireId: parsed.data.concessionnaireId,
@@ -84,6 +84,7 @@ export async function GET(request: NextRequest) {
       statutMetier: parsed.data.statutMetier,
       dateFrom: parsed.data.dateFrom ? new Date(parsed.data.dateFrom) : undefined,
       dateTo: parsed.data.dateTo ? new Date(parsed.data.dateTo) : undefined,
+      visibility: auth.user,
     },
   );
   return NextResponse.json(result, { status: 200 });
@@ -118,7 +119,6 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
-  const { resolveFormPartyIds } = await import("@/lib/lonaci/client-party-resolve");
   let concessionnaireId: string;
   try {
     const party = await resolveFormPartyIds({

@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureSprint4Indexes();
-  const rows = await listCautionEtatMensuelParProduit(parsed.data.months);
+  const rows = await listCautionEtatMensuelParProduit(parsed.data.months, auth.user);
 
   return NextResponse.json(
     { rows, months: parsed.data.months },

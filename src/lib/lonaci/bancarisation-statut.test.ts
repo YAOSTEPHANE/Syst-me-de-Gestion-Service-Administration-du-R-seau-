@@ -6,7 +6,7 @@ import {
   normalizeBancarisationStatut,
 } from "@/lib/lonaci/bancarisation-statut";
 
-describe("bancarisation statut spec 8.3", () => {
+describe("statut de bancarisation", () => {
   it("expose les libellés et descriptions métier", () => {
     expect(bancarisationStatutLabel("NON_BANCARISE")).toBe("NON BANCARISÉ");
     expect(bancarisationStatutDescription("BANCARISE")).toContain("Commissions versées");
@@ -18,7 +18,7 @@ describe("bancarisation statut spec 8.3", () => {
     expect(normalizeBancarisationStatut("NON_BANCARISE", "EN_ATTENTE_RIB")).toBe("EN_ATTENTE_RIB");
   });
 
-  it("conserve les statuts 8.3", () => {
+  it("conserve les statuts de bancarisation", () => {
     expect(normalizeBancarisationStatut("RIB_VALIDE", null)).toBe("RIB_VALIDE");
     expect(normalizeBancarisationStatut("BANCARISE", null)).toBe("BANCARISE");
   });

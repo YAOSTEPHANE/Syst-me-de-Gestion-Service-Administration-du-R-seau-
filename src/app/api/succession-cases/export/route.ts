@@ -5,6 +5,8 @@ import { concessionnaireListAgenceRestriction } from "@/lib/lonaci/concessionnai
 import { listSuccessionCases } from "@/lib/lonaci/succession";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
+import { createPdfResponse } from "@/lib/pdf";
+import { renderSuccessionsListPdf } from "@/lib/pdf/successions-list";
 
 const schema = z.object({
   format: z.enum(["csv", "pdf"]).default("csv"),
@@ -38,6 +40,7 @@ export async function GET(request: NextRequest) {
       parsed.data.dateTo && !Number.isNaN(new Date(parsed.data.dateTo).getTime())
         ? new Date(parsed.data.dateTo)
         : undefined,
+    visibility: auth.user,
   });
 
   if (parsed.data.format === "csv") {
@@ -67,18 +70,9 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  const rows = data.items
-    .map(
-      (r) =>
-        `<tr><td>${r.reference}</td><td>${r.concessionnaireId}</td><td>${r.statutMetierLabel}</td><td>${r.status}</td><td>${r.stepsCompleted}/${r.stepsTotal}</td><td>${r.decisionType ?? ""}</td><td>${r.autoDossierContratReference ?? ""}</td><td>${new Date(r.updatedAt).toLocaleString("fr-FR")}</td></tr>`,
-    )
-    .join("");
-  const html = `<!doctype html><html><head><meta charset="utf-8"/><title>Décès et ayants droit</title></head><body><h1>Décès et ayants droit</h1><p>Export imprimable (PDF via impression navigateur)</p><table border="1" cellspacing="0" cellpadding="6"><thead><tr><th>Réf</th><th>Concessionnaire</th><th>Statut §10.3</th><th>Statut technique</th><th>Progression</th><th>Décision</th><th>Dossier contrat auto</th><th>MAJ</th></tr></thead><tbody>${rows}</tbody></table></body></html>`;
-  return new NextResponse(html, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "Content-Disposition": `inline; filename="succession-${new Date().toISOString().slice(0, 10)}.html"`,
-    },
+  const issuedAt = new Date();
+  const pdf = await renderSuccessionsListPdf(data.items, issuedAt);
+  return createPdfResponse(pdf, {
+    filename: `succession-${issuedAt.toISOString().slice(0, 10)}.pdf`,
   });
 }

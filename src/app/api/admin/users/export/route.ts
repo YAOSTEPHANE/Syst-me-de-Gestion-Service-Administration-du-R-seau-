@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import PDFDocument from "pdfkit";
 import { z } from "zod";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
 import { listUsers } from "@/lib/lonaci/users";
+import { createPdfResponse, renderAdminUsersExportPdf } from "@/lib/pdf";
 
 const querySchema = z.object({
   status: z.enum(["ALL", "ACTIF", "INACTIF"]).optional().default("ALL"),
@@ -38,45 +38,27 @@ export async function GET(request: NextRequest) {
         return haystack.includes(q);
       })
     : agenceFiltered;
-
-  const pdfBuffer = await new Promise<Buffer>((resolve, reject) => {
-    const doc = new PDFDocument({ margin: 24, size: "A4", layout: "landscape" });
-    const chunks: Buffer[] = [];
-    doc.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
-    doc.on("error", reject);
-
-    doc.fontSize(14).text("Export utilisateurs", { underline: true });
-    doc.moveDown(0.3);
-    doc
-      .fontSize(9)
-      .text(
-        `Filtres: status=${parsed.data.status} role=${parsed.data.role ?? "ALL"} agence=${parsed.data.agenceId ?? "ALL"} q=${parsed.data.q ?? ""}`,
-      );
-    doc.fontSize(9).text(`Genere le: ${new Date().toLocaleString("fr-FR")} | total: ${filtered.length}`);
-    doc.moveDown(0.6);
-
-    for (const row of filtered) {
-      doc
-        .fontSize(8.8)
-        .text(
-          `${row.prenom} ${row.nom} | ${row.email} | matricule=${row.matricule ?? "-"} | role=${row.role} | agence=${row.agenceId ?? "-"} | statut=${row.actif ? "ACTIF" : "INACTIF"} | derniereConnexion=${row.derniereConnexion?.toISOString() ?? "-"}`,
-        );
-    }
-
-    if (filtered.length === 0) {
-      doc.fontSize(9).text("Aucun utilisateur pour ces filtres.");
-    }
-
-    doc.end();
-  });
-
-  return new NextResponse(new Uint8Array(pdfBuffer), {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="users-${Date.now()}.pdf"`,
-      "Cache-Control": "no-store",
+  const generatedAt = new Date();
+  const pdfBuffer = await renderAdminUsersExportPdf(
+    filtered.map((row) => ({
+      nomComplet: `${row.prenom} ${row.nom}`,
+      email: row.email,
+      matricule: row.matricule ?? "-",
+      role: row.role,
+      agence: row.agenceId ?? "-",
+      statut: row.actif ? "ACTIF" : "INACTIF",
+      derniereConnexion: row.derniereConnexion ?? null,
+    })),
+    {
+      status: parsed.data.status,
+      role: parsed.data.role ?? "ALL",
+      agence: parsed.data.agenceId ?? "ALL",
+      recherche: parsed.data.q ?? "",
     },
+    generatedAt,
+  );
+
+  return createPdfResponse(pdfBuffer, {
+    filename: `users-${generatedAt.getTime()}.pdf`,
   });
 }

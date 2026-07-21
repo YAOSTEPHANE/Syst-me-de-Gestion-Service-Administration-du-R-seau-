@@ -1,5 +1,15 @@
 import { ObjectId } from "mongodb";
 
+import {
+  buildWorkflowVisibilityMongoFilter,
+  isWorkflowDocumentVisible,
+} from "@/lib/auth/workflow-visibility";
+import {
+  canFinalizeCaution,
+  canValidateCautionN1,
+  canValidateCautionN2,
+  resolveCautionCorrectionReturnLevel,
+} from "@/lib/auth/caution-transition-policy";
 import type { CautionEncaissementMode, CautionStatus } from "@/lib/lonaci/constants";
 import type {
   AuditEntityType,
@@ -14,8 +24,8 @@ import { getResolvedAlertThresholds } from "@/lib/lonaci/alert-thresholds";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { broadcastCriticalEmailToRole } from "@/lib/lonaci/critical-email";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
-import { isStatutBloquant } from "@/lib/lonaci/access";
-import { notifyRoleTargets } from "@/lib/lonaci/notifications";
+import { canReadClient, canReadConcessionnaire, isStatutBloquant } from "@/lib/lonaci/access";
+import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { findLonaciClientById, activateClientAfterCautionPaid, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { isClientStatutEligibleForCaution } from "@/lib/lonaci/client-constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
@@ -28,14 +38,16 @@ import {
   CAUTION_PENDING_PAYMENT_STATUSES,
   cautionStatutMetierDescription,
   cautionStatutMetierLabel,
-  isCautionPendingPayment,
   resolveCautionStatutMetier,
   type CautionStatutMetier,
 } from "@/lib/lonaci/caution-statut-metier";
 import { listContratsAllMatching, type ListContratsParams } from "@/lib/lonaci/contracts";
 import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, listAgenceIdsZoneAbidjan, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
-import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
+import {
+  restrictionToMongoAgenceFilter,
+  type ListAgenceRestriction,
+} from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -147,6 +159,65 @@ async function findContratById(id: string): Promise<ContratDocument | null> {
   return { ...row, _id: row._id.toHexString() };
 }
 
+async function isCautionInActorAgence(caution: CautionDocument, actor: UserDocument): Promise<boolean> {
+  if (caution.agenceId !== undefined) {
+    return canReadClient(actor, { agenceId: caution.agenceId ?? null });
+  }
+  if (caution.lonaciClientId) {
+    const client = await findLonaciClientById(caution.lonaciClientId);
+    return Boolean(client && canReadClient(actor, client));
+  }
+  const concessionnaireId = caution.concessionnaireId
+    ?? (caution.contratId ? (await findContratById(caution.contratId))?.concessionnaireId : null);
+  if (!concessionnaireId) return false;
+  const concessionnaire = await findConcessionnaireById(concessionnaireId);
+  return Boolean(
+    concessionnaire
+      && !concessionnaire.deletedAt
+      && canReadConcessionnaire(actor, concessionnaire),
+  );
+}
+
+async function cautionAgenceIdForNotification(
+  caution: CautionDocument,
+): Promise<string | null> {
+  if (caution.agenceId !== undefined) return caution.agenceId ?? null;
+  if (caution.lonaciClientId) {
+    return (await findLonaciClientById(caution.lonaciClientId))?.agenceId ?? null;
+  }
+  const concessionnaireId =
+    caution.concessionnaireId ??
+    (caution.contratId ? (await findContratById(caution.contratId))?.concessionnaireId : null);
+  if (!concessionnaireId) return null;
+  return (await findConcessionnaireById(concessionnaireId))?.agenceId ?? null;
+}
+
+export async function findVisibleCautionById(
+  id: string,
+  actor: UserDocument,
+): Promise<CautionDocument | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
+    _id: new ObjectId(id),
+    deletedAt: null,
+  });
+  if (!row) return null;
+  const caution: CautionDocument = { ...row, _id: row._id.toHexString() };
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "CAUTIONS",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: caution.createdByUserId,
+      status: caution.status,
+    })
+  ) {
+    return null;
+  }
+  return (await isCautionInActorAgence(caution, actor)) ? caution : null;
+}
+
 export async function createCaution(input: {
   contratId?: string;
   lonaciClientId?: string;
@@ -204,6 +275,7 @@ export async function createCaution(input: {
 
     doc = {
       contratId,
+      agenceId: concessionnaire.agenceId,
       montant: input.montant,
       modeReglement,
       status: "EN_ATTENTE",
@@ -231,6 +303,7 @@ export async function createCaution(input: {
 
     doc = {
       concessionnaireId,
+      agenceId: concessionnaire.agenceId,
       montant: input.montant,
       modeReglement,
       status: "EN_ATTENTE",
@@ -277,6 +350,7 @@ export async function createCaution(input: {
 
     doc = {
       lonaciClientId: lonaciClientId!,
+      agenceId: client.agenceId,
       produitCode: pcode,
       montant,
       modeReglement,
@@ -341,6 +415,7 @@ export async function createCaution(input: {
       ficheProvisoire: isProvisoire,
       numeroFicheProvisoire: numeroFicheProvisoire ?? undefined,
     },
+    await cautionAgenceIdForNotification({ ...doc, _id: result.insertedId.toHexString() }),
   );
   return { ...doc, _id: result.insertedId.toHexString() };
 }
@@ -354,10 +429,7 @@ export async function regulariserCautionPaiement(input: {
 }): Promise<CautionFicheDefinitiveDto> {
   if (!ObjectId.isValid(input.cautionId)) throw new Error("CAUTION_NOT_FOUND");
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(input.cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(input.cautionId, input.actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
   if (!caution.ficheProvisoire) throw new Error("CAUTION_NOT_PROVISOIRE");
@@ -369,8 +441,8 @@ export async function regulariserCautionPaiement(input: {
   const numeroFicheDefinitive =
     caution.numeroFicheDefinitive?.trim() || (await nextNumeroFicheDefinitive());
   const ficheDefinitiveEmiseLe = caution.ficheDefinitiveEmiseLe ?? now;
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: caution._id },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(input.cautionId) },
     {
       $set: {
         ficheProvisoire: false,
@@ -384,6 +456,7 @@ export async function regulariserCautionPaiement(input: {
       },
     },
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
   const actionBy = userDisplayName(input.actor);
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
@@ -412,6 +485,7 @@ export async function regulariserCautionPaiement(input: {
       status: caution.status,
       numeroFicheDefinitive,
     },
+    await cautionAgenceIdForNotification(caution),
   );
   const emailResult = await deliverCautionFicheDefinitive(input.cautionId);
   return {
@@ -433,25 +507,31 @@ export async function validateCautionN1(cautionId: string, actor: UserDocument) 
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
   if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
   if (caution.ficheProvisoire) throw new Error("CAUTION_FICHE_PROVISOIRE");
-  if (!["EN_ATTENTE", "A_CORRIGER"].includes(caution.status)) throw new Error("CAUTION_WRONG_STATUS");
+  if (!canValidateCautionN1(actor.role, caution.status)) throw new Error("CAUTION_WRONG_STATUS");
   const now = new Date();
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: caution._id },
-    { $set: { status: "VALIDE_N1" as CautionStatus, updatedAt: now, updatedByUserId: actor._id ?? "" } },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(cautionId), status: "EN_ATTENTE" },
+    {
+      $set: {
+        status: "VALIDE_N1" as CautionStatus,
+        correctionReturnLevel: null,
+        updatedAt: now,
+        updatedByUserId: actor._id ?? "",
+      },
+    },
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
   const actionBy = userDisplayName(actor);
   await notifyRoleTargets(
     "ASSIST_CDS",
     "Caution : validation N2 attendue",
     `Opération caution | id ${cautionId} | action validation N2 attendue | acteur ${actionBy}.`,
     { cautionId, contratId: caution.contratId ?? null, lonaciClientId: caution.lonaciClientId ?? null },
+    await cautionAgenceIdForNotification(caution),
   );
 }
 
@@ -459,29 +539,33 @@ export async function validateCautionN2(cautionId: string, actor: UserDocument) 
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
   if (actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
   if (caution.ficheProvisoire) throw new Error("CAUTION_FICHE_PROVISOIRE");
-  if (caution.status !== "VALIDE_N1") throw new Error("CAUTION_WRONG_STATUS");
+  if (!canValidateCautionN2(actor.role, caution.status)) throw new Error("CAUTION_WRONG_STATUS");
   const now = new Date();
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: caution._id },
-    { $set: { status: "VALIDE_N2" as CautionStatus, updatedAt: now, updatedByUserId: actor._id ?? "" } },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(cautionId), status: "VALIDE_N1" },
+    {
+      $set: {
+        status: "VALIDE_N2" as CautionStatus,
+        correctionReturnLevel: null,
+        updatedAt: now,
+        updatedByUserId: actor._id ?? "",
+      },
+    },
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
   const actionBy = userDisplayName(actor);
   await notifyRoleTargets(
     "CHEF_SERVICE",
     "Caution : finalisation attendue",
     `Opération caution | id ${cautionId} | action finalisation (paiement / rejet) attendue | acteur ${actionBy}.`,
     { cautionId, contratId: caution.contratId ?? null, lonaciClientId: caution.lonaciClientId ?? null },
+    await cautionAgenceIdForNotification(caution),
   );
 }
-
-const CAUTION_FINALIZABLE_STATUSES = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"] as const;
 
 export async function finalizeCaution(
   cautionId: string,
@@ -489,17 +573,13 @@ export async function finalizeCaution(
   actor: UserDocument,
 ): Promise<CautionFicheDefinitiveDto | null> {
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
+  if (actor.role !== "CHEF_SERVICE") throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
   if (caution.ficheProvisoire) throw new Error("CAUTION_FICHE_PROVISOIRE");
-  if (!CAUTION_FINALIZABLE_STATUSES.includes(caution.status as (typeof CAUTION_FINALIZABLE_STATUSES)[number])) {
-    throw new Error("CAUTION_WRONG_STATUS");
-  }
+  if (!canFinalizeCaution(actor.role, caution.status)) throw new Error("CAUTION_WRONG_STATUS");
   const status = paid ? "PAYEE" : "ANNULEE";
   const now = new Date();
   const hadFicheDefinitive = Boolean(caution.numeroFicheDefinitive?.trim());
@@ -513,8 +593,8 @@ export async function finalizeCaution(
       ficheDefinitiveEmiseLe = now;
     }
   }
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: new ObjectId(cautionId) },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(cautionId), status: "VALIDE_N2", immutableAfterFinal: false },
     {
       $set: {
         status,
@@ -529,6 +609,7 @@ export async function finalizeCaution(
       },
     },
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
     lonaciClientId: caution.lonaciClientId ?? null,
@@ -551,17 +632,17 @@ export async function finalizeCaution(
     : caution.lonaciClientId?.trim()
       ? `client ${caution.lonaciClientId}`
       : "dossier";
-  await notifyRoleTargets(
-    "ASSIST_CDS",
-    "Caution finalisee",
-    `Opération caution | référence ${cautionId} | action caution passée à ${status} (${dossier}) | acteur ${actionBy}.`,
-    {
+  await sendNotification({
+    userId: caution.createdByUserId,
+    title: "Caution finalisee",
+    message: `Opération caution | référence ${cautionId} | action caution passée à ${status} (${dossier}) | acteur ${actionBy}.`,
+    metadata: {
       cautionId,
       contratId: caution.contratId ?? null,
       lonaciClientId: caution.lonaciClientId ?? null,
       status,
     },
-  );
+  });
   if (paid) {
     const { completeInscriptionAfterCautionPaid, resolveConcessionnaireIdFromCautionLink } =
       await import("@/lib/lonaci/concessionnaire-inscription");
@@ -599,21 +680,21 @@ export async function returnCautionForCorrection(input: {
 }) {
   if (!ObjectId.isValid(input.cautionId)) throw new Error("CAUTION_NOT_FOUND");
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(input.cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(input.cautionId, input.actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal) throw new Error("CAUTION_IMMUTABLE");
-  if (!["EN_ATTENTE", "VALIDE_N1", "VALIDE_N2", "A_CORRIGER"].includes(caution.status)) {
-    throw new Error("CAUTION_WRONG_STATUS");
-  }
+  const correctionReturnLevel = resolveCautionCorrectionReturnLevel(
+    input.actor.role,
+    caution.status,
+  );
+  if (!correctionReturnLevel) throw new Error("CAUTION_WRONG_STATUS");
   const now = new Date();
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: new ObjectId(input.cautionId) },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(input.cautionId), status: caution.status },
     {
       $set: {
         status: "A_CORRIGER",
+        correctionReturnLevel,
         updatedAt: now,
         updatedByUserId: input.actor._id ?? "",
       },
@@ -631,6 +712,7 @@ export async function returnCautionForCorrection(input: {
       },
     } as unknown as Record<string, unknown>,
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
     lonaciClientId: caution.lonaciClientId ?? null,
@@ -640,7 +722,7 @@ export async function returnCautionForCorrection(input: {
     entityId: auditEnt.entityId,
     action: "CAUTION_RETURN_FOR_CORRECTION",
     userId: input.actor._id ?? "",
-    details: { cautionId: input.cautionId, comment: input.comment },
+    details: { cautionId: input.cautionId, comment: input.comment, correctionReturnLevel },
   });
   const actionBy = userDisplayName(input.actor);
   const dossier = caution.contratId?.trim()
@@ -648,17 +730,17 @@ export async function returnCautionForCorrection(input: {
     : caution.lonaciClientId?.trim()
       ? `client ${caution.lonaciClientId}`
       : "dossier";
-  await notifyRoleTargets(
-    "ASSIST_CDS",
-    "Caution retournee pour correction",
-    `Opération caution | référence ${input.cautionId} | action caution retournée pour correction (${dossier}) | acteur ${actionBy} | motif ${input.comment}`,
-    {
+  await sendNotification({
+    userId: caution.createdByUserId,
+    title: "Caution retournee pour correction",
+    message: `Opération caution | référence ${input.cautionId} | action caution retournée pour correction (${dossier}) | acteur ${actionBy} | motif ${input.comment}`,
+    metadata: {
       cautionId: input.cautionId,
       contratId: caution.contratId ?? null,
       lonaciClientId: caution.lonaciClientId ?? null,
       status: "A_CORRIGER",
     },
-  );
+  });
 }
 
 export async function exonererCaution(input: {
@@ -667,29 +749,29 @@ export async function exonererCaution(input: {
   actor: UserDocument;
 }): Promise<void> {
   if (!ObjectId.isValid(input.cautionId)) throw new Error("CAUTION_NOT_FOUND");
+  if (input.actor.role !== "CHEF_SERVICE") throw new Error("ROLE_FORBIDDEN");
   const motif = input.motif.trim();
   if (motif.length < 3) throw new Error("CAUTION_EXONERATION_MOTIF_REQUIS");
 
   const db = await getDatabase();
-  const caution = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).findOne({
-    _id: new ObjectId(input.cautionId),
-    deletedAt: null,
-  });
+  const caution = await findVisibleCautionById(input.cautionId, input.actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
   if (caution.immutableAfterFinal && caution.status !== "EXONEREE") {
     throw new Error("CAUTION_IMMUTABLE");
   }
   if (caution.status === "PAYEE") throw new Error("CAUTION_DEJA_PAYEE");
   if (caution.status === "EXONEREE") throw new Error("CAUTION_DEJA_EXONEREE");
-  if (!isCautionPendingPayment(caution.status)) throw new Error("CAUTION_WRONG_STATUS");
+  if (!canFinalizeCaution(input.actor.role, caution.status)) {
+    throw new Error("CAUTION_WRONG_STATUS");
+  }
 
   const now = new Date();
   const observations = [caution.observations?.trim(), `Exonération Direction : ${motif}`]
     .filter(Boolean)
     .join("\n");
 
-  await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: caution._id },
+  const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
+    { _id: new ObjectId(input.cautionId), status: "VALIDE_N2", immutableAfterFinal: false },
     {
       $set: {
         status: "EXONEREE",
@@ -701,6 +783,7 @@ export async function exonererCaution(input: {
       },
     },
   );
+  if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
 
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
@@ -722,12 +805,12 @@ export async function exonererCaution(input: {
   }
 
   const actionBy = userDisplayName(input.actor);
-  await notifyRoleTargets(
-    "CHEF_SECTION",
-    "Caution exoneree (Direction)",
-    `Caution ${input.cautionId} exoneree | motif : ${motif} | acteur ${actionBy}.`,
-    { cautionId: input.cautionId, motif },
-  );
+  await sendNotification({
+    userId: caution.createdByUserId,
+    title: "Caution exoneree (Direction)",
+    message: `Caution ${input.cautionId} exoneree | motif : ${motif} | acteur ${actionBy}.`,
+    metadata: { cautionId: input.cautionId, motif },
+  });
 }
 
 export async function listCautionAlertsJ10(agenceId?: string | null) {
@@ -1085,7 +1168,7 @@ export interface CautionListRowDto {
   montant: number;
   modeReglement: CautionPaymentMode;
   status: CautionStatus;
-  /** Statut métier spec 2.3 (EN_ATTENTE, PAYEE, EN_RETARD, EXONEREE). */
+  /** Statut métier parmi EN_ATTENTE, PAYEE, EN_RETARD et EXONEREE. */
   statutMetier: CautionStatutMetier;
   statutMetierLabel: string;
   statutMetierDescription: string;
@@ -1113,40 +1196,25 @@ function cautionDueThresholdDate(): Promise<Date> {
 }
 
 /** Compteurs des trois tuiles de l’écran Cautions (cohérents avec les onglets liste). */
-export async function getCautionCounters(): Promise<{
+export async function getCautionCounters(
+  actor: UserDocument,
+  agenceRestriction: ListAgenceRestriction,
+): Promise<{
   overdueJ10: number;
   enAttente: number;
   validatedThisMonth: number;
 }> {
-  const db = await getDatabase();
-  const threshold = await cautionDueThresholdDate();
-  const today = new Date();
-  const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const startNext = new Date(today.getFullYear(), today.getMonth() + 1, 1);
-
-  const base = { deletedAt: null };
-
-  const pendingStatuses = [...CAUTION_PENDING_PAYMENT_STATUSES];
-
   const [overdueJ10, enAttente, validatedThisMonth] = await Promise.all([
-    db.collection(CAUTIONS_COLLECTION).countDocuments({
-      ...base,
-      status: { $in: [...pendingStatuses] },
-      dueDate: { $lte: threshold },
-    }),
-    db.collection(CAUTIONS_COLLECTION).countDocuments({
-      ...base,
-      status: { $in: [...pendingStatuses] },
-      dueDate: { $gt: threshold },
-    }),
-    db.collection(CAUTIONS_COLLECTION).countDocuments({
-      ...base,
-      status: "PAYEE",
-      paidAt: { $gte: startMonth, $lt: startNext },
-    }),
+    listCautionsForTab("J10_OVERDUE", 1, 1, actor, agenceRestriction),
+    listCautionsForTab("EN_ATTENTE", 1, 1, actor, agenceRestriction),
+    listCautionsForTab("VALIDATED_THIS_MONTH", 1, 1, actor, agenceRestriction),
   ]);
 
-  return { overdueJ10, enAttente, validatedThisMonth };
+  return {
+    overdueJ10: overdueJ10.total,
+    enAttente: enAttente.total,
+    validatedThisMonth: validatedThisMonth.total,
+  };
 }
 
 function mapRowToListDto(
@@ -1393,6 +1461,8 @@ export async function listCautionsForTab(
   tab: CautionListTab,
   page: number,
   pageSize: number,
+  actor: UserDocument,
+  agenceRestriction: ListAgenceRestriction,
 ): Promise<{ items: CautionListRowDto[]; total: number }> {
   const db = await getDatabase();
   const threshold = await cautionDueThresholdDate();
@@ -1400,23 +1470,62 @@ export async function listCautionsForTab(
   const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
   const startNext = new Date(today.getFullYear(), today.getMonth() + 1, 1);
 
-  const base = { deletedAt: null };
-  let filter: Record<string, unknown> = base;
+  const conditions: Record<string, unknown>[] = [{ deletedAt: null }];
 
   const pendingStatuses = [...CAUTION_PENDING_PAYMENT_STATUSES];
 
   if (tab === "J10_OVERDUE") {
-    filter = { ...base, status: { $in: [...pendingStatuses] }, dueDate: { $lte: threshold } };
+    conditions.push({ status: { $in: [...pendingStatuses] }, dueDate: { $lte: threshold } });
   } else if (tab === "EN_ATTENTE") {
-    filter = { ...base, status: { $in: [...pendingStatuses] }, dueDate: { $gt: threshold } };
+    conditions.push({ status: { $in: [...pendingStatuses] }, dueDate: { $gt: threshold } });
   } else {
-    filter = {
-      ...base,
+    conditions.push({
       status: "PAYEE",
       paidAt: { $gte: startMonth, $lt: startNext },
-    };
+    });
   }
 
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "CAUTIONS",
+    role: actor.role,
+    userId: actor._id ?? "",
+  });
+  conditions.push(visibility ?? { _id: { $in: [] } });
+
+  const agenceMongo = restrictionToMongoAgenceFilter(agenceRestriction);
+  if (agenceMongo) {
+    const agenceIds = typeof agenceMongo === "string" ? [agenceMongo] : agenceMongo.$in;
+    const [clients, concessionnaires] = await Promise.all([
+      prisma.lonaciClient.findMany({
+        where: { deletedAt: null, agenceId: { in: agenceIds } },
+        select: { id: true },
+      }),
+      prisma.concessionnaire.findMany({
+        where: { deletedAt: null, agenceId: { in: agenceIds } },
+        select: { id: true },
+      }),
+    ]);
+    const concessionnaireIds = concessionnaires.map((row) => row.id);
+    const contrats = concessionnaireIds.length
+      ? await db
+          .collection<StoredContrat>(CONTRATS_COLLECTION)
+          .find(
+            { deletedAt: null, concessionnaireId: { $in: concessionnaireIds } },
+            { projection: { _id: 1 } },
+          )
+          .toArray()
+      : [];
+    conditions.push({
+      $or: [
+        { agenceId: agenceMongo },
+        { lonaciClientId: { $in: clients.map((row) => row.id) } },
+        { concessionnaireId: { $in: concessionnaireIds } },
+        { contratId: { $in: contrats.map((row) => row._id.toHexString()) } },
+      ],
+    });
+  }
+
+  const filter: Record<string, unknown> = { $and: conditions };
   const col = db.collection<StoredCaution>(CAUTIONS_COLLECTION);
   const skip = Math.max(0, (page - 1) * pageSize);
 
@@ -1791,7 +1900,10 @@ function computeCautionBucketMetrics(
   return acc;
 }
 
-export async function listCautionEtatMensuelParProduit(months: number): Promise<CautionEtatMensuelProduitRow[]> {
+export async function listCautionEtatMensuelParProduit(
+  months: number,
+  actor: UserDocument,
+): Promise<CautionEtatMensuelProduitRow[]> {
   await ensureSprint4Indexes();
   const n = Math.min(36, Math.max(1, Math.floor(months)));
   const monthDefs = lastNCalendarMonths(n);
@@ -1802,20 +1914,42 @@ export async function listCautionEtatMensuelParProduit(months: number): Promise<
   ).start;
 
   const db = await getDatabase();
-  const cautionRows = await db
+  const visibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "CAUTIONS",
+    role: actor.role,
+    userId: actor._id ?? "",
+  });
+  const cautionCandidates = await db
     .collection<StoredCaution>(CAUTIONS_COLLECTION)
     .find(
       {
-        deletedAt: null,
-        $or: [
-          { createdAt: { $gte: oldestStart } },
-          { paidAt: { $gte: oldestStart } },
-          { status: { $in: [...MONTHLY_ETAT_PENDING] } },
+        $and: [
+          { deletedAt: null },
+          visibility ?? { _id: { $in: [] } },
+          {
+            $or: [
+              { createdAt: { $gte: oldestStart } },
+              { paidAt: { $gte: oldestStart } },
+              { status: { $in: [...MONTHLY_ETAT_PENDING] } },
+            ],
+          },
         ],
       },
       { projection: { contratId: 1, lonaciClientId: 1, produitCode: 1, montant: 1, status: 1, paidAt: 1, createdAt: 1, updatedAt: 1, deletedAt: 1, ficheProvisoire: 1 } },
     )
     .toArray();
+  const cautionAccess = await Promise.all(
+    cautionCandidates.map(async (row) => ({
+      row,
+      visible: await isCautionInActorAgence(
+        { ...row, _id: row._id.toHexString() },
+        actor,
+      ),
+    })),
+  );
+  const cautionRows = cautionAccess
+    .filter((entry) => entry.visible)
+    .map((entry) => entry.row);
 
   const contratIds = [...new Set(cautionRows.map((r) => r.contratId).filter((id): id is string => Boolean(id?.trim())))];
   const contrats =

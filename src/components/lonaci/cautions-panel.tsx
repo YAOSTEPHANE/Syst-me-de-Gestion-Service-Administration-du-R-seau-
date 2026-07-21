@@ -1,8 +1,15 @@
 ﻿"use client";
 
+import { FilePlus2, RefreshCw, ShieldCheck } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { Badge, StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { Dialog } from "@/components/lonaci/ui/dialog";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Card, Surface } from "@/components/lonaci/ui/surface";
 import { canRole } from "@/lib/auth/rbac";
 import {
   CAUTION_ENCAISSEMENT_MODES,
@@ -15,6 +22,7 @@ import {
 } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
@@ -28,8 +36,8 @@ import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fic
 import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 import { aggregateEtatMensuelLatestMonth } from "@/lib/lonaci/caution-etat-mensuel-display";
 import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
-
-type CautionPaymentMode = (typeof CAUTION_PAYMENT_MODES)[number];
+import { CLIENT_PDF_COLORS } from "@/lib/pdf/client-premium";
+import { notify } from "@/lib/toast";
 
 interface AlertItem {
   id: string;
@@ -439,7 +447,7 @@ function uniqueOrderedProduitCodes(selected: string[]): string[] {
  */
 const LONACI_PRINT_ISOLATION_CSS = `
 @media print {
-  @page { size: A4; margin: 5mm; }
+  @page { size: A4 portrait; margin: 24mm 9mm 17mm; }
   html, body {
     height: auto !important;
     overflow: visible !important;
@@ -461,7 +469,7 @@ const LONACI_PRINT_ISOLATION_CSS = `
     min-height: 0 !important;
     max-height: none !important;
     margin: 0 !important;
-    padding: 3mm 4mm !important;
+    padding: 0 !important;
     background: #fff !important;
     box-shadow: none !important;
     z-index: 2147483647 !important;
@@ -477,8 +485,20 @@ const LONACI_PRINT_ISOLATION_CSS = `
     padding: 0 !important;
     margin: 0 auto !important;
     max-width: 100% !important;
-    font-size: 8.6pt !important;
-    line-height: 1.22 !important;
+    font-size: 9.5pt !important;
+    line-height: 1.35 !important;
+  }
+  .lonaci-print-surface .provisional-slip-sheet > header {
+    position: fixed !important; top: -18mm; left: 0; right: 0; height: 15mm;
+    margin: 0 !important; padding: 2mm 0 !important;
+    border-color: ${CLIENT_PDF_COLORS.orange} !important;
+    background: #fff !important;
+  }
+  .lonaci-print-surface .provisional-slip-footer {
+    display: flex !important; position: fixed; bottom: -11mm; left: 0; right: 0;
+  }
+  .lonaci-print-surface .provisional-slip-footer .page-number::after {
+    content: "Page " counter(page) " / " counter(pages);
   }
   .lonaci-print-surface .provisional-slip-sheet h2 {
     font-size: 13pt !important;
@@ -491,8 +511,6 @@ const LONACI_PRINT_ISOLATION_CSS = `
   .lonaci-print-surface .provisional-slip-sheet section {
     margin-bottom: 2mm !important;
     padding: 2mm 2.5mm !important;
-    break-inside: auto !important;
-    page-break-inside: auto !important;
   }
   .lonaci-print-surface .fiche-print-table-wrap {
     overflow: visible !important;
@@ -502,7 +520,7 @@ const LONACI_PRINT_ISOLATION_CSS = `
     width: 100% !important;
     min-width: 0 !important;
     table-layout: fixed !important;
-    font-size: 7.2pt !important;
+    font-size: 8.5pt !important;
   }
   .lonaci-print-surface .provisional-slip-sheet th,
   .lonaci-print-surface .provisional-slip-sheet td {
@@ -510,12 +528,26 @@ const LONACI_PRINT_ISOLATION_CSS = `
     hyphens: auto;
     overflow-wrap: anywhere;
   }
+  .lonaci-print-surface thead { display: table-header-group !important; }
+  .lonaci-print-surface tfoot { display: table-footer-group !important; }
+  .lonaci-print-surface tr,
+  .lonaci-print-surface article,
+  .lonaci-print-surface .print-card,
+  .lonaci-print-surface .print-signatures,
+  .lonaci-print-surface .print-qr {
+    break-inside: avoid !important;
+    page-break-inside: avoid !important;
+  }
   .lonaci-print-surface .lonaci-payee-print-card {
     box-shadow: none !important;
     max-height: none !important;
     overflow: visible !important;
     padding: 2mm !important;
     font-size: 8.8pt !important;
+  }
+  .lonaci-print-surface * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 }
 `.trim();
@@ -540,12 +572,10 @@ function provisionalBundleClipboardLines(slips: ProvisionalSlipData[]): string[]
     lines.push(
       `--- Ligne ${i + 1} / ${slips.length} ---`,
       `N° FPC: ${s.numero}`,
-      `ID dossier caution: ${s.cautionId || "—"}`,
       `Code produit: ${s.produitCode}`,
       ...(s.produitLibelle ? [`Libellé produit: ${s.produitLibelle}`] : []),
       `Montant FCFA: ${s.montantFCFA}`,
-      `—0chéance: ${s.dueDate}`,
-      `Référence interne Lonaci (trace): ${s.referenceInterneLonaci}`,
+      `Échéance: ${s.dueDate}`,
       "",
     );
   });
@@ -588,7 +618,6 @@ export default function CautionsPanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const referentialError = error;
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [counters, setCounters] = useState<CautionCounters | null>(null);
   /** Données brutes état mensuel par produit (même API que le tableau) — pour aligner les Analytics. */
   const [etatMensuelRows, setEtatMensuelRows] = useState<CautionEtatMensuelProduitRow[]>([]);
@@ -638,6 +667,9 @@ export default function CautionsPanel() {
   const [finalizeAck, setFinalizeAck] = useState(false);
   const [finalizeDecision, setFinalizeDecision] = useState<CautionDecision>("APPROUVER");
   const [finalizeComment, setFinalizeComment] = useState("");
+  const [exonerationTarget, setExonerationTarget] = useState<CautionListItem | null>(null);
+  const [exonerationMotif, setExonerationMotif] = useState("");
+  const [exonerationError, setExonerationError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [importingFile, setImportingFile] = useState(false);
@@ -659,9 +691,13 @@ export default function CautionsPanel() {
     [items, tab],
   );
 
-  const renderCautionListActionCell = useCallback(
-    (row: CautionListItem) => {
+  const renderCautionListActionCell = (row: CautionListItem) => {
       const pipelineStatus = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"].includes(row.status);
+      const assignedTarget = getAssignedWorkflowTarget({
+        workflow: "CAUTIONS",
+        role: meRbacRole,
+        status: row.status,
+      });
       const mayFinalize = meRbacRole
         ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "FINALIZE" }).allowed
         : false;
@@ -675,16 +711,18 @@ export default function CautionsPanel() {
         row.ficheProvisoire &&
         (row.status === "EN_ATTENTE" || row.status === "A_CORRIGER") &&
         mayRegularizePaiement;
-      const showFinalize = pipelineStatus && !row.ficheProvisoire && mayFinalize;
-      const showReturn = pipelineStatus && mayReturn;
-      const showReject = pipelineStatus && mayReject;
-      const mayExonerer = meRole === "CHEF_SERVICE" && pipelineStatus && row.statutMetier !== "EXONEREE";
+      const showValidation = assignedTarget === "VALIDE_N1" || assignedTarget === "VALIDE_N2";
+      const showFinalize = assignedTarget === "PAYEE" && !row.ficheProvisoire && mayFinalize;
+      const showReturn = Boolean(assignedTarget) && pipelineStatus && mayReturn;
+      const showReject = Boolean(assignedTarget) && pipelineStatus && mayReject;
+      const mayExonerer =
+        assignedTarget === "PAYEE" && meRole === "CHEF_SERVICE" && row.statutMetier !== "EXONEREE";
       const showActionCell =
         tab !== "VALIDATED_THIS_MONTH" &&
         !row.immutableAfterFinal &&
         row.statutMetier !== "PAYEE" &&
         row.statutMetier !== "EXONEREE" &&
-        (showFinalize || showReturn || showReject || showRegularize || mayExonerer);
+        (showValidation || showFinalize || showReturn || showReject || showRegularize || mayExonerer);
 
       if (!showActionCell) {
         const label = cautionStatutLabel(row, tab);
@@ -718,6 +756,18 @@ export default function CautionsPanel() {
       }
       return (
         <div className="flex flex-wrap justify-end gap-1">
+          {showValidation ? (
+            <button
+              type="button"
+              disabled={finalizingId === row.id}
+              onClick={() =>
+                void validateCautionLevel(row.id, assignedTarget === "VALIDE_N1" ? "n1" : "n2")
+              }
+              className="rounded-lg border border-sky-600 bg-sky-600 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
+            >
+              {assignedTarget === "VALIDE_N1" ? "Valider N1" : "Valider N2"}
+            </button>
+          ) : null}
           {showRegularize ? (
             <button
               type="button"
@@ -786,29 +836,9 @@ export default function CautionsPanel() {
               type="button"
               disabled={finalizingId === row.id}
               onClick={() => {
-                const motif = window.prompt("Motif d'exonération (décision Direction) :");
-                if (!motif?.trim()) return;
-                void (async () => {
-                  setFinalizingId(row.id);
-                  setError(null);
-                  try {
-                    const res = await fetch(`/api/cautions/${encodeURIComponent(row.id)}/exonerer`, {
-                      method: "POST",
-                      credentials: "include",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ motif: motif.trim() }),
-                    });
-                    const body = (await res.json().catch(() => null)) as { message?: string } | null;
-                    if (!res.ok) {
-                      throw new Error(friendlyErrorMessage(body?.message ?? "Exonération impossible"));
-                    }
-                    await reloadCautionsListRef.current?.();
-                  } catch (e) {
-                    setError(e instanceof Error ? e.message : "Exonération impossible");
-                  } finally {
-                    setFinalizingId(null);
-                  }
-                })();
+                setExonerationTarget(row);
+                setExonerationMotif("");
+                setExonerationError(null);
               }}
               className="rounded-lg border border-violet-400 bg-violet-50 px-2 py-1 text-[10px] font-semibold text-violet-900"
             >
@@ -817,9 +847,39 @@ export default function CautionsPanel() {
           ) : null}
         </div>
       );
-    },
-    [finalizingId, meRbacRole, mayRegularizePaiement, meRole, tab],
-  );
+    };
+
+  async function confirmExoneration() {
+    if (!exonerationTarget) return;
+    const motif = exonerationMotif.trim();
+    if (!motif) {
+      setExonerationError("Le motif d’exonération est obligatoire.");
+      return;
+    }
+    const row = exonerationTarget;
+    setFinalizingId(row.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/cautions/${encodeURIComponent(row.id)}/exonerer`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motif }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string } | null;
+      if (!res.ok) {
+        throw new Error(friendlyErrorMessage(body?.message ?? "Exonération impossible"));
+      }
+      await reloadCautionsListRef.current?.();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Exonération impossible");
+    } finally {
+      setFinalizingId(null);
+      setExonerationTarget(null);
+      setExonerationMotif("");
+      setExonerationError(null);
+    }
+  }
 
   useEffect(() => {
     if (!createOpen) return;
@@ -1030,7 +1090,7 @@ export default function CautionsPanel() {
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setLoading(false);
     }
@@ -1057,28 +1117,26 @@ export default function CautionsPanel() {
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!selectedLonaciClientId.trim()) {
-      setToast({ type: "error", message: "Choisissez un client Lonaci actif." });
+      notify.error("Choisissez un client Lonaci actif.");
       return;
     }
     if (!clientFromPick || clientFromPick.id !== selectedLonaciClientId.trim()) {
-      setToast({ type: "error", message: "Sélectionnez un client dans les résultats de recherche." });
+      notify.error("Sélectionnez un client dans les résultats de recherche.");
       return;
     }
     const codes = uniqueOrderedProduitCodes(selectedProduitCodes);
     if (codes.length === 0) {
-      setToast({ type: "error", message: "Cochez au moins un produit du référentiel." });
+      notify.error("Cochez au moins un produit du référentiel.");
       return;
     }
     if (!paymentReference.trim() && !ficheProvisoire) {
-      setToast({ type: "error", message: "Indiquez la référence du paiement." });
+      notify.error("Indiquez la référence du paiement.");
       return;
     }
     if (referentielMontantTotal === null || referentielMontantTotal <= 0) {
-      setToast({
-        type: "error",
-        message:
-          "Montant : chaque produit coché doit avoir un tarif caution référentiel valide (prix manquant ou nul sur au moins un).",
-      });
+      notify.error(
+        "Montant : chaque produit coché doit avoir un tarif caution référentiel valide (prix manquant ou nul sur au moins un).",
+      );
       return;
     }
     setCreating(true);
@@ -1173,21 +1231,19 @@ export default function CautionsPanel() {
       }
       window.dispatchEvent(new Event("lonaci:data-imported"));
       const n = codes.length;
-      setToast({
-        type: "success",
-        message:
-          wasProvisoire && slipsOut.length > 1
-            ? `${slipsOut.length} cautions créées — une fiche de paiement caution unique affichée (${n} produit${n > 1 ? "s" : ""}).`
-            : wasProvisoire
-              ? "Fiche de paiement caution créée."
-              : n > 1
-                ? `${n} cautions créées.`
-                : "Caution créée.",
-      });
+      notify.success(
+        wasProvisoire && slipsOut.length > 1
+          ? `${slipsOut.length} cautions créées — une fiche de paiement caution unique affichée (${n} produit${n > 1 ? "s" : ""}).`
+          : wasProvisoire
+            ? "Fiche de paiement caution créée."
+            : n > 1
+              ? `${n} cautions créées.`
+              : "Caution créée.",
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setCreating(false);
     }
@@ -1198,7 +1254,7 @@ export default function CautionsPanel() {
     if (!regularizeTarget) return;
     const ref = regularizeRef.trim();
     if (!ref) {
-      setToast({ type: "error", message: "Référence de paiement obligatoire." });
+      notify.error("Référence de paiement obligatoire.");
       return;
     }
     setRegularizing(true);
@@ -1236,17 +1292,13 @@ export default function CautionsPanel() {
       if (targetRow && raw?.fiche?.numeroFicheDefinitive) {
         setCautionPayeeSlip(buildCautionFicheModalData(targetRow, raw.fiche, true));
       }
-      setToast({
-        type: "success",
-        message: raw?.fiche?.numeroFicheDefinitive
+      notify.success(
+        raw?.fiche?.numeroFicheDefinitive
           ? `Paiement valid—  fiche d—finitive ${raw.fiche.numeroFicheDefinitive} g—n—r—e.`
           : "Paiement r—gularis—  finalisation possible.",
-      });
+      );
     } catch (err) {
-      setToast({
-        type: "error",
-        message: friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"),
-      });
+      notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
     } finally {
       setRegularizing(false);
     }
@@ -1270,13 +1322,12 @@ export default function CautionsPanel() {
         | null;
       if (!res.ok) throw new Error(data?.message ?? "Import impossible");
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message: `Import cautions terminé: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
-      });
+      notify.success(
+        `Import cautions terminé: ${data?.upserted ?? 0} créée(s), ${data?.modified ?? 0} mise(s) à jour.`,
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setImportingFile(false);
       e.target.value = "";
@@ -1288,6 +1339,31 @@ export default function CautionsPanel() {
     setFinalizeAck(false);
     setFinalizeDecision("APPROUVER");
     setFinalizeComment("");
+  }
+
+  async function validateCautionLevel(cautionId: string, level: "n1" | "n2") {
+    setFinalizingId(cautionId);
+    setError(null);
+    try {
+      const response = await fetch(
+        `/api/cautions/${encodeURIComponent(cautionId)}/validate-${level}`,
+        {
+          method: "POST",
+          credentials: "include",
+        },
+      );
+      const body = (await response.json().catch(() => null)) as { message?: string } | null;
+      if (!response.ok) throw new Error(body?.message ?? `Validation ${level.toUpperCase()} impossible`);
+      setItems((current) => current.filter((item) => item.id !== cautionId));
+      notify.success(`Validation ${level.toUpperCase()} enregistrée.`);
+      await reloadCautionsListRef.current?.();
+    } catch (err) {
+      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur de validation");
+      setError(message);
+      notify.error(message);
+    } finally {
+      setFinalizingId(null);
+    }
   }
 
   async function executeDecision(
@@ -1336,20 +1412,19 @@ export default function CautionsPanel() {
       }
       closeFinalizeModal();
       setManualCautionId("");
+      setItems((current) => current.filter((item) => item.id !== cautionId));
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      setToast({
-        type: "success",
-        message:
-          decision === "APPROUVER"
-            ? "Caution approuvée (payée)."
-            : decision === "REJETER"
-              ? "Caution rejetée."
-              : "Caution retournée pour correction.",
-      });
+      notify.success(
+        decision === "APPROUVER"
+          ? "Caution approuvée (payée)."
+          : decision === "REJETER"
+            ? "Caution rejetée."
+            : "Caution retournée pour correction.",
+      );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setError(message);
-      setToast({ type: "error", message });
+      notify.error(message);
     } finally {
       setFinalizingId(null);
     }
@@ -1369,7 +1444,6 @@ export default function CautionsPanel() {
   function closeCreate() {
     setCreateOpen(false);
     setError(null);
-    setToast(null);
 
     setMontant("");
     setDueDateLocal("");
@@ -1434,38 +1508,26 @@ export default function CautionsPanel() {
   }, [alerts, counters, items]);
 
   return (
-    <section className="space-y-5 rounded-2xl bg-white/80 p-6">
-      <header className="relative overflow-hidden rounded-3xl border border-amber-200 bg-gradient-to-r from-slate-900 via-slate-800 to-amber-900 p-5 shadow-sm">
-        <div className="pointer-events-none absolute -right-14 -top-14 h-44 w-44 rounded-full bg-amber-300/20 blur-2xl" />
-        <div className="pointer-events-none absolute -bottom-16 left-24 h-44 w-44 rounded-full bg-orange-300/20 blur-2xl" />
-        <div className="relative flex flex-wrap items-start justify-between gap-4">
-          <div>
-            <p className="inline-flex rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-100">
-              Référentiel
-            </p>
-            <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">Cautions</h2>
-            <p className="mt-1 text-sm text-amber-100/90">
-              Suivi des encaissements, contrôles d&apos;échéance et finalisation par le chef de service.
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
+    <div className="min-w-0 space-y-5">
+      <PageHeader
+        eyebrow="Référentiel"
+        title="Cautions"
+        description="Suivi des encaissements, contrôles d’échéance et finalisation par le chef de service."
+        actions={
+          <>
+            <Button
+              variant="secondary"
+              leadingIcon={RefreshCw}
               onClick={() => window.dispatchEvent(new Event("lonaci:data-imported"))}
-              className="rounded-xl border border-white/30 bg-white/10 px-3 py-2 text-sm font-semibold text-white transition hover:bg-white/20"
             >
               Actualiser
-            </button>
-            <button
-              type="button"
-              onClick={() => setCreateOpen(true)}
-              className="rounded-xl border border-amber-300 bg-amber-500 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-amber-200 hover:bg-amber-400 disabled:opacity-60"
-            >
+            </Button>
+            <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>
               Nouvelle caution
-            </button>
-          </div>
-        </div>
-      </header>
+            </Button>
+          </>
+        }
+      />
 
       {createOpen ? (
         <div
@@ -1810,7 +1872,7 @@ export default function CautionsPanel() {
                           className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                         />
                         <p className="mt-1 text-[11px] text-slate-500">
-                          —0chéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
+                          Échéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
                         </p>
                       </div>
                     ) : (
@@ -2025,12 +2087,22 @@ export default function CautionsPanel() {
         <div className="lonaci-print-surface fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/55 p-4">
           <style dangerouslySetInnerHTML={{ __html: LONACI_PRINT_ISOLATION_CSS }} />
           <div className="provisional-slip-sheet max-h-[92vh] w-full max-w-3xl overflow-y-auto rounded-2xl border-2 border-slate-300 bg-white p-6 shadow-2xl print:max-h-none print:rounded-none print:border-0 print:p-4 print:shadow-none">
-            <header className="mb-5 border-b-2 border-slate-800 pb-4 print:mb-3 print:border-slate-900 print:pb-2">
-              <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
-                Fiche de paiement caution
-              </h2>
-              <p className="mt-2 max-w-2xl text-sm text-slate-600">
-                <strong>Document unique</strong> pour la caisse et Lonaci : client, total à encaisser et tableau de tous
+            <header className="mb-5 border-b-4 border-orange-500 pb-4 print:mb-3 print:pb-2">
+              <div className="flex items-end justify-between gap-4">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-700">LONACI</p>
+                  <h2 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+                    Fiche de paiement caution
+                  </h2>
+                </div>
+                <p className="text-right text-[11px] text-slate-500">
+                  Loterie Nationale de Côte d’Ivoire
+                  <br />
+                  Module Cautions
+                </p>
+              </div>
+              <p className="mt-2 max-w-2xl text-sm text-slate-600 print:hidden">
+                <strong>Document unique</strong> pour la caisse et LONACI : client, total à encaisser et tableau de tous
                 les produits / cautions créés sur cette opération.
               </p>
             </header>
@@ -2042,29 +2114,23 @@ export default function CautionsPanel() {
               </p>
             ) : null}
 
-            <section className="mb-6 rounded-xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/90 to-white p-4 print:mb-3 print:border-slate-300 print:bg-white print:p-3">
-              <h4 className="text-[11px] font-bold uppercase tracking-wide text-indigo-950">Client Lonaci</h4>
-              <p className="mt-1 text-[11px] leading-relaxed text-indigo-900/90">
-                Personne ou structure enregistrée dans le référentiel <strong>Clients</strong> Lonaci.
+            <section className="print-card mb-6 rounded-xl border-2 border-orange-200 bg-gradient-to-br from-orange-50/90 to-white p-4 print:mb-3 print:border-orange-200 print:bg-white print:p-3">
+              <h4 className="text-[11px] font-bold uppercase tracking-wide text-orange-950">Client LONACI</h4>
+              <p className="mt-1 text-[11px] leading-relaxed text-orange-900/90">
+                Personne ou structure enregistrée dans le référentiel <strong>Clients</strong> LONACI.
               </p>
               <p className="mt-2 text-xl font-semibold leading-snug text-slate-900">{provisionalSlips[0]!.clientLabel}</p>
               <dl className="mt-3 grid gap-2 text-sm text-slate-700">
-                <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
+                <div className="flex flex-wrap justify-between gap-2 border-t border-orange-100 pt-2 print:border-slate-200">
                   <dt className="text-slate-500">Code client</dt>
                   <dd className="break-all font-mono text-xs font-semibold text-slate-900">
                     {provisionalSlips[0]!.clientCode || "—"}
                   </dd>
                 </div>
-                <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
+                <div className="flex flex-wrap justify-between gap-2 border-t border-orange-100 pt-2 print:border-slate-200">
                   <dt className="text-slate-500">{CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL}</dt>
                   <dd className="text-right text-xs font-semibold text-slate-900">
                     {provisionalSlips[0]!.agenceInscriptionLabel || "Sans agence"}
-                  </dd>
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 border-t border-indigo-100 pt-2 print:border-slate-200">
-                  <dt className="text-slate-500">Identifiant technique (Lonaci)</dt>
-                  <dd className="break-all font-mono text-xs font-semibold text-slate-900">
-                    {provisionalSlips[0]!.lonaciClientId || "—"}
                   </dd>
                 </div>
               </dl>
@@ -2113,6 +2179,7 @@ export default function CautionsPanel() {
               </p>
               <div className="fiche-print-table-wrap mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white print:overflow-visible print:mt-2">
                 <table className="w-full min-w-[44rem] border-collapse text-left text-sm print:min-w-0 print:table-fixed print:text-[7.5pt]">
+                  <caption className="sr-only">Produits et cautions de la fiche groupée de paiement</caption>
                   <thead>
                     <tr className="border-b border-slate-200 bg-slate-100 text-[10px] font-bold uppercase tracking-wider text-slate-600">
                       <th scope="col" className="px-2 py-2">
@@ -2128,13 +2195,7 @@ export default function CautionsPanel() {
                         Montant
                       </th>
                       <th scope="col" className="px-2 py-2 whitespace-nowrap">
-                        —0chéance
-                      </th>
-                      <th scope="col" className="px-2 py-2 font-mono text-[10px] font-bold normal-case tracking-normal">
-                        ID dossier
-                      </th>
-                      <th scope="col" className="max-w-[8rem] px-2 py-2 font-mono text-[10px] font-bold normal-case tracking-normal">
-                        Réf. interne
+                        Échéance
                       </th>
                       <th scope="col" className="print:hidden px-2 py-2 text-right">
                         Action
@@ -2166,12 +2227,6 @@ export default function CautionsPanel() {
                             dateStyle: "short",
                             timeStyle: "short",
                           })}
-                        </td>
-                        <td className="max-w-[7rem] truncate px-2 py-2 align-top font-mono text-[10px] text-slate-700" title={row.cautionId || undefined}>
-                          {row.cautionId || "—"}
-                        </td>
-                        <td className="max-w-[8rem] truncate px-2 py-2 align-top font-mono text-[10px] text-amber-950" title={row.referenceInterneLonaci}>
-                          {row.referenceInterneLonaci}
                         </td>
                         <td className="print:hidden px-2 py-2 align-top text-right">
                           <button
@@ -2216,11 +2271,15 @@ export default function CautionsPanel() {
                 <p className="mt-1 text-indigo-900/95">
                   Liste <strong>Cautions</strong> — onglet <strong>Attendu caution</strong>, pour <strong>chaque ligne</strong> du tableau :{" "}
                   <strong>Régulariser paiement</strong> et saisir le mode ainsi que la référence figurant sur le reçu
-                  caisse. Les références <strong>FPC</strong> et <strong>ID dossier</strong> ci-dessus identifient chaque
-                  dossier ; la colonne « Réf. interne » est une trace Lonaci, distincte de la référence bancaire.
+                  caisse. La référence <strong>FPC</strong> identifie chaque dossier.
                 </p>
               </div>
             </section>
+
+            <footer className="provisional-slip-footer hidden items-center justify-between border-t border-orange-200 pt-2 text-[8pt] text-slate-500">
+              <span>LONACI · Fiche groupée de paiement caution · Document interne</span>
+              <span className="page-number" />
+            </footer>
 
             <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-slate-200 pt-4 print:hidden">
               <button
@@ -2236,8 +2295,8 @@ export default function CautionsPanel() {
                   void navigator.clipboard
                     .writeText(provisionalBundleClipboardLines(provisionalSlips).join("\n"))
                     .then(
-                      () => setToast({ type: "success", message: "Fiche copiée dans le presse-papiers." }),
-                      () => setToast({ type: "error", message: "Copie impossible (navigateur ou permissions)." }),
+                      () => notify.success("Fiche copiée dans le presse-papiers."),
+                      () => notify.error("Copie impossible (navigateur ou permissions)."),
                     );
                 }}
                 className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50"
@@ -2247,7 +2306,7 @@ export default function CautionsPanel() {
               <button
                 type="button"
                 onClick={() => window.print()}
-                className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700"
+                className="rounded-lg border border-orange-600 bg-orange-600 px-3 py-2 text-sm font-medium text-white hover:bg-orange-700"
               >
                 Imprimer
               </button>
@@ -2260,7 +2319,7 @@ export default function CautionsPanel() {
         <CautionFicheDefinitiveModal slip={cautionPayeeSlip} onClose={() => setCautionPayeeSlip(null)} />
       ) : null}
 
-      <section className="mb-6 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <Surface padding="none" elevated className="mb-6 overflow-hidden">
         <div className="border-b border-slate-100 bg-slate-50/70 px-4 py-3">
           <h3 className="text-sm font-semibold text-slate-900">Analytics cautions</h3>
           <p className="mt-0.5 text-xs text-slate-600">
@@ -2422,7 +2481,7 @@ export default function CautionsPanel() {
             </div>
           </div>
         </div>
-      </section>
+      </Surface>
 
       <CautionEtatMensuelParProduitBlock
         domIdPrefix="cautions-etat-mensuel"
@@ -2480,30 +2539,22 @@ export default function CautionsPanel() {
         </button>
       </div>
 
-      <h3 className="text-sm font-semibold text-amber-800">{labelTab(tab)}</h3>
-      {loading ? <p className="text-sm text-slate-600">Chargement...</p> : null}
-      {error ? <p className="mb-3 text-sm text-rose-700">{error}</p> : null}
-      {toast ? (
-        <div
-          className={`mb-3 rounded-lg px-3 py-2 text-sm ${
-            toast.type === "success"
-              ? "bg-emerald-50/80 text-emerald-800"
-              : "bg-rose-50/80 text-rose-800"
-          }`}
-        >
-          <div className="flex items-center justify-between gap-3">
-            <span>{toast.message}</span>
-            <button type="button" onClick={() => setToast(null)} className="text-xs opacity-80 hover:opacity-100">
-              Fermer
-            </button>
-          </div>
-        </div>
-      ) : null}
+      <SectionHeader
+        title={labelTab(tab)}
+        description={`${items.length} caution${items.length !== 1 ? "s" : ""} dans la vue active.`}
+      />
+      <div aria-live="polite">
+        {loading ? <Skeleton lines={4} /> : null}
+        {error ? (
+          <FeedbackState title="Chargement impossible" description={error} tone="danger" className="mb-3" />
+        ) : null}
+      </div>
 
       {!loading ? (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="overflow-x-auto">
+        <Surface padding="none" elevated className="overflow-hidden">
+          <div className="hidden overflow-x-auto sm:block">
             <table className="min-w-full table-fixed border-collapse text-left text-xs">
+            <caption className="sr-only">Liste des cautions — {labelTab(tab)}</caption>
             <thead className="bg-slate-50 text-slate-600">
               <tr>
                 <th className="px-2 py-2 font-medium" scope="col" title="Fiche provisoire : N° FPC comme sur l&apos;imprimé ; sinon référence d&apos;encaissement.">
@@ -2554,12 +2605,12 @@ export default function CautionsPanel() {
                       <td className="px-2 py-2">{row.montant?.toLocaleString("fr-FR") ?? row.montant}</td>
                       <td className="px-2 py-2">{row.agenceLabel || "Sans agence"}</td>
                       <td className="px-2 py-2">
-                        <span
+                        <StatusBadge
                           title={row.statutMetierDescription ?? undefined}
                           className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statutBadgeClass}`}
                         >
                           {statutLabel}
-                        </span>
+                        </StatusBadge>
                       </td>
                       <td className="px-2 py-2 text-right">{renderCautionListActionCell(row)}</td>
                     </tr>
@@ -2590,9 +2641,9 @@ export default function CautionsPanel() {
                               {cautionReferenceListeOuFiche(r)}
                             </span>
                             {r.ficheProvisoire ? (
-                              <span className="w-fit rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-amber-900">
+                              <Badge tone="warning" className="w-fit">
                                 Provisoire
-                              </span>
+                              </Badge>
                             ) : null}
                           </div>
                         ))}
@@ -2614,12 +2665,12 @@ export default function CautionsPanel() {
                     </td>
                     <td className="px-2 py-2">{agenceCell}</td>
                     <td className="px-2 py-2">
-                      <span
+                      <StatusBadge
                         title={primary.statutMetierDescription ?? undefined}
                         className={`inline-flex rounded-full border px-2 py-0.5 text-[10px] font-semibold ${statutBadgeClass}`}
                       >
                         {statutLabel}
-                      </span>
+                      </StatusBadge>
                     </td>
                     <td className="px-2 py-2 text-right">
                       <div className="flex flex-col items-end gap-2">
@@ -2643,11 +2694,45 @@ export default function CautionsPanel() {
             </tbody>
             </table>
           </div>
-        </div>
+          <div className="grid gap-3 p-3 sm:hidden" role="list" aria-label={`Cautions — ${labelTab(tab)}`}>
+            {items.map((row) => (
+              <article key={row.id} role="listitem" className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="truncate font-mono text-xs font-semibold text-slate-900">
+                      {cautionReferenceListeOuFiche(row)}
+                    </p>
+                    <p className="mt-1 text-sm font-medium text-slate-900">{row.concessionnaireNom || "—"}</p>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                      {row.produitCode || "—"} · {row.agenceLabel || "Sans agence"}
+                    </p>
+                  </div>
+                  <StatusBadge
+                    title={row.statutMetierDescription ?? undefined}
+                    className={cautionStatutMetierBadgeClass(row, tab)}
+                  >
+                    {cautionStatutLabel(row, tab)}
+                  </StatusBadge>
+                </div>
+                <p className="mt-3 text-lg font-semibold tabular-nums text-slate-950">
+                  {row.montant?.toLocaleString("fr-FR") ?? row.montant} FCFA
+                </p>
+                <div className="mt-3 border-t border-slate-100 pt-3">{renderCautionListActionCell(row)}</div>
+              </article>
+            ))}
+            {!items.length ? (
+              <FeedbackState title="Aucune caution" description="Aucune caution pour ce filtre." />
+            ) : null}
+          </div>
+        </Surface>
       ) : null}
 
-      <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-        <h3 className="mb-2 text-sm font-semibold text-slate-800">Finaliser par ID (hors liste)</h3>
+      <Card
+        title="Finalisation avancée"
+        description="Action hors liste réservée au chef de service."
+        action={<ShieldCheck className="text-orange-600" size={20} aria-hidden="true" />}
+        elevated
+      >
         <p className="mb-3 text-xs text-slate-600">
           Rôle requis : chef(fe) de service. Régulariser toute fiche provisoire avant finalisation. Double confirmation avant envoi.
         </p>
@@ -2655,7 +2740,7 @@ export default function CautionsPanel() {
           <input
             value={manualCautionId}
             onChange={(e) => setManualCautionId(e.target.value)}
-            placeholder="ID caution (hex)"
+            placeholder="Référence technique de la caution"
             className="min-w-[240px] flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-xs text-slate-900 outline-none focus:ring-2 focus:ring-emerald-500/20"
           />
           <button
@@ -2672,7 +2757,7 @@ export default function CautionsPanel() {
             Finaliser payée
           </button>
         </div>
-      </div>
+      </Card>
 
       {finalizeModal ? (
         <div
@@ -2867,6 +2952,67 @@ export default function CautionsPanel() {
           </div>
         </div>
       ) : null}
-    </section>
+      <Dialog
+        open={exonerationTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !finalizingId) {
+            setExonerationTarget(null);
+            setExonerationMotif("");
+            setExonerationError(null);
+          }
+        }}
+        title="Exonérer la caution"
+        description="Motif d'exonération (décision Direction) :"
+        size="sm"
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              disabled={Boolean(finalizingId)}
+              onClick={() => {
+                setExonerationTarget(null);
+                setExonerationMotif("");
+                setExonerationError(null);
+              }}
+            >
+              Annuler
+            </Button>
+            <Button
+              variant="danger"
+              loading={Boolean(finalizingId)}
+              onClick={() => void confirmExoneration()}
+            >
+              Exonérer
+            </Button>
+          </>
+        }
+      >
+        <label className="block text-sm">
+          <span className="font-medium text-slate-700">
+            Motif <span className="text-rose-600">*</span>
+          </span>
+          <textarea
+            data-autofocus
+            required
+            rows={4}
+            value={exonerationMotif}
+            disabled={Boolean(finalizingId)}
+            onChange={(event) => {
+              setExonerationMotif(event.target.value);
+              if (exonerationError) setExonerationError(null);
+            }}
+            aria-invalid={exonerationError ? "true" : undefined}
+            aria-describedby={exonerationError ? "caution-exoneration-error" : undefined}
+            className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-violet-500/20 focus:border-violet-400 focus:ring-4 disabled:bg-slate-100"
+            placeholder="Précisez la décision de la Direction…"
+          />
+        </label>
+        {exonerationError ? (
+          <p id="caution-exoneration-error" className="mt-2 text-sm font-medium text-rose-700" role="alert">
+            {exonerationError}
+          </p>
+        ) : null}
+      </Dialog>
+    </div>
   );
 }

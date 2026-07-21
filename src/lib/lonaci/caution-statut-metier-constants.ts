@@ -1,4 +1,4 @@
-/** Statuts métier affichés (spec 2.3 — gestion des cautions). */
+/** Statuts métier affichés pour la gestion des cautions. */
 export const CAUTION_STATUTS_METIER = ["EN_ATTENTE", "PAYEE", "EN_RETARD", "EXONEREE"] as const;
 
 export type CautionStatutMetier = (typeof CAUTION_STATUTS_METIER)[number];

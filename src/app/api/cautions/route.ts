@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { apiError, conflict, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
+import { resolveListAgenceFilter } from "@/lib/lonaci/access";
 import { CAUTION_ENCAISSEMENT_MODES, CAUTION_PAYMENT_MODES } from "@/lib/lonaci/constants";
 import {
   CAUTION_LIST_TABS,
@@ -79,7 +80,7 @@ const createBodySchema = z
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
   });
   if ("error" in auth) return auth.error;
 
@@ -90,10 +91,16 @@ export async function GET(request: NextRequest) {
   }
 
   await ensureSprint4Indexes();
+  const scope = resolveListAgenceFilter(auth.user, undefined);
+  const agenceRestriction = scope.ok
+    ? { agenceId: scope.agenceId, agenceIds: scope.agenceIds }
+    : {};
   const { items, total } = await listCautionsForTab(
     parsed.data.tab,
     parsed.data.page,
     parsed.data.pageSize,
+    auth.user,
+    agenceRestriction,
   );
 
   return NextResponse.json({ items, total, page: parsed.data.page, pageSize: parsed.data.pageSize }, { status: 200 });

@@ -14,7 +14,7 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).optional(),
 });
 
-/** §9.2 — Concessionnaires éligibles (contrat actif + GPR validé) pour un produit. */
+/** Concessionnaires éligibles (contrat actif + GPR validé) pour un produit. */
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, { roles: [...GRATTAGE_API_ROLES] });
   if ("error" in auth) return auth.error;

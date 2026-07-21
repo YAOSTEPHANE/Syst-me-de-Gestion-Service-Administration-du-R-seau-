@@ -4,7 +4,7 @@ import { resolveSuccessionStatutMetier } from "@/lib/lonaci/succession-statut-me
 
 const baseHistory = [{ step: "DECLARATION_DECES" as const }];
 
-describe("resolveSuccessionStatutMetier §10.3", () => {
+describe("resolveSuccessionStatutMetier", () => {
   it("retourne DÉCLARÉ en constitution initiale", () => {
     expect(
       resolveSuccessionStatutMetier({

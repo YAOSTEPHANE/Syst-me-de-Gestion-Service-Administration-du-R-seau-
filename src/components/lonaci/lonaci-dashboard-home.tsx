@@ -2,6 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import {
+  Clock3,
+  FileCheck2,
+  MapPinned,
+  RefreshCw,
+  UsersRound,
+} from "lucide-react";
 import type { ChartArea, ChartOptions, TooltipItem, TooltipOptions } from "chart.js";
 import {
   ArcElement,
@@ -20,6 +27,12 @@ import { Bar, Doughnut, Line, Radar } from "react-chartjs-2";
 
 import DashboardNotifications from "@/components/lonaci/dashboard-notifications";
 import { useLonaciKpi } from "@/components/lonaci/lonaci-kpi-context";
+import { Badge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { ChartCard, KpiCard } from "@/components/lonaci/ui/dashboard-cards";
+import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
+import { Surface } from "@/components/lonaci/ui/surface";
 
 ChartJS.register(
   CategoryScale,
@@ -34,10 +47,10 @@ ChartJS.register(
   Legend,
 );
 
-const DONUT_COLORS = ["#0ea5e9", "#14b8a6", "#d97706", "#8b5cf6", "#64748b"] as const;
+const DONUT_COLORS = ["#f97316", "#0f766e", "#eab308", "#1e3a5f", "#64748b"] as const;
 
 const BAR_GRADIENTS = [
-  { top: "#7dd3fc", bottom: "#0369a1" },
+  { top: "#fdba74", bottom: "#c2410c" },
   { top: "#5eead4", bottom: "#0f766e" },
   { top: "#fde047", bottom: "#ca8a04" },
 ] as const;
@@ -65,7 +78,7 @@ const premiumTooltipDefaults = {
   backgroundColor: "rgba(15, 23, 42, 0.94)",
   titleColor: "#f8fafc",
   bodyColor: "#e2e8f0",
-  borderColor: "rgba(125, 211, 252, 0.45)",
+  borderColor: "rgba(249, 115, 22, 0.45)",
   borderWidth: 1,
   padding: 14,
   cornerRadius: 12,
@@ -206,12 +219,12 @@ export default function LonaciDashboardHome() {
           pointRadius: 4,
           pointHoverRadius: 8,
           pointBackgroundColor: "#ffffff",
-          pointBorderColor: "#0284c7",
+          pointBorderColor: "#f97316",
           pointBorderWidth: 2,
-          pointHoverBackgroundColor: "#0284c7",
+          pointHoverBackgroundColor: "#f97316",
           pointHoverBorderColor: "#ffffff",
           pointHoverBorderWidth: 2,
-          borderColor: "#0284c7",
+          borderColor: "#ea580c",
           backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
             const { ctx, chartArea } = context.chart;
             if (!chartArea) return "rgba(2, 132, 199, 0.08)";
@@ -265,7 +278,7 @@ export default function LonaciDashboardHome() {
           borderSkipped: false as const,
           backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
             const { ctx, chartArea } = context.chart;
-            return verticalGradient(ctx, chartArea, "#38bdf8", "#0369a1");
+            return verticalGradient(ctx, chartArea, "#fdba74", "#c2410c");
           },
         },
       ],
@@ -287,12 +300,12 @@ export default function LonaciDashboardHome() {
           beginAtZero: true,
           border: { display: false },
           grid: { color: "rgba(148, 163, 184, 0.16)" },
-          ticks: { color: "#94a3b8", font: { size: 10 } },
+          ticks: { color: "#94a3b8", font: { size: 12 } },
         },
         y: {
           border: { display: false },
           grid: { display: false },
-          ticks: { color: "#64748b", font: { size: 10 } },
+          ticks: { color: "#64748b", font: { size: 12 } },
         },
       },
     }),
@@ -312,11 +325,11 @@ export default function LonaciDashboardHome() {
         {
           label: "Heures moyennes",
           data: values,
-          borderColor: "#0ea5e9",
-          backgroundColor: "rgba(14, 165, 233, 0.2)",
-          pointBackgroundColor: "#0284c7",
+          borderColor: "#1e3a5f",
+          backgroundColor: "rgba(30, 58, 95, 0.18)",
+          pointBackgroundColor: "#1e3a5f",
           pointBorderColor: "#ffffff",
-          pointHoverBackgroundColor: "#0369a1",
+          pointHoverBackgroundColor: "#0f172a",
           pointBorderWidth: 2,
         },
       ],
@@ -345,7 +358,7 @@ export default function LonaciDashboardHome() {
           beginAtZero: true,
           angleLines: { color: "rgba(148, 163, 184, 0.2)" },
           grid: { color: "rgba(148, 163, 184, 0.2)" },
-          pointLabels: { color: "#475569", font: { size: 11 } },
+          pointLabels: { color: "#475569", font: { size: 12 } },
           ticks: { display: false },
         },
       },
@@ -384,7 +397,7 @@ export default function LonaciDashboardHome() {
           maxBarThickness: 20,
           backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
             const { ctx, chartArea } = context.chart;
-            return verticalGradient(ctx, chartArea, "#7dd3fc", "#0284c7");
+            return verticalGradient(ctx, chartArea, "#fdba74", "#c2410c");
           },
         },
         {
@@ -423,14 +436,14 @@ export default function LonaciDashboardHome() {
         x: {
           stacked: true,
           grid: { display: false },
-          ticks: { color: "#64748b", font: { size: 10 } },
+          ticks: { color: "#64748b", font: { size: 12 } },
           border: { display: false },
         },
         y: {
           stacked: true,
           beginAtZero: true,
           grid: { color: "rgba(148, 163, 184, 0.16)" },
-          ticks: { color: "#94a3b8", font: { size: 10 } },
+          ticks: { color: "#94a3b8", font: { size: 12 } },
           border: { display: false },
         },
       },
@@ -472,7 +485,7 @@ export default function LonaciDashboardHome() {
           maxBarThickness: 20,
           backgroundColor: (context: { chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea } }) => {
             const { ctx, chartArea } = context.chart;
-            return verticalGradient(ctx, chartArea, "#7dd3fc", "#0284c7");
+            return verticalGradient(ctx, chartArea, "#fdba74", "#c2410c");
           },
         },
         {
@@ -516,13 +529,13 @@ export default function LonaciDashboardHome() {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { color: "#64748b", font: { size: 10 } },
+          ticks: { color: "#64748b", font: { size: 12 } },
           border: { display: false },
         },
         y: {
           beginAtZero: true,
           grid: { color: "rgba(148, 163, 184, 0.16)" },
-          ticks: { color: "#94a3b8", font: { size: 10 } },
+          ticks: { color: "#94a3b8", font: { size: 12 } },
           border: { display: false },
         },
       },
@@ -569,14 +582,14 @@ export default function LonaciDashboardHome() {
         x: {
           stacked: false,
           grid: { display: false, drawTicks: true },
-          ticks: { font: { size: 10 }, color: "#64748b", padding: 8 },
+          ticks: { font: { size: 12 }, color: "#64748b", padding: 8 },
           border: { display: false },
         },
         y: {
           beginAtZero: true,
           border: { display: false },
           grid: { color: "rgba(148, 163, 184, 0.18)", lineWidth: 1 },
-          ticks: { font: { size: 10 }, color: "#94a3b8", padding: 10 },
+          ticks: { font: { size: 12 }, color: "#94a3b8", padding: 10 },
         },
       },
     }),
@@ -605,14 +618,14 @@ export default function LonaciDashboardHome() {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 10 }, color: "#64748b", padding: 8 },
+          ticks: { font: { size: 12 }, color: "#64748b", padding: 8 },
           border: { display: false },
         },
         y: {
           beginAtZero: true,
           border: { display: false },
           grid: { color: "rgba(148, 163, 184, 0.16)" },
-          ticks: { font: { size: 10 }, color: "#94a3b8", padding: 8 },
+          ticks: { font: { size: 12 }, color: "#94a3b8", padding: 8 },
         },
       },
       elements: {
@@ -689,108 +702,79 @@ export default function LonaciDashboardHome() {
   const pdvToday = kpi?.daily?.pdvIntegrations?.nonFinalise ?? 0;
 
   return (
-    <div className="lonaci-db-dashboard lonaci-db-dashboard--premium space-y-5">
+    <div className="lonaci-db-dashboard lonaci-db-dashboard--premium space-y-6">
       <DashboardNotifications />
-      {error ? <p className="lonaci-db-dashboard--premium__error">{error}</p> : null}
+      {error ? (
+        <FeedbackState
+          tone="danger"
+          title="Tableau de bord indisponible"
+          description={error}
+          action={
+            <Button variant="secondary" size="sm" leadingIcon={RefreshCw} onClick={() => void handleRefreshDashboard()}>
+              Réessayer
+            </Button>
+          }
+        />
+      ) : null}
 
       {!kpi && !error ? (
-        <div className="lonaci-db-prem-skeleton" aria-busy aria-label="Chargement du tableau de bord">
-          <div className="lonaci-db-prem-skeleton-hero">
-            <div className="lonaci-db-prem-skel-line lonaci-db-prem-skel-line--lg" />
-            <div className="lonaci-db-prem-skel-line lonaci-db-prem-skel-line--md" />
-            <div className="lonaci-db-prem-skeleton-stats">
-              <div className="lonaci-db-prem-skel-block" />
-              <div className="lonaci-db-prem-skel-block" />
-              <div className="lonaci-db-prem-skel-block" />
-              <div className="lonaci-db-prem-skel-block" />
-            </div>
-          </div>
-          <div className="lonaci-db-prem-skeleton-grid">
-            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
-            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
-            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
-            <div className="lonaci-db-prem-skel-block lonaci-db-prem-skel-block--tall" />
+        <div className="space-y-4" aria-busy="true">
+          <Surface elevated padding="lg">
+            <Skeleton lines={3} />
+          </Surface>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            {Array.from({ length: 4 }, (_, index) => (
+              <Surface key={index} elevated>
+                <Skeleton lines={4} />
+              </Surface>
+            ))}
           </div>
         </div>
       ) : null}
 
       {kpi ? (
         <>
-          <div className="lonaci-db-analytics-global-toggle-wrap">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="lonaci-db-analytics-global-toggle-label">Thème analytics</span>
-              <button
-                type="button"
-                className="lonaci-db-analytics-theme-toggle"
-                onClick={() => setAnalyticsTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-                aria-label="Basculer le thème analytics"
-                title="Basculer le thème analytics"
-              >
-                {analyticsThemeLabel}
-              </button>
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                className="lonaci-db-analytics-theme-toggle"
-                onClick={() => setIsCompactView((prev) => !prev)}
-                aria-label="Basculer la densité du tableau de bord"
-                title="Basculer la densité du tableau de bord"
-              >
-                {isCompactView ? "Vue complète" : "Vue compacte"}
-              </button>
-              <button
-                type="button"
-                className="lonaci-db-analytics-theme-toggle"
-                onClick={() => void handleRefreshDashboard()}
-                disabled={isRefreshing}
-                aria-label="Rafraîchir les données du tableau de bord"
-                title="Rafraîchir les données du tableau de bord"
-              >
-                {isRefreshing ? "Rafraîchissement..." : "Rafraîchir"}
-              </button>
-              <span className="text-[11px] text-slate-500">
-                {lastRefreshedAt ? `Maj: ${lastRefreshedAt.toLocaleTimeString("fr-FR")}` : "Maj: —"}
+          <PageHeader
+            eyebrow="Vue exécutive"
+            title="Pilotage des opérations"
+            description="Contrats, cautions, intégrations PDV et signaux critiques du réseau LONACI."
+            actions={
+              <>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setAnalyticsTheme((prev) => (prev === "dark" ? "light" : "dark"))}
+                >
+                  {analyticsThemeLabel}
+                </Button>
+                <Button variant="secondary" size="sm" onClick={() => setIsCompactView((prev) => !prev)}>
+                  {isCompactView ? "Vue complète" : "Vue compacte"}
+                </Button>
+                <Button
+                  size="sm"
+                  leadingIcon={RefreshCw}
+                  loading={isRefreshing}
+                  onClick={() => void handleRefreshDashboard()}
+                >
+                  Rafraîchir
+                </Button>
+              </>
+            }
+          />
+
+          <Surface elevated padding="lg" className="border-orange-200 bg-linear-to-br from-orange-50 via-white to-slate-50">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div className="flex flex-wrap gap-2" aria-label="État global">
+                <Badge tone="brand">Finalisation {finalisationRate}%</Badge>
+                <Badge tone="success">{totalActifReseau} PDV actifs</Badge>
+                <Badge tone={urgentCount > 0 ? "danger" : "neutral"}>{urgentCount} urgences</Badge>
+                <Badge tone="warning">{totalPending} dossiers en attente</Badge>
+              </div>
+              <span className="text-xs text-slate-600">
+                {lastRefreshedAt ? `Mise à jour à ${lastRefreshedAt.toLocaleTimeString("fr-FR")}` : "Mise à jour —"}
               </span>
             </div>
-          </div>
-
-          <section className="lonaci-db-prem-hero" aria-labelledby="lonaci-prem-hero-title">
-            <div className="lonaci-db-prem-hero__mesh" aria-hidden />
-            <div className="lonaci-db-prem-hero__inner">
-              <div className="lonaci-db-prem-hero__intro">
-                <p className="lonaci-db-prem-eyebrow">Executive overview</p>
-                <h1 id="lonaci-prem-hero-title" className="lonaci-db-prem-hero__title">
-                  Pilotage opérations
-                </h1>
-                <p className="lonaci-db-prem-hero__lede">
-                  Contrats, cautions, intégrations PDV et signaux critiques — vue consolidée du réseau en temps réel.
-                </p>
-              </div>
-              <div className="lonaci-db-prem-hero__stats" role="group" aria-label="Indicateurs clés">
-                <div className="lonaci-db-prem-stat">
-                  <span className="lonaci-db-prem-stat__label">Finalisation</span>
-                  <span className="lonaci-db-prem-stat__value">{finalisationRate}%</span>
-                  <span className="lonaci-db-prem-stat__hint">contrats</span>
-                </div>
-                <div className="lonaci-db-prem-stat">
-                  <span className="lonaci-db-prem-stat__label">PDV actifs</span>
-                  <span className="lonaci-db-prem-stat__value">{totalActifReseau}</span>
-                  <span className="lonaci-db-prem-stat__hint">réseau</span>
-                </div>
-                <div className="lonaci-db-prem-stat lonaci-db-prem-stat--alert">
-                  <span className="lonaci-db-prem-stat__label">Urgences</span>
-                  <span className="lonaci-db-prem-stat__value">{urgentCount}</span>
-                  <span className="lonaci-db-prem-stat__hint">à traiter</span>
-                </div>
-                <div className="lonaci-db-prem-stat">
-                  <span className="lonaci-db-prem-stat__label">En attente</span>
-                  <span className="lonaci-db-prem-stat__value">{totalPending}</span>
-                  <span className="lonaci-db-prem-stat__hint">dossiers</span>
-                </div>
-              </div>
-            </div>
-            <nav className="lonaci-db-prem-hero__actions" aria-label="Raccourcis modules">
+            <nav className="mt-4 flex flex-wrap gap-2" aria-label="Raccourcis modules">
               <Link href="/contrats" className="lonaci-db-prem-pill">
                 Contrats
                 <span className="lonaci-db-prem-pill__meta">{contratsToday}</span>
@@ -807,133 +791,46 @@ export default function LonaciDashboardHome() {
                 Alertes critiques
               </Link>
             </nav>
-          </section>
+          </Surface>
 
-          <div className="lonaci-db-kpi-grid">
-            <div className="lonaci-db-kpi">
-              <div className="lonaci-db-kpi-head">
-                <div className="lonaci-db-kpi-label">Contrats signés</div>
-                <div className="lonaci-db-icon-box lonaci-db-icon-box-blue">
-                  <svg width="14" height="14" fill="none" stroke="#1D4ED8" strokeWidth={1.7} viewBox="0 0 24 24">
-                    <path d="M14 2H7a2 2 0 00-2 2v16a2 2 0 002 2h10a2 2 0 002-2V8z" />
-                    <path d="M14 2v6h6M9 13h6M9 17h6M9 9h2" />
-                  </svg>
-                </div>
-              </div>
-              <div className="lonaci-db-kpi-value">{kpi.weekly.contrats.createdInWindow}</div>
-              <div className="lonaci-db-mt-7">
-                {kpi.weekly.contrats.createdInWindow > 0 ? (
-                  <span className="lonaci-db-badge lonaci-db-badge-green">
-                    +{kpi.weekly.contrats.createdInWindow} cette semaine
-                  </span>
-                ) : (
-                  <span className="lonaci-db-badge lonaci-db-badge-blue">Aucun cette semaine</span>
-                )}
-              </div>
-              <div className="lonaci-db-pbr">
-                <div className="lonaci-db-pbf lonaci-db-pbf-blue lonaci-db-pbf-w-60" />
-              </div>
-              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
-                <span>Objectif : {kpi.contractsMonthlyTarget ?? 20} / mois</span>
-                <Link href="/contrats" className="lonaci-db-abtn lonaci-db-abtn-ghost">
-                  Ouvrir
-                </Link>
-              </div>
-            </div>
-
-            <div className="lonaci-db-kpi">
-              <div className="lonaci-db-kpi-head">
-                <div className="lonaci-db-kpi-label">Cautions en attente</div>
-                <div className="lonaci-db-icon-box lonaci-db-icon-box-amber">
-                  <svg width="14" height="14" fill="none" stroke="#B45309" strokeWidth={1.7} viewBox="0 0 24 24">
-                    <circle cx="12" cy="13" r="8" />
-                    <path d="M12 9v4l2.5 2.5M9 2h6M12 2v3" />
-                  </svg>
-                </div>
-              </div>
-              <div className="lonaci-db-kpi-value">{kpi.daily.cautions.enAttente}</div>
-              <div className="lonaci-db-mt-7">
-                <span className="lonaci-db-badge lonaci-db-badge-red">
-                  {kpi.cautionsJ10} dépassée{kpi.cautionsJ10 > 1 ? "s" : ""} J+{cautionDays}
-                </span>
-              </div>
-              <div className="lonaci-db-pbr">
-                <div className="lonaci-db-pbf lonaci-db-pbf-amber lonaci-db-pbf-w-30" />
-              </div>
-              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
-                <span>{kpi.daily.cautions.enAttente} en attente de finalisation</span>
-                <Link href="/cautions?tab=EN_ATTENTE" className="lonaci-db-abtn lonaci-db-abtn-ghost">
-                  Ouvrir
-                </Link>
-              </div>
-            </div>
-
-            <div className="lonaci-db-kpi">
-              <div className="lonaci-db-kpi-head">
-                <div className="lonaci-db-kpi-label">Géolocalisation PDV</div>
-                <div className="lonaci-db-icon-box lonaci-db-icon-box-green">
-                  <svg width="14" height="14" fill="none" stroke="#047857" strokeWidth={1.7} viewBox="0 0 24 24">
-                    <path d="M12 21s-6-5.2-6-10a6 6 0 1112 0c0 4.8-6 10-6 10z" />
-                    <circle cx="12" cy="11" r="2.2" />
-                  </svg>
-                </div>
-              </div>
-              <div className="lonaci-db-kpi-value">{kpi.daily.pdvIntegrations.nonFinalise}</div>
-              <div className="lonaci-db-mt-7">
-                <span className="lonaci-db-badge lonaci-db-badge-blue">en traitement</span>
-              </div>
-              <div className="lonaci-db-pbr">
-                <div className="lonaci-db-pbf lonaci-db-pbf-green lonaci-db-pbf-w-50" />
-              </div>
-              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
-                <span>
-                  {kpi.dossierValidation.pdvEnCoursRetard5j === 0
-                    ? "0 en retard"
-                    : `${kpi.dossierValidation.pdvEnCoursRetard5j} intégration(s) > ${pdvDays} j.`}
-                </span>
-                <Link href="/pdv-integrations?status=EN_TRAITEMENT" className="lonaci-db-abtn lonaci-db-abtn-ghost">
-                  Ouvrir
-                </Link>
-              </div>
-            </div>
-
-            <div className="lonaci-db-kpi">
-              <div className="lonaci-db-kpi-head">
-                <div className="lonaci-db-kpi-label">Concessionnaires actifs</div>
-                <div className="lonaci-db-icon-box lonaci-db-icon-box-violet">
-                  <svg width="14" height="14" fill="none" stroke="#6D28D9" strokeWidth={1.7} viewBox="0 0 24 24">
-                    <path d="M16 19v-1a4 4 0 00-4-4H6a4 4 0 00-4 4v1" />
-                    <circle cx="9" cy="7" r="3" />
-                    <path d="M22 19v-1a4 4 0 00-3-3.87M16 4.13a3 3 0 010 5.74" />
-                  </svg>
-                </div>
-              </div>
-              <div className="lonaci-db-kpi-value">{kpi.daily.concessionnaires.byStatut.ACTIF ?? 0}</div>
-              <div className="lonaci-db-mt-7">
-                <span className="lonaci-db-badge lonaci-db-badge-green">reseau actif</span>
-              </div>
-              <div className="lonaci-db-pbr">
-                <div className="lonaci-db-pbf lonaci-db-pbf-violet lonaci-db-pbf-w-80" />
-              </div>
-              <div className="lonaci-db-kpi-foot lonaci-db-flex-between">
-                <span>Sur le réseau ({kpi.daily.concessionnaires.total ?? 0} PDV)</span>
-                <Link href="/concessionnaires" className="lonaci-db-abtn lonaci-db-abtn-ghost">
-                  Ouvrir
-                </Link>
-              </div>
-            </div>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <KpiCard
+              label="Contrats signés"
+              value={kpi.weekly.contrats.createdInWindow}
+              icon={FileCheck2}
+              detail={`Objectif ${kpi.contractsMonthlyTarget ?? 20} / mois`}
+              trend={{ label: `${kpi.weekly.contrats.createdInWindow} cette semaine`, tone: "success" }}
+            />
+            <KpiCard
+              label="Cautions en attente"
+              value={kpi.daily.cautions.enAttente}
+              icon={Clock3}
+              detail="En attente de finalisation"
+              trend={{ label: `${kpi.cautionsJ10} à J+${cautionDays}`, tone: kpi.cautionsJ10 > 0 ? "danger" : "neutral" }}
+            />
+            <KpiCard
+              label="Géolocalisation PDV"
+              value={kpi.daily.pdvIntegrations.nonFinalise}
+              icon={MapPinned}
+              detail={`${kpi.dossierValidation.pdvEnCoursRetard5j} au-delà de ${pdvDays} j.`}
+              trend={{ label: "En traitement", tone: "warning" }}
+            />
+            <KpiCard
+              label="Concessionnaires actifs"
+              value={kpi.daily.concessionnaires.byStatut.ACTIF ?? 0}
+              icon={UsersRound}
+              detail={`${kpi.daily.concessionnaires.total ?? 0} PDV au total`}
+              trend={{ label: "Réseau actif", tone: "success" }}
+            />
           </div>
 
-          <div className="lonaci-db-row-2">
-            <div className={`lonaci-db-kpi lonaci-db-analytics-card ${analyticsThemeClass}`}>
-              <div className="lonaci-db-flex-between lonaci-db-mb-14">
-                <div>
-                  <div className="lonaci-db-section-title">Activité — 7 derniers jours</div>
-                  <div className="lonaci-db-section-subtitle">
-                    Barres en dégradé · courbe de volume agrégé · infobulles détaillées
-                  </div>
-                </div>
-                <div className="lonaci-db-chart-legend">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(300px,1fr)]">
+            <ChartCard
+              className={analyticsThemeClass}
+              title="Activité — 7 derniers jours"
+              description="Répartition par canal et dynamique du volume agrégé"
+              legend={
+                <div className="lonaci-db-chart-legend" aria-label="Légende des séries">
                   <span>
                     <span className="lonaci-db-chart-legend-swatch lonaci-db-chart-legend-swatch-contract" /> Contrats
                   </span>
@@ -944,7 +841,8 @@ export default function LonaciDashboardHome() {
                     <span className="lonaci-db-chart-legend-swatch lonaci-db-chart-legend-swatch-pdv" /> Intégrations
                   </span>
                 </div>
-              </div>
+              }
+            >
               <div className="lonaci-db-prem-chart-split">
                 <div className="lonaci-db-prem-chart-panel lonaci-db-prem-chart-panel--ultra">
                   <p className="lonaci-db-prem-chart-panel-title">Répartition par canal</p>
@@ -959,13 +857,14 @@ export default function LonaciDashboardHome() {
                   </div>
                 </div>
               </div>
-            </div>
+            </ChartCard>
 
-            <div className="lonaci-db-kpi lonaci-db-alerts">
-              <div className="lonaci-db-flex-between lonaci-db-mb-12">
-                <div className="lonaci-db-section-title">Alertes actives</div>
-                <span className="lonaci-db-badge lonaci-db-badge-red">{urgentCount} urgentes</span>
-              </div>
+            <Surface elevated className="lonaci-db-alerts">
+              <SectionHeader
+                title="Alertes actives"
+                description="Éléments nécessitant une action"
+                action={<Badge tone={urgentCount > 0 ? "danger" : "neutral"}>{urgentCount} urgentes</Badge>}
+              />
               <div className="lonaci-db-alr lonaci-db-alr-red lonaci-db-alr-row">
                 <div className="lonaci-db-dot lonaci-db-dot-red" />
                 <div className="lonaci-db-alr-grow">
@@ -1021,7 +920,7 @@ export default function LonaciDashboardHome() {
                   Voir toutes les alertes ↗
                 </Link>
               </div>
-            </div>
+            </Surface>
           </div>
 
           {!isCompactView ? (
@@ -1039,7 +938,7 @@ export default function LonaciDashboardHome() {
               </div>
               <div className="lonaci-db-top-grid">
                 {topPdv.length === 0 ? (
-                  <p className="lonaci-db-muted lonaci-db-fs-10">Aucun contrat actif répertorié.</p>
+                  <p className="lonaci-db-muted text-xs">Aucun contrat actif répertorié.</p>
                 ) : (
                   topPdv.map((row, i) => (
                     <div key={row.concessionnaireId || `pdv-${i}`} className="lonaci-db-top-item">
@@ -1066,7 +965,7 @@ export default function LonaciDashboardHome() {
                 </div>
               </div>
               {!delays || delays.sampleSize === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Pas assez de données sur la période.</p>
+                <p className="lonaci-db-muted text-xs">Pas assez de données sur la période.</p>
               ) : (
                 <div className="lonaci-db-delay-grid">
                   <div>
@@ -1078,8 +977,8 @@ export default function LonaciDashboardHome() {
                     <div className="lonaci-db-delay-label lonaci-db-delay-amber-sub">Jusqu&apos;à validation N1</div>
                   </div>
                   <div>
-                    <div className="lonaci-db-delay-value lonaci-db-delay-violet">{formatDelayHours(delays.avgN2Hours)}</div>
-                    <div className="lonaci-db-delay-label lonaci-db-delay-violet-sub">Jusqu&apos;à validation N2</div>
+                    <div className="lonaci-db-delay-value text-slate-900">{formatDelayHours(delays.avgN2Hours)}</div>
+                    <div className="lonaci-db-delay-label text-slate-600">Jusqu&apos;à validation N2</div>
                   </div>
                   <div>
                     <div className="lonaci-db-delay-value lonaci-db-delay-green">{formatDelayHours(delays.avgFinalizeHours)}</div>
@@ -1099,7 +998,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-section-subtitle">Contrats + cautions + integrations sur 30 jours</div>
               </div>
               {agencesTableRows.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune agence avec activité sur la période.</p>
+                <p className="lonaci-db-muted text-xs">Aucune agence avec activité sur la période.</p>
               ) : (
                 <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--ultra">
                   <Bar data={agenceVolumeData} options={agenceVolumeOptions} />
@@ -1115,7 +1014,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-section-subtitle">Visualisation radar des étapes de traitement</div>
               </div>
               {!delays || delays.sampleSize === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Pas assez de données sur la période.</p>
+                <p className="lonaci-db-muted text-xs">Pas assez de données sur la période.</p>
               ) : (
                 <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--ultra">
                   <Radar data={delaysRadarData} options={delaysRadarOptions} />
@@ -1171,7 +1070,7 @@ export default function LonaciDashboardHome() {
                 </span>
               </div>
               {productTopRows.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune activité produit sur la période.</p>
+                <p className="lonaci-db-muted text-xs">Aucune activité produit sur la période.</p>
               ) : (
                 <div className="lonaci-db-chart-wrap lonaci-db-chart-wrap--insight lonaci-db-chart-wrap--glass lonaci-db-chart-wrap--ultra">
                   <Bar data={productComparisonData} options={productComparisonOptions} />
@@ -1191,7 +1090,7 @@ export default function LonaciDashboardHome() {
             </div>
             <div className="lonaci-db-mini-table-wrap">
               {agencesTableRows.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune agence dans le référentiel.</p>
+                <p className="lonaci-db-muted text-xs">Aucune agence dans le référentiel.</p>
               ) : (
                 <table className="lonaci-db-mini-table">
                   <thead>
@@ -1250,7 +1149,7 @@ export default function LonaciDashboardHome() {
             </div>
             <div className="lonaci-db-mini-table-wrap">
               {produitVol.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucun contrat sur les périodes comparées.</p>
+                <p className="lonaci-db-muted text-xs">Aucun contrat sur les périodes comparées.</p>
               ) : (
                 <table className="lonaci-db-mini-table">
                   <thead>
@@ -1283,7 +1182,7 @@ export default function LonaciDashboardHome() {
             <div className="lonaci-db-products-watch">
               <div className="lonaci-db-products-watch__title">Top 3 produits à surveiller</div>
               {productsToWatch.length === 0 ? (
-                <p className="lonaci-db-muted lonaci-db-fs-10">Aucune variation notable sur la période.</p>
+                <p className="lonaci-db-muted text-xs">Aucune variation notable sur la période.</p>
               ) : (
                 <div className="lonaci-db-products-watch__grid">
                   {productsToWatch.map((row) => (

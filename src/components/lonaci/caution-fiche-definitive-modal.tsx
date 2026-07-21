@@ -1,11 +1,17 @@
 ﻿"use client";
 
+import { Download, FileText, Printer } from "lucide-react";
+
+import { StatusBadge } from "@/components/lonaci/ui/badge";
+import { Button } from "@/components/lonaci/ui/button";
+import { Dialog } from "@/components/lonaci/ui/dialog";
 import {
   CAUTION_FICHE_DEFINITIVE_TITLE,
   CAUTION_FICHE_PAYEE_MENTION,
 } from "@/lib/lonaci/caution-fiche-definitive-constants";
 import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
+import { CLIENT_PDF_COLORS } from "@/lib/pdf/client-premium";
 
 export interface CautionFicheDefinitiveModalData {
   cautionId: string;
@@ -31,7 +37,7 @@ export interface CautionFicheDefinitiveModalData {
 
 const PRINT_CSS = `
 @media print {
-  @page { size: A4; margin: 8mm; }
+  @page { size: A4 portrait; margin: 10mm 12mm; }
   html, body { height: auto !important; overflow: visible !important; background: #fff !important; }
   body * { visibility: hidden; }
   .lonaci-fpd-print-surface, .lonaci-fpd-print-surface * { visibility: visible; }
@@ -39,7 +45,19 @@ const PRINT_CSS = `
     position: fixed !important; inset: 0 !important; display: block !important;
     background: #fff !important; padding: 0 !important; margin: 0 !important; z-index: 99999 !important;
   }
-  .lonaci-fpd-print-card { box-shadow: none !important; border: none !important; max-height: none !important; }
+  .lonaci-fpd-print-card {
+    box-shadow: none !important; border: none !important; max-height: none !important;
+    font-size: 10pt !important; line-height: 1.4 !important;
+  }
+  .lonaci-fpd-print-card header, .lonaci-fpd-print-card footer,
+  .lonaci-fpd-row, .lonaci-fpd-qr, .lonaci-fpd-signatures {
+    break-inside: avoid !important; page-break-inside: avoid !important;
+  }
+  .lonaci-fpd-print-card footer { display: flex !important; }
+  .lonaci-fpd-print-card > .lonaci-ui-dialog__header,
+  .lonaci-fpd-print-card > .lonaci-ui-dialog__footer { display: none !important; }
+  .lonaci-fpd-print-card > .lonaci-ui-dialog__body { padding: 0 !important; overflow: visible !important; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .print\\:hidden { display: none !important; }
 }
 `;
@@ -58,12 +76,12 @@ function FicheRow({
   accent?: boolean;
 }) {
   return (
-    <div className="flex justify-between gap-3 border-b border-slate-100 py-2.5">
+    <div className="lonaci-fpd-row flex justify-between gap-3 border-b border-slate-100 py-2.5">
       <dt className="text-slate-500">{label}</dt>
       <dd
         className={`text-right ${mono ? "font-mono text-xs sm:text-sm" : ""} ${
           strong ? "font-semibold" : ""
-        } ${accent ? "text-emerald-900" : "text-slate-900"}`}
+        } ${accent ? "text-orange-800" : "text-slate-900"}`}
       >
         {value}
       </dd>
@@ -83,29 +101,55 @@ export function CautionFicheDefinitiveModal({
   const qrUrl = `/api/cautions/${encodeURIComponent(slip.cautionId)}/fiche-definitive/qr`;
 
   return (
-    <div
-      className="lonaci-fpd-print-surface fixed inset-0 z-[60] flex items-center justify-center bg-slate-900/55 p-4"
-      role="dialog"
-      aria-modal
-      aria-labelledby="caution-fpd-title"
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={CAUTION_FICHE_DEFINITIVE_TITLE}
+      description={`Référence ${slip.numeroFicheDefinitive}`}
+      size="lg"
+      className="lonaci-fpd-print-surface lonaci-fpd-print-card print:max-h-none print:rounded-none print:border-0 print:shadow-none"
+      footer={
+        <>
+          <a
+            href={courrierUrl}
+            title={COURRIER_COMPTABILITE_TITLE}
+            className="lonaci-ui-button lonaci-ui-button--secondary lonaci-ui-button--md"
+          >
+            <FileText size={18} aria-hidden="true" />
+            <span>Courrier comptabilité</span>
+          </a>
+          <a
+            href={pdfUrl}
+            className="lonaci-ui-button lonaci-ui-button--secondary lonaci-ui-button--md"
+          >
+            <Download size={18} aria-hidden="true" />
+            <span>Télécharger PDF</span>
+          </a>
+          <Button leadingIcon={Printer} onClick={() => window.print()}>
+            Imprimer
+          </Button>
+        </>
+      }
     >
       <style dangerouslySetInnerHTML={{ __html: PRINT_CSS }} />
-      <div className="lonaci-fpd-print-card max-h-[92vh] w-full max-w-xl overflow-y-auto rounded-2xl border border-emerald-200 bg-white shadow-2xl print:max-h-none print:rounded-none print:border-0 print:shadow-none">
-        <header className="border-b-4 border-[#0f3d2e] bg-[#0f3d2e] px-5 py-4 text-white print:border-b-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-emerald-100">Lonaci</p>
-          <p className="text-xs text-emerald-50/90">Loterie Nationale de Cote d Ivoire — module Cautions</p>
+      <div>
+        <header className="border-b-4 px-5 py-4 text-white print:border-b-4" style={{ borderColor: CLIENT_PDF_COLORS.orangeDark, backgroundColor: CLIENT_PDF_COLORS.orangeDark }}>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-orange-100">LONACI</p>
+          <p className="text-xs text-orange-50/90">Loterie Nationale de Côte d’Ivoire — module Cautions</p>
         </header>
         <div className="px-5 py-4">
           <h2 id="caution-fpd-title" className="text-center text-base font-bold uppercase tracking-wide text-slate-900 sm:text-lg">
             {CAUTION_FICHE_DEFINITIVE_TITLE}
           </h2>
-          <p className="mt-3 text-center">
-            <span className="inline-block rounded-md border-2 border-emerald-600 bg-emerald-600 px-4 py-1.5 text-sm font-bold uppercase tracking-widest text-white">
+          <p className="mt-3 flex justify-center">
+            <StatusBadge tone="success" dot>
               {CAUTION_FICHE_PAYEE_MENTION}
-            </span>
+            </StatusBadge>
           </p>
           <p className="mt-3 text-center font-mono text-sm text-slate-600">
-            Ref. document : <span className="font-semibold text-emerald-900">{slip.numeroFicheDefinitive}</span>
+            Réf. document : <span className="font-semibold text-orange-800">{slip.numeroFicheDefinitive}</span>
           </p>
           <dl className="mt-5 grid gap-0 text-sm">
             <FicheRow label={slip.identiteLabel} value={slip.identiteDetail} strong />
@@ -119,7 +163,7 @@ export function CautionFicheDefinitiveModal({
             <FicheRow label="Reference de paiement" value={slip.paymentReference} mono strong />
             {slip.ancienneFicheProvisoire ? <FicheRow label="Fiche provisoire (FPC)" value={slip.ancienneFicheProvisoire} mono /> : null}
           </dl>
-          <div className="mt-5 flex flex-col items-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50/80 p-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="lonaci-fpd-qr mt-5 flex flex-col items-center gap-2 rounded-xl border border-dashed border-orange-300 bg-orange-50/60 p-4 sm:flex-row sm:items-start sm:justify-between">
             <div className="text-center sm:text-left">
               <p className="text-xs font-semibold uppercase tracking-wide text-slate-600">Verification</p>
               <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-600">QR code optionnel pour controle d authenticite.</p>
@@ -133,24 +177,20 @@ export function CautionFicheDefinitiveModal({
           ) : (
             <p className="mt-4 text-xs text-slate-500">Aucune adresse e-mail renseignee.</p>
           )}
-          <p className="mt-4 rounded-lg bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-950">
+          <p className="mt-4 rounded-lg bg-orange-50 px-3 py-2 text-xs leading-relaxed text-orange-950">
             {slip.apresValidationPaiement ? "Paiement valide par l agent habilite." : "Dossier finalise comme paye."}
           </p>
-          <div className="mt-6 flex flex-wrap justify-end gap-2 print:hidden">
-            <button type="button" onClick={onClose} className="rounded-lg border border-slate-300 px-3 py-2 text-sm text-slate-700 hover:bg-slate-50">Fermer</button>
-            <a
-              href={courrierUrl}
-              title={COURRIER_COMPTABILITE_TITLE}
-              className="rounded-lg border border-blue-600 bg-blue-50 px-3 py-2 text-sm font-medium text-blue-900 hover:bg-blue-100"
-            >
-              Courrier comptabilité
-            </a>
-            <a href={pdfUrl} className="rounded-lg border border-slate-400 bg-white px-3 py-2 text-sm font-medium text-slate-800 hover:bg-slate-50">Telecharger PDF</a>
-            <button type="button" onClick={() => window.print()} className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700">Imprimer</button>
+          <div className="lonaci-fpd-signatures mt-7 grid grid-cols-2 gap-8 text-center text-xs text-slate-600">
+            <div className="border-t border-slate-400 pt-2">Agent habilité · Signature et cachet</div>
+            <div className="border-t border-slate-400 pt-2">Bénéficiaire · Signature</div>
           </div>
         </div>
+        <footer className="hidden items-center justify-between border-t border-orange-200 px-5 py-3 text-[10px] text-slate-500">
+          <span>LONACI · Document interne sécurisé</span>
+          <span>Page 1/1</span>
+        </footer>
       </div>
-    </div>
+    </Dialog>
   );
 }
 

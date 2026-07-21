@@ -82,10 +82,6 @@ export async function previewNextContratReference(produitCode: string, dateEffet
   return `CONTRAT-${normalizedProduit}-${y}-${m}-${String(nextSeq).padStart(4, "0")}`;
 }
 
-export async function ensureContratIndexes() {
-  return;
-}
-
 export async function hasActiveContractForProduct(
   concessionnaireId: string,
   produitCode: string,
