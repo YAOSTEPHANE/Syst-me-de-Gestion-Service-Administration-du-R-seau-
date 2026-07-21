@@ -637,7 +637,7 @@ export default function CessionsPanel() {
   }, [concessionnaires]);
 
   return (
-    <section className="space-y-5 bg-orange-50/20">
+    <section className="relative space-y-5 overflow-hidden bg-orange-50/20">
       <div className="pointer-events-none absolute -right-12 -top-16 h-44 w-44 rounded-full bg-indigo-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-20 left-0 h-44 w-44 rounded-full bg-cyan-200/25 blur-3xl" />
       <PageHeader

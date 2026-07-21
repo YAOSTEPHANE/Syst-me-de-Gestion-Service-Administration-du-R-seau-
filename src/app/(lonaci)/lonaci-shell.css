@@ -1165,7 +1165,6 @@ body.lonaci-db-no-scroll {
   min-width: 0;
   margin: 0 auto;
   font-size: 12px;
-  overflow-x: hidden;
 }
 
 .lonaci-db-kpi {

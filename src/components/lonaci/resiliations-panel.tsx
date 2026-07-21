@@ -445,7 +445,7 @@ export default function ResiliationsPanel() {
   }).toString()}`;
 
   return (
-    <section className="space-y-5 bg-orange-50/20">
+    <section className="relative space-y-5 overflow-hidden bg-orange-50/20">
       <div className="pointer-events-none absolute -right-16 top-0 h-44 w-44 rounded-full bg-cyan-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-20 left-0 h-48 w-48 rounded-full bg-rose-200/20 blur-3xl" />
       <Surface elevated padding="lg">

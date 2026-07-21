@@ -606,7 +606,7 @@ export default function SuccessionPanel() {
     "rounded-xl border border-slate-300 bg-white px-2.5 py-2 text-xs text-slate-900 outline-none transition focus:border-cyan-500 focus:ring-2 focus:ring-cyan-200";
 
   return (
-    <section className="space-y-5 bg-orange-50/20">
+    <section className="relative space-y-5 overflow-hidden bg-orange-50/20">
       <div className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-indigo-200/30 blur-3xl" />
       <div className="pointer-events-none absolute -left-24 bottom-0 h-56 w-56 rounded-full bg-teal-200/20 blur-3xl" />
 
