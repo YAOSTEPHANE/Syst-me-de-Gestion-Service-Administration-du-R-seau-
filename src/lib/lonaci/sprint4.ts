@@ -50,6 +50,10 @@ import {
 } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
+import { escapeRegexLiteral } from "@/lib/security/escape-regex";
+
+const MAX_CAUTION_SEARCH_Q_LENGTH = 200;
+const MAX_CAUTION_SEARCH_ENTITY_IDS = 300;
 
 const CAUTIONS_COLLECTION = "cautions";
 const CAUTION_ETAT_ATTENDUS_SAISIS_COLLECTION = "caution_etat_attendus_saisis";
@@ -1457,12 +1461,106 @@ async function mapCautionsToListRows(rows: StoredCaution[]): Promise<CautionList
   });
 }
 
+/** Critères Mongo pour la recherche texte (réf. FPC/FPD, produit, client, PDV…). */
+async function buildCautionListSearchOr(qRaw: string): Promise<Record<string, unknown>[] | null> {
+  const trimmed = qRaw.trim();
+  if (!trimmed) return null;
+  const q =
+    trimmed.length > MAX_CAUTION_SEARCH_Q_LENGTH
+      ? trimmed.slice(0, MAX_CAUTION_SEARCH_Q_LENGTH)
+      : trimmed;
+  const safe = escapeRegexLiteral(q);
+  const regex = { $regex: safe, $options: "i" as const };
+  const or: Record<string, unknown>[] = [
+    { paymentReference: regex },
+    { numeroFicheProvisoire: regex },
+    { numeroFicheDefinitive: regex },
+    { produitCode: regex },
+    { contratId: regex },
+    { observations: regex },
+  ];
+
+  if (ObjectId.isValid(q) && q.length === 24) {
+    or.push({ _id: new ObjectId(q) });
+  }
+
+  const [clients, concessionnaires, contratsByRef] = await Promise.all([
+    prisma.lonaciClient.findMany({
+      where: {
+        AND: [
+          lonaciClientNotDeletedWhere,
+          {
+            OR: [
+              { code: { contains: q, mode: "insensitive" } },
+              { nomComplet: { contains: q, mode: "insensitive" } },
+              { raisonSociale: { contains: q, mode: "insensitive" } },
+              { cniNumero: { contains: q, mode: "insensitive" } },
+              { codeMachine: { contains: q, mode: "insensitive" } },
+            ],
+          },
+        ],
+      },
+      select: { id: true },
+      take: MAX_CAUTION_SEARCH_ENTITY_IDS,
+    }),
+    prisma.concessionnaire.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { codePdv: { contains: q, mode: "insensitive" } },
+          { nomComplet: { contains: q, mode: "insensitive" } },
+          { raisonSociale: { contains: q, mode: "insensitive" } },
+          { cniNumero: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true },
+      take: MAX_CAUTION_SEARCH_ENTITY_IDS,
+    }),
+    prisma.contrat.findMany({
+      where: {
+        deletedAt: null,
+        OR: [
+          { reference: { contains: q, mode: "insensitive" } },
+          { annexeReference: { contains: q, mode: "insensitive" } },
+        ],
+      },
+      select: { id: true },
+      take: MAX_CAUTION_SEARCH_ENTITY_IDS,
+    }),
+  ]);
+
+  const clientIds = clients.map((row) => row.id);
+  if (clientIds.length > 0) {
+    or.push({ lonaciClientId: { $in: clientIds } });
+  }
+
+  const contratIdsFromRef = new Set(contratsByRef.map((row) => row.id));
+
+  const concessionnaireIds = concessionnaires.map((row) => row.id);
+  if (concessionnaireIds.length > 0) {
+    or.push({ concessionnaireId: { $in: concessionnaireIds } });
+    const contrats = await prisma.contrat.findMany({
+      where: { deletedAt: null, concessionnaireId: { in: concessionnaireIds } },
+      select: { id: true },
+      take: MAX_CAUTION_SEARCH_ENTITY_IDS,
+    });
+    for (const row of contrats) contratIdsFromRef.add(row.id);
+  }
+
+  if (contratIdsFromRef.size > 0) {
+    or.push({ contratId: { $in: [...contratIdsFromRef] } });
+  }
+
+  return or;
+}
+
 export async function listCautionsForTab(
   tab: CautionListTab,
   page: number,
   pageSize: number,
   actor: UserDocument,
   agenceRestriction: ListAgenceRestriction,
+  q?: string,
 ): Promise<{ items: CautionListRowDto[]; total: number }> {
   const db = await getDatabase();
   const threshold = await cautionDueThresholdDate();
@@ -1523,6 +1621,11 @@ export async function listCautionsForTab(
         { contratId: { $in: contrats.map((row) => row._id.toHexString()) } },
       ],
     });
+  }
+
+  const searchOr = await buildCautionListSearchOr(q ?? "");
+  if (searchOr) {
+    conditions.push({ $or: searchOr });
   }
 
   const filter: Record<string, unknown> = { $and: conditions };

@@ -55,6 +55,24 @@ describe("GET /api/cautions", () => {
       25,
       { _id: "agent-1", role: "AGENT", agenceId: "agence-a", agencesAutorisees: [] },
       { agenceId: "agence-a", agenceIds: undefined },
+      undefined,
+    );
+  });
+
+  it("transmet le terme de recherche q", async () => {
+    const response = await GET(
+      new NextRequest("http://localhost/api/cautions?tab=EN_ATTENTE&page=1&pageSize=50&q=FPC-2026"),
+    );
+
+    expectResponse(response);
+    expect(response.status).toBe(200);
+    expect(listCautionsForTabMock).toHaveBeenCalledWith(
+      "EN_ATTENTE",
+      1,
+      50,
+      expect.anything(),
+      expect.anything(),
+      "FPC-2026",
     );
   });
 });

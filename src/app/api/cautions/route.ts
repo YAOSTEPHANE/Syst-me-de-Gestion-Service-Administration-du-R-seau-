@@ -17,6 +17,7 @@ const listQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
   tab: z.enum(CAUTION_LIST_TABS),
+  q: z.string().max(200).optional(),
 });
 
 const createBodySchema = z
@@ -101,6 +102,7 @@ export async function GET(request: NextRequest) {
     parsed.data.pageSize,
     auth.user,
     agenceRestriction,
+    parsed.data.q,
   );
 
   return NextResponse.json({ items, total, page: parsed.data.page, pageSize: parsed.data.pageSize }, { status: 200 });

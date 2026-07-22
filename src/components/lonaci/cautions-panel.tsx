@@ -8,6 +8,7 @@ import { Badge, StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button } from "@/components/lonaci/ui/button";
 import { Dialog } from "@/components/lonaci/ui/dialog";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
+import { FilterBar } from "@/components/lonaci/ui/filter-bar";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Card, Surface } from "@/components/lonaci/ui/surface";
 import { canRole } from "@/lib/auth/rbac";
@@ -304,6 +305,9 @@ function isoToDatetimeLocalValue(iso: string): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** Observation par défaut à la création d’une fiche caisse. */
+const CAUTION_CREATE_DEFAULT_OBSERVATIONS = "En attente de reçu de caisse";
+
 async function downloadCautionsExcelTemplate() {
   const XLSX = await import("xlsx");
   const headers = ["contratId", "montant", "modeReglement", "dueDate", "paymentReference", "observations"];
@@ -582,12 +586,18 @@ function provisionalBundleClipboardLines(slips: ProvisionalSlipData[]): string[]
   return lines;
 }
 
-async function fetchCautionsList(input: { tab: CautionListTab; pageSize: number }): Promise<CautionListItem[]> {
+async function fetchCautionsList(input: {
+  tab: CautionListTab;
+  pageSize: number;
+  q?: string;
+}): Promise<{ items: CautionListItem[]; total: number }> {
   const params = new URLSearchParams({
     page: "1",
     pageSize: String(input.pageSize),
     tab: input.tab,
   });
+  const q = input.q?.trim();
+  if (q) params.set("q", q);
   const response = await fetch(`/api/cautions?${params.toString()}`, {
     credentials: "include",
     cache: "no-store",
@@ -595,8 +605,8 @@ async function fetchCautionsList(input: { tab: CautionListTab; pageSize: number 
   if (!response.ok) {
     throw new Error("Impossible de charger la liste des cautions");
   }
-  const data = (await response.json()) as { items: CautionListItem[] };
-  return data.items;
+  const data = (await response.json()) as { items: CautionListItem[]; total?: number };
+  return { items: data.items ?? [], total: typeof data.total === "number" ? data.total : data.items?.length ?? 0 };
 }
 
 async function fetchCautionCounters(): Promise<CautionCounters> {
@@ -624,8 +634,16 @@ export default function CautionsPanel() {
   const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [tab, setTab] = useState<CautionListTab>("EN_ATTENTE");
   const [items, setItems] = useState<CautionListItem[]>([]);
+  const [listTotal, setListTotal] = useState(0);
+  const [q, setQ] = useState("");
+  const [qDebounced, setQDebounced] = useState("");
 
   const pageSize = 50;
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setQDebounced(q.trim()), 300);
+    return () => window.clearTimeout(timer);
+  }, [q]);
 
   const [referentialProduits, setReferentialProduits] = useState<ReferentialProduitRow[]>([]);
   const [referentialProduitsLoading, setReferentialProduitsLoading] = useState(false);
@@ -645,12 +663,8 @@ export default function CautionsPanel() {
   const [produitSearch, setProduitSearch] = useState("");
   const referentialLoadSeq = useRef(0);
   const [montant, setMontant] = useState("");
-  const [modeReglement, setModeReglement] = useState<CautionEncaissementMode>("ESPECES");
   const [dueDateLocal, setDueDateLocal] = useState("");
-  const [paymentReference, setPaymentReference] = useState("");
   const [observations, setObservations] = useState("");
-  /** Par défaut : fiche de paiement caution pour paiement à la caisse (parcours nominal). */
-  const [ficheProvisoire, setFicheProvisoire] = useState(true);
   const [regularizeTarget, setRegularizeTarget] = useState<CautionListItem | null>(null);
   const [regularizeMode, setRegularizeMode] = useState<CautionEncaissementMode>("VIREMENT");
   const [regularizeRef, setRegularizeRef] = useState("");
@@ -891,11 +905,8 @@ export default function CautionsPanel() {
     const hh = pad(now.getHours());
     const mm = pad(now.getMinutes());
     setDueDateLocal(`${y}-${m}-${d}T${hh}:${mm}`);
-    setPaymentReference("");
-    setObservations("");
+    setObservations(CAUTION_CREATE_DEFAULT_OBSERVATIONS);
     setMontant("");
-    setModeReglement("ESPECES");
-    setFicheProvisoire(true);
     setClientSearchInput("");
     setClientSearchHits([]);
     setClientFromPick(null);
@@ -1055,7 +1066,7 @@ export default function CautionsPanel() {
     try {
       const tabEff = nextTab ?? tab;
       const [list, a, meRes, etatRes] = await Promise.all([
-        fetchCautionsList({ tab: tabEff, pageSize }),
+        fetchCautionsList({ tab: tabEff, pageSize, q: qDebounced }),
         fetchAlerts().catch(() => []),
         fetch("/api/auth/me", { credentials: "include", cache: "no-store" }).catch(() => null),
         fetch(`/api/cautions/etat-mensuel-produits?months=12&_=${Date.now()}`, {
@@ -1063,7 +1074,8 @@ export default function CautionsPanel() {
           cache: "no-store",
         }).catch(() => null),
       ]);
-      setItems(list);
+      setItems(list.items);
+      setListTotal(list.total);
       setAlerts(a);
       if (etatRes?.ok) {
         const etatJson = (await etatRes.json().catch(() => null)) as { rows?: CautionEtatMensuelProduitRow[] } | null;
@@ -1094,7 +1106,7 @@ export default function CautionsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [pageSize, tab]);
+  }, [pageSize, tab, qDebounced]);
 
   useEffect(() => {
     reloadCautionsListRef.current = load;
@@ -1129,10 +1141,6 @@ export default function CautionsPanel() {
       notify.error("Cochez au moins un produit du référentiel.");
       return;
     }
-    if (!paymentReference.trim() && !ficheProvisoire) {
-      notify.error("Indiquez la référence du paiement.");
-      return;
-    }
     if (referentielMontantTotal === null || referentielMontantTotal <= 0) {
       notify.error(
         "Montant : chaque produit coché doit avoir un tarif caution référentiel valide (prix manquant ou nul sur au moins un).",
@@ -1141,7 +1149,6 @@ export default function CautionsPanel() {
     }
     setCreating(true);
     setError(null);
-    const wasProvisoire = ficheProvisoire;
     try {
       const due = new Date(dueDateLocal);
       if (Number.isNaN(due.getTime())) {
@@ -1149,7 +1156,6 @@ export default function CautionsPanel() {
       }
       const clientId = selectedLonaciClientId.trim();
       const obs = observations.trim() ? observations.trim() : null;
-      const payRef = ficheProvisoire ? undefined : paymentReference.trim();
       const slipsOut: ProvisionalSlipData[] = [];
 
       for (const produitCode of codes) {
@@ -1167,11 +1173,10 @@ export default function CautionsPanel() {
             lonaciClientId: clientId,
             produitCode,
             montant: montantLigne,
-            modeReglement: ficheProvisoire ? "PAIEMENT_DIFFERE" : modeReglement,
+            modeReglement: "PAIEMENT_DIFFERE",
             dueDate: due.toISOString(),
-            paymentReference: payRef,
             observations: obs,
-            ficheProvisoire: ficheProvisoire || undefined,
+            ficheProvisoire: true,
           }),
         });
         const raw = (await response.json().catch(() => null)) as
@@ -1222,23 +1227,16 @@ export default function CautionsPanel() {
       setCreateOpen(false);
       setMontant("");
       setDueDateLocal("");
-      setPaymentReference("");
       setObservations("");
-      setModeReglement("ESPECES");
-      setFicheProvisoire(true);
       if (slipsOut.length > 0) {
         setProvisionalSlips(slipsOut);
       }
       window.dispatchEvent(new Event("lonaci:data-imported"));
       const n = codes.length;
       notify.success(
-        wasProvisoire && slipsOut.length > 1
+        slipsOut.length > 1
           ? `${slipsOut.length} cautions créées — une fiche de paiement caution unique affichée (${n} produit${n > 1 ? "s" : ""}).`
-          : wasProvisoire
-            ? "Fiche de paiement caution créée."
-            : n > 1
-              ? `${n} cautions créées.`
-              : "Caution créée.",
+          : "Fiche de paiement caution créée.",
       );
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
@@ -1447,10 +1445,7 @@ export default function CautionsPanel() {
 
     setMontant("");
     setDueDateLocal("");
-    setPaymentReference("");
     setObservations("");
-    setModeReglement("ESPECES");
-    setFicheProvisoire(true);
     setClientSearchInput("");
     setClientSearchHits([]);
     setClientFromPick(null);
@@ -1578,7 +1573,7 @@ export default function CautionsPanel() {
                   2. Produit(s)
                 </span>
                 <span className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700">
-                  3. Constitution (caisse ou déjà payé)
+                  3. Fiche caisse (en attente de reçu)
                 </span>
               </div>
 
@@ -1791,48 +1786,10 @@ export default function CautionsPanel() {
                     3. Constitution de la caution
                   </legend>
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
-                    Cas nominal : vous remplissez ce formulaire avec le client inscrit, puis le porteur présente la{" "}
-                    <strong>fiche de paiement caution</strong> à la caisse pour payer. Si l&apos;argent a déjà été encaissé hors
-                    ce flux, basculez sur la saisie directe.
+                    Remplissez ce formulaire avec le client inscrit, puis le porteur présente la{" "}
+                    <strong>fiche de paiement caution</strong> (FPC-…) à la caisse. Après paiement :{" "}
+                    <strong>Régulariser paiement</strong> dans Lonaci avec la référence reçue.
                   </p>
-
-                  <div className="mb-3 grid gap-2" role="radiogroup" aria-label="Mode de constitution de la caution">
-                    <label
-                      className={`flex cursor-pointer gap-2.5 rounded-lg border border-amber-300 bg-amber-50/80 p-3 ${
-                        ficheProvisoire ? "ring-2 ring-amber-400" : ""
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="caution-constitution-mode"
-                        checked={ficheProvisoire}
-                        onChange={() => setFicheProvisoire(true)}
-                        className="mt-1"
-                      />
-                      <span className="text-xs leading-relaxed text-amber-950">
-                        <span className="font-semibold">Paiement à la caisse (recommandé)</span> — enregistrement sans
-                        encaissement immédiat ; génération d&apos;une fiche numérotée (FPC-…) à imprimer pour le
-                        guichet. Après paiement : <strong>Régulariser paiement</strong> dans Lonaci (référence reçue).
-                      </span>
-                    </label>
-                    <label
-                      className={`flex cursor-pointer gap-2.5 rounded-lg border border-slate-200 bg-white p-3 ${
-                        !ficheProvisoire ? "ring-2 ring-indigo-300" : ""
-                      }`}
-                    >
-                      <input
-                        type="radio"
-                        name="caution-constitution-mode"
-                        checked={!ficheProvisoire}
-                        onChange={() => setFicheProvisoire(false)}
-                        className="mt-1"
-                      />
-                      <span className="text-xs leading-relaxed text-slate-700">
-                        <span className="font-semibold">Encaissement déjà effectué</span> — saisir tout de suite le
-                        mode, la date et la référence du paiement reçu (hors fiche caisse).
-                      </span>
-                    </label>
-                  </div>
 
                   <div className="grid gap-2.5 sm:grid-cols-2">
                     <div className="sm:col-span-2">
@@ -1858,79 +1815,22 @@ export default function CautionsPanel() {
                       ) : null}
                     </div>
 
-                    {ficheProvisoire ? (
-                      <div className="sm:col-span-2">
-                        <label className="mb-1 block text-xs font-medium text-slate-700">
-                          Date limite de paiement à la caisse <span className="text-rose-600">*</span>
-                        </label>
-                        <input
-                          aria-label="Date limite de paiement prévue pour la fiche de paiement caution"
-                          required
-                          type="datetime-local"
-                          value={dueDateLocal}
-                          onChange={(e) => setDueDateLocal(e.target.value)}
-                          className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                        />
-                        <p className="mt-1 text-[11px] text-slate-500">
-                          Échéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
-                        </p>
-                      </div>
-                    ) : (
-                      <>
-                        <div>
-                          <label htmlFor="caution-mode-reglement" className="mb-1 block text-xs font-medium text-slate-700">
-                            Mode de règlement <span className="text-rose-600">*</span>
-                          </label>
-                          <select
-                            id="caution-mode-reglement"
-                            required
-                            aria-label="Mode de règlement du paiement de caution"
-                            value={modeReglement}
-                            onChange={(e) => setModeReglement(e.target.value as CautionEncaissementMode)}
-                            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                          >
-                            {CAUTION_ENCAISSEMENT_MODES.map((m) => (
-                              <option key={m} value={m}>
-                                {getCautionEncaissementModeLabel(m)}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div>
-                          <label htmlFor="caution-date-paiement" className="mb-1 block text-xs font-medium text-slate-700">
-                            Date et heure du paiement <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            id="caution-date-paiement"
-                            required
-                            type="datetime-local"
-                            value={dueDateLocal}
-                            onChange={(e) => setDueDateLocal(e.target.value)}
-                            aria-label="Date et heure du paiement reçu"
-                            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                          />
-                          <p className="mt-1 text-[11px] text-slate-500">
-                            Date d&apos;encaissement effectif (caisse, banque ou opérateur).
-                          </p>
-                        </div>
-
-                        <div className="sm:col-span-2">
-                          <label htmlFor="caution-ref-paiement" className="mb-1 block text-xs font-medium text-slate-700">
-                            Référence du paiement <span className="text-rose-600">*</span>
-                          </label>
-                          <input
-                            id="caution-ref-paiement"
-                            required
-                            aria-label="Référence du paiement"
-                            value={paymentReference}
-                            onChange={(e) => setPaymentReference(e.target.value)}
-                            placeholder="Ex. n° transaction, n° chèque, référence virement…"
-                            className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
-                          />
-                        </div>
-                      </>
-                    )}
+                    <div className="sm:col-span-2">
+                      <label className="mb-1 block text-xs font-medium text-slate-700">
+                        Date limite de paiement à la caisse <span className="text-rose-600">*</span>
+                      </label>
+                      <input
+                        aria-label="Date limite de paiement prévue pour la fiche de paiement caution"
+                        required
+                        type="datetime-local"
+                        value={dueDateLocal}
+                        onChange={(e) => setDueDateLocal(e.target.value)}
+                        className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
+                      />
+                      <p className="mt-1 text-[11px] text-slate-500">
+                        Échéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
+                      </p>
+                    </div>
                   </div>
                 </fieldset>
 
@@ -1941,10 +1841,13 @@ export default function CautionsPanel() {
                     aria-label="Observations"
                     value={observations}
                     onChange={(e) => setObservations(e.target.value)}
-                    placeholder="Notes internes / détails utiles (optionnel)"
+                    placeholder="Ex. En attente de reçu de caisse"
                     rows={2}
                     className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20 placeholder:text-slate-400"
                   />
+                  <p className="mt-1 text-[11px] text-slate-500">
+                    Prérempli automatiquement — vous pouvez modifier le texte avant de générer la fiche.
+                  </p>
                 </section>
 
                 <div className="flex flex-wrap justify-end gap-2">
@@ -1984,11 +1887,7 @@ export default function CautionsPanel() {
                     disabled={creating || referentialProduitsLoading}
                     className="rounded-lg border border-amber-500 bg-amber-500 px-3 py-2 text-sm font-semibold text-white shadow-sm transition hover:border-amber-600 hover:bg-amber-600 disabled:opacity-60"
                   >
-                    {creating
-                      ? "Création…"
-                      : ficheProvisoire
-                        ? "Générer la fiche caisse"
-                        : "Enregistrer la caution payée"}
+                    {creating ? "Création…" : "Générer la fiche caisse"}
                   </button>
                 </div>
               </form>
@@ -2016,7 +1915,7 @@ export default function CautionsPanel() {
               <span className="font-mono font-medium text-slate-800">
                 {regularizeTarget.numeroFicheProvisoire ?? "—"}
               </span>{" "}
-              — complétez le formulaire de paiement effectif (même rubrique que lors d&apos;un encaissement direct).
+              — complétez le formulaire de paiement effectif avec le mode et la référence du reçu caisse.
             </p>
             <fieldset className="mt-4 rounded-xl border border-indigo-200/90 bg-white/90 p-3">
               <legend className="px-1 text-[11px] font-bold uppercase tracking-wide text-indigo-900">
@@ -2242,6 +2141,7 @@ export default function CautionsPanel() {
                               setRegularizeTarget(cautionListItemFromProvisionalSlip(row));
                               setRegularizeRef("");
                               setRegularizeMode("VIREMENT");
+                              setRegularizeDue(isoToDatetimeLocalValue(row.dueDate));
                               setProvisionalSlips([]);
                             }}
                             className="rounded-md border border-indigo-400 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"
@@ -2541,7 +2441,27 @@ export default function CautionsPanel() {
 
       <SectionHeader
         title={labelTab(tab)}
-        description={`${items.length} caution${items.length !== 1 ? "s" : ""} dans la vue active.`}
+        description={
+          qDebounced
+            ? `${listTotal} résultat${listTotal !== 1 ? "s" : ""} pour « ${qDebounced} » (${items.length} affiché${items.length !== 1 ? "s" : ""}).`
+            : `${listTotal} caution${listTotal !== 1 ? "s" : ""} dans la vue active.`
+        }
+      />
+      <FilterBar
+        aria-label="Recherche des cautions"
+        search={{
+          value: q,
+          onChange: setQ,
+          label: "Rechercher une caution",
+          placeholder: "N° FPC, client, code, produit, CNI, PDV…",
+        }}
+        actions={
+          q.trim() ? (
+            <Button type="button" variant="secondary" size="sm" onClick={() => setQ("")}>
+              Effacer
+            </Button>
+          ) : null
+        }
       />
       <div aria-live="polite">
         {loading ? <Skeleton lines={4} /> : null}
@@ -2687,7 +2607,9 @@ export default function CautionsPanel() {
               {!cautionListDisplayRows.length ? (
                 <tr>
                   <td className="px-2 py-6 text-center text-slate-500" colSpan={7}>
-                    Aucune caution pour ce filtre.
+                    {qDebounced
+                      ? `Aucun résultat pour « ${qDebounced} » dans cet onglet.`
+                      : "Aucune caution pour ce filtre."}
                   </td>
                 </tr>
               ) : null}
@@ -2721,7 +2643,14 @@ export default function CautionsPanel() {
               </article>
             ))}
             {!items.length ? (
-              <FeedbackState title="Aucune caution" description="Aucune caution pour ce filtre." />
+              <FeedbackState
+                title="Aucune caution"
+                description={
+                  qDebounced
+                    ? `Aucun résultat pour « ${qDebounced} » dans cet onglet.`
+                    : "Aucune caution pour ce filtre."
+                }
+              />
             ) : null}
           </div>
         </Surface>
