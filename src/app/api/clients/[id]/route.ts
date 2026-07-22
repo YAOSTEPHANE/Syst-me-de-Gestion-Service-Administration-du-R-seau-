@@ -46,7 +46,7 @@ const patchSchema = z
     adresse: z.union([z.string().max(500), z.null()]).optional(),
     ville: z.union([z.string().max(120), z.null()]).optional(),
     codePostal: z.union([z.string().max(12), z.null()]).optional(),
-    typeConcession: z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
+    typeDistributeur: z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
     nombreTpm: z.union([z.number().int().min(0).max(9999), z.null()]).optional(),
     numeroDistributeur: z.union([z.string().min(1).max(64), z.null()]).optional(),
     numeroTpm: z.union([z.string().min(1).max(64), z.null()]).optional(),

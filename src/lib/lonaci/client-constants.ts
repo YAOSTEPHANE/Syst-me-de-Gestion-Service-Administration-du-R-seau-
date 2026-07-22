@@ -13,20 +13,27 @@ export function normalizeClientCategorie(value: string | null | undefined): Clie
   return "PARTICULIER";
 }
 
-/** Type de concession rattaché au client. */
-export const CLIENT_TYPE_CONCESSION = ["NOUVEAU", "ANCIEN"] as const;
-export type ClientTypeConcession = (typeof CLIENT_TYPE_CONCESSION)[number];
+/** Type de distributeur rattaché au client. */
+export const CLIENT_TYPE_DISTRIBUTEUR = ["NOUVEAU", "ANCIEN"] as const;
+export type ClientTypeDistributeur = (typeof CLIENT_TYPE_DISTRIBUTEUR)[number];
 
-export const CLIENT_TYPE_CONCESSION_LABELS: Record<ClientTypeConcession, string> = {
+export const CLIENT_TYPE_DISTRIBUTEUR_LABELS: Record<ClientTypeDistributeur, string> = {
   NOUVEAU: "Nouveau",
   ANCIEN: "Ancien",
 };
 
-export function normalizeClientTypeConcession(
+export function normalizeClientTypeDistributeur(
   value: string | null | undefined,
-): ClientTypeConcession | null {
+): ClientTypeDistributeur | null {
   const v = (value ?? "").trim().toUpperCase();
-  if (v === "NOUVEAU" || v === "NOUVEAU CONCESSION" || v === "NEW") return "NOUVEAU";
+  if (
+    v === "NOUVEAU" ||
+    v === "NOUVEAU DISTRIBUTEUR" ||
+    v === "NOUVEAU CONCESSION" ||
+    v === "NEW"
+  ) {
+    return "NOUVEAU";
+  }
   if (v === "ANCIEN" || v === "ANCIENNE" || v === "OLD") return "ANCIEN";
   return null;
 }
@@ -121,4 +128,42 @@ export function normalizeClientCodeForAgence(rawCode: string, agenceCode: string
     throw new Error("CLIENT_CODE_INVALID");
   }
   return `${prefix}${trimmed}`;
+}
+
+/**
+ * Comme `normalizeClientCodeForAgence`, mais réécrit le préfixe d’agence
+ * (`CLI-AUTRE-0001` → `CLI-CIBLE-0001`) pour un import scoppé forcé.
+ * @throws Error `CLIENT_CODE_INVALID`
+ */
+export function remapClientCodeToAgence(rawCode: string, agenceCode: string): string {
+  const trimmed = rawCode.trim().toUpperCase();
+  const prefix = clientCodePrefixForAgence(agenceCode);
+
+  if (trimmed.startsWith(`${CLIENT_CODE_PREFIX}-`)) {
+    const withoutCli = trimmed.slice(`${CLIENT_CODE_PREFIX}-`.length);
+    const dash = withoutCli.indexOf("-");
+    if (dash <= 0) {
+      throw new Error("CLIENT_CODE_INVALID");
+    }
+    const suffix = withoutCli.slice(dash + 1);
+    if (!isValidClientCodeSuffix(suffix)) {
+      throw new Error("CLIENT_CODE_INVALID");
+    }
+    return `${prefix}${suffix}`;
+  }
+
+  return normalizeClientCodeForAgence(trimmed, agenceCode);
+}
+
+/** Suffixe après `CLI-{AGENCE}-` (ex. `000042`), ou null si format inattendu. */
+export function clientCodeSuffix(fullOrRawCode: string): string | null {
+  const trimmed = fullOrRawCode.trim().toUpperCase();
+  if (!trimmed.startsWith(`${CLIENT_CODE_PREFIX}-`)) {
+    return isValidClientCodeSuffix(trimmed) ? trimmed : null;
+  }
+  const withoutCli = trimmed.slice(`${CLIENT_CODE_PREFIX}-`.length);
+  const dash = withoutCli.indexOf("-");
+  if (dash <= 0) return null;
+  const suffix = withoutCli.slice(dash + 1);
+  return isValidClientCodeSuffix(suffix) ? suffix : null;
 }

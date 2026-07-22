@@ -253,7 +253,7 @@ function LoginPageContent() {
                 >
                   Identifiant (email ou matricule)
                 </label>
-                <div className="group relative">
+                <div className="group relative" suppressHydrationWarning>
                   <Mail className="pointer-events-none absolute top-1/2 left-4 h-4.5 w-4.5 -translate-y-1/2 text-slate-500 transition group-focus-within:text-orange-300" strokeWidth={1.7} aria-hidden="true" />
                   <input
                     id="login-identifier"
@@ -276,7 +276,7 @@ function LoginPageContent() {
                 >
                   Mot de passe
                 </label>
-                <div className="group relative">
+                <div className="group relative" suppressHydrationWarning>
                   <LockKeyhole className="pointer-events-none absolute top-1/2 left-4 h-4.5 w-4.5 -translate-y-1/2 text-slate-500 transition group-focus-within:text-orange-300" strokeWidth={1.7} aria-hidden="true" />
                   <input
                     id="login-password"

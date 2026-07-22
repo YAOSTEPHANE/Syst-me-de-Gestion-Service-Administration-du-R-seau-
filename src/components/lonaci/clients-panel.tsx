@@ -26,13 +26,13 @@ import {
   CLIENT_STATUTS,
   CLIENT_CATEGORIES,
   CLIENT_CATEGORIE_LABELS,
-  CLIENT_TYPE_CONCESSION,
-  CLIENT_TYPE_CONCESSION_LABELS,
+  CLIENT_TYPE_DISTRIBUTEUR,
+  CLIENT_TYPE_DISTRIBUTEUR_LABELS,
   clientDisplayName,
   clientCodePrefixForAgence,
   type ClientCategorie,
   type ClientStatut,
-  type ClientTypeConcession,
+  type ClientTypeDistributeur,
 } from "@/lib/lonaci/client-constants";
 import type { AgenceZoneGeographique, DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { OTHER_PRODUCT_CODE } from "@/lib/lonaci/produit-constants";
@@ -45,6 +45,9 @@ import { notify } from "@/lib/toast";
 import {
   CLIENT_IMPORT_COLUMN_ORDER,
   CLIENT_IMPORT_HEADER_LABELS,
+  mapClientImportRowFromRecord,
+  matchAgenceFromImportToken,
+  inferAgenceCodeFromClientCode,
 } from "@/lib/lonaci/clients-import-map";
 import { assertExcelImportAllowed } from "@/lib/spreadsheet/import-format-policy";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
@@ -57,10 +60,14 @@ function isMostlyEmptyImportRow(row: Record<string, unknown>): boolean {
   });
 }
 
-async function downloadClientsExcelTemplate(produitCode?: string) {
+const FILTER_SANS_AGENCE = "__SANS_AGENCE__";
+const FILTER_SANS_PRODUIT = "__SANS_PRODUIT__";
+
+async function downloadClientsExcelTemplate(opts?: { produitCode?: string; agenceCode?: string }) {
   const XLSX = await import("xlsx");
   const frenchHeaders = CLIENT_IMPORT_COLUMN_ORDER.map((key) => CLIENT_IMPORT_HEADER_LABELS[key]);
-  const produitSample = produitCode?.trim().toUpperCase() || "LOTO";
+  const produitSample = opts?.produitCode?.trim().toUpperCase() || "LOTO";
+  const agenceSample = opts?.agenceCode?.trim().toUpperCase() || "ABOBO";
   const sampleByKey = {
     code: "000001",
     codeMachine: "TERM-001",
@@ -71,14 +78,14 @@ async function downloadClientsExcelTemplate(produitCode?: string) {
     nomContact: "KOUASSI JEAN",
     email: "jean.kouassi@example.test",
     telephone: "+2250700000000",
-    typeConcession: "NOUVEAU",
+    typeDistributeur: "NOUVEAU",
     nombreTpm: "1",
     numeroDistributeur: "DIST-001",
     numeroTpm: "TPM-001",
     adresse: "Abidjan",
     ville: "Abidjan",
     codePostal: "",
-    agence: "ABOBO",
+    agence: agenceSample,
     produitsAutorises: produitSample,
     notes: "Exemple de ligne",
   };
@@ -88,11 +95,85 @@ async function downloadClientsExcelTemplate(produitCode?: string) {
       sampleByKey[key],
     ]),
   );
-  const ws = XLSX.utils.json_to_sheet([sample], { header: frenchHeaders });
+  const wsClients = XLSX.utils.json_to_sheet([sample], { header: frenchHeaders });
+  const wsPerimetre = XLSX.utils.aoa_to_sheet([
+    ["Périmètre d’import"],
+    ["Agence", agenceSample],
+    ["Produit", produitSample],
+    ["Note", "Un fichier peut contenir plusieurs agences : chaque ligne est rangée selon sa colonne Agence."],
+  ]);
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "clients");
-  const suffix = produitCode?.trim() ? `-${produitSample}` : "";
-  XLSX.writeFile(wb, `modele-import-clients${suffix}.xlsx`);
+  // Feuille données en premier : l’import lit la 1re feuille
+  const sheetName = `clients-${agenceSample}`.slice(0, 31);
+  XLSX.utils.book_append_sheet(wb, wsClients, sheetName);
+  XLSX.utils.book_append_sheet(wb, wsPerimetre, "Perimetre");
+  XLSX.writeFile(wb, `liste-clients-${agenceSample}-${produitSample}.xlsx`);
+}
+
+const AGENCE_IMPORT_KEYS = [
+  "agence",
+  "Agence",
+  "Agence (zone)",
+  "Agence (Intérieur - Abidjan)",
+  "agenceId",
+  "agenceCode",
+  "codeAgence",
+  "code agence",
+  "zone",
+] as const;
+
+type AgenceListItem = { id: string; code: string; libelle: string };
+
+function analyzeAgencesInImportRows(
+  rows: Record<string, unknown>[],
+  agences: AgenceListItem[],
+): {
+  agencesDetectees: Array<{ id: string; libelle: string; count: number }>;
+  lignesSansAgence: number;
+  tokensNonResolus: string[];
+} {
+  const counts = new Map<string, number>();
+  let lignesSansAgence = 0;
+  const unresolved = new Set<string>();
+
+  for (const row of rows) {
+    const mapped = mapClientImportRowFromRecord(row);
+    let token = mapped.agence.trim();
+    if (!token) {
+      const inferred = inferAgenceCodeFromClientCode(mapped.code);
+      if (inferred) token = inferred;
+    }
+
+    if (!token) {
+      lignesSansAgence += 1;
+      continue;
+    }
+
+    const resolved = matchAgenceFromImportToken(token, agences);
+    if (!resolved) {
+      unresolved.add(token);
+      lignesSansAgence += 1;
+      continue;
+    }
+    counts.set(resolved.id, (counts.get(resolved.id) ?? 0) + 1);
+  }
+
+  const agencesDetectees = [...counts.entries()]
+    .map(([id, count]) => {
+      const ag = agences.find((a) => a.id === id);
+      return {
+        id,
+        libelle: ag?.libelle ?? id,
+        count,
+      };
+    })
+    .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }));
+
+  return {
+    agencesDetectees,
+    lignesSansAgence,
+    tokensNonResolus: [...unresolved].slice(0, 8),
+  };
 }
 
 async function normalizeClientsImportFile(file: File): Promise<Record<string, unknown>[]> {
@@ -148,7 +229,7 @@ type ListItem = {
   nomContact: string | null;
   email: string | null;
   telephone: string | null;
-  typeConcession: string | null;
+  typeDistributeur: string | null;
   nombreTpm: number | null;
   numeroDistributeur: string | null;
   numeroTpm: string | null;
@@ -189,7 +270,7 @@ type ClientDetail = {
   adresse: string | null;
   ville: string | null;
   codePostal: string | null;
-  typeConcession: string | null;
+  typeDistributeur: string | null;
   nombreTpm: number | null;
   numeroDistributeur: string | null;
   numeroTpm: string | null;
@@ -239,8 +320,7 @@ function libelleZoneGeographique(z: AgenceZoneGeographique | undefined): string 
 
 function libelleAgenceAvecZone(a: AgenceRef): string {
   const zone = libelleZoneGeographique(a.zoneGeographique);
-  const base = `${a.code} — ${a.libelle}`;
-  return zone ? `${base} (${zone})` : base;
+  return zone ? `${a.libelle} (${zone})` : a.libelle;
 }
 
 const CLIENT_STATUS_TONES: Record<string, Tone> = {
@@ -252,6 +332,16 @@ const CLIENT_STATUS_TONES: Record<string, Tone> = {
 };
 
 type ClientConfirmation = { kind: "deactivate"; id: string; code: string };
+
+/** Fichier lu, en attente du choix agence + produit avant envoi. */
+type PendingClientImport = {
+  fileName: string;
+  rows: Record<string, unknown>[];
+  /** Répartition des agences détectées dans le fichier (libellé → nombre de lignes). */
+  agencesDetectees: Array<{ id: string; libelle: string; count: number }>;
+  lignesSansAgence: number;
+  tokensNonResolus: string[];
+};
 
 export default function ClientsPanel() {
   const [items, setItems] = useState<ListItem[]>([]);
@@ -274,6 +364,11 @@ export default function ClientsPanel() {
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [confirmation, setConfirmation] = useState<ClientConfirmation | null>(null);
+  const [pendingImport, setPendingImport] = useState<PendingClientImport | null>(null);
+  const [importProduitCode, setImportProduitCode] = useState("");
+  const [templateDialogOpen, setTemplateDialogOpen] = useState(false);
+  const [templateAgenceId, setTemplateAgenceId] = useState("");
+  const [templateProduitCode, setTemplateProduitCode] = useState("");
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -299,7 +394,7 @@ export default function ClientsPanel() {
     adresse: "",
     ville: "",
     codePostal: "",
-    typeConcession: "" as "" | ClientTypeConcession,
+    typeDistributeur: "" as "" | ClientTypeDistributeur,
     nombreTpm: "",
     numeroDistributeur: "",
     numeroTpm: "",
@@ -308,7 +403,13 @@ export default function ClientsPanel() {
     notes: "",
   });
 
-  const agencesActives = useMemo(() => agences.filter((a) => a.actif), [agences]);
+  const agencesActives = useMemo(
+    () =>
+      [...agences.filter((a) => a.actif)].sort((a, b) =>
+        a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }),
+      ),
+    [agences],
+  );
   const selectedAgence = useMemo(
     () => agencesActives.find((a) => a.id === form.agenceId) ?? null,
     [agencesActives, form.agenceId],
@@ -328,9 +429,24 @@ export default function ClientsPanel() {
   );
   const selectedProduitLabel = useMemo(() => {
     if (!filterProduit) return null;
+    if (filterProduit === FILTER_SANS_PRODUIT) return "Sans produit";
     const found = produitsTries.find((p) => p.code === filterProduit);
     return found ? `${found.code} — ${found.libelle}` : filterProduit;
   }, [filterProduit, produitsTries]);
+  const selectedAgenceLabel = useMemo(() => {
+    if (!filterAgence) return null;
+    if (filterAgence === FILTER_SANS_AGENCE) return "Sans agence";
+    const found = agencesActives.find((a) => a.id === filterAgence);
+    return found ? libelleAgenceAvecZone(found) : filterAgence;
+  }, [filterAgence, agencesActives]);
+  const selectedAgenceName = useMemo(() => {
+    if (!filterAgence || filterAgence === FILTER_SANS_AGENCE) return null;
+    return agencesActives.find((a) => a.id === filterAgence)?.libelle ?? null;
+  }, [filterAgence, agencesActives]);
+  const scopeImportLabel = useMemo(() => {
+    if (!selectedAgenceName || !filterProduit) return null;
+    return `${selectedAgenceName} · ${filterProduit}`;
+  }, [selectedAgenceName, filterProduit]);
 
   const piecesFourniesIds = useMemo(
     () =>
@@ -360,8 +476,10 @@ export default function ClientsPanel() {
       if (q.trim()) params.set("q", q.trim());
       if (filterStatut) params.set("statut", filterStatut);
       if (filterCategorie) params.set("categorie", filterCategorie);
-      if (filterAgence) params.set("agenceId", filterAgence);
-      if (filterProduit) params.set("produitCode", filterProduit);
+      if (filterAgence === FILTER_SANS_AGENCE) params.set("sansAgence", "true");
+      else if (filterAgence) params.set("agenceId", filterAgence);
+      if (filterProduit === FILTER_SANS_PRODUIT) params.set("sansProduit", "true");
+      else if (filterProduit) params.set("produitCode", filterProduit);
       const res = await fetch(`/api/clients?${params}`, { credentials: "include", cache: "no-store" });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -417,7 +535,7 @@ export default function ClientsPanel() {
       adresse: "",
       ville: "",
       codePostal: "",
-      typeConcession: "",
+      typeDistributeur: "",
       nombreTpm: "",
       numeroDistributeur: "",
       numeroTpm: "",
@@ -439,35 +557,78 @@ export default function ClientsPanel() {
 
   function openCreate() {
     resetForm();
-    if (filterProduit) {
+    if (filterProduit && filterProduit !== FILTER_SANS_PRODUIT) {
       setProduitsAutorises([filterProduit]);
     }
-    setModalOpen(true);
-  }
-
-  function requireProduitForImport(): string | null {
-    const code = filterProduit.trim().toUpperCase();
-    if (!code) {
-      notify.error("Sélectionnez un produit (onglet) avant d’importer ou de télécharger le modèle.");
-      return null;
+    if (filterAgence && filterAgence !== FILTER_SANS_AGENCE) {
+      setForm((f) => ({ ...f, agenceId: filterAgence }));
     }
-    return code;
+    setModalOpen(true);
   }
 
   async function onImportClientsFileChange(ev: ChangeEvent<HTMLInputElement>) {
     const source = ev.target.files?.[0];
     if (!source) return;
-    const produitCode = requireProduitForImport();
-    if (!produitCode) {
-      ev.target.value = "";
-      return;
-    }
-    setImportingFile(true);
     try {
-      const rows = await normalizeClientsImportFile(source);
-      if (rows.length === 0) {
+      if (agencesActives.length === 0) {
+        throw new Error(
+          "Référentiel des agences non chargé. Attendez quelques secondes puis réessayez.",
+        );
+      }
+
+      const rawRows = await normalizeClientsImportFile(source);
+      if (rawRows.length === 0) {
         throw new Error("Le fichier ne contient aucune ligne exploitable.");
       }
+
+      const { agencesDetectees, lignesSansAgence, tokensNonResolus } = analyzeAgencesInImportRows(
+        rawRows,
+        agencesActives,
+      );
+
+      setImportProduitCode(
+        filterProduit && filterProduit !== FILTER_SANS_PRODUIT ? filterProduit : "",
+      );
+      setPendingImport({
+        fileName: source.name,
+        rows: rawRows,
+        agencesDetectees,
+        lignesSansAgence,
+        tokensNonResolus,
+      });
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Lecture du fichier impossible.");
+    } finally {
+      ev.target.value = "";
+    }
+  }
+
+  async function confirmPendingImport() {
+    if (!pendingImport || importingFile) return;
+
+    const produitCode = importProduitCode.trim().toUpperCase();
+    if (!produitCode) {
+      notify.error("Choisissez le produit concerné par cet import.");
+      return;
+    }
+
+    if (pendingImport.agencesDetectees.length === 0) {
+      if (pendingImport.tokensNonResolus.length > 0) {
+        notify.error(
+          `Agences du fichier non reconnues : ${pendingImport.tokensNonResolus.join(", ")}. Vérifiez qu’elles existent dans le référentiel.`,
+        );
+      } else {
+        notify.error(
+          "Aucune agence détectée dans le fichier. Ajoutez une colonne Agence (code ou libellé) ou des codes CLI-{AGENCE}-…",
+        );
+      }
+      return;
+    }
+
+    const rows = pendingImport.rows;
+
+    setImportingFile(true);
+    try {
       const res = await fetch("/api/clients/import", {
         method: "POST",
         credentials: "include",
@@ -478,6 +639,8 @@ export default function ClientsPanel() {
         | {
             message?: string;
             inserted?: number;
+            updated?: number;
+            unchanged?: number;
             skippedDuplicates?: number;
             failed?: number;
             results?: Array<{ row: number; ok: boolean; error?: string }>;
@@ -488,8 +651,9 @@ export default function ClientsPanel() {
       }
 
       const inserted = data?.inserted ?? 0;
+      const updated = data?.updated ?? 0;
+      const unchanged = data?.unchanged ?? data?.skippedDuplicates ?? 0;
       const failed = data?.failed ?? 0;
-      const skipped = data?.skippedDuplicates ?? 0;
       const firstErrors = (data?.results ?? [])
         .filter((r) => !r.ok && r.error)
         .slice(0, 3)
@@ -501,7 +665,9 @@ export default function ClientsPanel() {
       setFilterStatut("");
       setFilterCategorie("");
       setFilterAgence("");
-      // conserve filterProduit : l’import est lié au produit sélectionné
+      setFilterProduit(produitCode);
+      const agencesCount = pendingImport.agencesDetectees.length;
+      setPendingImport(null);
 
       setLoading(true);
       setError(null);
@@ -531,23 +697,47 @@ export default function ClientsPanel() {
 
       window.dispatchEvent(new Event("lonaci:data-imported"));
 
-      if (inserted === 0) {
+      const agencesLabel = agencesCount > 0 ? `${agencesCount} agence(s)` : "agences du fichier";
+      if (inserted === 0 && updated === 0 && failed > 0 && unchanged === 0) {
         notify.error(
           firstErrors
-            ? `Aucun client créé (${produitCode}). ${firstErrors}`
-            : `Aucun client créé pour ${produitCode} (${skipped} doublon(s), ${failed} erreur(s)).`,
+            ? `Import impossible (${agencesLabel} · ${produitCode}). ${firstErrors}`
+            : `Import impossible (${failed} erreur(s)).`,
         );
       } else {
         notify.success(
-          `Import ${produitCode} : ${inserted} créé(s), ${skipped} doublon(s), ${failed} erreur(s).`,
+          `Import terminé (${agencesLabel} · ${produitCode}) : ${inserted} créé(s), ${updated} mis à jour, ${unchanged} inchangé(s)${failed ? `, ${failed} erreur(s)` : ""}.`,
         );
       }
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Import clients impossible.");
     } finally {
       setImportingFile(false);
-      ev.target.value = "";
     }
+  }
+
+  function openTemplateDialog() {
+    setTemplateAgenceId(filterAgence);
+    setTemplateProduitCode(filterProduit);
+    setTemplateDialogOpen(true);
+  }
+
+  function downloadTemplateFromDialog() {
+    const produitCode = templateProduitCode.trim().toUpperCase();
+    const agence = agencesActives.find((a) => a.id === templateAgenceId);
+    if (!agence) {
+      notify.error("Choisissez l’agence du modèle.");
+      return;
+    }
+    if (!produitCode) {
+      notify.error("Choisissez le produit du modèle.");
+      return;
+    }
+    setTemplateDialogOpen(false);
+    void downloadClientsExcelTemplate({
+      produitCode,
+      agenceCode: agence.code,
+    });
   }
 
   async function fetchClientDetail(id: string): Promise<ClientDetail> {
@@ -599,8 +789,8 @@ export default function ClientsPanel() {
         adresse: c.adresse ?? "",
         ville: c.ville ?? "",
         codePostal: c.codePostal ?? "",
-        typeConcession: (CLIENT_TYPE_CONCESSION as readonly string[]).includes(c.typeConcession ?? "")
-          ? (c.typeConcession as ClientTypeConcession)
+        typeDistributeur: (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(c.typeDistributeur ?? "")
+          ? (c.typeDistributeur as ClientTypeDistributeur)
           : "",
         nombreTpm: c.nombreTpm != null ? String(c.nombreTpm) : "",
         numeroDistributeur: c.numeroDistributeur ?? "",
@@ -652,7 +842,7 @@ export default function ClientsPanel() {
             adresse: form.adresse.trim() || null,
             ville: form.ville.trim() || null,
             codePostal: form.codePostal.trim() || null,
-            typeConcession: form.typeConcession || null,
+            typeDistributeur: form.typeDistributeur || null,
             nombreTpm: form.nombreTpm.trim() === "" ? null : Number(form.nombreTpm),
             numeroDistributeur: form.numeroDistributeur.trim() || null,
             numeroTpm: form.numeroTpm.trim() || null,
@@ -699,7 +889,7 @@ export default function ClientsPanel() {
             adresse: form.adresse.trim() || null,
             ville: form.ville.trim() || null,
             codePostal: form.codePostal.trim() || null,
-            typeConcession: form.typeConcession || null,
+            typeDistributeur: form.typeDistributeur || null,
             nombreTpm: form.nombreTpm.trim() === "" ? null : Number(form.nombreTpm),
             numeroDistributeur: form.numeroDistributeur.trim() || null,
             numeroTpm: form.numeroTpm.trim() || null,
@@ -765,7 +955,7 @@ export default function ClientsPanel() {
     const ag = agences.find((a) => a.id === agenceId);
     if (!ag) return agenceId;
     const zone = libelleZoneGeographique(ag.zoneGeographique);
-    return zone ? `${ag.code} (${zone})` : ag.code;
+    return zone ? `${ag.libelle} (${zone})` : ag.libelle;
   }
 
   function statutLabelCourt(statut: string) {
@@ -793,8 +983,10 @@ export default function ClientsPanel() {
       if (q.trim()) params.set("q", q.trim());
       if (filterStatut) params.set("statut", filterStatut);
       if (filterCategorie) params.set("categorie", filterCategorie);
-      if (filterAgence) params.set("agenceId", filterAgence);
-      if (filterProduit) params.set("produitCode", filterProduit);
+      if (filterAgence === FILTER_SANS_AGENCE) params.set("sansAgence", "true");
+      else if (filterAgence) params.set("agenceId", filterAgence);
+      if (filterProduit === FILTER_SANS_PRODUIT) params.set("sansProduit", "true");
+      else if (filterProduit) params.set("produitCode", filterProduit);
 
       const allRows: ListItem[] = [];
       let pageCursor = 1;
@@ -829,9 +1021,9 @@ export default function ClientsPanel() {
             : codeUpper;
         const contactName = row.nomContact?.trim() || "";
         const typeValue =
-          row.typeConcession &&
-          (CLIENT_TYPE_CONCESSION as readonly string[]).includes(row.typeConcession)
-            ? row.typeConcession
+          row.typeDistributeur &&
+          (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(row.typeDistributeur)
+            ? row.typeDistributeur
             : "";
         const byKey: Record<(typeof CLIENT_IMPORT_COLUMN_ORDER)[number], string | number> = {
           code: codeSuffix,
@@ -843,7 +1035,7 @@ export default function ClientsPanel() {
           nomContact: contactName,
           email: row.email ?? "",
           telephone: row.telephone ?? "",
-          typeConcession: typeValue,
+          typeDistributeur: typeValue,
           nombreTpm: row.nombreTpm ?? "",
           numeroDistributeur: row.numeroDistributeur ?? "",
           numeroTpm: row.numeroTpm ?? "",
@@ -862,8 +1054,8 @@ export default function ClientsPanel() {
       const ws = XLSX.utils.json_to_sheet(exportRows, { header: frenchHeaders });
       const wb = XLSX.utils.book_new();
       XLSX.utils.book_append_sheet(wb, ws, "clients");
-      const suffix = filterProduit ? `-${filterProduit}` : "";
-      XLSX.writeFile(wb, `liste-clients${suffix}.xlsx`);
+      const suffix = [selectedAgenceName, filterProduit].filter(Boolean).join("-");
+      XLSX.writeFile(wb, suffix ? `liste-clients-${suffix}.xlsx` : "liste-clients.xlsx");
       notify.success(`${exportRows.length} client(s) exporté(s) dans liste-clients.xlsx.`);
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Export Excel impossible.");
@@ -1014,9 +1206,9 @@ export default function ClientsPanel() {
         eyebrow="Référentiel"
         title="Clients"
         description={
-          selectedProduitLabel
-            ? `Liste filtrée sur ${selectedProduitLabel}. L’import Excel rattache les clients à ce produit.`
-            : `Comptes clients et tiers, distincts des concessionnaires PDV. Choisissez un produit pour filtrer la liste et importer.`
+          scopeImportLabel
+            ? `Liste filtrée sur ${selectedAgenceLabel ?? "agence"} · ${selectedProduitLabel ?? filterProduit}.`
+            : `Comptes clients et tiers, distincts des concessionnaires PDV. À l’import, choisissez l’agence et le produit concernés.`
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -1035,15 +1227,7 @@ export default function ClientsPanel() {
             >
               Exporter la liste
             </Button>
-            <Button
-              variant="secondary"
-              leadingIcon={Download}
-              onClick={() => {
-                const code = requireProduitForImport();
-                if (!code) return;
-                void downloadClientsExcelTemplate(code);
-              }}
-            >
+            <Button variant="secondary" leadingIcon={Download} onClick={openTemplateDialog}>
               Modèle d’import
             </Button>
             <Button
@@ -1051,16 +1235,9 @@ export default function ClientsPanel() {
               leadingIcon={Import}
               disabled={importingFile}
               aria-busy={importingFile}
-              onClick={() => {
-                if (!requireProduitForImport()) return;
-                importFileInputRef.current?.click();
-              }}
+              onClick={() => importFileInputRef.current?.click()}
             >
-              {importingFile
-                ? "Import…"
-                : filterProduit
-                  ? `Importer (${filterProduit})`
-                  : "Importer Excel"}
+              {importingFile ? "Import…" : "Importer Excel"}
             </Button>
             <Button leadingIcon={Plus} onClick={openCreate}>
               Nouveau client
@@ -1072,6 +1249,72 @@ export default function ClientsPanel() {
       {error ? (
         <FeedbackState tone="danger" title="Opération impossible" description={error} aria-live="assertive" />
       ) : null}
+
+      <Surface elevated padding="sm" className="overflow-x-auto [scrollbar-width:thin]">
+        <div
+          className="flex min-w-max gap-1.5"
+          role="tablist"
+          aria-label="Filtrer les clients par agence"
+          aria-orientation="horizontal"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={!filterAgence}
+            onClick={() => {
+              setPage(1);
+              setFilterAgence("");
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              !filterAgence
+                ? "bg-[#102a43] text-white shadow-md"
+                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+            }`}
+          >
+            Toutes les agences
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filterAgence === FILTER_SANS_AGENCE}
+            title="Clients sans agence renseignée (imports non catégorisés)"
+            onClick={() => {
+              setPage(1);
+              setFilterAgence(FILTER_SANS_AGENCE);
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              filterAgence === FILTER_SANS_AGENCE
+                ? "bg-amber-700 text-white shadow-md"
+                : "text-amber-800 hover:bg-amber-50"
+            }`}
+          >
+            Sans agence
+          </button>
+          {agencesActives.map((a) => {
+            const active = filterAgence === a.id;
+            return (
+              <button
+                key={a.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                title={libelleAgenceAvecZone(a)}
+                onClick={() => {
+                  setPage(1);
+                  setFilterAgence(a.id);
+                }}
+                className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+                  active
+                    ? "bg-[#102a43] text-white shadow-md"
+                    : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+                }`}
+              >
+                {a.libelle}
+              </button>
+            );
+          })}
+        </div>
+      </Surface>
 
       <Surface elevated padding="sm" className="overflow-x-auto [scrollbar-width:thin]">
         <div
@@ -1095,6 +1338,23 @@ export default function ClientsPanel() {
             }`}
           >
             Tous les produits
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={filterProduit === FILTER_SANS_PRODUIT}
+            title="Clients sans produit rattaché (imports non catégorisés)"
+            onClick={() => {
+              setPage(1);
+              setFilterProduit(FILTER_SANS_PRODUIT);
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              filterProduit === FILTER_SANS_PRODUIT
+                ? "bg-amber-700 text-white shadow-md"
+                : "text-amber-800 hover:bg-amber-50"
+            }`}
+          >
+            Sans produit
           </button>
           {produitsTries.map((p) => {
             const active = filterProduit === p.code;
@@ -1167,22 +1427,6 @@ export default function ClientsPanel() {
               </option>
             ))}
           </select>
-          <select
-            value={filterAgence}
-            aria-label="Agence"
-            onChange={(e) => {
-              setPage(1);
-              setFilterAgence(e.target.value);
-            }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-          >
-            <option value="">Toutes les agences</option>
-            {agencesActives.map((a) => (
-              <option key={a.id} value={a.id}>
-                {libelleAgenceAvecZone(a)}
-              </option>
-            ))}
-          </select>
             </>
           }
           actions={
@@ -1206,8 +1450,12 @@ export default function ClientsPanel() {
         <div className="my-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm font-semibold text-slate-700">
             {total} client(s)
-            {selectedProduitLabel ? (
-              <span className="ml-2 font-normal text-slate-500">· {selectedProduitLabel}</span>
+            {scopeImportLabel ? (
+              <span className="ml-2 font-normal text-slate-500">· {scopeImportLabel}</span>
+            ) : selectedAgenceLabel || selectedProduitLabel ? (
+              <span className="ml-2 font-normal text-slate-500">
+                · {[selectedAgenceLabel, selectedProduitLabel].filter(Boolean).join(" · ")}
+              </span>
             ) : null}
           </p>
           <Pagination
@@ -1224,9 +1472,11 @@ export default function ClientsPanel() {
           <FeedbackState
             title="Aucun client"
             description={
-              filterProduit
-                ? `Aucun client rattaché au produit ${filterProduit} avec les filtres actuels.`
-                : "Aucun client ne correspond aux filtres actuels. Sélectionnez un produit pour importer."
+              filterAgence === FILTER_SANS_AGENCE || filterProduit === FILTER_SANS_PRODUIT
+                ? "Ces clients viennent d’un import non catégorisé. Réimportez le fichier en choisissant l’agence et le produit pour les rattacher."
+                : filterAgence || filterProduit
+                  ? `Aucun client pour ${[selectedAgenceLabel, selectedProduitLabel].filter(Boolean).join(" · ")} avec les filtres actuels.`
+                  : "Aucun client ne correspond aux filtres actuels."
             }
           />
         ) : (
@@ -1249,7 +1499,7 @@ export default function ClientsPanel() {
               <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] uppercase tracking-wide text-slate-500">
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Nom complet</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Contact</th>
-                <th className="whitespace-nowrap px-2 py-2 font-semibold">Type concession</th>
+                <th className="whitespace-nowrap px-2 py-2 font-semibold">Type distributeur</th>
                 <th className="whitespace-nowrap px-2 py-2 text-center font-semibold">Nb TPM</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold" title="Agence (Intérieur - Abidjan)">
                   Agence
@@ -1285,9 +1535,9 @@ export default function ClientsPanel() {
                       {contactLine}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-slate-700">
-                      {row.typeConcession &&
-                      (CLIENT_TYPE_CONCESSION as readonly string[]).includes(row.typeConcession)
-                        ? CLIENT_TYPE_CONCESSION_LABELS[row.typeConcession as ClientTypeConcession]
+                      {row.typeDistributeur &&
+                      (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(row.typeDistributeur)
+                        ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[row.typeDistributeur as ClientTypeDistributeur]
                         : "—"}
                     </td>
                     <td className="whitespace-nowrap px-2 py-2 text-center font-mono text-[11px] text-slate-700">
@@ -1351,11 +1601,11 @@ export default function ClientsPanel() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-slate-500">Type concession</dt>
+                  <dt className="font-semibold text-slate-500">Type distributeur</dt>
                   <dd className="mt-1">
-                    {row.typeConcession &&
-                    (CLIENT_TYPE_CONCESSION as readonly string[]).includes(row.typeConcession)
-                      ? CLIENT_TYPE_CONCESSION_LABELS[row.typeConcession as ClientTypeConcession]
+                    {row.typeDistributeur &&
+                    (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(row.typeDistributeur)
+                      ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[row.typeDistributeur as ClientTypeDistributeur]
                       : "—"}
                   </dd>
                 </div>
@@ -1613,21 +1863,21 @@ export default function ClientsPanel() {
                   </label>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block text-sm">
-                      <span className="text-slate-600">Type de concession</span>
+                      <span className="text-slate-600">Type de distributeur</span>
                       <select
-                        value={form.typeConcession}
+                        value={form.typeDistributeur}
                         onChange={(e) =>
                           setForm((f) => ({
                             ...f,
-                            typeConcession: e.target.value as "" | ClientTypeConcession,
+                            typeDistributeur: e.target.value as "" | ClientTypeDistributeur,
                           }))
                         }
                         className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
                       >
                         <option value="">—</option>
-                        {CLIENT_TYPE_CONCESSION.map((t) => (
+                        {CLIENT_TYPE_DISTRIBUTEUR.map((t) => (
                           <option key={t} value={t}>
-                            {CLIENT_TYPE_CONCESSION_LABELS[t]}
+                            {CLIENT_TYPE_DISTRIBUTEUR_LABELS[t]}
                           </option>
                         ))}
                       </select>
@@ -1789,21 +2039,21 @@ export default function ClientsPanel() {
                   </label>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="block text-sm">
-                      <span className="text-slate-600">Type de concession</span>
+                      <span className="text-slate-600">Type de distributeur</span>
                       <select
-                        value={form.typeConcession}
+                        value={form.typeDistributeur}
                         onChange={(e) =>
                           setForm((f) => ({
                             ...f,
-                            typeConcession: e.target.value as "" | ClientTypeConcession,
+                            typeDistributeur: e.target.value as "" | ClientTypeDistributeur,
                           }))
                         }
                         className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
                       >
                         <option value="">—</option>
-                        {CLIENT_TYPE_CONCESSION.map((t) => (
+                        {CLIENT_TYPE_DISTRIBUTEUR.map((t) => (
                           <option key={t} value={t}>
-                            {CLIENT_TYPE_CONCESSION_LABELS[t]}
+                            {CLIENT_TYPE_DISTRIBUTEUR_LABELS[t]}
                           </option>
                         ))}
                       </select>
@@ -1975,12 +2225,12 @@ export default function ClientsPanel() {
                 { label: "N° CNI", value: viewingClient.cniNumero },
                 { label: "Code machine", value: viewingClient.codeMachine },
                 {
-                  label: "Type de concession",
+                  label: "Type de distributeur",
                   value:
-                    viewingClient.typeConcession &&
-                    (CLIENT_TYPE_CONCESSION as readonly string[]).includes(viewingClient.typeConcession)
-                      ? CLIENT_TYPE_CONCESSION_LABELS[viewingClient.typeConcession as ClientTypeConcession]
-                      : viewingClient.typeConcession,
+                    viewingClient.typeDistributeur &&
+                    (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(viewingClient.typeDistributeur)
+                      ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[viewingClient.typeDistributeur as ClientTypeDistributeur]
+                      : viewingClient.typeDistributeur,
                 },
                 {
                   label: "Nombre de TPM",
@@ -2030,6 +2280,153 @@ export default function ClientsPanel() {
             </div>
           </div>
         ) : null}
+      </Dialog>
+
+      <Dialog
+        open={pendingImport !== null}
+        onOpenChange={(open) => {
+          if (!open && !importingFile) {
+            setPendingImport(null);
+            setImportProduitCode("");
+          }
+        }}
+        title="Importer la liste clients"
+        description="Chaque client est rangé automatiquement dans l’agence indiquée sur sa ligne (colonne Agence ou code CLI-{AGENCE}-…). Choisissez uniquement le produit."
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!importingFile) setPendingImport(null);
+              }}
+              disabled={importingFile}
+            >
+              Annuler
+            </Button>
+            <Button
+              leadingIcon={Import}
+              loading={importingFile}
+              onClick={() => void confirmPendingImport()}
+            >
+              Importer
+            </Button>
+          </>
+        }
+      >
+        {pendingImport ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              {pendingImport.rows.length} ligne(s) · {pendingImport.fileName}
+            </p>
+            {pendingImport.agencesDetectees.length > 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <p className="font-semibold text-slate-700">Agences détectées dans le fichier</p>
+                <ul className="mt-1 space-y-0.5 text-slate-600">
+                  {pendingImport.agencesDetectees.map((a) => (
+                    <li key={a.id}>
+                      {a.libelle} — {a.count} client(s)
+                    </li>
+                  ))}
+                </ul>
+                {pendingImport.lignesSansAgence > 0 ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {pendingImport.lignesSansAgence} ligne(s) sans agence reconnue
+                    {pendingImport.tokensNonResolus.length > 0
+                      ? ` (ex. : ${pendingImport.tokensNonResolus.join(", ")})`
+                      : ""}
+                    .
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {pendingImport.tokensNonResolus.length > 0 ? (
+                  <>
+                    Valeurs d’agence non reconnues dans le fichier :{" "}
+                    <strong>{pendingImport.tokensNonResolus.join(", ")}</strong>. Elles doivent
+                    correspondre au code ou au libellé du référentiel.
+                  </>
+                ) : (
+                  <>
+                    Aucune colonne Agence détectée. Le fichier doit contenir une colonne Agence
+                    (code ou libellé) ou des codes au format CLI-{"{AGENCE}"}-….
+                  </>
+                )}
+              </p>
+            )}
+            <label className="block space-y-1 text-sm">
+              <span className="font-semibold text-slate-700">Produit concerné</span>
+              <select
+                value={importProduitCode}
+                onChange={(e) => setImportProduitCode(e.target.value)}
+                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                aria-label="Produit d’import"
+                disabled={importingFile}
+              >
+                <option value="">Sélectionner un produit</option>
+                {produitsTries.map((p) => (
+                  <option key={p.id} value={p.code}>
+                    {p.code} — {p.libelle}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
+      </Dialog>
+
+      <Dialog
+        open={templateDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) setTemplateDialogOpen(false);
+        }}
+        title="Modèle d’import"
+        description="Choisissez l’agence et le produit pour générer le fichier modèle."
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setTemplateDialogOpen(false)}>
+              Annuler
+            </Button>
+            <Button leadingIcon={Download} onClick={downloadTemplateFromDialog}>
+              Télécharger
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <label className="block space-y-1 text-sm">
+            <span className="font-semibold text-slate-700">Agence</span>
+            <select
+              value={templateAgenceId}
+              onChange={(e) => setTemplateAgenceId(e.target.value)}
+              className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              aria-label="Agence du modèle"
+            >
+              <option value="">Sélectionner une agence</option>
+              {agencesActives.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {libelleAgenceAvecZone(a)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="block space-y-1 text-sm">
+            <span className="font-semibold text-slate-700">Produit</span>
+            <select
+              value={templateProduitCode}
+              onChange={(e) => setTemplateProduitCode(e.target.value)}
+              className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+              aria-label="Produit du modèle"
+            >
+              <option value="">Sélectionner un produit</option>
+              {produitsTries.map((p) => (
+                <option key={p.id} value={p.code}>
+                  {p.code} — {p.libelle}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </Dialog>
 
       <ConfirmDialog

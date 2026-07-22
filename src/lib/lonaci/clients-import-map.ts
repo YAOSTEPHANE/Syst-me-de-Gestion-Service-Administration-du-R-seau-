@@ -16,7 +16,7 @@ export type MappedClientImportRow = {
   adresse: string | null;
   ville: string | null;
   codePostal: string | null;
-  typeConcession: string | null;
+  typeDistributeur: string | null;
   nombreTpm: string | null;
   numeroDistributeur: string | null;
   numeroTpm: string | null;
@@ -32,6 +32,91 @@ export function normalizeImportHeaderToken(value: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "")
     .trim();
+}
+
+/** Normalise un libellé/code d’agence pour matching souple à l’import. */
+export function normalizeAgenceMatchToken(value: string): string {
+  return value
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[\s/-]+/g, "_")
+    .replace(/^AGENCE_DE_/, "")
+    .replace(/^AGENCE_/, "")
+    .replace(/^AG_/, "");
+}
+
+type AgenceMatchable = {
+  code: string;
+  libelle: string;
+  id?: string | null;
+  _id?: string | null;
+};
+
+/**
+ * Résout un token fichier (code, libellé, « Agence Abobo », etc.) vers une agence du référentiel.
+ */
+export function matchAgenceFromImportToken<T extends AgenceMatchable>(
+  token: string,
+  agences: T[],
+): T | null {
+  const normalized = normalizeAgenceMatchToken(token);
+  if (!normalized || agences.length === 0) return null;
+
+  const idOf = (a: T) => (a.id ?? a._id ?? "").trim();
+
+  const byId = agences.find((a) => {
+    const id = idOf(a);
+    return id && normalizeAgenceMatchToken(id) === normalized;
+  });
+  if (byId) return byId;
+
+  const byCode = agences.find((a) => normalizeAgenceMatchToken(a.code) === normalized);
+  if (byCode) return byCode;
+
+  const byLibelle = agences.find((a) => normalizeAgenceMatchToken(a.libelle) === normalized);
+  if (byLibelle) return byLibelle;
+
+  const parts = normalized.split("_").filter((p) => p.length >= 2);
+
+  // Préfère le code le plus long présent comme segment (évite ABO vs ABOBO).
+  const byCodeSegment = [...agences]
+    .map((a) => ({ a, code: normalizeAgenceMatchToken(a.code) }))
+    .filter(({ code }) => code.length >= 2 && parts.includes(code))
+    .sort((x, y) => y.code.length - x.code.length);
+  if (byCodeSegment[0]) return byCodeSegment[0].a;
+
+  const byLibelleParts = agences.find((a) => {
+    const libParts = normalizeAgenceMatchToken(a.libelle)
+      .split("_")
+      .filter((p) => p.length >= 2);
+    return parts.some((p) => libParts.includes(p) && p.length >= 4);
+  });
+  if (byLibelleParts) return byLibelleParts;
+
+  return (
+    agences.find((a) => {
+      const code = normalizeAgenceMatchToken(a.code);
+      if (!code || code.length < 2) return false;
+      return (
+        normalized === `AGENCE_${code}` ||
+        normalized.endsWith(`_${code}`) ||
+        normalized.startsWith(`${code}_`)
+      );
+    }) ?? null
+  );
+}
+
+/** Déduit le code agence depuis un identifiant `CLI-{AGENCE}-{suffix}`. */
+export function inferAgenceCodeFromClientCode(rawCode: string): string | null {
+  const trimmed = rawCode.trim().toUpperCase();
+  if (!trimmed.startsWith("CLI-")) return null;
+  const withoutCli = trimmed.slice(4);
+  const dash = withoutCli.indexOf("-");
+  if (dash <= 0) return null;
+  const ag = withoutCli.slice(0, dash).trim();
+  return ag || null;
 }
 
 function asCellString(value: unknown): string {
@@ -76,7 +161,7 @@ export const CLIENT_IMPORT_COLUMN_ORDER = [
   "nomContact",
   "email",
   "telephone",
-  "typeConcession",
+  "typeDistributeur",
   "nombreTpm",
   "numeroDistributeur",
   "numeroTpm",
@@ -102,7 +187,7 @@ export const CLIENT_IMPORT_HEADER_LABELS: Record<
   nomContact: "Contact",
   email: "Email",
   telephone: "Téléphone",
-  typeConcession: "Type de concession",
+  typeDistributeur: "Type de distributeur",
   nombreTpm: "Nombre de TPM",
   numeroDistributeur: "N° Distributeur",
   numeroTpm: "N° TPM",
@@ -197,14 +282,43 @@ const FIELD_ALIASES: Record<(typeof CLIENT_IMPORT_COLUMN_ORDER)[number], string[
     "nomContact",
     "Contact",
     "contact",
+    "contacts",
+    "nom contact",
+    "nom du contact",
+    "contact client",
+    "contact pdv",
+    "contact / representant",
+    "contact / représentant",
     "représentant",
     "representant",
     "interlocuteur",
     "personne a contacter",
+    "personne à contacter",
+    "personne contact",
+    "gerant",
+    "gérant",
+    "responsable",
   ],
-  email: ["email", "Email", "courriel", "mail"],
-  telephone: ["telephone", "Téléphone", "tel", "mobile", "phone"],
-  typeConcession: [
+  email: ["email", "Email", "E-mail", "e-mail", "courriel", "mail", "adresse email", "adresse mail"],
+  telephone: [
+    "telephone",
+    "Téléphone",
+    "tel",
+    "tél",
+    "tél.",
+    "mobile",
+    "phone",
+    "portable",
+    "whatsapp",
+    "n telephone",
+    "n° telephone",
+    "numero telephone",
+  ],
+  typeDistributeur: [
+    "typeDistributeur",
+    "Type de distributeur",
+    "type de distributeur",
+    "type distributeur",
     "typeConcession",
     "Type de concession",
     "type de concession",
@@ -237,11 +351,24 @@ const FIELD_ALIASES: Record<(typeof CLIENT_IMPORT_COLUMN_ORDER)[number], string[
     "Agence",
     "Agence (zone)",
     "Agence (Intérieur - Abidjan)",
+    "Agence (Interieur - Abidjan)",
     "agenceId",
     "agenceCode",
     "codeAgence",
     "code agence",
+    "code_agence",
+    "nom agence",
+    "libelle agence",
+    "libellé agence",
+    "direction",
+    "direction regionale",
+    "direction régionale",
+    "dr",
+    "antenne",
+    "site",
     "zone",
+    "zone geographique",
+    "zone géographique",
   ],
   produitsAutorises: [
     "produitsAutorises",
@@ -296,6 +423,20 @@ export function mapClientImportRowFromRecord(
     nomComplet = [nomSeul, prenom].filter(Boolean).join(" ").trim();
   }
 
+  let nomContact = pick("nomContact");
+  // En-têtes non listés mais contenant « contact » (ex. « Nom du contact PDV »)
+  if (!nomContact) {
+    for (const [key, value] of Object.entries(record)) {
+      const token = normalizeImportHeaderToken(key);
+      if (!token.includes("contact") || token.includes("contrat")) continue;
+      const text = asCellString(value);
+      if (text) {
+        nomContact = text;
+        break;
+      }
+    }
+  }
+
   return {
     code: pick("code"),
     categorie: pick("categorie") || "PARTICULIER",
@@ -303,13 +444,13 @@ export function mapClientImportRowFromRecord(
     raisonSociale: pick("raisonSociale"),
     codeMachine: pick("codeMachine") || null,
     cniNumero: pick("cniNumero"),
-    nomContact: pick("nomContact") || null,
+    nomContact: nomContact || null,
     email: pick("email") || null,
     telephone: pick("telephone") || null,
     adresse: pick("adresse") || null,
     ville: pick("ville") || null,
     codePostal: pick("codePostal") || null,
-    typeConcession: pick("typeConcession") || null,
+    typeDistributeur: pick("typeDistributeur") || null,
     nombreTpm: pick("nombreTpm") || null,
     numeroDistributeur: pick("numeroDistributeur") || null,
     numeroTpm: pick("numeroTpm") || null,

@@ -170,3 +170,22 @@ describe("resolveAgenceFromImportToken", () => {
     expect(resolveAgenceFromImportToken("INCONNUE", agences)).toBeNull();
   });
 });
+
+describe("remapClientCodeToAgence", () => {
+  it("réécrit le préfixe d’agence pour un import forcé", async () => {
+    const { remapClientCodeToAgence, clientCodeSuffix } = await import(
+      "@/lib/lonaci/client-constants"
+    );
+    expect(remapClientCodeToAgence("CLI-COCODY-000042", "ABOBO")).toBe("CLI-ABOBO-000042");
+    expect(remapClientCodeToAgence("000042", "ABOBO")).toBe("CLI-ABOBO-000042");
+    expect(clientCodeSuffix("CLI-YAMOUSSOUKRO-12")).toBe("12");
+  });
+});
+
+describe("inferAgenceFromClientCode", () => {
+  it("déduit l’agence depuis le préfixe CLI-{AGENCE}-", async () => {
+    const { inferAgenceFromClientCode } = await import("@/lib/lonaci/clients-import");
+    expect(inferAgenceFromClientCode("CLI-ABOBO-0001", agences)?._id).toBe(agences[0]!._id);
+    expect(inferAgenceFromClientCode("0001", agences)).toBeNull();
+  });
+});

@@ -60,7 +60,7 @@ const createSchema = z.object({
   adresse: z.preprocess(emptyStringToNull, z.union([z.string().max(500), z.null()]).optional()),
   ville: z.preprocess(emptyStringToNull, z.union([z.string().max(120), z.null()]).optional()),
   codePostal: z.preprocess(emptyStringToNull, z.union([z.string().max(12), z.null()]).optional()),
-  typeConcession: z.preprocess(
+  typeDistributeur: z.preprocess(
     emptyStringToNull,
     z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
   ),
@@ -90,6 +90,8 @@ const listQuerySchema = z.object({
   statut: z.enum(CLIENT_STATUTS).optional(),
   categorie: z.enum(CLIENT_CATEGORIES).optional(),
   produitCode: z.string().trim().min(1).max(32).optional(),
+  sansProduit: z.enum(["true", "false"]).optional(),
+  sansAgence: z.enum(["true", "false"]).optional(),
   eligibleForCaution: z.enum(["true", "false"]).optional(),
   eligibleForContrat: z.enum(["true", "false"]).optional(),
   eligibleForPromotion: z.enum(["true", "false"]).optional(),
@@ -113,14 +115,20 @@ export async function GET(request: NextRequest) {
   const includeDeleted =
     parsed.data.includeDeleted === "true" && auth.user.role === "CHEF_SERVICE";
 
-  const agenceScope = resolveListAgenceFilter(auth.user, parsed.data.agenceId);
-  if (!agenceScope.ok) {
-    return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+  const sansAgence = parsed.data.sansAgence === "true";
+  const sansProduit = parsed.data.sansProduit === "true";
+
+  let clientAgenceFilter: string | undefined;
+  if (!sansAgence) {
+    const agenceScope = resolveListAgenceFilter(auth.user, parsed.data.agenceId);
+    if (!agenceScope.ok) {
+      return forbidden("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");
+    }
+    clientAgenceFilter =
+      agenceScope.agenceIds && agenceScope.agenceIds.length > 1
+        ? undefined
+        : agenceScope.agenceId;
   }
-  const clientAgenceFilter =
-    agenceScope.agenceIds && agenceScope.agenceIds.length > 1
-      ? undefined
-      : agenceScope.agenceId;
 
   const readerScope = await buildClientAgenceReadScopeWhere(auth.user);
   const result = await searchClients({
@@ -129,7 +137,9 @@ export async function GET(request: NextRequest) {
     q: parsed.data.q,
     statut: parsed.data.statut,
     categorie: parsed.data.categorie,
-    produitCode: parsed.data.produitCode?.toUpperCase(),
+    produitCode: sansProduit ? undefined : parsed.data.produitCode?.toUpperCase(),
+    sansProduit,
+    sansAgence,
     eligibleForCaution: parsed.data.eligibleForCaution === "true",
     eligibleForContrat: parsed.data.eligibleForContrat === "true",
     eligibleForPromotion: parsed.data.eligibleForPromotion === "true",
@@ -236,7 +246,7 @@ export async function POST(request: NextRequest) {
         adresse: parsed.data.adresse ?? null,
         ville: parsed.data.ville ?? null,
         codePostal: parsed.data.codePostal ?? null,
-        typeConcession: parsed.data.typeConcession ?? null,
+        typeDistributeur: parsed.data.typeDistributeur ?? null,
         nombreTpm: parsed.data.nombreTpm ?? null,
         numeroDistributeur: parsed.data.numeroDistributeur ?? null,
         numeroTpm: parsed.data.numeroTpm ?? null,

@@ -138,9 +138,11 @@ export async function POST(request: NextRequest) {
   const summary = await importClientsFromRows(rows, auth.user, { produitCode });
   return NextResponse.json(
     {
-      message: `Import clients terminé pour le produit ${produitCode}.`,
+      message: `Import terminé : chaque client a été rangé dans l’agence indiquée dans le fichier (produit ${produitCode}).`,
       produitCode,
       inserted: summary.inserted,
+      updated: summary.updated,
+      unchanged: summary.unchanged,
       skippedDuplicates: summary.skippedDuplicates,
       failed: summary.failed,
       results: summary.results.slice(0, 200),

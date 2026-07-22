@@ -181,8 +181,8 @@ model LonaciClient {
   adresse         String?
   ville           String?
   codePostal      String?
-  /** Type de concession : NOUVEAU | ANCIEN. */
-  typeConcession  String?
+  /** Type de distributeur : NOUVEAU | ANCIEN. */
+  typeDistributeur String? @map("typeConcession")
   /** Nombre de TPM. */
   nombreTpm       Int?
   /** N° Distributeur. */

@@ -6,7 +6,7 @@ import {
   clientDisplayName,
   normalizeClientCategorie,
   normalizeClientCodeForAgence,
-  normalizeClientTypeConcession,
+  normalizeClientTypeDistributeur,
   type ClientCategorie,
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
@@ -120,6 +120,10 @@ export function buildClientListWhere(params: {
   categorie?: ClientCategorie;
   /** Filtre les clients autorisés pour ce code produit. */
   produitCode?: string;
+  /** Clients sans aucun produit rattaché (imports non catégorisés). */
+  sansProduit?: boolean;
+  /** Clients sans agence renseignée. */
+  sansAgence?: boolean;
   /** Clients éligibles caution : dossier en cours ou actif (exclut inactifs). */
   eligibleForCaution?: boolean;
   /** Clients éligibles contrat : dossier en cours ou actif. */
@@ -142,7 +146,9 @@ export function buildClientListWhere(params: {
     parts.push(lonaciClientNotDeletedWhere);
   }
 
-  if (params.agenceId) {
+  if (params.sansAgence) {
+    parts.push({ OR: [{ agenceId: null }, { agenceId: "" }] });
+  } else if (params.agenceId) {
     parts.push({ agenceId: params.agenceId });
   }
 
@@ -158,7 +164,9 @@ export function buildClientListWhere(params: {
     parts.push({ categorie: params.categorie });
   }
 
-  if (params.produitCode?.trim()) {
+  if (params.sansProduit) {
+    parts.push({ produitsAutorises: { equals: [] } });
+  } else if (params.produitCode?.trim()) {
     parts.push({ produitsAutorises: { has: params.produitCode.trim().toUpperCase() } });
   }
 
@@ -199,6 +207,8 @@ export async function searchClients(params: {
   statut?: ClientStatut;
   categorie?: ClientCategorie;
   produitCode?: string;
+  sansProduit?: boolean;
+  sansAgence?: boolean;
   eligibleForCaution?: boolean;
   eligibleForContrat?: boolean;
   eligibleForPromotion?: boolean;
@@ -214,6 +224,8 @@ export async function searchClients(params: {
     statut: params.statut,
     categorie: params.categorie,
     produitCode: params.produitCode,
+    sansProduit: params.sansProduit,
+    sansAgence: params.sansAgence,
     eligibleForCaution: params.eligibleForCaution,
     eligibleForContrat: params.eligibleForContrat,
     eligibleForPromotion: params.eligibleForPromotion,
@@ -296,7 +308,7 @@ export function sanitizeClientListItem(doc: {
   nomContact: string | null;
   email: string | null;
   telephone: string | null;
-  typeConcession?: string | null;
+  typeDistributeur?: string | null;
   nombreTpm?: number | null;
   numeroDistributeur?: string | null;
   numeroTpm?: string | null;
@@ -321,7 +333,7 @@ export function sanitizeClientListItem(doc: {
     nomContact: doc.nomContact,
     email: doc.email,
     telephone: doc.telephone,
-    typeConcession: doc.typeConcession ?? null,
+    typeDistributeur: doc.typeDistributeur ?? null,
     nombreTpm: doc.nombreTpm ?? null,
     numeroDistributeur: doc.numeroDistributeur ?? null,
     numeroTpm: doc.numeroTpm ?? null,
@@ -348,7 +360,7 @@ export function sanitizeClientPublic(doc: {
   adresse: string | null;
   ville: string | null;
   codePostal: string | null;
-  typeConcession?: string | null;
+  typeDistributeur?: string | null;
   nombreTpm?: number | null;
   numeroDistributeur?: string | null;
   numeroTpm?: string | null;
@@ -381,7 +393,7 @@ export function sanitizeClientPublic(doc: {
     adresse: doc.adresse,
     ville: doc.ville,
     codePostal: doc.codePostal,
-    typeConcession: doc.typeConcession ?? null,
+    typeDistributeur: doc.typeDistributeur ?? null,
     nombreTpm: doc.nombreTpm ?? null,
     numeroDistributeur: doc.numeroDistributeur ?? null,
     numeroTpm: doc.numeroTpm ?? null,
@@ -419,7 +431,7 @@ export async function createClient(
     adresse: string | null;
     ville: string | null;
     codePostal: string | null;
-    typeConcession?: string | null;
+    typeDistributeur?: string | null;
     nombreTpm?: number | null;
     numeroDistributeur?: string | null;
     numeroTpm?: string | null;
@@ -465,13 +477,13 @@ export async function createClient(
       nomComplet: input.nomComplet.trim(),
       codeMachine: input.codeMachine?.trim() || null,
       cniNumero,
-      nomContact: input.nomContact,
-      email: input.email,
-      telephone: input.telephone,
+      nomContact: input.nomContact?.trim() || null,
+      email: input.email?.trim() || null,
+      telephone: input.telephone?.trim() || null,
       adresse: input.adresse,
       ville: input.ville,
       codePostal: input.codePostal,
-      typeConcession: normalizeClientTypeConcession(input.typeConcession),
+      typeDistributeur: normalizeClientTypeDistributeur(input.typeDistributeur),
       nombreTpm:
         typeof input.nombreTpm === "number" && Number.isFinite(input.nombreTpm)
           ? Math.max(0, Math.trunc(input.nombreTpm))
@@ -543,11 +555,13 @@ export async function updateClient(
     adresse?: string | null;
     ville?: string | null;
     codePostal?: string | null;
-    typeConcession?: string | null;
+    typeDistributeur?: string | null;
     nombreTpm?: number | null;
     numeroDistributeur?: string | null;
     numeroTpm?: string | null;
     agenceId?: string | null;
+    /** Réaffectation d’agence à l’import (recalc du code CLI-AGENCE-…). */
+    code?: string;
     produitsAutorises?: string[];
     documentChecklist?: Array<{ itemId: string; statut: "FOURNI" | "MANQUANT" | "EN_ATTENTE" }>;
     statut?: ClientStatut;
@@ -595,14 +609,14 @@ export async function updateClient(
     data.codeMachine = patch.codeMachine?.trim() || null;
   }
   if (patch.cniNumero !== undefined) data.cniNumero = patch.cniNumero;
-  if (patch.nomContact !== undefined) data.nomContact = patch.nomContact;
+  if (patch.nomContact !== undefined) data.nomContact = patch.nomContact?.trim() || null;
   if (patch.email !== undefined) data.email = patch.email;
   if (patch.telephone !== undefined) data.telephone = patch.telephone;
   if (patch.adresse !== undefined) data.adresse = patch.adresse;
   if (patch.ville !== undefined) data.ville = patch.ville;
   if (patch.codePostal !== undefined) data.codePostal = patch.codePostal;
-  if (patch.typeConcession !== undefined) {
-    data.typeConcession = normalizeClientTypeConcession(patch.typeConcession);
+  if (patch.typeDistributeur !== undefined) {
+    data.typeDistributeur = normalizeClientTypeDistributeur(patch.typeDistributeur);
   }
   if (patch.nombreTpm !== undefined) {
     data.nombreTpm =
@@ -617,6 +631,10 @@ export async function updateClient(
     data.numeroTpm = patch.numeroTpm?.trim() || null;
   }
   if (patch.agenceId !== undefined) data.agenceId = patch.agenceId;
+  if (patch.code !== undefined) {
+    const nextCode = patch.code.trim().toUpperCase();
+    if (nextCode) data.code = nextCode;
+  }
   if (patch.notes !== undefined) data.notes = patch.notes;
   if (patch.statut !== undefined && (CLIENT_STATUTS as readonly string[]).includes(patch.statut)) {
     if (actor.role !== "CHEF_SERVICE") {
