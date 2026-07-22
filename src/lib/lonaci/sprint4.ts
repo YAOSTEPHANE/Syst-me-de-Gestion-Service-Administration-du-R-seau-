@@ -30,6 +30,7 @@ import { findLonaciClientById, activateClientAfterCautionPaid, lonaciClientNotDe
 import { isClientStatutEligibleForCaution } from "@/lib/lonaci/client-constants";
 import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
+import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import {
   deliverCautionFicheDefinitive,
   resolveCautionPaymentReference,
@@ -350,8 +351,8 @@ export async function createCaution(input: {
     const produits = await listProduits();
     const p = produits.find((x) => x.code === pcode && x.actif);
     if (!p) throw new Error("PRODUIT_NOT_FOUND");
-    const montant = Math.round(Number(p.prix));
-    if (!Number.isFinite(montant) || montant <= 0) throw new Error("PRODUIT_PRIX_CAUTION_INVALIDE");
+    const montant = produitMontantCautionReferentiel(p);
+    if (montant === null || montant <= 0) throw new Error("PRODUIT_PRIX_CAUTION_INVALIDE");
 
     doc = {
       lonaciClientId: lonaciClientId!,

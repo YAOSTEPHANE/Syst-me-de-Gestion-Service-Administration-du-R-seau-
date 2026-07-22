@@ -26,6 +26,7 @@ const patchSchema = z
   .object({
     libelle: z.string().min(2).max(200).optional(),
     prix: z.coerce.number().int().min(0).max(999_999_999_999).optional(),
+    prixKit: z.coerce.number().int().min(0).max(999_999_999_999).optional(),
     actif: z.boolean().optional(),
     code: z.string().min(2).max(32).optional(),
     documentsChecklist: z.array(checklistItemSchema).max(50).optional(),
@@ -35,6 +36,7 @@ const patchSchema = z
     (o) =>
       o.libelle !== undefined ||
       o.prix !== undefined ||
+      o.prixKit !== undefined ||
       o.actif !== undefined ||
       o.code !== undefined ||
       o.documentsChecklist !== undefined ||

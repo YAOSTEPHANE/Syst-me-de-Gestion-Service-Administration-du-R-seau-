@@ -74,6 +74,7 @@ describe("exports PDF premium de l’administration", () => {
             code: "PMU",
             libelle: "Pari Mutuel Urbain",
             prix: 500,
+            prixKit: 50,
             statut: "ACTIF",
             id: "produit-001",
           },

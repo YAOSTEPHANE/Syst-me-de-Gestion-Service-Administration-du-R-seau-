@@ -119,6 +119,8 @@ export interface ProduitDocument {
   libelle: string;
   /** Prix caution référentiel (FCFA), entier. */
   prix?: number;
+  /** Prix kit optionnel accompagnant le produit (FCFA), entier. */
+  prixKit?: number;
   /** Documents obligatoires configurés pour la constitution de dossier. */
   documentsChecklist?: ProduitDocumentChecklistItem[];
   /** Documents annexes associés au contrat (génération annexe PDF). */

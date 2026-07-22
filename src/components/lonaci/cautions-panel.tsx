@@ -29,6 +29,7 @@ import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spread
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
+import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import { CLIENT_CODE_PREFIX } from "@/lib/lonaci/client-constants";
 import {
   CautionFicheDefinitiveModal,
@@ -403,6 +404,7 @@ type ReferentialProduitRow = {
   libelle: string;
   actif: boolean;
   prix?: number;
+  prixKit?: number;
   documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
 };
 
@@ -992,9 +994,9 @@ export default function CautionsPanel() {
     let sum = 0;
     for (const code of ordered) {
       const row = referentialProduits.find((p) => p.code.trim().toUpperCase() === code);
-      const prix = row && typeof row.prix === "number" && Number.isFinite(row.prix) ? Math.round(row.prix) : null;
-      if (prix === null || prix <= 0) return null;
-      sum += prix;
+      const montant = row ? produitMontantCautionReferentiel(row) : null;
+      if (montant === null || montant <= 0) return null;
+      sum += montant;
     }
     return sum;
   }, [selectedProduitCodes, referentialProduits]);
@@ -1161,8 +1163,7 @@ export default function CautionsPanel() {
 
       for (const produitCode of codes) {
         const row = referentialProduits.find((p) => p.code.trim().toUpperCase() === produitCode);
-        const montantLigne =
-          row && typeof row.prix === "number" && Number.isFinite(row.prix) ? Math.round(row.prix) : 0;
+        const montantLigne = row ? produitMontantCautionReferentiel(row) ?? 0 : 0;
         if (montantLigne <= 0) {
           throw new Error(`Produit ${produitCode} : tarif caution invalide ou manquant.`);
         }
@@ -1726,9 +1727,18 @@ export default function CautionsPanel() {
                       const checked = selectedProduitCodes.some((c) => c.trim().toUpperCase() === ku);
                       const lib = p.libelle?.trim();
                       const label = lib && lib !== code ? `${code} — ${lib}` : code;
+                      const montant = produitMontantCautionReferentiel(p);
+                      const kit =
+                        typeof p.prixKit === "number" && Number.isFinite(p.prixKit) && p.prixKit > 0
+                          ? Math.round(p.prixKit)
+                          : 0;
+                      const prixBase =
+                        typeof p.prix === "number" && Number.isFinite(p.prix) ? Math.round(p.prix) : null;
                       const prixLabel =
-                        typeof p.prix === "number" && Number.isFinite(p.prix)
-                          ? `${Math.round(p.prix).toLocaleString("fr-FR")} FCFA`
+                        montant !== null && montant > 0
+                          ? kit > 0 && prixBase !== null
+                            ? `${montant.toLocaleString("fr-FR")} FCFA (caution ${prixBase.toLocaleString("fr-FR")} + kit ${kit.toLocaleString("fr-FR")})`
+                            : `${montant.toLocaleString("fr-FR")} FCFA`
                           : "—";
                       return (
                         <label

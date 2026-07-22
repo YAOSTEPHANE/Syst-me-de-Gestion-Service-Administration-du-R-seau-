@@ -37,6 +37,7 @@ interface ProduitRow {
   code: string;
   libelle: string;
   prix?: number;
+  prixKit?: number;
   actif: boolean;
   documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
   documentsAnnexe?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
@@ -51,12 +52,14 @@ export default function AdminProduitsPanel() {
   const [code, setCode] = useState("");
   const [libelle, setLibelle] = useState("");
   const [prix, setPrix] = useState("");
+  const [prixKit, setPrixKit] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editCode, setEditCode] = useState("");
   const [editLibelle, setEditLibelle] = useState("");
   const [editPrix, setEditPrix] = useState("");
+  const [editPrixKit, setEditPrixKit] = useState("");
   const [editActif, setEditActif] = useState(true);
   const [editChecklistItems, setEditChecklistItems] = useState<ProduitPieceDraft[]>([]);
   const [createChecklistItems, setCreateChecklistItems] = useState<ProduitPieceDraft[]>([]);
@@ -73,6 +76,7 @@ export default function AdminProduitsPanel() {
   const [quickUpdatingId, setQuickUpdatingId] = useState<string | null>(null);
   /** Sauvegarde rapide du montant attendu (prix) depuis la cellule du tableau. */
   const [savingPrixId, setSavingPrixId] = useState<string | null>(null);
+  const [savingPrixKitId, setSavingPrixKitId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<"ALL" | "ACTIVE" | "INACTIVE">("ALL");
   const [sortBy, setSortBy] = useState<"CODE" | "LABEL" | "PRICE_ASC" | "PRICE_DESC">("CODE");
@@ -121,6 +125,7 @@ export default function AdminProduitsPanel() {
     setEditCode(p.code);
     setEditLibelle(p.libelle);
     setEditPrix(typeof p.prix === "number" ? String(p.prix) : "");
+    setEditPrixKit(typeof p.prixKit === "number" ? String(p.prixKit) : "");
     setEditActif(p.actif);
     setEditChecklistItems(piecesFromStored(p.documentsChecklist));
   }
@@ -216,12 +221,18 @@ export default function AdminProduitsPanel() {
     const c = editCode.trim();
     const l = editLibelle.trim();
     const prixNum = Number.parseInt(editPrix.replace(/\s/g, ""), 10);
+    const prixKitRaw = editPrixKit.replace(/\s/g, "");
+    const prixKitNum = prixKitRaw === "" ? 0 : Number.parseInt(prixKitRaw, 10);
     if (c.length < 2 || l.length < 2) {
       setError("Code et libellé : au moins 2 caractères.");
       return;
     }
     if (!Number.isFinite(prixNum) || prixNum < 0 || !Number.isInteger(prixNum)) {
-      setError("Indiquez un prix valide en FCFA (entier ≥ 0).");
+      setError("Indiquez un prix caution valide en FCFA (entier ≥ 0).");
+      return;
+    }
+    if (!Number.isFinite(prixKitNum) || prixKitNum < 0 || !Number.isInteger(prixKitNum)) {
+      setError("Indiquez un prix kit valide en FCFA (entier ≥ 0).");
       return;
     }
     setSavingId(editingId);
@@ -234,6 +245,7 @@ export default function AdminProduitsPanel() {
           code: c,
           libelle: l,
           prix: prixNum,
+          prixKit: prixKitNum,
           actif: editActif,
           documentsChecklist: piecesToApiPayload(editChecklistItems),
         }),
@@ -337,6 +349,41 @@ export default function AdminProduitsPanel() {
     }
   }
 
+  async function savePrixKitFromTable(p: ProduitRow, raw: string) {
+    const trimmed = raw.replace(/\s/g, "");
+    const prixKitNum = trimmed === "" ? 0 : Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(prixKitNum) || prixKitNum < 0 || !Number.isInteger(prixKitNum)) {
+      setError("Prix kit invalide : indiquez un entier ≥ 0 (FCFA).");
+      return;
+    }
+    const current = typeof p.prixKit === "number" ? p.prixKit : 0;
+    if (prixKitNum === current) {
+      setError(null);
+      return;
+    }
+    setError(null);
+    setSavingPrixKitId(p._id);
+    try {
+      const res = await fetch(`/api/admin/produits/${p._id}`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prixKit: prixKitNum }),
+      });
+      const body = (await res.json().catch(() => null)) as { message?: string; produit?: ProduitRow } | null;
+      if (!res.ok || !body?.produit) {
+        notify.error(body?.message ?? "Enregistrement du prix kit impossible.");
+        return;
+      }
+      setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
+      notify.success(`Prix kit « ${body.produit.code} » : ${prixKitNum.toLocaleString("fr-FR")} FCFA.`);
+    } catch {
+      notify.error("Erreur réseau ou serveur.");
+    } finally {
+      setSavingPrixKitId(null);
+    }
+  }
+
   async function toggleActif(p: ProduitRow) {
     setError(null);
     setQuickUpdatingId(p._id);
@@ -368,12 +415,18 @@ export default function AdminProduitsPanel() {
     const c = code.trim();
     const l = libelle.trim();
     const prixNum = Number.parseInt(prix.replace(/\s/g, ""), 10);
+    const prixKitRaw = prixKit.replace(/\s/g, "");
+    const prixKitNum = prixKitRaw === "" ? 0 : Number.parseInt(prixKitRaw, 10);
     if (c.length < 2 || l.length < 2) {
       setError("Code et libellé : au moins 2 caractères.");
       return;
     }
     if (!Number.isFinite(prixNum) || prixNum < 0 || !Number.isInteger(prixNum)) {
-      setError("Indiquez un prix valide en FCFA (entier ≥ 0).");
+      setError("Indiquez un prix caution valide en FCFA (entier ≥ 0).");
+      return;
+    }
+    if (!Number.isFinite(prixKitNum) || prixKitNum < 0 || !Number.isInteger(prixKitNum)) {
+      setError("Indiquez un prix kit valide en FCFA (entier ≥ 0).");
       return;
     }
     setCreating(true);
@@ -386,6 +439,7 @@ export default function AdminProduitsPanel() {
           code: c,
           libelle: l,
           prix: prixNum,
+          prixKit: prixKitNum,
           documentsChecklist: piecesToApiPayload(createChecklistItems),
         }),
       });
@@ -411,6 +465,7 @@ export default function AdminProduitsPanel() {
       setCode("");
       setLibelle("");
       setPrix("");
+      setPrixKit("");
       setCreateChecklistItems([]);
       setShowCreatePieces(false);
       notify.success(`Produit « ${body?.produit?.code ?? c} » créé.`);
@@ -500,6 +555,17 @@ export default function AdminProduitsPanel() {
             autoComplete="off"
           />
         </FormField>
+        <FormField label="Prix kit (FCFA)" htmlFor="produit-prix-kit">
+          <input
+            id="produit-prix-kit"
+            value={prixKit}
+            onChange={(e) => setPrixKit(e.target.value.replace(/[^\d\s]/g, ""))}
+            placeholder="Optionnel — accompagne le produit"
+            inputMode="numeric"
+            className={inputClass}
+            autoComplete="off"
+          />
+        </FormField>
         <Button type="submit" leadingIcon={Plus} loading={creating}>Créer le produit</Button>
       </form>
 
@@ -569,7 +635,8 @@ export default function AdminProduitsPanel() {
             <tr className="border-b border-slate-200 bg-slate-50 text-slate-600">
               <th className="px-3 py-2 font-semibold">Code</th>
               <th className="px-3 py-2 font-semibold">Libellé</th>
-              <th className="px-3 py-2 font-semibold">Montant attendu (FCFA)</th>
+              <th className="px-3 py-2 font-semibold">Caution (FCFA)</th>
+              <th className="px-3 py-2 font-semibold">Prix kit (FCFA)</th>
               <th className="px-3 py-2 font-semibold">Pièces à fournir</th>
               <th className="px-3 py-2 font-semibold">Statut</th>
               <th className="px-3 py-2 font-semibold">Actions</th>
@@ -579,7 +646,7 @@ export default function AdminProduitsPanel() {
           <tbody className="text-slate-800">
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-slate-500">
+                <td colSpan={8} className="px-3 py-6 text-center text-slate-500">
                   Aucun produit ne correspond au filtre.
                 </td>
               </tr>
@@ -587,7 +654,7 @@ export default function AdminProduitsPanel() {
               pageRows.map((p) =>
                 editingId === p._id ? (
                   <tr key={p._id} className="border-b border-slate-100 bg-cyan-50/50 last:border-b-0">
-                    <td colSpan={7} className="p-3">
+                    <td colSpan={8} className="p-3">
                       <form
                         onSubmit={onSaveEdit}
                         className="grid gap-3 sm:grid-cols-2 lg:grid-cols-12 lg:items-end"
@@ -602,7 +669,7 @@ export default function AdminProduitsPanel() {
                             aria-label="Modifier le code produit"
                           />
                         </label>
-                        <label className="grid gap-1 lg:col-span-4">
+                        <label className="grid gap-1 lg:col-span-3">
                           <span className="text-xs font-medium text-slate-700">Libellé</span>
                           <input
                             value={editLibelle}
@@ -613,13 +680,24 @@ export default function AdminProduitsPanel() {
                           />
                         </label>
                         <label className="grid gap-1 lg:col-span-2">
-                          <span className="text-xs font-medium text-slate-700">Montant attendu (FCFA)</span>
+                          <span className="text-xs font-medium text-slate-700">Caution (FCFA)</span>
                           <input
                             value={editPrix}
                             onChange={(e) => setEditPrix(e.target.value.replace(/[^\d\s]/g, ""))}
                             inputMode="numeric"
                             className={inputClass}
-                            aria-label="Modifier le montant attendu"
+                            aria-label="Modifier le montant caution"
+                          />
+                        </label>
+                        <label className="grid gap-1 lg:col-span-2">
+                          <span className="text-xs font-medium text-slate-700">Prix kit (FCFA)</span>
+                          <input
+                            value={editPrixKit}
+                            onChange={(e) => setEditPrixKit(e.target.value.replace(/[^\d\s]/g, ""))}
+                            inputMode="numeric"
+                            className={inputClass}
+                            aria-label="Modifier le prix kit"
+                            placeholder="0"
                           />
                         </label>
                         <label className="flex items-center gap-2 lg:col-span-2">
@@ -672,15 +750,42 @@ export default function AdminProduitsPanel() {
                         inputMode="numeric"
                         defaultValue={typeof p.prix === "number" ? String(p.prix) : ""}
                         placeholder="0"
-                        aria-label={`Montant attendu FCFA pour ${p.code}`}
+                        aria-label={`Montant caution FCFA pour ${p.code}`}
                         title="Modifier le montant puis valider avec Entrée ou en cliquant ailleurs"
                         disabled={
                           savingPrixId === p._id ||
+                          savingPrixKitId === p._id ||
                           deletingId === p._id ||
                           quickUpdatingId === p._id ||
                           editingId !== null
                         }
                         onBlur={(e) => void savePrixFromTable(p, e.currentTarget.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            (e.currentTarget as HTMLInputElement).blur();
+                          }
+                        }}
+                        className="w-full min-w-28 max-w-44 rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs tabular-nums text-slate-900 outline-none focus:ring-2 focus:ring-cyan-500/30 disabled:bg-slate-100 disabled:text-slate-500"
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <input
+                        key={`prix-kit-inline-${p._id}-${p.prixKit ?? "x"}`}
+                        type="text"
+                        inputMode="numeric"
+                        defaultValue={typeof p.prixKit === "number" ? String(p.prixKit) : ""}
+                        placeholder="0"
+                        aria-label={`Prix kit FCFA pour ${p.code}`}
+                        title="Prix kit optionnel accompagnant le produit"
+                        disabled={
+                          savingPrixId === p._id ||
+                          savingPrixKitId === p._id ||
+                          deletingId === p._id ||
+                          quickUpdatingId === p._id ||
+                          editingId !== null
+                        }
+                        onBlur={(e) => void savePrixKitFromTable(p, e.currentTarget.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") {
                             e.preventDefault();
@@ -771,8 +876,11 @@ export default function AdminProduitsPanel() {
                 <FormField label="Libellé" htmlFor={`mobile-produit-libelle-${p._id}`} required>
                   <input id={`mobile-produit-libelle-${p._id}`} value={editLibelle} onChange={(event) => setEditLibelle(event.target.value)} maxLength={200} className={inputClass} />
                 </FormField>
-                <FormField label="Montant attendu (FCFA)" htmlFor={`mobile-produit-prix-${p._id}`} required>
+                <FormField label="Montant caution (FCFA)" htmlFor={`mobile-produit-prix-${p._id}`} required>
                   <input id={`mobile-produit-prix-${p._id}`} value={editPrix} onChange={(event) => setEditPrix(event.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" className={inputClass} />
+                </FormField>
+                <FormField label="Prix kit (FCFA)" htmlFor={`mobile-produit-prix-kit-${p._id}`}>
+                  <input id={`mobile-produit-prix-kit-${p._id}`} value={editPrixKit} onChange={(event) => setEditPrixKit(event.target.value.replace(/[^\d\s]/g, ""))} inputMode="numeric" placeholder="0" className={inputClass} />
                 </FormField>
                 <FormField label="Statut" htmlFor={`mobile-produit-status-${p._id}`}>
                   <select id={`mobile-produit-status-${p._id}`} value={editActif ? "true" : "false"} onChange={(event) => setEditActif(event.target.value === "true")} className={inputClass}>
@@ -795,7 +903,8 @@ export default function AdminProduitsPanel() {
             </div>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
               <div><dt className="text-xs text-slate-500">Caution</dt><dd className="font-semibold">{(p.prix ?? 0).toLocaleString("fr-FR")} FCFA</dd></div>
-              <div><dt className="text-xs text-slate-500">Documents</dt><dd>{p.documentsChecklist?.length ?? 0} pièce(s) · {p.documentsAnnexe?.length ?? 0} annexe(s)</dd></div>
+              <div><dt className="text-xs text-slate-500">Prix kit</dt><dd className="font-semibold">{(p.prixKit ?? 0).toLocaleString("fr-FR")} FCFA</dd></div>
+              <div className="col-span-2"><dt className="text-xs text-slate-500">Documents</dt><dd>{p.documentsChecklist?.length ?? 0} pièce(s) · {p.documentsAnnexe?.length ?? 0} annexe(s)</dd></div>
             </dl>
             <div className="mt-4 flex flex-wrap gap-1 border-t border-slate-100 pt-3">
               <IconButton icon={Files} label={`Gérer les pièces de ${p.code}`} size="sm" onClick={() => openPiecesModal(p)} disabled={editingId !== null || deletingId !== null} />

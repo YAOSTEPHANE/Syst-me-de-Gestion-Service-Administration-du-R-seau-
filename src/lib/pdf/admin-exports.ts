@@ -23,6 +23,7 @@ export interface AdminProduitExportRow {
   code: string;
   libelle: string;
   prix: number;
+  prixKit: number;
   statut: string;
   id: string;
 }
@@ -150,17 +151,24 @@ export async function renderAdminAgencesExportPdf(
 }
 
 const produitColumns: readonly PdfTableColumn<AdminProduitExportRow>[] = [
-  { header: "CODE", width: 80, value: (row) => row.code },
-  { header: "LIBELLÉ", width: 235, value: (row) => row.libelle },
+  { header: "CODE", width: 70, value: (row) => row.code },
+  { header: "LIBELLÉ", width: 200, value: (row) => row.libelle },
   {
-    header: "PRIX",
-    width: 120,
+    header: "CAUTION",
+    width: 90,
     value: (row) => row.prix,
     format: (value) => priceFormatter.format(typeof value === "number" ? value : 0),
     align: "right",
   },
-  { header: "STATUT", width: 90, value: (row) => row.statut, align: "center" },
-  { header: "IDENTIFIANT", width: 215, value: (row) => row.id },
+  {
+    header: "KIT",
+    width: 80,
+    value: (row) => row.prixKit,
+    format: (value) => priceFormatter.format(typeof value === "number" ? value : 0),
+    align: "right",
+  },
+  { header: "STATUT", width: 80, value: (row) => row.statut, align: "center" },
+  { header: "IDENTIFIANT", width: 200, value: (row) => row.id },
 ];
 
 export async function renderAdminProduitsExportPdf(

@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
       code: row.code,
       libelle: row.libelle,
       prix: typeof row.prix === "number" ? row.prix : 0,
+      prixKit: typeof row.prixKit === "number" ? row.prixKit : 0,
       statut: row.actif ? "ACTIF" : "INACTIF",
       id: row._id ?? "",
     })),

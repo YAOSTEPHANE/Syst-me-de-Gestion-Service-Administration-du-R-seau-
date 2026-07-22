@@ -5,6 +5,7 @@ import { ObjectId } from "mongodb";
 import { getLonaciCautionBankReferences } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import type { CautionDocument } from "@/lib/lonaci/types";
@@ -75,7 +76,7 @@ export function buildCautionProduitLignes(
     const code = raw.trim().toUpperCase();
     if (!code || code === "AUTRES") continue;
     const p = produits.find((x) => x.code.trim().toUpperCase() === code);
-    const montant = Math.round(Number(p?.prix ?? 0));
+    const montant = p ? produitMontantCautionReferentiel(p) ?? 0 : 0;
     if (!Number.isFinite(montant) || montant <= 0) continue;
     lignes.push({
       code,

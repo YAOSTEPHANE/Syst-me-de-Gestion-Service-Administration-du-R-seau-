@@ -9,6 +9,7 @@ import {
   isStatutFicheGelee,
 } from "@/lib/lonaci/access";
 import { BANCARISATION_STATUTS, CONCESSIONNAIRE_STATUTS } from "@/lib/lonaci/constants";
+import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import {
   isConcessionnaireInscriptionFinalisee,
   patchDocumentChecklistStatuts,
@@ -139,9 +140,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!code) continue;
     const lib = (p.libelle ?? "").trim();
     produitLibelles[code] = lib || code;
-    const rawPrix = p.prix;
-    const n = typeof rawPrix === "number" && Number.isFinite(rawPrix) ? Math.max(0, Math.round(rawPrix)) : 0;
-    produitPrixCaution[code] = n;
+    produitPrixCaution[code] = produitMontantCautionReferentiel(p) ?? 0;
   }
 
   const inscriptionCaution = await getInscriptionCautionSummary(id);

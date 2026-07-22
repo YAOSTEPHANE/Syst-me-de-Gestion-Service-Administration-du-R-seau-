@@ -163,6 +163,8 @@ interface CreateProduitInput {
   libelle: string;
   /** Prix caution (FCFA), entier ≥ 0. */
   prix: number;
+  /** Prix kit optionnel accompagnant le produit (FCFA), entier ≥ 0. */
+  prixKit?: number;
   documentsChecklist?: ProduitDocumentChecklistItem[];
   documentsAnnexe?: ProduitDocumentChecklistItem[];
 }
@@ -191,10 +193,12 @@ export async function createProduit(input: CreateProduitInput): Promise<ProduitD
   const db = await getDatabase();
   const now = new Date();
   const prix = Number.isFinite(input.prix) ? Math.max(0, Math.round(input.prix)) : 0;
+  const prixKit = Number.isFinite(input.prixKit) ? Math.max(0, Math.round(input.prixKit!)) : 0;
   const produit: InsertProduitDocument = {
     code: normalizeCode(input.code),
     libelle: input.libelle.trim(),
     prix,
+    prixKit,
     actif: true,
     ...(input.documentsChecklist?.length
       ? { documentsChecklist: normalizeChecklistTemplate(input.documentsChecklist) }
@@ -309,6 +313,7 @@ export async function findProduitById(id: string): Promise<ProduitDocument | nul
 export interface UpdateProduitInput {
   libelle?: string;
   prix?: number;
+  prixKit?: number;
   actif?: boolean;
   code?: string;
   documentsChecklist?: ProduitDocumentChecklistItem[];
@@ -335,6 +340,9 @@ export async function updateProduit(id: string, input: UpdateProduitInput): Prom
   }
   if (input.prix !== undefined) {
     $set.prix = Number.isFinite(input.prix) ? Math.max(0, Math.round(input.prix)) : 0;
+  }
+  if (input.prixKit !== undefined) {
+    $set.prixKit = Number.isFinite(input.prixKit) ? Math.max(0, Math.round(input.prixKit)) : 0;
   }
   if (input.actif !== undefined) {
     $set.actif = input.actif;

@@ -21,6 +21,8 @@ const createProduitSchema = z.object({
   libelle: z.string().min(2),
   /** Prix caution en FCFA (entier ≥ 0). */
   prix: z.coerce.number().int().min(0).max(999_999_999_999),
+  /** Prix kit optionnel accompagnant le produit (FCFA). */
+  prixKit: z.coerce.number().int().min(0).max(999_999_999_999).optional().default(0),
   documentsChecklist: z.array(checklistItemSchema).max(50).optional(),
   documentsAnnexe: z.array(checklistItemSchema).max(50).optional(),
 });
