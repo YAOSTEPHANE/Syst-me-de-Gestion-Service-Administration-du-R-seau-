@@ -18,6 +18,10 @@ export function coalesceZoneGeographique(
   return "INTERIEUR";
 }
 
+export function libelleZoneGeographique(zone: AgenceZoneGeographique): string {
+  return zone === "ABIDJAN" ? "Abidjan" : "Intérieur";
+}
+
 /**
  * Identifiants d’agences comptées en zone Abidjan : champ explicite `zoneGeographique: "ABIDJAN"`,
  * ou anciennes lignes sans champ mais correspondant à l’heuristique libellé/code.
@@ -49,9 +53,13 @@ export async function listAgenceIdsZoneAbidjan(db: Db): Promise<string[]> {
   return rows.map((r) => r._id.toHexString());
 }
 
-export type AgenceLibelleDoc = { code: string; libelle: string };
+export type AgenceLibelleDoc = {
+  code: string;
+  libelle: string;
+  zoneGeographique: AgenceZoneGeographique;
+};
 
-/** Charge code + libellé des agences à partir de leurs `_id` Mongo (hex). */
+/** Charge code + libellé + zone des agences à partir de leurs `_id` Mongo (hex). */
 export async function loadAgenceLibelleMap(db: Db, agenceIds: readonly (string | null | undefined)[]) {
   const unique = [
     ...new Set(
@@ -62,23 +70,34 @@ export async function loadAgenceLibelleMap(db: Db, agenceIds: readonly (string |
   if (unique.length === 0) return map;
   const oids = unique.map((id) => new ObjectId(id));
   const rows = await db
-    .collection<{ _id: ObjectId; code?: string; libelle?: string }>("agences")
+    .collection<{
+      _id: ObjectId;
+      code?: string;
+      libelle?: string;
+      zoneGeographique?: string | null;
+    }>("agences")
     .find({ _id: { $in: oids } })
-    .project({ code: 1, libelle: 1 })
+    .project({ code: 1, libelle: 1, zoneGeographique: 1 })
     .toArray();
   for (const r of rows) {
+    const code = String(r.code ?? "").trim();
+    const libelle = String(r.libelle ?? "").trim();
     map.set(r._id.toHexString(), {
-      code: String(r.code ?? "").trim(),
-      libelle: String(r.libelle ?? "").trim(),
+      code,
+      libelle,
+      zoneGeographique: coalesceZoneGeographique(r.zoneGeographique, code, libelle),
     });
   }
   return map;
 }
 
+/** Ex. `ABJ-01 — Agence Abobo (Abidjan)` — colonne métier « Agence (Intérieur - Abidjan) ». */
 export function formatAgenceLibelle(doc: AgenceLibelleDoc | undefined, agenceId: string | null | undefined): string {
   if (doc?.libelle) {
+    const zone = libelleZoneGeographique(doc.zoneGeographique);
     const c = doc.code?.trim();
-    return c ? `${c} — ${doc.libelle}` : doc.libelle;
+    const base = c ? `${c} — ${doc.libelle}` : doc.libelle;
+    return `${base} (${zone})`;
   }
   if (agenceId?.trim()) return `Agence (${agenceId.trim()})`;
   return "Agence non renseignée";

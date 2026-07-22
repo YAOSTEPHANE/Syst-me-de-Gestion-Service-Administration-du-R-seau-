@@ -27,7 +27,7 @@ import { operationStatutMetierBadgeClass } from "@/lib/lonaci/cession-operation-
 import { DELOCALISATION_STATUTS_SPEC_63 } from "@/lib/lonaci/delocalisation-statut-metier";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
-import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
+import { getAssignedWorkflowTarget, workflowActionLabelForTarget, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { notify } from "@/lib/toast";
 import { FilePlus2, RefreshCw, X } from "lucide-react";
@@ -899,9 +899,9 @@ export default function CessionsPanel() {
               {row.attachments.length ? <ul className="mt-3 space-y-1 text-xs">{row.attachments.map((a) => <li key={a.id}><a className="text-orange-700 underline" href={`/api/cessions/${row.id}/attachments/${a.id}`} target="_blank" rel="noopener noreferrer">{a.filename}</a></li>)}</ul> : null}
               <div className="mt-4 flex flex-wrap gap-2">
                 <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>Voir le dossier</Button>
-                {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}>Valider N1</Button> : null}
-                {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transition(row.id, "VALIDATION_N2")}>Valider N2</Button> : null}
-                {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" && canFinalize ? <Button size="sm" onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}>Finaliser</Button> : null}
+                {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}>{workflowActionLabelForTarget("CONTROLE_CHEF_SECTION")}</Button> : null}
+                {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transition(row.id, "VALIDATION_N2")}>{workflowActionLabelForTarget("VALIDATION_N2")}</Button> : null}
+                {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" && canFinalize ? <Button size="sm" onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}>{workflowActionLabelForTarget("VALIDEE_CHEF_SERVICE")}</Button> : null}
                 {assignedTransitionTarget(row) && canReject ? <Button size="sm" variant="danger" onClick={() => void transition(row.id, "REJETEE")}>Rejeter</Button> : null}
               </div>
             </Surface>
@@ -1022,7 +1022,7 @@ export default function CessionsPanel() {
                             onClick={() => void transition(row.id, "CONTROLE_CHEF_SECTION")}
                             className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider N1
+                            {workflowActionLabelForTarget("CONTROLE_CHEF_SECTION")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" &&
@@ -1034,7 +1034,7 @@ export default function CessionsPanel() {
                             onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}
                             className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider (chef de service)
+                            {workflowActionLabelForTarget("VALIDEE_CHEF_SERVICE")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) === "VALIDATION_N2" &&
@@ -1045,7 +1045,7 @@ export default function CessionsPanel() {
                             onClick={() => void transition(row.id, "VALIDATION_N2")}
                             className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider N2
+                            {workflowActionLabelForTarget("VALIDATION_N2")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) === "VALIDEE_CHEF_SERVICE" &&
@@ -1057,7 +1057,7 @@ export default function CessionsPanel() {
                             onClick={() => void transition(row.id, "VALIDEE_CHEF_SERVICE")}
                             className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider + transférer
+                            {workflowAdvanceLabel()} + transférer
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) && canReject ? (

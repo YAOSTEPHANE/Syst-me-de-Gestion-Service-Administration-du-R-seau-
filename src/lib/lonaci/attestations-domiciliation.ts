@@ -6,6 +6,7 @@ import {
   findConcessionnaireById,
 } from "@/lib/lonaci/concessionnaires";
 import type { AttestationDomiciliationStatus, AttestationDomiciliationType } from "@/lib/lonaci/constants";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
 import type { UserDocument } from "@/lib/lonaci/types";
 import { prisma } from "@/lib/prisma";
@@ -149,15 +150,15 @@ export async function transitionDemandeAttestationDomiciliation(input: {
   };
 
   if (row.statut === "DEMANDE_RECUE" && input.target === "TRANSMIS") {
-    if (input.role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     $set.transmittedAt = now;
     $set.transmittedByUserId = input.actorId;
   } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {
-    if (input.role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.role, "ASSIST_CDS")) throw new Error("FORBIDDEN_TRANSITION");
     $set.finalizedAt = now;
     $set.finalizedByUserId = input.actorId;
   } else if (row.statut === "FINALISE" && input.target === "VALIDE") {
-    if (input.role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     $set.validatedAt = now;
     $set.validatedByUserId = input.actorId;
   } else if (input.target === "ENVOYE_CLIENT") {
@@ -183,7 +184,7 @@ export async function envoyerAttestationAuClient(input: {
   role: string;
   actorId: string;
 }): Promise<EnvoyerAttestationClientResult> {
-  if (input.role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+  if (!roleMayAdvanceWorkflow(input.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
   if (!ObjectId.isValid(input.id)) throw new Error("DEMANDE_NOT_FOUND");
 
   const db = await getDatabase();

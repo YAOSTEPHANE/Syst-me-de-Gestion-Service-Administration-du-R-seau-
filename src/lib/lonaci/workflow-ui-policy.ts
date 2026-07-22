@@ -4,6 +4,13 @@ import {
   type HierarchicalWorkflow,
 } from "@/lib/auth/workflow-visibility";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+  workflowAdvanceLabel,
+} from "@/lib/lonaci/workflow-approvals";
+
+export { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
 
 const NEXT_STATUS: Readonly<
   Partial<Record<HierarchicalWorkflow, Readonly<Record<string, string>>>>
@@ -62,6 +69,12 @@ export function getAssignedWorkflowTarget(input: {
 }): string | null {
   if (!input.role) return null;
   if (
+    !areWorkflowApprovalsEnabled() &&
+    isOperationalWorkflowRole(input.role)
+  ) {
+    return NEXT_STATUS[input.workflow]?.[input.status] ?? null;
+  }
+  if (
     !isWorkflowStageAssignedToRole({
       workflow: input.workflow,
       role: input.role,
@@ -71,6 +84,28 @@ export function getAssignedWorkflowTarget(input: {
     return null;
   }
   return NEXT_STATUS[input.workflow]?.[input.status] ?? null;
+}
+
+export function workflowActionLabelForTarget(target: string | null | undefined): string {
+  if (!areWorkflowApprovalsEnabled()) return workflowAdvanceLabel();
+  if (!target) return workflowAdvanceLabel();
+  if (target.includes("N1") || target === "CONTROLE_CHEF_SECTION" || target === "CONTROLE") {
+    return "Valider N1";
+  }
+  if (target.includes("N2") || target === "VALIDATION_N2" || target === "TRANSMIS") {
+    return "Valider N2";
+  }
+  if (
+    target === "FINALISE" ||
+    target === "VALIDEE_CHEF_SERVICE" ||
+    target === "RESILIE" ||
+    target === "PAYEE" ||
+    target === "VALIDE" ||
+    target === "SUIVI_CHEF_SERVICE"
+  ) {
+    return "Finaliser";
+  }
+  return workflowAdvanceLabel();
 }
 
 export function getRoleWorkflowFilterStatuses(

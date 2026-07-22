@@ -77,6 +77,7 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   createConcessionnaireFromClient,
+  parseContratPdvMetaFromPayload,
   promoteSignedDossierClient,
 } from "@/lib/lonaci/client-to-concessionnaire";
 
@@ -120,6 +121,36 @@ const createdConcessionnaire = {
   gps: null,
 };
 
+describe("parseContratPdvMetaFromPayload", () => {
+  it("extrait GPS et bancarisation valides", () => {
+    expect(
+      parseContratPdvMetaFromPayload({
+        gps: { lat: 5.3, lng: -4 },
+        commune: " Cocody ",
+        quartier: " Angré ",
+        statutBancarisation: "BANCARISE",
+        compteBancaire: "  CI1  ",
+      }),
+    ).toEqual({
+      gps: { lat: 5.3, lng: -4 },
+      commune: "Cocody",
+      quartier: "Angré",
+      statutBancarisation: "BANCARISE",
+      compteBancaire: "CI1",
+    });
+  });
+
+  it("ignore un GPS invalide", () => {
+    expect(parseContratPdvMetaFromPayload({ gps: { lat: "x", lng: 1 } })).toEqual({
+      gps: null,
+      commune: null,
+      quartier: null,
+      statutBancarisation: undefined,
+      compteBancaire: null,
+    });
+  });
+});
+
 describe("promotion concessionnaire après signature", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -162,6 +193,31 @@ describe("promotion concessionnaire après signature", () => {
     );
     expect(createConcessionnaireMock.mock.calls[0]?.[0]).not.toHaveProperty(
       "skipInscriptionWorkflow",
+    );
+  });
+
+  it("reprend GPS et bancarisation fournis à la promotion signée", async () => {
+    findLonaciClientByIdMock.mockResolvedValue(clientWithStatut("DOSSIER_EN_COURS"));
+
+    await promoteSignedDossierClient({
+      sourceLonaciClientId: clientId,
+      dossierAgenceId: agenceId,
+      actorUserId: actorId,
+      gps: { lat: 5.36, lng: -4.01 },
+      commune: "Cocody",
+      quartier: "Angré",
+      statutBancarisation: "RIB_FOURNI",
+      compteBancaire: "CI99",
+    });
+
+    expect(createConcessionnaireMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        gps: { lat: 5.36, lng: -4.01 },
+        ville: "Cocody",
+        adresse: "Quartier Angré — Abidjan",
+        statutBancarisation: "RIB_FOURNI",
+        compteBancaire: "CI99",
+      }),
     );
   });
 

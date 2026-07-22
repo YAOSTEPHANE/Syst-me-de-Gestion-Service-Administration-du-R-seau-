@@ -28,6 +28,7 @@ import { canReadClient, canReadConcessionnaire, isStatutBloquant } from "@/lib/l
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { findLonaciClientById, activateClientAfterCautionPaid, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { isClientStatutEligibleForCaution } from "@/lib/lonaci/client-constants";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import {
   deliverCautionFicheDefinitive,
@@ -509,7 +510,7 @@ export async function regulariserCautionPaiement(input: {
 
 export async function validateCautionN1(cautionId: string, actor: UserDocument) {
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
-  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (!roleMayAdvanceWorkflow(actor.role, "CHEF_SECTION")) throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
   const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
@@ -541,7 +542,7 @@ export async function validateCautionN1(cautionId: string, actor: UserDocument) 
 
 export async function validateCautionN2(cautionId: string, actor: UserDocument) {
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
-  if (actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
+  if (!roleMayAdvanceWorkflow(actor.role, "ASSIST_CDS")) throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
   const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
@@ -577,7 +578,7 @@ export async function finalizeCaution(
   actor: UserDocument,
 ): Promise<CautionFicheDefinitiveDto | null> {
   if (!ObjectId.isValid(cautionId)) throw new Error("CAUTION_NOT_FOUND");
-  if (actor.role !== "CHEF_SERVICE") throw new Error("ROLE_FORBIDDEN");
+  if (!roleMayAdvanceWorkflow(actor.role, "CHEF_SERVICE")) throw new Error("ROLE_FORBIDDEN");
   const db = await getDatabase();
   const caution = await findVisibleCautionById(cautionId, actor);
   if (!caution) throw new Error("CAUTION_NOT_FOUND");
@@ -1006,7 +1007,7 @@ export async function transitionPdvIntegration(input: {
   } else if (current === "EN_TRAITEMENT" && next === "INTEGRE_GPR") {
     if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
   } else if (current === "INTEGRE_GPR" && next === "FINALISE") {
-    if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     return finalizePdvIntegration(input.integrationId, input.actor);
   } else {
     throw new Error("INVALID_PDV_STATUS_TRANSITION");

@@ -33,6 +33,7 @@ import { ChartCard, KpiCard } from "@/components/lonaci/ui/dashboard-cards";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Surface } from "@/components/lonaci/ui/surface";
+import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
 
 ChartJS.register(
   CategoryScale,
@@ -1222,7 +1223,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
                     <div className="lonaci-db-cell-title">Contrats &amp; Actualisations</div>
-                    <div className="lonaci-db-cell-sub">Validation N1 requise</div>
+                    <div className="lonaci-db-cell-sub">Progression dossier</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En attente</span>
@@ -1234,14 +1235,14 @@ export default function LonaciDashboardHome() {
                   </div>
                   <div className="lonaci-db-pending-action">
                     <Link href="/dossiers?status=SOUMIS" className="lonaci-db-abtn lonaci-db-abtn-blue">
-                      Valider N1
+                      {workflowAdvanceLabel()}
                     </Link>
                   </div>
                 </div>
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
                     <div className="lonaci-db-cell-title">Cautions</div>
-                    <div className="lonaci-db-cell-sub">Finalisation (chef de service)</div>
+                    <div className="lonaci-db-cell-sub">Progression</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En attente</span>
@@ -1260,7 +1261,7 @@ export default function LonaciDashboardHome() {
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
                     <div className="lonaci-db-cell-title">Géolocalisation PDV</div>
-                    <div className="lonaci-db-cell-sub">Finalisation</div>
+                    <div className="lonaci-db-cell-sub">Progression</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En attente</span>
@@ -1278,14 +1279,14 @@ export default function LonaciDashboardHome() {
                   </div>
                   <div className="lonaci-db-pending-action">
                     <Link href="/pdv-integrations?status=EN_TRAITEMENT" className="lonaci-db-abtn lonaci-db-abtn-green">
-                      Finaliser
+                      {workflowAdvanceLabel()}
                     </Link>
                   </div>
                 </div>
                 <div className="lonaci-db-pending-row">
                   <div className="lonaci-db-pending-module">
                     <div className="lonaci-db-cell-title">Agréments</div>
-                    <div className="lonaci-db-cell-sub">Contrôle N2</div>
+                    <div className="lonaci-db-cell-sub">Progression</div>
                   </div>
                   <div className="lonaci-db-pending-metric">
                     <span className="lonaci-db-pending-metric-label">En attente</span>

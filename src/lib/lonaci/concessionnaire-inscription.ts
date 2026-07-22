@@ -19,6 +19,10 @@ import type {
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { inscriptionTransitionRoleError } from "@/lib/lonaci/workflow-separation";
 import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
+import {
   findConcessionnaireById,
   nextCodePdvForAgence,
 } from "@/lib/lonaci/concessionnaires";
@@ -186,14 +190,18 @@ function canTransition(
     return (
       current === "SOUMIS" &&
       target === "DOSSIER_EN_COURS" &&
-      role === "CHEF_SECTION"
+      (areWorkflowApprovalsEnabled()
+        ? role === "CHEF_SECTION"
+        : isOperationalWorkflowRole(role))
     );
   }
   if (action === "REJECT") {
     return (
       current === "SOUMIS" &&
       target === "REJETE" &&
-      role === "CHEF_SECTION"
+      (areWorkflowApprovalsEnabled()
+        ? role === "CHEF_SECTION"
+        : isOperationalWorkflowRole(role))
     );
   }
   if (action === "RETURN_TO_DRAFT") {
@@ -236,7 +244,10 @@ export async function transitionConcessionnaireInscription(input: {
 
   if (!canTransition(current, target, input.action, input.actor.role)) {
     if (input.action === "VALIDATE_N1" || input.action === "REJECT") {
-      throw new Error(inscriptionTransitionRoleError(input.action, input.actor.role, current));
+      throw new Error(
+        inscriptionTransitionRoleError(input.action, input.actor.role, current) ??
+          "FORBIDDEN_TRANSITION",
+      );
     }
     throw new Error("FORBIDDEN_TRANSITION");
   }

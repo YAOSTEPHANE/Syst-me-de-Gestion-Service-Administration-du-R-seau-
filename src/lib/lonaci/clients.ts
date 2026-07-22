@@ -24,6 +24,10 @@ import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import type { DossierDocumentChecklistPayload, ProduitDocument, UserDocument } from "@/lib/lonaci/types";
 import { userDisplayName } from "@/lib/lonaci/types";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 
 /** Fiches client actives (non désactivées) : Prisma Mongo ne matche pas `null` si la clé `deletedAt` est absente. */
 export const lonaciClientNotDeletedWhere: Prisma.LonaciClientWhereInput = {
@@ -686,7 +690,11 @@ export async function softDeleteClient(id: string, actor: UserDocument): Promise
 
 /** Validation N1 (Chef de section) : EN_ATTENTE_N1 → DOSSIER_EN_COURS. */
 export async function validateClientCreationN1(clientId: string, actor: UserDocument) {
-  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (areWorkflowApprovalsEnabled()) {
+    if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  } else if (!isOperationalWorkflowRole(actor.role)) {
+    throw new Error("ROLE_FORBIDDEN");
+  }
   if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
 
   const existing = await findLonaciClientById(clientId);
@@ -732,7 +740,11 @@ export async function rejectClientCreationN1(
   motif: string,
   actor: UserDocument,
 ) {
-  if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (areWorkflowApprovalsEnabled()) {
+    if (actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  } else if (!isOperationalWorkflowRole(actor.role)) {
+    throw new Error("ROLE_FORBIDDEN");
+  }
   if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
 
   const trimmedMotif = motif.trim();
@@ -773,7 +785,7 @@ export async function rejectClientCreationN1(
   return row;
 }
 
-/** Resoumission après rejet : REJETE → EN_ATTENTE_N1. */
+/** Resoumission après rejet : REJETE → DOSSIER_EN_COURS (plus d'attente N1). */
 export async function resubmitClientForValidation(clientId: string, actor: UserDocument) {
   if (!isObjectId(clientId)) throw new Error("CLIENT_NOT_FOUND");
 
@@ -782,10 +794,11 @@ export async function resubmitClientForValidation(clientId: string, actor: UserD
   if (existing.statut !== "REJETE") throw new Error("CLIENT_WRONG_STATUS");
 
   const now = new Date();
+  const nextStatut = areWorkflowApprovalsEnabled() ? "EN_ATTENTE_N1" : "DOSSIER_EN_COURS";
   const row = await prisma.lonaciClient.update({
     where: { id: clientId },
     data: {
-      statut: "EN_ATTENTE_N1",
+      statut: nextStatut,
       rejetMotif: null,
       rejetAt: null,
       updatedAt: now,
@@ -798,16 +811,18 @@ export async function resubmitClientForValidation(clientId: string, actor: UserD
     entityId: clientId,
     action: "CLIENT_RESUBMIT",
     userId: actor._id ?? "",
-    details: { from: "REJETE", to: "EN_ATTENTE_N1" },
+    details: { from: "REJETE", to: nextStatut },
   });
 
   const label = row.nomComplet?.trim() || row.raisonSociale;
-  await notifyRoleTargets(
-    "CHEF_SECTION",
-    "Client resoumis (validation N1)",
-    `Client ${row.code} (${label}) resoumis par ${userDisplayName(actor)} | validation Chef de section requise.`,
-    { clientId: row.id, code: row.code, agenceId: row.agenceId },
-  );
+  if (areWorkflowApprovalsEnabled()) {
+    await notifyRoleTargets(
+      "CHEF_SECTION",
+      "Client resoumis (validation N1)",
+      `Client ${row.code} (${label}) resoumis par ${userDisplayName(actor)} | validation Chef de section requise.`,
+      { clientId: row.id, code: row.code, agenceId: row.agenceId },
+    );
+  }
 
   return row;
 }

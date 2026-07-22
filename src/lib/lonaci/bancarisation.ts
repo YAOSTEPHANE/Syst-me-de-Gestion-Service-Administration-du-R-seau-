@@ -21,6 +21,10 @@ import type {
   UserDocument,
 } from "@/lib/lonaci/types";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
@@ -290,16 +294,22 @@ export async function validateBancarisationRequest(input: {
     return mapRequest(updated);
   }
 
-  // VALIDER — enchaînement N1 (chef section) → N2 (assistant CDS) → application (chef de service)
+  // VALIDER — enchaînement SOUMIS → VALIDE_N1 → VALIDE_N2 → VALIDE
   let nextStatus: BancarisationRequestStatus;
   if (existing.status === "SOUMIS") {
-    if (actorRole !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+    if (areWorkflowApprovalsEnabled() ? actorRole !== "CHEF_SECTION" : !isOperationalWorkflowRole(actorRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
     nextStatus = "VALIDE_N1";
   } else if (existing.status === "VALIDE_N1") {
-    if (actorRole !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    if (areWorkflowApprovalsEnabled() ? actorRole !== "ASSIST_CDS" : !isOperationalWorkflowRole(actorRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
     nextStatus = "VALIDE_N2";
   } else if (existing.status === "VALIDE_N2") {
-    if (actorRole !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (areWorkflowApprovalsEnabled() ? actorRole !== "CHEF_SERVICE" : !isOperationalWorkflowRole(actorRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
     nextStatus = "VALIDE";
   } else {
     throw new Error("REQUEST_NOT_PENDING");

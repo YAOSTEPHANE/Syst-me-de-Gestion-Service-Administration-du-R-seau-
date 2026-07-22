@@ -1,5 +1,6 @@
 import type { LonaciRole, ConcessionnaireInscriptionStatut } from "@/lib/lonaci/constants";
 import type { RbacAction, RbacResource } from "@/lib/auth/rbac";
+import { areWorkflowApprovalsEnabled, isOperationalWorkflowRole } from "@/lib/lonaci/workflow-approvals";
 import type { DossierStatus } from "@/lib/lonaci/types";
 
 type InscriptionN1GateAction = "VALIDATE_N1" | "REJECT";
@@ -43,7 +44,10 @@ export function isWorkflowSeparationError(code: string): boolean {
 export function dossierTransitionRoleError(
   role: LonaciRole,
   targetStatus: DossierStatus,
-): WorkflowSeparationErrorCode | "ROLE_FORBIDDEN" {
+): WorkflowSeparationErrorCode | "ROLE_FORBIDDEN" | null {
+  if (!areWorkflowApprovalsEnabled()) {
+    return isOperationalWorkflowRole(role) ? null : "ROLE_FORBIDDEN";
+  }
   switch (targetStatus) {
     case "VALIDE_N1":
       if (role !== "CHEF_SECTION") return WORKFLOW_SEPARATION_ERRORS.DOSSIER_N1_CHEF_SECTION_ONLY;
@@ -64,8 +68,11 @@ export function inscriptionTransitionRoleError(
   action: InscriptionN1GateAction,
   role: LonaciRole,
   current: ConcessionnaireInscriptionStatut,
-): WorkflowSeparationErrorCode | "FORBIDDEN_TRANSITION" {
+): WorkflowSeparationErrorCode | "FORBIDDEN_TRANSITION" | null {
   if (current !== "SOUMIS") return "FORBIDDEN_TRANSITION";
+  if (!areWorkflowApprovalsEnabled()) {
+    return isOperationalWorkflowRole(role) ? null : "FORBIDDEN_TRANSITION";
+  }
   if (action === "VALIDATE_N1" && role !== "CHEF_SECTION") {
     return WORKFLOW_SEPARATION_ERRORS.INSCRIPTION_N1_CHEF_SECTION_ONLY;
   }
@@ -81,6 +88,7 @@ export function rbacWorkflowDenialMessage(
   resource: RbacResource,
   action: RbacAction,
 ): string | null {
+  if (!areWorkflowApprovalsEnabled()) return null;
   if (resource !== "DOSSIERS") return null;
 
   if (action === "VALIDATE_N1") {

@@ -7,6 +7,7 @@ import {
 import { userMatchesAgence } from "@/lib/lonaci/access";
 import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import type { UserDocument } from "@/lib/lonaci/types";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "agrements";
@@ -235,15 +236,15 @@ export async function transitionAgrement(input: {
   const $set: Record<string, unknown> = { statut: input.target, updatedAt: now, updatedByUserId: actorId };
 
   if (row.statut === "RECU" && input.target === "CONTROLE") {
-    if (input.actor.role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SECTION")) throw new Error("FORBIDDEN_TRANSITION");
     $set.controlledAt = now;
     $set.controlledByUserId = actorId;
   } else if (row.statut === "CONTROLE" && input.target === "TRANSMIS") {
-    if (input.actor.role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.actor.role, "ASSIST_CDS")) throw new Error("FORBIDDEN_TRANSITION");
     $set.transmittedAt = now;
     $set.transmittedByUserId = actorId;
   } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {
-    if (input.actor.role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     $set.finalizedAt = now;
     $set.finalizedByUserId = actorId;
   } else {

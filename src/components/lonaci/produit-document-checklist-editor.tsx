@@ -16,11 +16,11 @@ import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } 
 function statutBadgeClass(statut: DossierDocumentChecklistStatut): string {
   switch (statut) {
     case "FOURNI":
-      return "bg-emerald-100 text-emerald-800 border-emerald-200";
+      return "border-emerald-300 bg-emerald-100 text-emerald-900 shadow-sm ring-1 ring-emerald-200";
     case "MANQUANT":
-      return "bg-rose-100 text-rose-800 border-rose-200";
+      return "border-rose-300 bg-rose-100 text-rose-900 shadow-sm ring-1 ring-rose-200";
     case "EN_ATTENTE":
-      return "bg-amber-100 text-amber-900 border-amber-200";
+      return "border-amber-300 bg-amber-100 text-amber-950 shadow-sm ring-1 ring-amber-200";
     default: {
       const exhaustiveStatut: never = statut;
       return exhaustiveStatut;
@@ -157,20 +157,25 @@ export default function ProduitDocumentChecklistEditor({
                 )}
               </div>
               {editable ? (
-                <div className="flex flex-wrap gap-1">
-                  {DOSSIER_CHECKLIST_STATUTS.map((s) => (
-                    <Button
-                      key={s}
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => applyStatut(entry.itemId, s)}
-                      className={`min-h-0 px-2 py-1 text-[11px] ${
-                        statut === s ? statutBadgeClass(s) : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                      }`}
-                    >
-                      {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
-                    </Button>
-                  ))}
+                <div className="flex flex-wrap gap-1" role="group" aria-label={`Statut de ${entry.libelle}`}>
+                  {DOSSIER_CHECKLIST_STATUTS.map((s) => {
+                    const selected = statut === s;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        onClick={() => applyStatut(entry.itemId, s)}
+                        aria-pressed={selected}
+                        className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
+                          selected
+                            ? statutBadgeClass(s)
+                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
+                        }`}
+                      >
+                        {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
+                      </button>
+                    );
+                  })}
                 </div>
               ) : (
                 <span className={`rounded-md border px-2 py-1 text-[11px] font-medium ${statutBadgeClass(statut)}`}>

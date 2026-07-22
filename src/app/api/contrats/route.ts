@@ -27,11 +27,12 @@ import {
 import { findAssociatedCautionForDossier } from "@/lib/lonaci/dossier-decharge-provisoire";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
+import { submitAndAutoValidateContratDossier } from "@/lib/lonaci/dossier-contrat-auto-validate";
 import {
   createDossier,
   ensureDossierIndexes,
+  findDossierById,
   listVisibleDossierIds,
-  transitionDossier,
 } from "@/lib/lonaci/dossiers";
 import {
   extendContratDossierWithProduits,
@@ -45,14 +46,21 @@ import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { canReadClient } from "@/lib/lonaci/access";
 import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
+import { BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { buildWorkflowVisibilityMongoFilter } from "@/lib/auth/workflow-visibility";
+import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 
 const checklistItemSchema = z.object({
   itemId: z.string().min(1),
   statut: z.enum(["FOURNI", "MANQUANT", "EN_ATTENTE"]),
+});
+
+const gpsSchema = z.object({
+  lat: z.number().finite(),
+  lng: z.number().finite(),
 });
 
 const createSchema = z
@@ -69,6 +77,11 @@ const createSchema = z
     /** null autorisé (formulaire envoie null si vide) — z.string().optional() seul rejetait null → 400. */
     observations: z.string().max(5000).nullish(),
     documentChecklist: z.array(checklistItemSchema).optional(),
+    gps: gpsSchema.nullish(),
+    commune: z.string().max(200).nullish(),
+    quartier: z.string().max(200).nullish(),
+    statutBancarisation: z.enum(BANCARISATION_STATUTS).optional(),
+    compteBancaire: z.string().max(128).nullish(),
   })
   .superRefine((data, ctx) => {
     const c = (data.concessionnaireId ?? "").trim();
@@ -107,6 +120,14 @@ const createSchema = z
         code: z.ZodIssueCode.custom,
         message: "Une actualisation ne porte que sur un seul produit à la fois.",
         path: ["produitCodes"],
+      });
+    }
+    const compte = (data.compteBancaire ?? "").trim();
+    if (data.statutBancarisation === "BANCARISE" && !compte) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Le numéro de compte est obligatoire pour le statut BANCARISÉ.",
+        path: ["compteBancaire"],
       });
     }
   });
@@ -232,19 +253,70 @@ export async function GET(request: NextRequest) {
       ? Promise.resolve([])
       : prisma.lonaciClient.findMany({
           where: { id: { in: clientIds }, deletedAt: null },
-          select: { id: true, code: true, nomComplet: true, raisonSociale: true },
+          select: {
+            id: true,
+            code: true,
+            categorie: true,
+            nomComplet: true,
+            raisonSociale: true,
+            codeMachine: true,
+            cniNumero: true,
+            nomContact: true,
+            email: true,
+            telephone: true,
+            adresse: true,
+            ville: true,
+            codePostal: true,
+            typeDistributeur: true,
+            nombreTpm: true,
+            numeroDistributeur: true,
+            numeroTpm: true,
+            notes: true,
+            produitsAutorises: true,
+            agenceId: true,
+            statut: true,
+          },
         }),
   ]);
   const pdvMap = new Map(pdvRows.map((p) => [p.id, p]));
   const clientMap = new Map(clientRows.map((c) => [c.id, c]));
+  const clientAgenceIds = clientRows.map((c) => c.agenceId);
+  const agenceLabelMap = await loadAgenceLibelleMap(db, clientAgenceIds);
 
   const itemsWithPdv = result.items.map((c) => {
     const client = c.lonaciClientId ? clientMap.get(c.lonaciClientId) : undefined;
     if (client) {
+      const agenceLabel = formatAgenceLibelle(
+        client.agenceId ? agenceLabelMap.get(client.agenceId) : undefined,
+        client.agenceId,
+      );
       return {
         ...c,
         codePdv: client.code ?? "",
         nomPdv: client.nomComplet || client.raisonSociale || "",
+        clientFiche: {
+          code: client.code,
+          categorie: client.categorie,
+          nomComplet: client.nomComplet,
+          raisonSociale: client.raisonSociale,
+          codeMachine: client.codeMachine,
+          cniNumero: client.cniNumero,
+          nomContact: client.nomContact,
+          email: client.email,
+          telephone: client.telephone,
+          adresse: client.adresse,
+          ville: client.ville,
+          codePostal: client.codePostal,
+          typeDistributeur: client.typeDistributeur,
+          nombreTpm: client.nombreTpm,
+          numeroDistributeur: client.numeroDistributeur,
+          numeroTpm: client.numeroTpm,
+          notes: client.notes,
+          produitsAutorises: client.produitsAutorises ?? [],
+          agenceId: client.agenceId,
+          agenceLabel,
+          statut: client.statut,
+        },
       };
     }
     const pdv = c.concessionnaireId ? pdvMap.get(c.concessionnaireId) : undefined;
@@ -252,6 +324,7 @@ export async function GET(request: NextRequest) {
       ...c,
       codePdv: pdv?.codePdv ?? "",
       nomPdv: pdv ? pdv.nomComplet || pdv.raisonSociale : "",
+      clientFiche: null,
     };
   });
 
@@ -355,9 +428,21 @@ export async function GET(request: NextRequest) {
   if (parsed.data.concessionnaireId) {
     dossierFilterConditions.push({ concessionnaireId: parsed.data.concessionnaireId });
   }
+  if (parsed.data.lonaciClientId) {
+    dossierFilterConditions.push({ lonaciClientId: parsed.data.lonaciClientId });
+  }
+  if (parsed.data.dossierStatus) {
+    dossierFilterConditions.push({ status: parsed.data.dossierStatus });
+  }
   if (parsed.data.produitCode) {
+    const pcode = parsed.data.produitCode.trim().toUpperCase();
     dossierFilterConditions.push({
-      "payload.produitCode": parsed.data.produitCode.trim().toUpperCase(),
+      $or: [{ "payload.produitCode": pcode }, { "payload.produitCodes": pcode }],
+    });
+  }
+  if (parsed.data.q?.trim()) {
+    dossierFilterConditions.push({
+      reference: { $regex: parsed.data.q.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), $options: "i" },
     });
   }
 
@@ -468,69 +553,246 @@ export async function GET(request: NextRequest) {
     monthly: values.monthly,
   }));
 
+  const dossiersEnriched = await Promise.all(
+    dossiersRows.map(async (d) => {
+      const id = d._id.toHexString();
+      const mapped = {
+        _id: id,
+        type: d.type,
+        status: d.status,
+        concessionnaireId: d.concessionnaireId,
+        lonaciClientId: d.lonaciClientId,
+        payload: d.payload ?? {},
+      };
+      const produitCodes = getDossierProduitCodes(d.payload ?? {});
+      const checklist = await ensureChecklistForDossierProduits(d.payload ?? {}, produitCodes);
+      const hasDocumentChecklist = Boolean(checklist.entries.length);
+      const cautionsStatus = await resolveDossierCautionsStatus(mapped);
+      const cautionPaid = cautionsStatus.allPaid;
+      const cautionPaymentReference = cautionsStatus.primaryPaymentReference;
+      const dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
+        hasDocumentChecklist ? checklist : { entries: [], complet: false },
+        cautionPaid,
+        Boolean(cautionPaymentReference),
+      );
+      const statutMetier = resolveContratStatutMetier({
+        dossierStatus: d.status,
+        checklistComplet: hasDocumentChecklist ? checklist.complet : null,
+        cautionPaid,
+        hasDocumentChecklist,
+      });
+      const contratsGeneres = parseContratsGeneresPayload(d.payload ?? {});
+      return {
+        id,
+        reference: d.reference,
+        status: d.status,
+        concessionnaireId: d.concessionnaireId,
+        lonaciClientId: d.lonaciClientId ?? null,
+        agenceId: d.agenceId,
+        payload: d.payload,
+        hasDocumentChecklist,
+        checklistComplet: hasDocumentChecklist ? checklist.complet : null,
+        cautionPaid,
+        cautionPaymentReference,
+        produitCodes,
+        cautionsByProduit: cautionsStatus.links.map((l) => ({
+          produitCode: l.produitCode,
+          cautionPaid: l.status === "PAYEE" && Boolean(l.paymentReference),
+          paymentReference: l.paymentReference,
+          referenceLabel: l.referenceLabel,
+        })),
+        dechargeDefinitiveEligible,
+        hasContratGenere: contratsGeneres.length > 0,
+        contratArchive: allContratsArchivesComplete(d.payload ?? {}),
+        annexeArchive: allAnnexesArchivesComplete(d.payload ?? {}),
+        contratsParProduit: summarizeContratsParProduit(d.payload ?? {}),
+        ...contratStatutMetierFields(statutMetier),
+        history: d.history.map((h) => ({
+          status: h.status,
+          actedByUserId: h.actedByUserId,
+          actedAt: h.actedAt.toISOString(),
+          comment: h.comment,
+        })),
+        createdAt: d.createdAt.toISOString(),
+        updatedAt: d.updatedAt.toISOString(),
+      };
+    }),
+  );
+
+  /** Dossiers en cours (pas encore de ligne Prisma Contrat) → lignes du registre. */
+  let itemsForRegistre = itemsEnriched;
+  let totalForRegistre = result.total;
+  if (!parsed.data.status) {
+    const coveredDossierIds = new Set(itemsEnriched.map((c) => c.dossierId).filter(Boolean));
+    const pendingDossiers = dossiersEnriched.filter(
+      (d) => d.status !== "FINALISE" || !coveredDossierIds.has(d.id),
+    );
+
+    const extraPdvIds = [
+      ...new Set(
+        pendingDossiers
+          .map((d) => d.concessionnaireId)
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0 && !pdvMap.has(id)),
+      ),
+    ];
+    const extraClientIds = [
+      ...new Set(
+        pendingDossiers
+          .map((d) => d.lonaciClientId)
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0 && !clientMap.has(id)),
+      ),
+    ];
+    if (extraPdvIds.length > 0 || extraClientIds.length > 0) {
+      const [extraPdv, extraClients] = await Promise.all([
+        extraPdvIds.length === 0
+          ? Promise.resolve([])
+          : prisma.concessionnaire.findMany({
+              where: { id: { in: extraPdvIds }, deletedAt: null },
+              select: { id: true, codePdv: true, nomComplet: true, raisonSociale: true },
+            }),
+        extraClientIds.length === 0
+          ? Promise.resolve([])
+          : prisma.lonaciClient.findMany({
+              where: { id: { in: extraClientIds }, deletedAt: null },
+              select: {
+                id: true,
+                code: true,
+                categorie: true,
+                nomComplet: true,
+                raisonSociale: true,
+                codeMachine: true,
+                cniNumero: true,
+                nomContact: true,
+                email: true,
+                telephone: true,
+                adresse: true,
+                ville: true,
+                codePostal: true,
+                typeDistributeur: true,
+                nombreTpm: true,
+                numeroDistributeur: true,
+                numeroTpm: true,
+                notes: true,
+                produitsAutorises: true,
+                agenceId: true,
+                statut: true,
+              },
+            }),
+      ]);
+      for (const p of extraPdv) pdvMap.set(p.id, p);
+      for (const c of extraClients) clientMap.set(c.id, c);
+      if (extraClients.length > 0) {
+        const extraAgenceMap = await loadAgenceLibelleMap(
+          db,
+          extraClients.map((c) => c.agenceId),
+        );
+        for (const [id, doc] of extraAgenceMap) {
+          agenceLabelMap.set(id, doc);
+        }
+      }
+    }
+
+    const syntheticItems = pendingDossiers.flatMap((d) => {
+      const codes =
+        d.produitCodes.length > 0
+          ? d.produitCodes
+          : (() => {
+              const single = String(d.payload?.produitCode ?? "")
+                .trim()
+                .toUpperCase();
+              return single ? [single] : ["—"];
+            })();
+      const operationType = String(d.payload?.operationType ?? "NOUVEAU");
+      const dateEffetRaw = String(d.payload?.dateEffet ?? d.payload?.dateOperation ?? d.createdAt);
+      const client = d.lonaciClientId ? clientMap.get(d.lonaciClientId) : undefined;
+      const pdv = d.concessionnaireId ? pdvMap.get(d.concessionnaireId) : undefined;
+      return codes
+        .filter((code) => {
+          if (!parsed.data.produitCode?.trim()) return true;
+          return code === parsed.data.produitCode.trim().toUpperCase();
+        })
+        .map((produitCode) => {
+          const produitSummary = contratProduitSummaryFromPayload(d.payload ?? {}, produitCode);
+          const agenceLabel = client
+            ? formatAgenceLibelle(
+                client.agenceId ? agenceLabelMap.get(client.agenceId) : undefined,
+                client.agenceId,
+              )
+            : "";
+          return {
+            id: `dossier:${d.id}:${produitCode}`,
+            reference: d.reference,
+            annexeReference: produitSummary?.referenceAnnexePreview ?? null,
+            concessionnaireId: d.concessionnaireId ?? "",
+            lonaciClientId: d.lonaciClientId,
+            produitCode,
+            operationType,
+            status: d.status === "FINALISE" ? "ACTIF" : "BROUILLON",
+            dateEffet: dateEffetRaw,
+            dossierId: d.id,
+            createdAt: d.createdAt,
+            updatedAt: d.updatedAt,
+            dateDepot: d.createdAt,
+            dossierEtape: d.status,
+            codePdv: client?.code ?? pdv?.codePdv ?? "",
+            nomPdv: client
+              ? client.nomComplet || client.raisonSociale || ""
+              : pdv
+                ? pdv.nomComplet || pdv.raisonSociale
+                : "",
+            clientFiche: client
+              ? {
+                  code: client.code,
+                  categorie: client.categorie,
+                  nomComplet: client.nomComplet,
+                  raisonSociale: client.raisonSociale,
+                  codeMachine: client.codeMachine,
+                  cniNumero: client.cniNumero,
+                  nomContact: client.nomContact,
+                  email: client.email,
+                  telephone: client.telephone,
+                  adresse: client.adresse,
+                  ville: client.ville,
+                  codePostal: client.codePostal,
+                  typeDistributeur: client.typeDistributeur,
+                  nombreTpm: client.nombreTpm,
+                  numeroDistributeur: client.numeroDistributeur,
+                  numeroTpm: client.numeroTpm,
+                  notes: client.notes,
+                  produitsAutorises: client.produitsAutorises ?? [],
+                  agenceId: client.agenceId,
+                  agenceLabel,
+                  statut: client.statut,
+                }
+              : null,
+            hasDocumentChecklist: d.hasDocumentChecklist,
+            checklistComplet: d.checklistComplet,
+            cautionPaid: d.cautionPaid,
+            cautionPaymentReference: d.cautionPaymentReference,
+            dechargeDefinitiveEligible: d.dechargeDefinitiveEligible,
+            hasContratGenere: d.hasContratGenere,
+            contratArchive: produitSummary?.contratArchive ?? d.contratArchive,
+            annexeArchive: produitSummary?.annexeArchive ?? d.annexeArchive,
+            documentsAnnexeAttendus: produitSummary?.documentsAnnexeAttendus ?? [],
+            contratsParProduit: d.contratsParProduit,
+            ...contratStatutMetierFields(d.statutMetier),
+            isDossierPending: true as const,
+          };
+        });
+    });
+
+    if (parsed.data.page === 1) {
+      itemsForRegistre = [...syntheticItems, ...itemsEnriched];
+    }
+    totalForRegistre = result.total + syntheticItems.length;
+  }
+
   return NextResponse.json(
     {
       ...result,
-      items: itemsEnriched,
-      dossiers: await Promise.all(
-        dossiersRows.map(async (d) => {
-          const id = d._id.toHexString();
-          const mapped = {
-            _id: id,
-            type: d.type,
-            status: d.status,
-            concessionnaireId: d.concessionnaireId,
-            lonaciClientId: d.lonaciClientId,
-            payload: d.payload ?? {},
-          };
-          const produitCodes = getDossierProduitCodes(d.payload ?? {});
-          const checklist = await ensureChecklistForDossierProduits(d.payload ?? {}, produitCodes);
-          const hasDocumentChecklist = Boolean(checklist.entries.length);
-          const cautionsStatus = await resolveDossierCautionsStatus(mapped);
-          const cautionPaid = cautionsStatus.allPaid;
-          const cautionPaymentReference = cautionsStatus.primaryPaymentReference;
-          const dechargeDefinitiveEligible = dossierEligibleDechargeDefinitive(
-            hasDocumentChecklist ? checklist : { entries: [], complet: false },
-            cautionPaid,
-            Boolean(cautionPaymentReference),
-          );
-          const statutMetier = resolveContratStatutMetier({
-            dossierStatus: d.status,
-            checklistComplet: hasDocumentChecklist ? checklist.complet : null,
-            cautionPaid,
-            hasDocumentChecklist,
-          });
-          return {
-            id,
-            reference: d.reference,
-            status: d.status,
-            concessionnaireId: d.concessionnaireId,
-            agenceId: d.agenceId,
-            payload: d.payload,
-            hasDocumentChecklist,
-            checklistComplet: hasDocumentChecklist ? checklist.complet : null,
-            cautionPaid,
-            cautionPaymentReference,
-            produitCodes,
-            cautionsByProduit: cautionsStatus.links.map((l) => ({
-              produitCode: l.produitCode,
-              cautionPaid: l.status === "PAYEE" && Boolean(l.paymentReference),
-              paymentReference: l.paymentReference,
-              referenceLabel: l.referenceLabel,
-            })),
-            dechargeDefinitiveEligible,
-            ...contratStatutMetierFields(statutMetier),
-            history: d.history.map((h) => ({
-              status: h.status,
-              actedByUserId: h.actedByUserId,
-              actedAt: h.actedAt.toISOString(),
-              comment: h.comment,
-            })),
-            createdAt: d.createdAt.toISOString(),
-            updatedAt: d.updatedAt.toISOString(),
-          };
-        }),
-      ),
+      total: totalForRegistre,
+      items: itemsForRegistre,
+      dossiers: dossiersEnriched,
       pendingByLevel,
       toSign,
       totalsByProduct: totals,
@@ -635,6 +897,19 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const gps = parsed.data.gps ?? null;
+  const commune = (parsed.data.commune ?? "").trim() || null;
+  const quartier = (parsed.data.quartier ?? "").trim() || null;
+  const statutBancarisation = parsed.data.statutBancarisation ?? "NON_BANCARISE";
+  const compteBancaire = (parsed.data.compteBancaire ?? "").trim() || null;
+  const pdvMeta = {
+    gps,
+    commune,
+    quartier,
+    statutBancarisation,
+    compteBancaire,
+  };
+
   await ensureDossierIndexes();
   try {
     let resultDossier: Awaited<ReturnType<typeof createDossier>> | null = null;
@@ -677,30 +952,59 @@ export async function POST(request: NextRequest) {
           agenceId: parsed.data.agenceId,
           parentContratId: parsed.data.parentContratId ?? null,
           observations: parsed.data.observations ?? null,
+          ...pdvMeta,
         },
         documentChecklist: parsed.data.documentChecklist,
         actor: auth.user,
       });
+    } else if (resultDossier._id) {
+      const db = await getDatabase();
+      const nextPayload = {
+        ...(resultDossier.payload ?? {}),
+        ...pdvMeta,
+      };
+      await db.collection("dossiers").updateOne(
+        { _id: new ObjectId(resultDossier._id), deletedAt: null },
+        {
+          $set: {
+            payload: nextPayload,
+            updatedAt: new Date(),
+            updatedByUserId: auth.user._id ?? "",
+          },
+        },
+      );
+      const refreshed = await findDossierById(resultDossier._id);
+      if (refreshed) {
+        resultDossier = refreshed;
+      } else {
+        resultDossier = { ...resultDossier, payload: nextPayload };
+      }
     }
 
     const checklist = parseDocumentChecklistPayload(resultDossier.payload ?? {});
     let submitted = false;
+    let autoValidated = false;
+    let finalized = false;
     if (checklist?.complet) {
-      resultDossier = await transitionDossier(
-        resultDossier._id ?? "",
-        "SOUMIS",
-        auth.user,
-        extended
+      const advanced = await submitAndAutoValidateContratDossier({
+        dossier: resultDossier,
+        actor: auth.user,
+        submitComment: extended
           ? "Soumis après enrichissement du dossier existant."
           : "Soumis à la création après constitution de la checklist.",
-      );
-      submitted = true;
+      });
+      resultDossier = advanced.dossier;
+      submitted = advanced.submitted;
+      autoValidated = advanced.autoValidated;
+      finalized = advanced.finalized;
     }
     return NextResponse.json(
       {
         dossier: resultDossier,
         checklistRequired: Boolean(checklist?.entries.length),
         submitted,
+        autoValidated,
+        finalized,
         extended,
         added,
       },

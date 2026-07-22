@@ -13,6 +13,7 @@ import {
   getAssignedWorkflowTarget,
   getRoleWorkflowFilterStatuses,
   parseLonaciRole,
+  workflowActionLabelForTarget,
 } from "@/lib/lonaci/workflow-ui-policy";
 import { notify } from "@/lib/toast";
 import { Download, FilePlus2, FileText, Upload } from "lucide-react";
@@ -65,9 +66,7 @@ function statusPillClass(status: AgrementStatus): string {
 }
 
 function transitionLabel(target: AgrementStatus): string {
-  if (target === "CONTROLE") return "Contrôler";
-  if (target === "TRANSMIS") return "Transmettre";
-  return "Finaliser";
+  return workflowActionLabelForTarget(target);
 }
 
 async function downloadAgrementsExcelTemplate(opts?: { produitCode?: string }) {

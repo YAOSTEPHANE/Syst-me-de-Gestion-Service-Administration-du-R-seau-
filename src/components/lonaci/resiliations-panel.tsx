@@ -27,7 +27,7 @@ import { resiliationChecklistProgress } from "@/lib/lonaci/resiliations-checklis
 import { canRole } from "@/lib/auth/rbac";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
-import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
+import { getAssignedWorkflowTarget, workflowActionLabelForTarget, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { notify } from "@/lib/toast";
 import { FilePlus2, RefreshCw, X } from "lucide-react";
@@ -624,9 +624,9 @@ export default function ResiliationsPanel() {
                 {row.attachments.length ? <ul className="mt-3 space-y-1 text-xs">{row.attachments.map((a) => <li key={a.id}><a className="text-orange-700 underline" href={`/api/resiliations/${row.id}/attachments/${a.id}`} target="_blank" rel="noreferrer">{a.filename}</a></li>)}</ul> : null}
                 <div className="mt-4 flex flex-wrap gap-2">
                   <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>Voir le dossier</Button>
-                  {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" disabled={busyId === row.id || !progress.complet} onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}>Valider N1</Button> : null}
-                  {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transitionResiliationRow(row.id, "VALIDATION_N2")}>Valider N2</Button> : null}
-                  {assignedTransitionTarget(row) === "RESILIE" && canFinalize ? <Button size="sm" variant="danger" onClick={() => setFinalizeId(row.id)}>Finaliser</Button> : null}
+                  {assignedTransitionTarget(row) === "CONTROLE_CHEF_SECTION" && canValidateN1 ? <Button size="sm" disabled={busyId === row.id || !progress.complet} onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}>{workflowActionLabelForTarget("CONTROLE_CHEF_SECTION")}</Button> : null}
+                  {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? <Button size="sm" onClick={() => void transitionResiliationRow(row.id, "VALIDATION_N2")}>{workflowActionLabelForTarget("VALIDATION_N2")}</Button> : null}
+                  {assignedTransitionTarget(row) === "RESILIE" && canFinalize ? <Button size="sm" variant="danger" onClick={() => setFinalizeId(row.id)}>{workflowActionLabelForTarget("RESILIE")}</Button> : null}
                 </div>
               </Surface>
             );
@@ -718,7 +718,7 @@ export default function ResiliationsPanel() {
                             onClick={() => void transitionResiliationRow(row.id, "CONTROLE_CHEF_SECTION")}
                             className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider N1
+                            {workflowActionLabelForTarget("CONTROLE_CHEF_SECTION")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) === "VALIDATION_N2" && canValidateN2 ? (
@@ -728,7 +728,7 @@ export default function ResiliationsPanel() {
                             onClick={() => void transitionResiliationRow(row.id, "VALIDATION_N2")}
                             className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Valider N2
+                            {workflowActionLabelForTarget("VALIDATION_N2")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) === "RESILIE" && canFinalize ? (
@@ -738,7 +738,7 @@ export default function ResiliationsPanel() {
                             onClick={() => setFinalizeId(row.id)}
                             className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-[11px] font-semibold text-white"
                           >
-                            Finaliser (RÉSILIÉ)
+                            {workflowActionLabelForTarget("RESILIE")}
                           </button>
                         ) : null}
                         {assignedTransitionTarget(row) && canReject ? (
@@ -858,7 +858,7 @@ export default function ResiliationsPanel() {
                     onClick={() => void transitionResiliationRow(detailItem.id, "CONTROLE_CHEF_SECTION")}
                     className="rounded-lg border border-sky-600 bg-sky-600 px-3 py-1.5 text-xs font-semibold text-white"
                   >
-                    Valider N1
+                    {workflowActionLabelForTarget("CONTROLE_CHEF_SECTION")}
                   </button>
                 ) : null}
                 {assignedTransitionTarget(detailItem) === "VALIDATION_N2" && canValidateN2 ? (
@@ -868,7 +868,7 @@ export default function ResiliationsPanel() {
                     onClick={() => void transitionResiliationRow(detailItem.id, "VALIDATION_N2")}
                     className="rounded-lg border border-violet-600 bg-violet-600 px-3 py-1.5 text-xs font-semibold text-white"
                   >
-                    Valider N2
+                    {workflowActionLabelForTarget("VALIDATION_N2")}
                   </button>
                 ) : null}
                 {assignedTransitionTarget(detailItem) === "RESILIE" && canFinalize ? (
@@ -880,7 +880,7 @@ export default function ResiliationsPanel() {
                     }
                     className="rounded-lg border border-rose-600 bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white"
                   >
-                    Finaliser (RÉSILIÉ)
+                    {workflowActionLabelForTarget("RESILIE")}
                   </button>
                 ) : null}
                 {assignedTransitionTarget(detailItem) && canReject ? (
@@ -904,7 +904,7 @@ export default function ResiliationsPanel() {
         onOpenChange={(open) => {
           if (!open && !busyId) setFinalizeId(null);
         }}
-        title="Finaliser la résiliation"
+        title={`${workflowAdvanceLabel()} la résiliation`}
         message="Cette action est irréversible : le contrat sera archivé et le concessionnaire passera au statut résilié."
         confirmLabel="Confirmer la résiliation"
         destructive

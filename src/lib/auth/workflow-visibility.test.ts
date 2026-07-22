@@ -82,16 +82,17 @@ const WORKFLOW_CASES: readonly WorkflowCase[] = [
 
 describe.each(WORKFLOW_CASES)("visibilité hiérarchique $workflow", (row) => {
   const actor = "viewer";
+  const allActive = [row.n1, row.n2, row.finalQueue, ...row.finalized];
 
   it.each([
     ["CHEF_SECTION", row.n1, true],
-    ["CHEF_SECTION", row.n2, false],
-    ["ASSIST_CDS", row.n1, false],
+    ["CHEF_SECTION", row.n2, true],
+    ["ASSIST_CDS", row.n1, true],
     ["ASSIST_CDS", row.n2, true],
-    ["ASSIST_CDS", row.finalQueue, false],
-    ["CHEF_SERVICE", row.n2, false],
+    ["ASSIST_CDS", row.finalQueue, true],
+    ["CHEF_SERVICE", row.n2, true],
     ["CHEF_SERVICE", row.finalQueue, true],
-  ] as const)("%s / %s => %s", (role, status, expected) => {
+  ] as const)("%s / %s => %s (approvals off)", (role, status, expected) => {
     expect(
       isWorkflowDocumentVisible({
         workflow: row.workflow,
@@ -103,11 +104,12 @@ describe.each(WORKFLOW_CASES)("visibilité hiérarchique $workflow", (row) => {
     ).toBe(expected);
   });
 
-  it("donne au dernier niveau sa file active et les finalisés", () => {
-    expect(getVisibleWorkflowStatuses(row.workflow, "CHEF_SERVICE")).toEqual([
-      row.finalQueue,
-      ...row.finalized,
-    ]);
+  it("expose toutes les étapes actives aux rôles opérationnels", () => {
+    for (const status of allActive) {
+      expect(
+        getVisibleWorkflowStatuses(row.workflow, "CHEF_SERVICE"),
+      ).toContain(status);
+    }
   });
 
   it("limite l'auditeur aux finalisés et rejetés", () => {
@@ -128,10 +130,19 @@ describe.each(WORKFLOW_CASES)("visibilité hiérarchique $workflow", (row) => {
 });
 
 describe("visibilité hiérarchique DELOCALISATIONS", () => {
-  it("saute N2 et transmet directement N1 au chef de service", () => {
-    expect(getVisibleWorkflowStatuses("DELOCALISATIONS", "CHEF_SECTION")).toEqual(["SAISIE_AGENT"]);
-    expect(getVisibleWorkflowStatuses("DELOCALISATIONS", "ASSIST_CDS")).toEqual([]);
+  it("partage la file complète aux rôles opérationnels (approvals off)", () => {
+    expect(getVisibleWorkflowStatuses("DELOCALISATIONS", "CHEF_SECTION")).toEqual([
+      "SAISIE_AGENT",
+      "CONTROLE_CHEF_SECTION",
+      "VALIDEE_CHEF_SERVICE",
+    ]);
+    expect(getVisibleWorkflowStatuses("DELOCALISATIONS", "ASSIST_CDS")).toEqual([
+      "SAISIE_AGENT",
+      "CONTROLE_CHEF_SECTION",
+      "VALIDEE_CHEF_SERVICE",
+    ]);
     expect(getVisibleWorkflowStatuses("DELOCALISATIONS", "CHEF_SERVICE")).toEqual([
+      "SAISIE_AGENT",
       "CONTROLE_CHEF_SECTION",
       "VALIDEE_CHEF_SERVICE",
     ]);
@@ -209,10 +220,10 @@ describe("règles transverses", () => {
 
   it.each([
     ["BANCARISATION", "CHEF_SECTION", "SOUMIS", true],
-    ["BANCARISATION", "ASSIST_CDS", "SOUMIS", false],
+    ["BANCARISATION", "ASSIST_CDS", "SOUMIS", true],
     ["GPR", "ASSIST_CDS", "VALIDE_N1", true],
-    ["GPR", "CHEF_SERVICE", "VALIDE_N1", false],
-  ] as const)("assigne l'étape %s/%s au seul rôle courant", (workflow, role, status, expected) => {
+    ["GPR", "CHEF_SERVICE", "VALIDE_N1", true],
+  ] as const)("assigne l'étape %s/%s (approvals off)", (workflow, role, status, expected) => {
     expect(isWorkflowStageAssignedToRole({ workflow, role, status })).toBe(expected);
   });
 });
@@ -234,15 +245,15 @@ describe("successions à état dérivé", () => {
 
   it.each([
     ["CHEF_SECTION", "EN_ATTENTE_N1", true],
-    ["CHEF_SECTION", "EN_ATTENTE_N2", false],
+    ["CHEF_SECTION", "EN_ATTENTE_N2", true],
     ["ASSIST_CDS", "EN_ATTENTE_N2", true],
-    ["ASSIST_CDS", "EN_ATTENTE_FINALISATION", false],
+    ["ASSIST_CDS", "EN_ATTENTE_FINALISATION", true],
     ["CHEF_SERVICE", "EN_ATTENTE_FINALISATION", true],
     ["CHEF_SERVICE", "FINALISE", true],
     ["AUDITEUR", "FINALISE", true],
     ["AUDITEUR", "EN_ATTENTE_FINALISATION", false],
   ] as const)(
-    "%s voit l'état %s => %s",
+    "%s voit l'état %s => %s (approvals off)",
     (role, successionState: SuccessionVisibilityState, expected) => {
       const status = successionState === "FINALISE" ? "CLOTURE" : "OUVERT";
       expect(
@@ -258,9 +269,14 @@ describe("successions à état dérivé", () => {
     },
   );
 
-  it("expose les files dérivées sans élargir le statut brut OUVERT", () => {
-    expect(getVisibleSuccessionStates("ASSIST_CDS")).toEqual(["EN_ATTENTE_N2"]);
-    expect(getVisibleWorkflowStatuses("SUCCESSIONS", "ASSIST_CDS")).toEqual([]);
+  it("expose toutes les files dérivées aux rôles opérationnels", () => {
+    expect(getVisibleSuccessionStates("ASSIST_CDS")).toEqual([
+      "EN_ATTENTE_N1",
+      "EN_ATTENTE_N2",
+      "EN_ATTENTE_FINALISATION",
+      "FINALISE",
+    ]);
+    expect(getVisibleWorkflowStatuses("SUCCESSIONS", "ASSIST_CDS")).toEqual(["CLOTURE"]);
   });
 
   it("rejette une combinaison statut / état incohérente", () => {
@@ -299,7 +315,10 @@ describe("filtre Mongo sérialisable", () => {
             },
           ],
         },
-        { statut: { $in: ["VALIDE_N2", "FINALISE"] }, enCorrection: { $ne: true } },
+        {
+          statut: { $in: ["SOUMIS", "VALIDE_N1", "VALIDE_N2", "FINALISE"] },
+          enCorrection: { $ne: true },
+        },
       ],
     });
   });
@@ -349,7 +368,14 @@ describe("filtre Mongo sérialisable", () => {
             },
           ],
         },
+        { status: "OUVERT", validationN1At: null, validationN2At: null },
         { status: "OUVERT", validationN1At: { $ne: null }, validationN2At: null },
+        {
+          status: "OUVERT",
+          validationN1At: { $ne: null },
+          validationN2At: { $ne: null },
+        },
+        { status: "CLOTURE" },
       ],
     });
   });

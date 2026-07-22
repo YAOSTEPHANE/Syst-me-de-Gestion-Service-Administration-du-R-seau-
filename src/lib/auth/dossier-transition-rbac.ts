@@ -1,5 +1,9 @@
 import { canRole, type RbacAction } from "@/lib/auth/rbac";
 import type { LonaciRole } from "@/lib/lonaci/constants";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 
 /** Actions `/api/dossiers/[id]/transition` alignées sur la matrice `DOSSIERS` dans `rbac.ts`. */
 export type DossierTransitionAction =
@@ -102,6 +106,7 @@ export function hideDossierN1N2ForChefService(
   role: string | null,
   action: DossierTransitionAction,
 ): boolean {
+  if (!areWorkflowApprovalsEnabled()) return false;
   return role === "CHEF_SERVICE" && (action === "VALIDATE_N1" || action === "VALIDATE_N2");
 }
 
@@ -110,6 +115,13 @@ export function userMayPerformDossierTransition(
   action: DossierTransitionAction,
 ): boolean {
   if (!role) return false;
+  if (
+    !areWorkflowApprovalsEnabled() &&
+    isOperationalWorkflowRole(role) &&
+    (action === "VALIDATE_N1" || action === "VALIDATE_N2" || action === "FINALIZE" || action === "SUBMIT")
+  ) {
+    return true;
+  }
   return canRole({
     role: role as LonaciRole,
     resource: "DOSSIERS",
@@ -130,9 +142,18 @@ export function userCanPerformDossierTransitionAtEtape(
   // Une seule décision négative par étape, réservée au valideur courant.
   // Après avoir validé son niveau, l'ancien valideur ne doit plus pouvoir agir.
   if (action === "REJECT") {
+    if (!areWorkflowApprovalsEnabled()) {
+      return step === "SOUMIS" && userMayPerformDossierTransition(role, action);
+    }
     return step === "SOUMIS" && role === "CHEF_SECTION" && userMayPerformDossierTransition(role, action);
   }
   if (action === "RETURN_PREVIOUS") {
+    if (!areWorkflowApprovalsEnabled()) {
+      return (
+        (step === "VALIDE_N1" || step === "VALIDE_N2") &&
+        userMayPerformDossierTransition(role, action)
+      );
+    }
     const ownsCurrentStep =
       (step === "VALIDE_N1" && role === "ASSIST_CDS") ||
       (step === "VALIDE_N2" && role === "CHEF_SERVICE");

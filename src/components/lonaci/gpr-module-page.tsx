@@ -38,6 +38,7 @@ import {
   canShowScratchLotTransition,
   getAssignedWorkflowTarget,
   parseLonaciRole,
+  workflowActionLabelForTarget,
 } from "@/lib/lonaci/workflow-ui-policy";
 import { notify } from "@/lib/toast";
 
@@ -371,7 +372,7 @@ export default function GprModulePage() {
   const gprActions = (row: GprItem) => {
     const target = assignedGprTarget(row);
     if (!target) return <span className="text-slate-400">Aucune action</span>;
-    const label = target === "VALIDE_N1" ? "Valider N1" : target === "VALIDE_N2" ? "Valider N2" : "Passer au suivi";
+    const label = workflowActionLabelForTarget(target);
     return (
       <div className="flex flex-wrap gap-2">
         <Button size="sm" leadingIcon={CheckCircle2} loading={transitioningGprId === row.id} onClick={() => void onTransitionGpr(row.id, target)}>{label}</Button>

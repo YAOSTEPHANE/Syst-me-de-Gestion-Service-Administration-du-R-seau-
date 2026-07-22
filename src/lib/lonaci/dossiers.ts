@@ -58,6 +58,10 @@ import {
 } from "@/lib/lonaci/list-agence-restriction";
 import { getDatabase } from "@/lib/mongodb";
 import { dossierTransitionRoleError } from "@/lib/lonaci/workflow-separation";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 
 const COLLECTION = "dossiers";
 const COUNTERS = "counters";
@@ -264,6 +268,16 @@ function roleCanDoTransition(
   target: DossierStatus,
   current?: DossierStatus,
 ): boolean {
+  if (!areWorkflowApprovalsEnabled() && isOperationalWorkflowRole(role)) {
+    return (
+      target === "SOUMIS" ||
+      target === "VALIDE_N1" ||
+      target === "VALIDE_N2" ||
+      target === "FINALISE" ||
+      target === "BROUILLON" ||
+      target === "REJETE"
+    );
+  }
   // Retour de l'étape de finalisation vers N2, demandé par le Chef de service.
   if (current === "VALIDE_N2" && target === "VALIDE_N1" && role === "CHEF_SERVICE") {
     return true;
@@ -305,46 +319,56 @@ async function notifyAfterTransition(
   const metadata = { dossierId: dossier._id, dossierReference: dossier.reference, status: target };
   const operationLabel = formatDossierOperationLabel(dossier.type, dossier.payload);
   const actionBy = userDisplayName(actor);
+  const hierarchical = areWorkflowApprovalsEnabled();
   if (target === "SOUMIS") {
+    const nextAction = hierarchical
+      ? "action validation N1 attendue"
+      : "action suite du circuit possible";
     await notifyRoleTargets(
       "CHEF_SECTION",
       `Dossier ${dossier.reference} soumis`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}.`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}.`,
       metadata,
       dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SECTION",
       `Dossier ${dossier.reference} soumis`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N1 attendue | acteur ${actionBy}. Connectez-vous à la console.`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}. Connectez-vous à la console.`,
       dossier.agenceId,
     );
   } else if (target === "VALIDE_N1") {
+    const nextAction = hierarchical
+      ? "action validation N2 attendue"
+      : "action suite du circuit possible";
     await notifyRoleTargets(
       "ASSIST_CDS",
-      `Dossier ${dossier.reference} valide N1`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+      `Dossier ${dossier.reference} avancé (N1)`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}.`,
       metadata,
       dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "ASSIST_CDS",
-      `Dossier ${dossier.reference} valide N1`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+      `Dossier ${dossier.reference} avancé (N1)`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}.`,
       dossier.agenceId,
     );
   } else if (target === "VALIDE_N2") {
+    const nextAction = hierarchical
+      ? "action finalisation attendue"
+      : "action suite du circuit possible";
     await notifyRoleTargets(
       "CHEF_SERVICE",
-      `Dossier ${dossier.reference} valide N2`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
+      `Dossier ${dossier.reference} avancé (N2)`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}.`,
       metadata,
       dossier.agenceId,
     );
     await broadcastCriticalEmailToRole(
       "CHEF_SERVICE",
-      `Dossier ${dossier.reference} valide N2`,
-      `Opération ${operationLabel} | référence ${dossier.reference} | action finalisation attendue | acteur ${actionBy}.`,
+      `Dossier ${dossier.reference} avancé (N2)`,
+      `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}.`,
       dossier.agenceId,
     );
   } else if (target === "FINALISE") {
@@ -487,7 +511,7 @@ export async function transitionDossier(
     throw new Error("DOSSIER_NOT_FOUND");
   }
   if (!roleCanDoTransition(actor.role, targetStatus, dossier.status)) {
-    throw new Error(dossierTransitionRoleError(actor.role, targetStatus));
+    throw new Error(dossierTransitionRoleError(actor.role, targetStatus) ?? "ROLE_FORBIDDEN");
   }
   if (!canTransition(dossier.status, targetStatus)) {
     throw new Error("INVALID_TRANSITION");

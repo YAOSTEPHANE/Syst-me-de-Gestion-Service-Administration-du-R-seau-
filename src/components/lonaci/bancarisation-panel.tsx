@@ -15,7 +15,12 @@ import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
   getRoleWorkflowFilterStatuses,
   parseLonaciRole,
+  workflowAdvanceLabel,
 } from "@/lib/lonaci/workflow-ui-policy";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 import {
   BANCARISATION_STATUT_LABELS,
   BANCARISATION_STATUTS_SPEC_83,
@@ -127,6 +132,10 @@ interface ReqRow {
 }
 
 function canValidateBancarisationRequest(r: ReqRow, role: string): boolean {
+  if (!areWorkflowApprovalsEnabled()) {
+    if (!isOperationalWorkflowRole(role)) return false;
+    return r.status === "SOUMIS" || r.status === "VALIDE_N1" || r.status === "VALIDE_N2";
+  }
   if (r.status === "SOUMIS") return role === "CHEF_SECTION";
   if (r.status === "VALIDE_N1") return role === "ASSIST_CDS";
   if (r.status === "VALIDE_N2") return role === "CHEF_SERVICE";
@@ -741,7 +750,11 @@ export default function BancarisationPanel() {
           <Surface>
             <SectionHeader
               title="Circuit de validation"
-              description="Validation N1, N2 puis chef de service."
+              description={
+                areWorkflowApprovalsEnabled()
+                  ? "Validation N1, N2 puis chef de service."
+                  : `Progression libre (${workflowAdvanceLabel()}).`
+              }
               action={<div className="flex flex-wrap gap-2">{visibleRequestTabs.map((status) => <Button key={status} size="sm" variant={requestTab === status ? "primary" : "secondary"} onClick={() => setRequestTab(status)}>{tabShortLabel(status)} ({(allStatusCounts ?? requestCountersPage)[status]})</Button>)}</div>}
             />
             <DataTable
@@ -760,7 +773,7 @@ export default function BancarisationPanel() {
       </Surface>
       <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-sm text-slate-600">{total} point(s) de vente</p><Pagination page={page} pageCount={totalPages} onPageChange={setPage} label="Pagination des points de vente" /></div>
 
-      <Dialog open={createOpen} onOpenChange={(open) => { if (!open && !submitting) setCreateOpen(false); }} title="Nouvelle demande de bancarisation" description="Circuit historique N1 → N2 → chef de service." size="lg" footer={<><Button variant="secondary" disabled={submitting} onClick={() => setCreateOpen(false)}>Annuler</Button><Button type="submit" form="bancarisation-create-form" loading={submitting}>Soumettre</Button></>}>
+      <Dialog open={createOpen} onOpenChange={(open) => { if (!open && !submitting) setCreateOpen(false); }} title="Nouvelle demande de bancarisation" description={areWorkflowApprovalsEnabled() ? "Circuit historique N1 → N2 → chef de service." : "Circuit de progression des demandes."} size="lg" footer={<><Button variant="secondary" disabled={submitting} onClick={() => setCreateOpen(false)}>Annuler</Button><Button type="submit" form="bancarisation-create-form" loading={submitting}>Soumettre</Button></>}>
         <form id="bancarisation-create-form" onSubmit={onSubmit} className="grid gap-4 sm:grid-cols-2">
           <div className="sm:col-span-2"><ClientSearchPicker key={`banc-create-${createOpen}`} label="Client Lonaci" selected={createClient} onSelectedChange={(row) => { setCreateClient(row); const picked = pickProduitCodeFromClient(row, refsProduits.filter((p) => p.actif).map((p) => p.code)); if (picked) setProduitCode(picked); }} filter="linkedPdv" inputClassName="w-full" searchPlaceholder="Rechercher un client" /></div>
           <FormField label="Nouveau statut" required><select value={nouveauStatut} onChange={(e) => setNouveauStatut(e.target.value as Banc)}>{BANCARISATION_STATUTS_SPEC_83.filter((row) => row.statut !== "NON_BANCARISE").map((row) => <option key={row.statut} value={row.statut}>{row.label}</option>)}</select></FormField>

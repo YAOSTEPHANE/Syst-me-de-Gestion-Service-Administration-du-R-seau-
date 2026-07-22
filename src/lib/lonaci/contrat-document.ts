@@ -2,7 +2,7 @@ import "server-only";
 
 import { ObjectId } from "mongodb";
 
-import { loadPartySnapshotForDossier, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
+import { loadPartySnapshotForDossier, parseContratPartySnapshot, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { buildDossierDechargeDefinitiveView } from "@/lib/lonaci/dossier-decharge-definitive";
 import { findDossierById } from "@/lib/lonaci/dossiers";
@@ -38,6 +38,65 @@ import { saveAnnexeArchivePdf, saveContratArchivePdf } from "@/lib/storage/contr
 
 export const CONTRAT_OFFICIEL_TITLE = "CONTRAT DE CONCESSION — LONACI";
 export const CONTRAT_ANNEXE_TITLE = "ANNEXE AU CONTRAT DE CONCESSION — LONACI";
+
+function pushIfPresent(fields: PdfField[], label: string, value: string | number | null | undefined) {
+  if (value == null) return;
+  const text = typeof value === "number" ? String(value) : value.trim();
+  if (!text) return;
+  fields.push({ label, value: text });
+}
+
+function fieldOrDash(value: string | number | null | undefined): string {
+  if (value == null) return "—";
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  const text = String(value).trim();
+  return text || "—";
+}
+
+/** Toutes les informations d’identité du titulaire (client ou PDV) pour le PDF. */
+export function partyIdentityPdfFields(party: ContratPartySnapshot): PdfField[] {
+  const isClient = party.partyKind === "client";
+  const fields: PdfField[] = [];
+  pushIfPresent(fields, "Nom / libellé", party.nomComplet);
+  pushIfPresent(fields, "Raison sociale", party.raisonSociale);
+  pushIfPresent(fields, isClient ? "Identifiant client" : "Code PDV", party.codePdv);
+  pushIfPresent(fields, "Catégorie", party.categorieLabel ?? party.categorie);
+  pushIfPresent(fields, "Code machine / terminal", party.codeMachine ?? party.codeTerminal);
+  pushIfPresent(fields, "Code concessionnaire", party.codeConcessionnaire);
+  pushIfPresent(fields, "N° CNI", party.cniNumero);
+  pushIfPresent(fields, "Nom du contact", party.nomContact);
+  pushIfPresent(fields, "E-mail", party.email);
+  pushIfPresent(fields, "Téléphone", party.telephone);
+  pushIfPresent(fields, "Adresse", party.adresse);
+  pushIfPresent(fields, "Ville", party.ville);
+  pushIfPresent(fields, "Code postal", party.codePostal);
+  // Champs réseau toujours visibles (même si non renseignés).
+  fields.push({
+    label: "Agence (Intérieur - Abidjan)",
+    value: fieldOrDash(party.agenceLabel),
+  });
+  fields.push({
+    label: "Type de distributeur",
+    value: fieldOrDash(party.typeDistributeurLabel ?? party.typeDistributeur),
+  });
+  fields.push({
+    label: "Nombre de TPM",
+    value: fieldOrDash(party.nombreTpm),
+  });
+  fields.push({
+    label: "N° Distributeur",
+    value: fieldOrDash(party.numeroDistributeur),
+  });
+  fields.push({
+    label: "N° TPM",
+    value: fieldOrDash(party.numeroTpm),
+  });
+  if ((party.produitsAutorises ?? []).length > 0) {
+    fields.push({ label: "Produits autorisés", value: (party.produitsAutorises ?? []).join(", ") });
+  }
+  pushIfPresent(fields, "Notes", party.notes);
+  return fields;
+}
 
 export type ContratGenereConcessionnaireSnapshot = ContratPartySnapshot;
 
@@ -137,20 +196,38 @@ function parseContratGenereRecord(raw: unknown): ContratGenerePayload | null {
     produitLibelle: String(o.produitLibelle ?? ""),
     operationType: String(o.operationType ?? ""),
     dateEffet: String(o.dateEffet ?? ""),
-    concessionnaire: {
-      nomComplet: String(c.nomComplet ?? ""),
-      raisonSociale: String(c.raisonSociale ?? ""),
-      codePdv: String(c.codePdv ?? ""),
-      codeTerminal: c.codeTerminal != null ? String(c.codeTerminal) : null,
-      codeConcessionnaire: c.codeConcessionnaire != null ? String(c.codeConcessionnaire) : null,
-      cniNumero: c.cniNumero != null ? String(c.cniNumero) : null,
-      email: c.email != null ? String(c.email) : null,
-      telephone: c.telephone != null ? String(c.telephone) : null,
-      adresse: c.adresse != null ? String(c.adresse) : null,
-      ville: c.ville != null ? String(c.ville) : null,
-      codePostal: c.codePostal != null ? String(c.codePostal) : null,
-      agenceLabel: String(c.agenceLabel ?? ""),
-    },
+    concessionnaire: (() => {
+      const parsed = parseContratPartySnapshot(c);
+      if (!parsed) {
+        return {
+          partyKind: "concessionnaire" as const,
+          nomComplet: String(c.nomComplet ?? ""),
+          raisonSociale: String(c.raisonSociale ?? ""),
+          codePdv: String(c.codePdv ?? ""),
+          codeTerminal: c.codeTerminal != null ? String(c.codeTerminal) : null,
+          codeConcessionnaire: c.codeConcessionnaire != null ? String(c.codeConcessionnaire) : null,
+          cniNumero: c.cniNumero != null ? String(c.cniNumero) : null,
+          email: c.email != null ? String(c.email) : null,
+          telephone: c.telephone != null ? String(c.telephone) : null,
+          adresse: c.adresse != null ? String(c.adresse) : null,
+          ville: c.ville != null ? String(c.ville) : null,
+          codePostal: c.codePostal != null ? String(c.codePostal) : null,
+          agenceLabel: String(c.agenceLabel ?? ""),
+          categorie: null,
+          categorieLabel: null,
+          codeMachine: null,
+          nomContact: null,
+          typeDistributeur: null,
+          typeDistributeurLabel: null,
+          nombreTpm: null,
+          numeroDistributeur: null,
+          numeroTpm: null,
+          notes: null,
+          produitsAutorises: [],
+        };
+      }
+      return parsed;
+    })(),
     contratSigneArchive:
       o.contratSigneArchive && typeof o.contratSigneArchive === "object" && !Array.isArray(o.contratSigneArchive)
         ? {
@@ -342,6 +419,7 @@ export async function buildContratDocumentView(
 
   const signature = await loadLatestSignature(dossierId);
   const ref = contratReference?.trim() || genere.contratSigneArchive?.contratReference || genere.referenceContratPreview;
+  const liveParty = await loadPartySnapshotForDossier(dossier);
 
   return {
     dossierReference: dossier.reference,
@@ -353,7 +431,7 @@ export async function buildContratDocumentView(
     produitLibelle: genere.produitLibelle,
     paymentReference: genere.paymentReference,
     cautionReferenceLabel: genere.cautionReferenceLabel,
-    concessionnaire: genere.concessionnaire,
+    concessionnaire: liveParty ?? genere.concessionnaire,
     documentsFournis,
     documentsAnnexeAssocies,
     signedAt: signature?.signedAt ?? null,
@@ -383,38 +461,8 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
       view.finalized ? "success" : "warning",
     );
 
-    drawSection(doc, "Identité du concessionnaire");
-    const identityFields: PdfField[] = [
-      { label: "Nom complet", value: view.concessionnaire.nomComplet },
-      { label: "Raison sociale", value: view.concessionnaire.raisonSociale },
-      { label: "Code PDV", value: view.concessionnaire.codePdv },
-    ];
-    if (view.concessionnaire.codeTerminal) {
-      identityFields.push({ label: "Code terminal", value: view.concessionnaire.codeTerminal });
-    }
-    if (view.concessionnaire.codeConcessionnaire) {
-      identityFields.push({
-        label: "Code concessionnaire",
-        value: view.concessionnaire.codeConcessionnaire,
-      });
-    }
-    if (view.concessionnaire.cniNumero) {
-      identityFields.push({ label: "N° CNI", value: view.concessionnaire.cniNumero });
-    }
-    if (view.concessionnaire.email) {
-      identityFields.push({ label: "E-mail", value: view.concessionnaire.email });
-    }
-    if (view.concessionnaire.telephone) {
-      identityFields.push({ label: "Téléphone", value: view.concessionnaire.telephone });
-    }
-    if (view.concessionnaire.adresse) {
-      identityFields.push({ label: "Adresse", value: view.concessionnaire.adresse });
-    }
-    if (view.concessionnaire.ville) {
-      identityFields.push({ label: "Ville", value: view.concessionnaire.ville });
-    }
-    identityFields.push({ label: "Agence", value: view.concessionnaire.agenceLabel });
-    drawInformationCard(doc, identityFields);
+    drawSection(doc, view.concessionnaire.partyKind === "client" ? "Identité du client" : "Identité du concessionnaire");
+    drawInformationCard(doc, partyIdentityPdfFields(view.concessionnaire));
 
     drawSection(doc, "Conditions du contrat");
     drawInformationCard(doc, [
@@ -537,13 +585,8 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
       { label: "Réf. paiement caution", value: view.paymentReference },
     ]);
 
-    drawSection(doc, "Titulaire");
-    drawInformationCard(doc, [
-      { label: "Nom complet", value: view.concessionnaire.nomComplet },
-      { label: "Raison sociale", value: view.concessionnaire.raisonSociale },
-      { label: "Code PDV", value: view.concessionnaire.codePdv },
-      { label: "Agence", value: view.concessionnaire.agenceLabel },
-    ]);
+    drawSection(doc, view.concessionnaire.partyKind === "client" ? "Client" : "Titulaire");
+    drawInformationCard(doc, partyIdentityPdfFields(view.concessionnaire));
 
     drawSection(doc, "Documents annexe associés");
     drawBulletList(doc, view.documentsAnnexeAssocies, "—");

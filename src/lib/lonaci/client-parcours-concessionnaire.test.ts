@@ -13,9 +13,9 @@ describe("parcours client → concessionnaire", () => {
     expect(isClientStatutEligibleForPromotionConcessionnaire("INACTIF")).toBe(false);
   });
 
-  it("un contrat peut encore viser un client en dossier en cours", () => {
+  it("un contrat peut viser un client en dossier en cours ou EN_ATTENTE_N1 historique", () => {
     expect(isClientStatutEligibleForContrat("DOSSIER_EN_COURS")).toBe(true);
     expect(isClientStatutEligibleForContrat("ACTIF")).toBe(true);
-    expect(isClientStatutEligibleForContrat("EN_ATTENTE_N1")).toBe(false);
+    expect(isClientStatutEligibleForContrat("EN_ATTENTE_N1")).toBe(true);
   });
 });

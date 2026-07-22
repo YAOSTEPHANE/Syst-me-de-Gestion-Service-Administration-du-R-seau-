@@ -19,6 +19,7 @@ import { appendAuditLog } from "@/lib/lonaci/audit";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { ensureGrattageContratIndexes, ensureGrattageContratsFromGpr } from "@/lib/lonaci/grattage-contrats";
 import { restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { prisma } from "@/lib/prisma";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -239,9 +240,9 @@ export async function createGprRegistration(input: {
 }
 
 function canTransitionGpr(role: LonaciRole, from: GprRegistrationStatus, to: GprRegistrationStatus) {
-  if (from === "SOUMIS_AGENT" && to === "VALIDE_N1") return role === "CHEF_SECTION";
-  if (from === "VALIDE_N1" && to === "VALIDE_N2") return role === "ASSIST_CDS";
-  if (from === "VALIDE_N2" && to === "SUIVI_CHEF_SERVICE") return role === "CHEF_SERVICE";
+  if (from === "SOUMIS_AGENT" && to === "VALIDE_N1") return roleMayAdvanceWorkflow(role, "CHEF_SECTION");
+  if (from === "VALIDE_N1" && to === "VALIDE_N2") return roleMayAdvanceWorkflow(role, "ASSIST_CDS");
+  if (from === "VALIDE_N2" && to === "SUIVI_CHEF_SERVICE") return roleMayAdvanceWorkflow(role, "CHEF_SERVICE");
   if (to === "REJETE") {
     return isWorkflowStageAssignedToRole({
       workflow: "GPR",

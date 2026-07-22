@@ -3,7 +3,10 @@ import { ObjectId } from "mongodb";
 
 import { env } from "@/lib/env";
 import { appendAuditLog } from "@/lib/lonaci/audit";
-import { promoteSignedDossierClient } from "@/lib/lonaci/client-to-concessionnaire";
+import {
+  parseContratPdvMetaFromPayload,
+  promoteSignedDossierClient,
+} from "@/lib/lonaci/client-to-concessionnaire";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -141,10 +144,16 @@ export async function signDossierByToken(input: {
   let concessionnaireId: string | null = null;
   let concessionnaireCreated = false;
   if (dossier.lonaciClientId) {
+    const pdvMeta = parseContratPdvMetaFromPayload(dossier.payload ?? {});
     const promotion = await promoteSignedDossierClient({
       sourceLonaciClientId: dossier.lonaciClientId,
       dossierAgenceId: dossier.agenceId,
       actorUserId: record.createdByUserId,
+      gps: pdvMeta.gps,
+      commune: pdvMeta.commune,
+      quartier: pdvMeta.quartier,
+      statutBancarisation: pdvMeta.statutBancarisation,
+      compteBancaire: pdvMeta.compteBancaire,
     });
     concessionnaireId = promotion.concessionnaire._id ?? null;
     if (!concessionnaireId) {

@@ -44,18 +44,30 @@ function createContratView(): ContratDocumentView {
     paymentReference: "PAY-2026-00042",
     cautionReferenceLabel: "CAU-2026-00042",
     concessionnaire: {
+      partyKind: "client",
       nomComplet: "Awa Koné",
       raisonSociale: "Établissements Awa",
-      codePdv: "PDV-0042",
+      codePdv: "CLI-0042",
       codeTerminal: "T-42",
-      codeConcessionnaire: "CC-42",
+      codeConcessionnaire: null,
       cniNumero: "CI012345",
       email: "awa@example.ci",
       telephone: "+225 01 02 03 04 05",
       adresse: "42 avenue de la Paix",
       ville: "Abidjan",
-      codePostal: null,
-      agenceLabel: "Agence Abidjan Centre",
+      codePostal: "01 BP 100",
+      agenceLabel: "ABJ-01 — Agence Abobo (Abidjan)",
+      categorie: "PERSONNE_PHYSIQUE",
+      categorieLabel: "Personne physique",
+      codeMachine: "T-42",
+      nomContact: "Awa Koné",
+      typeDistributeur: "NOUVEAU",
+      typeDistributeurLabel: "Nouveau",
+      nombreTpm: 2,
+      numeroDistributeur: "DIST-100",
+      numeroTpm: "TPM-200",
+      notes: null,
+      produitsAutorises: ["LOTO"],
     },
     documentsFournis: Array.from(
       { length: 58 },
@@ -168,6 +180,15 @@ describe("rendus PDF contrat et annexe", () => {
     expect(text).toContain("Signature électronique");
     expect(text).toContain("Chef de Service");
     expect(text).toContain("Pièce métier fournie numéro 58");
+    expect(text).toContain("Agence (Intérieur - Abidjan)");
+    expect(text).toContain("Abobo");
+    expect(text).toContain("Type de distributeur");
+    expect(text).toContain("Nouveau");
+    expect(text).toContain("Nombre de TPM");
+    expect(text).toContain("N° Distributeur");
+    expect(text).toContain("DIST-100");
+    expect(text).toContain("N° TPM");
+    expect(text).toContain("TPM-200");
     for (const [index, page] of parsed.pages.entries()) {
       expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
     }

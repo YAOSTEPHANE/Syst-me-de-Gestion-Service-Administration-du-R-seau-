@@ -19,6 +19,7 @@ import { FormField } from "@/components/lonaci/ui/form-field";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Card, Surface } from "@/components/lonaci/ui/surface";
+import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -591,7 +592,7 @@ export default function PdvIntegrationsPanel() {
       return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "INTEGRE_GPR")}>Marquer intégré GPR</Button>;
     }
     if (row.status === "INTEGRE_GPR" && canFinalizePdv) {
-      return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "FINALISE")}>Finaliser</Button>;
+      return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "FINALISE")}>{workflowAdvanceLabel()}</Button>;
     }
     return row.status === "FINALISE" || row.status === "INTEGRE_GPR"
       ? <StatusBadge tone="success">Validée</StatusBadge>
@@ -707,7 +708,7 @@ export default function PdvIntegrationsPanel() {
       <Dialog
         open={finalizeModal !== null}
         onOpenChange={(open) => { if (!open) closeFinalizeModal(); }}
-        title="Finaliser la géolocalisation PDV"
+        title={`${workflowAdvanceLabel()} la géolocalisation PDV`}
         description="Cette action peut créer ou lier automatiquement un concessionnaire."
         size="sm"
         footer={

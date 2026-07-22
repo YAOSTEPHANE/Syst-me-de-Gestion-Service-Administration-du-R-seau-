@@ -1,4 +1,8 @@
 import type { LonaciRole } from "@/lib/lonaci/constants";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 
 export const RBAC_RESOURCES = [
   "CONCESSIONNAIRES",
@@ -329,6 +333,18 @@ export interface RbacCheckResult {
 }
 
 export function canRole(input: RbacCheckInput): RbacCheckResult {
+  if (
+    !areWorkflowApprovalsEnabled() &&
+    isOperationalWorkflowRole(input.role) &&
+    (input.action === "VALIDATE_N1" ||
+      input.action === "VALIDATE_N2" ||
+      input.action === "FINALIZE")
+  ) {
+    return {
+      allowed: true,
+      scope: input.role === "CHEF_SERVICE" ? "GLOBAL" : "AGENCE_OR_ASSIGNED",
+    };
+  }
   const rules = RBAC_MATRIX[input.role] ?? [];
   const hit = rules.find((r) => r.resource === input.resource && r.action === input.action);
   if (!hit) return { allowed: false };

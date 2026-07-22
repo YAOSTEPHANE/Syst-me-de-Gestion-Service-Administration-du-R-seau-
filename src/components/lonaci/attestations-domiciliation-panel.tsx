@@ -28,6 +28,7 @@ import { FormField } from "@/components/lonaci/ui/form-field";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Card, Surface } from "@/components/lonaci/ui/surface";
+import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
 
 type DemandeType = "ATTESTATION_REVENU" | "DOMICILIATION_PRODUIT";
 type DemandeStatut = "DEMANDE_RECUE" | "TRANSMIS" | "FINALISE" | "VALIDE" | "ENVOYE_CLIENT";
@@ -452,7 +453,7 @@ export default function AttestationsDomiciliationPanel() {
 
   function actionLabel(row: DemandeItem): string | null {
     if (row.statut === "DEMANDE_RECUE") return "Transmettre DFC";
-    if (row.statut === "TRANSMIS") return "Finaliser (DFC)";
+    if (row.statut === "TRANSMIS") return `${workflowAdvanceLabel()} (DFC)`;
     if (row.statut === "FINALISE") return "Mettre en révision";
     if (row.statut === "VALIDE") return "Envoyer au client";
     return null;

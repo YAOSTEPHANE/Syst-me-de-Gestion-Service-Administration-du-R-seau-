@@ -323,9 +323,24 @@ describe("Chef de section - Validation N1", () => {
     expect(updateOneMock).toHaveBeenCalled();
   });
 
-  it("validateClientCreationN1 : assistant CDS reste interdit (ROLE_FORBIDDEN)", async () => {
+  it("validateClientCreationN1 : assistant CDS peut aussi avancer (approvals off)", async () => {
+    prismaFindFirstMock.mockResolvedValue({
+      id: validObjectId,
+      statut: "EN_ATTENTE_N1",
+      code: "ABJ-001",
+      nomComplet: "Client Test",
+      raisonSociale: "Client Test",
+    });
+    prismaUpdateMock.mockResolvedValue({
+      id: validObjectId,
+      statut: "DOSSIER_EN_COURS",
+      code: "ABJ-001",
+      nomComplet: "Client Test",
+      raisonSociale: "Client Test",
+    });
+
     await expect(
       validateClientCreationN1(validObjectId, { role: "ASSIST_CDS", _id: "u2" } as unknown as UserDocument),
-    ).rejects.toThrow("ROLE_FORBIDDEN");
+    ).resolves.toMatchObject({ statut: "DOSSIER_EN_COURS" });
   });
 });

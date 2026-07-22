@@ -78,11 +78,14 @@ export const CLIENT_STATUTS_ELIGIBLE_CONTRAT: ClientStatut[] = ["DOSSIER_EN_COUR
 export const CLIENT_STATUTS_ELIGIBLE_PROMOTION_CONCESSIONNAIRE: ClientStatut[] = ["ACTIF"];
 
 export function isClientStatutEligibleForCaution(statut: string): boolean {
-  return (CLIENT_STATUTS_ELIGIBLE_CAUTION as readonly string[]).includes(statut);
+  if ((CLIENT_STATUTS_ELIGIBLE_CAUTION as readonly string[]).includes(statut)) return true;
+  // Historique : fiches encore en attente N1 restent utilisables sans validation.
+  return statut === "EN_ATTENTE_N1";
 }
 
 export function isClientStatutEligibleForContrat(statut: string): boolean {
-  return (CLIENT_STATUTS_ELIGIBLE_CONTRAT as readonly string[]).includes(statut);
+  if ((CLIENT_STATUTS_ELIGIBLE_CONTRAT as readonly string[]).includes(statut)) return true;
+  return statut === "EN_ATTENTE_N1";
 }
 
 export function isClientStatutEligibleForPromotionConcessionnaire(statut: string): boolean {

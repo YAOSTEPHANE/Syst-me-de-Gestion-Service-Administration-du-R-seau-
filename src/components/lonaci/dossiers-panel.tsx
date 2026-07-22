@@ -14,7 +14,9 @@ import { isWorkflowDocumentVisible } from "@/lib/auth/workflow-visibility";
 import {
   getRoleWorkflowFilterStatuses,
   parseLonaciRole,
+  workflowAdvanceLabel,
 } from "@/lib/lonaci/workflow-ui-policy";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -189,11 +191,15 @@ function actionLabel(action: TransitionAction): string {
     case "SUBMIT":
       return "Soumettre";
     case "VALIDATE_N1":
-      return "Validation N1";
     case "VALIDATE_N2":
-      return "Validation N2";
     case "FINALIZE":
-      return "Finaliser";
+      return areWorkflowApprovalsEnabled()
+        ? action === "VALIDATE_N1"
+          ? "Validation N1"
+          : action === "VALIDATE_N2"
+            ? "Validation N2"
+            : "Finaliser"
+        : workflowAdvanceLabel();
     case "REJECT":
       return "Rejeter (retour brouillon)";
     case "RETURN_PREVIOUS":
@@ -1551,9 +1557,9 @@ export default function DossiersPanel() {
         onOpenChange={(next) => {
           if (!next && !actionBusyId) setTransitionConfirmation(null);
         }}
-        title="Finaliser le dossier"
+        title={`${workflowAdvanceLabel()} le dossier`}
         message={transitionConfirmation ? confirmMessage(transitionConfirmation.action) ?? "Confirmer cette transition ?" : ""}
-        confirmLabel="Finaliser"
+        confirmLabel={workflowAdvanceLabel()}
         pending={Boolean(actionBusyId)}
         onConfirm={async () => {
           if (!transitionConfirmation) return;

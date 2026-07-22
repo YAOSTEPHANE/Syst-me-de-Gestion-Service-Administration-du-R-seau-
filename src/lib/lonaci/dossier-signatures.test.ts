@@ -20,9 +20,13 @@ vi.mock("@/lib/lonaci/audit", () => ({
   appendAuditLog: appendAuditLogMock,
 }));
 
-vi.mock("@/lib/lonaci/client-to-concessionnaire", () => ({
-  promoteSignedDossierClient: promoteSignedDossierClientMock,
-}));
+vi.mock("@/lib/lonaci/client-to-concessionnaire", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/lonaci/client-to-concessionnaire")>();
+  return {
+    ...actual,
+    promoteSignedDossierClient: promoteSignedDossierClientMock,
+  };
+});
 
 vi.mock("@/lib/lonaci/dossiers", () => ({
   findDossierById: findDossierByIdMock,
@@ -103,6 +107,11 @@ describe("signDossierByToken avec promotion client", () => {
       sourceLonaciClientId: clientId,
       dossierAgenceId: agenceId,
       actorUserId: actorId,
+      gps: null,
+      commune: null,
+      quartier: null,
+      statutBancarisation: undefined,
+      compteBancaire: null,
     });
     expect(
       promoteSignedDossierClientMock.mock.invocationCallOrder[0],
@@ -124,6 +133,44 @@ describe("signDossierByToken avec promotion client", () => {
         concessionnaireCreated: true,
       }),
     );
+  });
+
+  it("transmet GPS et bancarisation du payload dossier à la promotion", async () => {
+    findDossierByIdMock.mockResolvedValue({
+      _id: dossierId,
+      reference: "DOS-00000001",
+      type: "CONTRAT_ACTUALISATION",
+      status: "VALIDE_N2",
+      lonaciClientId: clientId,
+      concessionnaireId: null,
+      agenceId,
+      payload: {
+        gps: { lat: 5.36, lng: -4.01 },
+        commune: "Cocody",
+        quartier: "Angré",
+        statutBancarisation: "BANCARISE",
+        compteBancaire: "CI00 1234",
+      },
+      deletedAt: null,
+    });
+
+    await signDossierByToken({
+      token: "token-public",
+      signerName: "Awa Koné",
+      signerIp: "127.0.0.1",
+      signerUserAgent: "vitest",
+    });
+
+    expect(promoteSignedDossierClientMock).toHaveBeenCalledWith({
+      sourceLonaciClientId: clientId,
+      dossierAgenceId: agenceId,
+      actorUserId: actorId,
+      gps: { lat: 5.36, lng: -4.01 },
+      commune: "Cocody",
+      quartier: "Angré",
+      statutBancarisation: "BANCARISE",
+      compteBancaire: "CI00 1234",
+    });
   });
 
   it("ne marque pas la signature si la promotion échoue", async () => {

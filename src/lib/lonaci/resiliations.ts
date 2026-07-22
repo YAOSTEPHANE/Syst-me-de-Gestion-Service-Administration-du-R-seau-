@@ -21,6 +21,7 @@ import {
   patchResiliationDocumentChecklistStatuts,
 } from "@/lib/lonaci/resiliation-document-checklist";
 import { resiliationDisplayStatutFields } from "@/lib/lonaci/resiliation-statut-metier";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import {
   type DossierDocumentChecklistPayload,
   type DossierDocumentChecklistStatut,
@@ -354,15 +355,15 @@ export function assertResiliationTransitionAllowed(
   target: ResiliationStatus,
 ) {
   if (from === "DOSSIER_RECU" && target === "CONTROLE_CHEF_SECTION") {
-    if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "CHEF_SECTION")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDATION_N2") {
-    if (role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "ASSIST_CDS")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (from === "VALIDATION_N2" && target === "RESILIE") {
-    if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (target === "REJETEE") {
@@ -373,7 +374,9 @@ export function assertResiliationTransitionAllowed(
         : from === "VALIDATION_N2"
           ? "CHEF_SERVICE"
           : null;
-    if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
+    if (!expectedRole || !roleMayAdvanceWorkflow(role, expectedRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
     return;
   }
   throw new Error("INVALID_TRANSITION");

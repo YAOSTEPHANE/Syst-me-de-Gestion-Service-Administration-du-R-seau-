@@ -30,6 +30,11 @@ import {
 } from "@/lib/lonaci/contrat-statut-metier";
 import { readDossierChecklistComplet } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+  workflowAdvanceLabel,
+} from "@/lib/lonaci/workflow-approvals";
 import type { FormEvent } from "react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Download, Save, Trash2 } from "lucide-react";
@@ -547,7 +552,11 @@ export default function ConcessionnaireFicheModal({
     Boolean(detail?.codePdv?.trim()) &&
     Boolean(detail?.inscriptionValideN1At);
   const canSubmitInscription = inscriptionEditable;
-  const canValidateN1 = me?.role === "CHEF_SECTION" && inscriptionStatut === "SOUMIS";
+  const canValidateN1 =
+    inscriptionStatut === "SOUMIS" &&
+    (areWorkflowApprovalsEnabled()
+      ? me?.role === "CHEF_SECTION"
+      : isOperationalWorkflowRole(me?.role));
 
   async function downloadCautionPdf(kind: "provisoire" | "definitive") {
     if (!concessionnaireId) return;
@@ -960,7 +969,9 @@ export default function ConcessionnaireFicheModal({
                         Reprendre le dossier
                       </button>
                     ) : null}
-                    {me?.role === "CHEF_SERVICE" && inscriptionStatut === "SOUMIS" ? (
+                    {areWorkflowApprovalsEnabled() &&
+                    me?.role === "CHEF_SERVICE" &&
+                    inscriptionStatut === "SOUMIS" ? (
                       <p className="mt-2 text-xs text-slate-600">
                         Validation N1 inscription réservée au chef de section (séparation des rôles).
                       </p>
@@ -973,7 +984,7 @@ export default function ConcessionnaireFicheModal({
                           onClick={() => void runInscriptionTransition("VALIDATE_N1")}
                           className="rounded-lg border border-emerald-600 bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
                         >
-                          Valider N1
+                          {workflowAdvanceLabel()}
                         </button>
                         <button
                           type="button"

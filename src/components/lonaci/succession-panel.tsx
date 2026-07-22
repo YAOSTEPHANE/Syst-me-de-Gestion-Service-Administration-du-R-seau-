@@ -23,7 +23,11 @@ import {
   deriveSuccessionVisibilityState,
   isWorkflowStageAssignedToRole,
 } from "@/lib/auth/workflow-visibility";
-import { parseLonaciRole } from "@/lib/lonaci/workflow-ui-policy";
+import { parseLonaciRole, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+} from "@/lib/lonaci/workflow-approvals";
 import {
   SUCCESSION_STATUTS_SPEC_103,
   successionStatutMetierBadgeClass,
@@ -1229,24 +1233,31 @@ export default function SuccessionPanel() {
               </ul>
               {detail.status === "OUVERT" ? (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {!detail.validationN1At && meRole === "CHEF_SECTION" ? (
+                  {!detail.validationN1At &&
+                  (areWorkflowApprovalsEnabled()
+                    ? meRole === "CHEF_SECTION"
+                    : isOperationalWorkflowRole(meRole)) ? (
                     <button
                       type="button"
                       disabled={validationBusy !== null}
                       onClick={() => void postSuccessionValidation(detail.id, "N1")}
                       className="rounded-lg border border-sky-600 bg-sky-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
                     >
-                      {validationBusy === "N1" ? "…" : "Enregistrer validation N1"}
+                      {validationBusy === "N1" ? "…" : workflowAdvanceLabel()}
                     </button>
                   ) : null}
-                  {detail.validationN1At && !detail.validationN2At && meRole === "ASSIST_CDS" ? (
+                  {detail.validationN1At &&
+                  !detail.validationN2At &&
+                  (areWorkflowApprovalsEnabled()
+                    ? meRole === "ASSIST_CDS"
+                    : isOperationalWorkflowRole(meRole)) ? (
                     <button
                       type="button"
                       disabled={validationBusy !== null}
                       onClick={() => void postSuccessionValidation(detail.id, "N2")}
                       className="rounded-lg border border-violet-600 bg-violet-600 px-2 py-1 text-xs font-semibold text-white disabled:opacity-50"
                     >
-                      {validationBusy === "N2" ? "…" : "Enregistrer validation N2"}
+                      {validationBusy === "N2" ? "…" : workflowAdvanceLabel()}
                     </button>
                   ) : null}
                   {detail.validationN1At ? (

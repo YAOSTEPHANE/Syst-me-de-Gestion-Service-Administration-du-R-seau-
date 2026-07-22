@@ -18,6 +18,11 @@ import {
 } from "@/lib/lonaci/succession-document-checklist";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
+import {
+  areWorkflowApprovalsEnabled,
+  isOperationalWorkflowRole,
+  roleMayAdvanceWorkflow,
+} from "@/lib/lonaci/workflow-approvals";
 import { findConcessionnaireById, updateConcessionnaire } from "@/lib/lonaci/concessionnaires";
 import type { SuccessionCaseDocument, SuccessionStep, UserDocument } from "@/lib/lonaci/types";
 import { successionStatutMetierFields } from "@/lib/lonaci/succession-statut-metier";
@@ -351,13 +356,15 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     if (!row.validationN1At || !row.validationN2At) {
       throw new Error("SUCCESSION_VALIDATION_N1_N2_REQUIRED");
     }
-    if (input.actor.role !== "CHEF_SERVICE") {
+    if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SERVICE")) {
       throw new Error("VERIFICATION_JURIDIQUE_CHEF_SERVICE_ONLY");
     }
   }
 
   if (nextKey === "DECISION") {
-    if (input.actor.role !== "CHEF_SERVICE") throw new Error("DECISION_CHEF_SERVICE_ONLY");
+    if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SERVICE")) {
+      throw new Error("DECISION_CHEF_SERVICE_ONLY");
+    }
     if (!input.decisionType) throw new Error("DECISION_TYPE_REQUIRED");
     if (row.stepHistory.length !== SUCCESSION_STEPS.length - 1) {
       throw new Error("SUCCESSION_STEPS_INCOMPLETE");
@@ -480,7 +487,11 @@ export async function patchSuccessionDocumentChecklist(input: {
 
 export async function recordSuccessionValidationN1(input: { caseId: string; actor: UserDocument }) {
   if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
-  if (input.actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  if (areWorkflowApprovalsEnabled()) {
+    if (input.actor.role !== "CHEF_SECTION") throw new Error("ROLE_FORBIDDEN");
+  } else if (!isOperationalWorkflowRole(input.actor.role)) {
+    throw new Error("ROLE_FORBIDDEN");
+  }
   const db = await getDatabase();
   const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
     _id: new ObjectId(input.caseId),
@@ -519,7 +530,11 @@ export async function recordSuccessionValidationN1(input: { caseId: string; acto
 
 export async function recordSuccessionValidationN2(input: { caseId: string; actor: UserDocument }) {
   if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
-  if (input.actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
+  if (areWorkflowApprovalsEnabled()) {
+    if (input.actor.role !== "ASSIST_CDS") throw new Error("ROLE_FORBIDDEN");
+  } else if (!isOperationalWorkflowRole(input.actor.role)) {
+    throw new Error("ROLE_FORBIDDEN");
+  }
   const db = await getDatabase();
   const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
     _id: new ObjectId(input.caseId),

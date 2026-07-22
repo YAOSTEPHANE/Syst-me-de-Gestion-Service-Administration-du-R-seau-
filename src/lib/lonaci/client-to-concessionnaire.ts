@@ -41,6 +41,43 @@ function isObjectId(id: string): boolean {
   return /^[a-f\d]{24}$/i.test(id);
 }
 
+/** Lit GPS / localisation / bancarisation stockés sur le payload d’un dossier contrat. */
+export function parseContratPdvMetaFromPayload(payload: Record<string, unknown>): {
+  gps: GpsPoint | null;
+  commune: string | null;
+  quartier: string | null;
+  statutBancarisation?: string;
+  compteBancaire: string | null;
+} {
+  let gps: GpsPoint | null = null;
+  const rawGps = payload.gps;
+  if (rawGps && typeof rawGps === "object" && !Array.isArray(rawGps)) {
+    const lat = Number((rawGps as { lat?: unknown }).lat);
+    const lng = Number((rawGps as { lng?: unknown }).lng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+      gps = { lat, lng };
+    }
+  }
+
+  const communeRaw = payload.commune;
+  const commune =
+    typeof communeRaw === "string" && communeRaw.trim() ? communeRaw.trim() : null;
+
+  const quartierRaw = payload.quartier;
+  const quartier =
+    typeof quartierRaw === "string" && quartierRaw.trim() ? quartierRaw.trim() : null;
+
+  const statutRaw = payload.statutBancarisation;
+  const statutBancarisation =
+    typeof statutRaw === "string" && statutRaw.trim() ? statutRaw.trim() : undefined;
+
+  const compteRaw = payload.compteBancaire;
+  const compteBancaire =
+    typeof compteRaw === "string" && compteRaw.trim() ? compteRaw.trim() : null;
+
+  return { gps, commune, quartier, statutBancarisation, compteBancaire };
+}
+
 export async function findConcessionnaireBySourceClientId(
   clientId: string,
 ): Promise<ConcessionnaireDocument | null> {
@@ -88,6 +125,8 @@ async function createConcessionnaireFromResolvedClient(input: {
   codeTerminal?: string | null;
   codeConcessionnaire?: string | null;
   gps: GpsPoint | null;
+  commune?: string | null;
+  quartier?: string | null;
   statutBancarisation?: string;
   compteBancaire?: string | null;
   banqueEtablissement?: string | null;
@@ -102,6 +141,13 @@ async function createConcessionnaireFromResolvedClient(input: {
   const clientChecklist = parseClientDocumentChecklist(input.client.documentChecklist);
   const checklist = buildInscriptionChecklistForProducts(produits, produitRefs, clientChecklist);
 
+  const commune = (input.commune ?? "").trim() || null;
+  const quartier = (input.quartier ?? "").trim() || null;
+  const baseAdresse = (input.client.adresse ?? "").trim();
+  const adresseParts = [quartier ? `Quartier ${quartier}` : null, baseAdresse || null].filter(
+    Boolean,
+  ) as string[];
+
   const created = await createConcessionnaire({
     nom: identity.nom || nomComplet,
     prenom: identity.prenom || nomComplet,
@@ -113,8 +159,8 @@ async function createConcessionnaireFromResolvedClient(input: {
     email: input.client.email,
     telephonePrincipal: input.client.telephone,
     telephoneSecondaire: null,
-    adresse: input.client.adresse,
-    ville: input.client.ville,
+    adresse: adresseParts.length ? adresseParts.join(" — ") : null,
+    ville: commune || input.client.ville,
     codePostal: input.client.codePostal,
     agenceId: input.agenceId,
     agenceCode: input.agenceCode,
@@ -223,6 +269,11 @@ export async function promoteSignedDossierClient(input: {
   sourceLonaciClientId: string;
   dossierAgenceId: string | null;
   actorUserId: string;
+  gps?: GpsPoint | null;
+  commune?: string | null;
+  quartier?: string | null;
+  statutBancarisation?: string;
+  compteBancaire?: string | null;
 }): Promise<{ concessionnaire: ConcessionnaireDocument; created: boolean }> {
   const existing = await findConcessionnaireBySourceClientId(input.sourceLonaciClientId);
   if (existing) {
@@ -270,7 +321,11 @@ export async function promoteSignedDossierClient(input: {
       client,
       agenceId,
       agenceCode: agence.code.trim().toUpperCase(),
-      gps: null,
+      gps: input.gps ?? null,
+      commune: input.commune,
+      quartier: input.quartier,
+      statutBancarisation: input.statutBancarisation,
+      compteBancaire: input.compteBancaire,
       actor,
     });
     return { concessionnaire, created: true };

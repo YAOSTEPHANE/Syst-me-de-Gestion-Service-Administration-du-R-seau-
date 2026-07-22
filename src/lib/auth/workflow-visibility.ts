@@ -1,4 +1,5 @@
 import type { LonaciRole } from "@/lib/lonaci/constants";
+import { areWorkflowApprovalsEnabled, isOperationalWorkflowRole } from "@/lib/lonaci/workflow-approvals";
 
 export const HIERARCHICAL_WORKFLOWS = [
   "DOSSIERS",
@@ -155,7 +156,45 @@ function unique(values: readonly string[]): readonly string[] {
   return [...new Set(values)];
 }
 
+/**
+ * Retourne uniquement les statuts bruts qui expriment exactement la politique.
+ * Pour SUCCESSIONS, utiliser `getVisibleSuccessionStates` car `OUVERT` est ambigu.
+ */
+export function getVisibleWorkflowStatuses(
+  workflow: HierarchicalWorkflow,
+  role: LonaciRole,
+): readonly string[] {
+  if (workflow === "SUCCESSIONS") {
+    if (!areWorkflowApprovalsEnabled()) {
+      return isOperationalWorkflowRole(role) ? ["CLOTURE"] : [];
+    }
+    return role === "CHEF_SERVICE" || role === "AUDITEUR" ? ["CLOTURE"] : [];
+  }
+
+  const policy = POLICIES[workflow];
+  if (role === "AUDITEUR") return unique([...policy.finalized, ...policy.rejected]);
+  if (!areWorkflowApprovalsEnabled()) {
+    if (!isOperationalWorkflowRole(role)) return [];
+    return unique([
+      ...policy.activeByRole.CHEF_SECTION,
+      ...policy.activeByRole.ASSIST_CDS,
+      ...policy.activeByRole.CHEF_SERVICE,
+      ...policy.finalized,
+    ]);
+  }
+  if (!isValidatorRole(role)) return [];
+  const active = policy.activeByRole[role];
+  return role === "CHEF_SERVICE" ? unique([...active, ...policy.finalized]) : active;
+}
+
 export function getVisibleSuccessionStates(role: LonaciRole): readonly SuccessionVisibilityState[] {
+  if (!areWorkflowApprovalsEnabled()) {
+    return isOperationalWorkflowRole(role)
+      ? ["EN_ATTENTE_N1", "EN_ATTENTE_N2", "EN_ATTENTE_FINALISATION", "FINALISE"]
+      : role === "AUDITEUR"
+        ? ["FINALISE"]
+        : [];
+  }
   switch (role) {
     case "CHEF_SECTION":
       return ["EN_ATTENTE_N1"];
@@ -179,29 +218,28 @@ export function isWorkflowStageAssignedToRole(input: {
   if (!input.status) return false;
   if (input.workflow === "SUCCESSIONS") {
     if (!input.successionState || input.successionState === "FINALISE") return false;
+    if (!areWorkflowApprovalsEnabled()) {
+      return (
+        isOperationalWorkflowRole(input.role) &&
+        (input.successionState === "EN_ATTENTE_N1" ||
+          input.successionState === "EN_ATTENTE_N2" ||
+          input.successionState === "EN_ATTENTE_FINALISATION")
+      );
+    }
     return getVisibleSuccessionStates(input.role).includes(input.successionState);
+  }
+  if (!areWorkflowApprovalsEnabled()) {
+    if (!isOperationalWorkflowRole(input.role)) return false;
+    const policy = POLICIES[input.workflow];
+    const activeStatuses = unique([
+      ...policy.activeByRole.CHEF_SECTION,
+      ...policy.activeByRole.ASSIST_CDS,
+      ...policy.activeByRole.CHEF_SERVICE,
+    ]);
+    return activeStatuses.includes(input.status);
   }
   if (!isValidatorRole(input.role)) return false;
   return POLICIES[input.workflow].activeByRole[input.role].includes(input.status);
-}
-
-/**
- * Retourne uniquement les statuts bruts qui expriment exactement la politique.
- * Pour SUCCESSIONS, utiliser `getVisibleSuccessionStates` car `OUVERT` est ambigu.
- */
-export function getVisibleWorkflowStatuses(
-  workflow: HierarchicalWorkflow,
-  role: LonaciRole,
-): readonly string[] {
-  if (workflow === "SUCCESSIONS") {
-    return role === "CHEF_SERVICE" || role === "AUDITEUR" ? ["CLOTURE"] : [];
-  }
-
-  const policy = POLICIES[workflow];
-  if (role === "AUDITEUR") return unique([...policy.finalized, ...policy.rejected]);
-  if (!isValidatorRole(role)) return [];
-  const active = policy.activeByRole[role];
-  return role === "CHEF_SERVICE" ? unique([...active, ...policy.finalized]) : active;
 }
 
 export interface WorkflowDocumentVisibilityInput {

@@ -1,11 +1,11 @@
 ﻿"use client";
 
-import { FilePlus2, RefreshCw, ShieldCheck } from "lucide-react";
+import { FilePlus2, RefreshCw, ShieldCheck, X } from "lucide-react";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Badge, StatusBadge } from "@/components/lonaci/ui/badge";
-import { Button } from "@/components/lonaci/ui/button";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
 import { Dialog } from "@/components/lonaci/ui/dialog";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
 import { FilterBar } from "@/components/lonaci/ui/filter-bar";
@@ -23,7 +23,8 @@ import {
 } from "@/lib/lonaci/constants";
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
-import { getAssignedWorkflowTarget } from "@/lib/lonaci/workflow-ui-policy";
+import { getAssignedWorkflowTarget, workflowActionLabelForTarget } from "@/lib/lonaci/workflow-ui-policy";
+import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
@@ -779,7 +780,7 @@ export default function CautionsPanel() {
               }
               className="rounded-lg border border-sky-600 bg-sky-600 px-2 py-1 text-[10px] font-semibold text-white disabled:opacity-50"
             >
-              {assignedTarget === "VALIDE_N1" ? "Valider N1" : "Valider N2"}
+              {workflowActionLabelForTarget(assignedTarget)}
             </button>
           ) : null}
           {showRegularize ? (
@@ -812,7 +813,7 @@ export default function CautionsPanel() {
                   : CAUTION_COLOR_TOKENS.validated.action
               }
             >
-              {tab === "J10_OVERDUE" ? "Finaliser (urgence)" : "Finaliser"}
+              {tab === "J10_OVERDUE" ? `${workflowAdvanceLabel()} (urgence)` : workflowAdvanceLabel()}
             </button>
           ) : null}
           {showReturn ? (
@@ -1292,8 +1293,8 @@ export default function CautionsPanel() {
       }
       notify.success(
         raw?.fiche?.numeroFicheDefinitive
-          ? `Paiement valid—  fiche d—finitive ${raw.fiche.numeroFicheDefinitive} g—n—r—e.`
-          : "Paiement r—gularis—  finalisation possible.",
+          ? `Paiement validé — fiche définitive ${raw.fiche.numeroFicheDefinitive} générée.`
+          : "Paiement régularisé — finalisation possible.",
       );
     } catch (err) {
       notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
@@ -1554,14 +1555,12 @@ export default function CautionsPanel() {
                   régulariser dans Lonaci.
                 </p>
               </div>
-              <button
-                type="button"
+              <IconButton
+                icon={X}
+                label="Fermer le formulaire de caution"
+                size="sm"
                 onClick={() => closeCreate()}
-                className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm text-slate-600 transition hover:bg-slate-100"
-                aria-label="Fermer"
-              >
-                —
-              </button>
+              />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto bg-gradient-to-b from-slate-50/80 via-white to-white px-4 py-3">
@@ -2710,15 +2709,13 @@ export default function CautionsPanel() {
                 </h3>
                 <p className="mt-0.5 text-[11px] text-slate-600">Approuver, rejeter ou retourner pour correction.</p>
               </div>
-              <button
-                type="button"
+              <IconButton
+                icon={X}
+                label="Fermer la décision finale"
+                size="sm"
                 disabled={finalizingId !== null}
                 onClick={closeFinalizeModal}
-                className="rounded px-2.5 py-1 text-sm text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                aria-label="Fermer"
-              >
-                —
-              </button>
+              />
             </div>
 
             <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 text-[11px] text-amber-950">

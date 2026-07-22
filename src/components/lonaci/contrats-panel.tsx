@@ -18,7 +18,24 @@ import {
   type DossierTransitionAction,
 } from "@/lib/auth/dossier-transition-rbac";
 import { getRoleWorkflowFilterStatuses } from "@/lib/lonaci/workflow-ui-policy";
-import type { LonaciRole } from "@/lib/lonaci/constants";
+import {
+  areWorkflowApprovalsEnabled,
+  workflowAdvanceLabel,
+} from "@/lib/lonaci/workflow-approvals";
+import {
+  CLIENT_CATEGORIE_LABELS,
+  CLIENT_STATUT_LABELS,
+  CLIENT_TYPE_DISTRIBUTEUR_LABELS,
+  normalizeClientCategorie,
+  normalizeClientTypeDistributeur,
+  type ClientCategorie,
+} from "@/lib/lonaci/client-constants";
+import {
+  BANCARISATION_STATUT_LABELS,
+  BANCARISATION_STATUTS,
+  type BancarisationStatut,
+  type LonaciRole,
+} from "@/lib/lonaci/constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import {
@@ -151,6 +168,31 @@ interface ContratListeItem {
     contratArchive: boolean;
     annexeArchive: boolean;
   }>;
+  clientFiche?: {
+    code: string;
+    categorie: string | null;
+    nomComplet: string | null;
+    raisonSociale: string;
+    codeMachine: string | null;
+    cniNumero: string | null;
+    nomContact: string | null;
+    email: string | null;
+    telephone: string | null;
+    adresse: string | null;
+    ville: string | null;
+    codePostal: string | null;
+    typeDistributeur: string | null;
+    nombreTpm: number | null;
+    numeroDistributeur: string | null;
+    numeroTpm: string | null;
+    notes: string | null;
+    produitsAutorises: string[];
+    agenceId: string | null;
+    agenceLabel?: string | null;
+    statut: string;
+  } | null;
+  /** Ligne issue d’un dossier pas encore finalisé (pas de contrat Prisma). */
+  isDossierPending?: boolean;
 }
 
 interface ToSignRow {
@@ -287,50 +329,68 @@ function workflowPrimaryAction(etape: string): {
   ariaLabel: string;
   buttonClass: string;
 } | null {
+  const advance = workflowAdvanceLabel();
+  const hierarchical = areWorkflowApprovalsEnabled();
   switch (etape) {
     case "BROUILLON":
       return {
         action: "SUBMIT",
         label: "Soumettre le dossier",
         labelBusy: "Soumission…",
-        confirmMessage:
-          "Confirmer la soumission du dossier ? Il passera à l’étape « Soumis » et pourra être pris en charge pour la validation de niveau 1.",
-        successMessage: "Dossier soumis. Prochaine étape : validation de niveau 1.",
-        ariaLabel: "Soumettre le dossier pour validation",
+        confirmMessage: hierarchical
+          ? "Confirmer la soumission du dossier ? Il passera à l’étape « Soumis » et pourra être pris en charge pour la validation de niveau 1."
+          : "Confirmer la soumission ? Le dossier sera validé automatiquement.",
+        successMessage: hierarchical
+          ? "Dossier soumis. Prochaine étape : validation de niveau 1."
+          : "Dossier soumis et validé automatiquement.",
+        ariaLabel: "Soumettre le dossier",
         buttonClass:
           "border border-slate-700 bg-slate-800 text-white hover:border-slate-900 hover:bg-slate-900",
       };
     case "SOUMIS":
       return {
         action: "VALIDATE_N1",
-        label: "Validation de niveau 1",
-        labelBusy: "Validation N1…",
-        confirmMessage:
-          "Confirmer la validation de niveau 1 ? Le dossier passera à l’étape « Validé N1 » (contrôle premier niveau).",
-        successMessage: "Validation de niveau 1 effectuée. Le dossier est à l’étape Validé N1.",
-        ariaLabel: "Valider le dossier au niveau 1 (premier contrôle)",
+        label: hierarchical ? "Validation de niveau 1" : advance,
+        labelBusy: hierarchical ? "Validation N1…" : `${advance}…`,
+        confirmMessage: hierarchical
+          ? "Confirmer la validation de niveau 1 ? Le dossier passera à l’étape « Validé N1 » (contrôle premier niveau)."
+          : `Confirmer : ${advance} le dossier ?`,
+        successMessage: hierarchical
+          ? "Validation de niveau 1 effectuée. Le dossier est à l’étape Validé N1."
+          : "Dossier avancé.",
+        ariaLabel: hierarchical
+          ? "Valider le dossier au niveau 1 (premier contrôle)"
+          : `${advance} le dossier`,
         buttonClass: "border border-sky-600 bg-sky-600 text-white hover:border-sky-700 hover:bg-sky-700",
       };
     case "VALIDE_N1":
       return {
         action: "VALIDATE_N2",
-        label: "Validation de niveau 2",
-        labelBusy: "Validation N2…",
-        confirmMessage:
-          "Confirmer la validation de niveau 2 ? Le dossier passera à l’étape « Validé N2 » (contrôle second niveau).",
-        successMessage: "Validation de niveau 2 effectuée. Le dossier est à l’étape Validé N2.",
-        ariaLabel: "Valider le dossier au niveau 2 (second contrôle)",
+        label: hierarchical ? "Validation de niveau 2" : advance,
+        labelBusy: hierarchical ? "Validation N2…" : `${advance}…`,
+        confirmMessage: hierarchical
+          ? "Confirmer la validation de niveau 2 ? Le dossier passera à l’étape « Validé N2 » (contrôle second niveau)."
+          : `Confirmer : ${advance} le dossier ?`,
+        successMessage: hierarchical
+          ? "Validation de niveau 2 effectuée. Le dossier est à l’étape Validé N2."
+          : "Dossier avancé.",
+        ariaLabel: hierarchical
+          ? "Valider le dossier au niveau 2 (second contrôle)"
+          : `${advance} le dossier`,
         buttonClass: "border border-sky-600 bg-sky-600 text-white hover:border-sky-700 hover:bg-sky-700",
       };
     case "VALIDE_N2":
       return {
         action: "FINALIZE",
-        label: "Finaliser le dossier",
-        labelBusy: "Finalisation…",
-        confirmMessage:
-          "Confirmer la finalisation du dossier ? Cette action crée le contrat actif et clôt le flux de validation.",
+        label: hierarchical ? "Finaliser le dossier" : advance,
+        labelBusy: hierarchical ? "Finalisation…" : `${advance}…`,
+        confirmMessage: hierarchical
+          ? "Confirmer la finalisation du dossier ? Cette action crée le contrat actif et clôt le flux de validation."
+          : `Confirmer : ${advance} le dossier ? Cette action crée le contrat actif.`,
         successMessage: "Dossier finalisé. Le contrat actif a été créé.",
-        ariaLabel: "Finaliser le dossier et créer le contrat actif",
+        ariaLabel: hierarchical
+          ? "Finaliser le dossier et créer le contrat actif"
+          : `${advance} le dossier et créer le contrat actif`,
         buttonClass:
           "border border-emerald-700 bg-emerald-600 text-white hover:border-emerald-800 hover:bg-emerald-700",
       };
@@ -391,6 +451,13 @@ export default function ContratsPanel() {
   const [operationType, setOperationType] = useState<OperationType>("NOUVEAU");
   const [parentContratId, setParentContratId] = useState("");
   const [observations, setObservations] = useState("");
+  const [commune, setCommune] = useState("");
+  const [quartier, setQuartier] = useState("");
+  const [gpsLat, setGpsLat] = useState("");
+  const [gpsLng, setGpsLng] = useState("");
+  const [statutBancarisation, setStatutBancarisation] =
+    useState<BancarisationStatut>("NON_BANCARISE");
+  const [compteBancaire, setCompteBancaire] = useState("");
   const [createChecklist, setCreateChecklist] = useState<DossierDocumentChecklistPayload | null>(null);
 
   const createChecklistObligatoires = useMemo(() => {
@@ -715,6 +782,12 @@ export default function ContratsPanel() {
     const pad = (n: number) => String(n).padStart(2, "0");
     setDateOperation(`${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`);
     setObservations("");
+    setCommune("");
+    setQuartier("");
+    setGpsLat("");
+    setGpsLng("");
+    setStatutBancarisation("NON_BANCARISE");
+    setCompteBancaire("");
     setOperationType("NOUVEAU");
     setParentContratId("");
     setProduitCode("");
@@ -860,6 +933,18 @@ export default function ContratsPanel() {
       fail("Date d’opération invalide.");
       return;
     }
+    const la = Number(gpsLat.replace(",", "."));
+    const lo = Number(gpsLng.replace(",", "."));
+    const hasLat = Boolean(gpsLat.trim());
+    const hasLng = Boolean(gpsLng.trim());
+    if (hasLat !== hasLng || ((hasLat || hasLng) && (Number.isNaN(la) || Number.isNaN(lo)))) {
+      fail("Renseignez latitude et longitude valides, ou laissez les deux champs vides.");
+      return;
+    }
+    if (statutBancarisation === "BANCARISE" && !compteBancaire.trim()) {
+      fail("Le numéro de compte est obligatoire pour passer au statut BANCARISÉ.");
+      return;
+    }
 
     setCreating(true);
     try {
@@ -869,6 +954,11 @@ export default function ContratsPanel() {
         operationType,
         dateOperation: d.toISOString(),
         observations: observations.trim() || null,
+        commune: commune.trim() || null,
+        quartier: quartier.trim() || null,
+        gps: hasLat && hasLng ? { lat: la, lng: lo } : null,
+        statutBancarisation,
+        compteBancaire: compteBancaire.trim() || null,
       };
       if (operationType === "ACTUALISATION") {
         body.produitCode = createProduitCodes[0];
@@ -892,6 +982,8 @@ export default function ContratsPanel() {
         issues?: { path: (string | number)[]; message: string }[];
         checklistRequired?: boolean;
         submitted?: boolean;
+        autoValidated?: boolean;
+        finalized?: boolean;
         extended?: boolean;
         added?: boolean;
       } | null;
@@ -902,17 +994,26 @@ export default function ContratsPanel() {
       setCreateFormError(null);
       setCreateOpen(false);
       setCreateChecklist(null);
+      const n = createProduitCodes.length;
+      const nLabel = `${n} produit${n > 1 ? "s" : ""}`;
+      const validatedSuffix = resBody?.finalized
+        ? "validé et finalisé automatiquement."
+        : resBody?.autoValidated
+          ? "validé automatiquement."
+          : resBody?.submitted
+            ? "soumis."
+            : null;
       const successMsg = resBody?.extended
         ? resBody.added
-          ? resBody.submitted
-            ? `Produit(s) ajouté(s) au dossier existant et soumis pour validation N1 (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""} au total).`
+          ? validatedSuffix
+            ? `Produit(s) ajouté(s) au dossier existant (${nLabel} au total) et ${validatedSuffix}`
             : "Produit(s) ajouté(s) au dossier existant (brouillon). Complétez la checklist puis soumettez."
           : "Ces produits sont déjà sur le dossier ouvert du client — complétez-le depuis le tableau."
-        : resBody?.submitted
-          ? `Dossier contrat créé (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""} — un contrat et une annexe par produit) et soumis pour validation N1.`
+        : validatedSuffix
+          ? `Dossier contrat créé (${nLabel} — un contrat et une annexe par produit) et ${validatedSuffix}`
           : resBody?.checklistRequired
-            ? `Dossier créé en brouillon pour ${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}. Complétez la checklist documents puis soumettez-le.`
-            : `Dossier contrat créé en brouillon (${createProduitCodes.length} produit${createProduitCodes.length > 1 ? "s" : ""}). Soumettez-le depuis le tableau pour lancer la validation.`;
+            ? `Dossier créé en brouillon pour ${nLabel}. Complétez la checklist documents puis soumettez-le.`
+            : `Dossier contrat créé en brouillon (${nLabel}). Soumettez-le depuis le tableau pour le faire avancer.`;
       notify.success(successMsg);
       window.dispatchEvent(new Event("lonaci:data-imported"));
     } catch (err) {
@@ -1647,7 +1748,8 @@ export default function ContratsPanel() {
           description={
             <>
             Filtres produit, agence, statut contrat, période (mois en cours sur la date d’effet ou plage), étape du dossier
-            lié. Périmètre agence appliqué côté serveur.
+            lié. Les dossiers en cours (soumis, etc.) apparaissent ici ; le contrat Prisma est créé à la finalisation.
+            Périmètre agence appliqué côté serveur.
             </>
           }
         />
@@ -1810,7 +1912,10 @@ export default function ContratsPanel() {
           ) : !listError && contratsListe.length === 0 ? (
             <div className="px-4 py-8 text-center sm:px-5">
               <p className="text-sm font-medium text-slate-700">Aucun contrat ne correspond aux critères.</p>
-              <p className="mt-1 text-xs text-slate-500">Ajustez les filtres puis cliquez sur “Actualiser”.</p>
+              <p className="mt-1 text-xs text-slate-500">
+                Les dossiers soumis apparaissent ici avant finalisation. Vérifiez les filtres (statut Actif/Résilié,
+                mois en cours, étape) puis cliquez sur « Actualiser ».
+              </p>
             </div>
           ) : (
             <div className="w-full overflow-hidden rounded-b-2xl">
@@ -2019,13 +2124,11 @@ export default function ContratsPanel() {
                                 {dossierActionBusyId === c.dossierId
                                   ? "..."
                                   : canApproveDossier && workflowPrimary
-                                    ? workflowPrimary.action === "FINALIZE"
-                                      ? "Finaliser"
-                                      : "Valider"
+                                    ? workflowPrimary.label
                                     : "Décision"}
                               </button>
                             ) : null}
-                            {meRole === "CHEF_SERVICE" ? (
+                            {meRole === "CHEF_SERVICE" && !c.isDossierPending ? (
                               <button
                                 type="button"
                                 onClick={() => openEditContrat(c)}
@@ -2243,7 +2346,7 @@ export default function ContratsPanel() {
             aria-label="Fermer"
             onClick={closeViewContrat}
           />
-          <div className="relative z-10 w-full max-w-xl rounded-2xl border border-slate-200 bg-white shadow-2xl">
+          <div className="relative z-10 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl">
             <div className="border-b border-slate-200 px-4 py-3">
               <h3 id="view-contrat-title" className="text-base font-semibold text-slate-900">
                 Détails du contrat
@@ -2289,6 +2392,89 @@ export default function ContratsPanel() {
                 <p className="text-sm text-slate-900">{labelDossierEtape(viewContrat.dossierEtape ?? "FINALISE")}</p>
               </div>
             </div>
+            {viewContrat.clientFiche ? (
+              <div className="border-t border-slate-200 px-4 py-4">
+                <p className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                  Fiche client
+                </p>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {(
+                    [
+                      ["Identifiant", viewContrat.clientFiche.code],
+                      [
+                        "Catégorie",
+                        CLIENT_CATEGORIE_LABELS[
+                          normalizeClientCategorie(viewContrat.clientFiche.categorie) as ClientCategorie
+                        ],
+                      ],
+                      ["Nom complet", viewContrat.clientFiche.nomComplet],
+                      ["Raison sociale", viewContrat.clientFiche.raisonSociale],
+                      ["Code machine", viewContrat.clientFiche.codeMachine],
+                      ["N° CNI", viewContrat.clientFiche.cniNumero],
+                      ["Contact", viewContrat.clientFiche.nomContact],
+                      ["E-mail", viewContrat.clientFiche.email],
+                      ["Téléphone", viewContrat.clientFiche.telephone],
+                      ["Adresse", viewContrat.clientFiche.adresse],
+                      ["Ville", viewContrat.clientFiche.ville],
+                      ["Code postal", viewContrat.clientFiche.codePostal],
+                      [
+                        "Agence (Intérieur - Abidjan)",
+                        viewContrat.clientFiche.agenceLabel,
+                      ],
+                      [
+                        "Type de distributeur",
+                        (() => {
+                          const t = normalizeClientTypeDistributeur(
+                            viewContrat.clientFiche.typeDistributeur,
+                          );
+                          return t
+                            ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[t]
+                            : viewContrat.clientFiche.typeDistributeur;
+                        })(),
+                      ],
+                      ["Nombre de TPM", viewContrat.clientFiche.nombreTpm],
+                      ["N° Distributeur", viewContrat.clientFiche.numeroDistributeur],
+                      ["N° TPM", viewContrat.clientFiche.numeroTpm],
+                      [
+                        "Produits autorisés",
+                        viewContrat.clientFiche.produitsAutorises.length
+                          ? viewContrat.clientFiche.produitsAutorises.join(", ")
+                          : null,
+                      ],
+                      [
+                        "Statut client",
+                        (CLIENT_STATUT_LABELS as Record<string, string>)[
+                          viewContrat.clientFiche.statut
+                        ] ?? viewContrat.clientFiche.statut,
+                      ],
+                      ["Notes", viewContrat.clientFiche.notes],
+                    ] as const
+                  ).map(([label, value]) => {
+                    const alwaysShow =
+                      label === "Agence (Intérieur - Abidjan)" ||
+                      label === "Type de distributeur" ||
+                      label === "Nombre de TPM" ||
+                      label === "N° Distributeur" ||
+                      label === "N° TPM";
+                    const text =
+                      value == null || value === ""
+                        ? null
+                        : typeof value === "number"
+                          ? String(value)
+                          : String(value).trim();
+                    if (!text && !alwaysShow) return null;
+                    return (
+                      <div key={label}>
+                        <p className="text-[11px] font-medium uppercase tracking-wide text-slate-500">
+                          {label}
+                        </p>
+                        <p className="text-sm text-slate-900">{text || "—"}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200 bg-slate-50 px-4 py-3">
               <div className="flex flex-wrap gap-2">
                 <button
@@ -2742,7 +2928,9 @@ export default function ContratsPanel() {
                           }`}
                         >
                           {createChecklistObligatoires.complet
-                            ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
+                            ? areWorkflowApprovalsEnabled()
+                              ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
+                              : "Checklist complète — le dossier sera soumis et validé automatiquement."
                             : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) marquée(s) « Fourni ».`}
                         </p>
                       ) : null}
@@ -2789,6 +2977,108 @@ export default function ContratsPanel() {
                       </label>
                     </section>
                   ) : null}
+
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <section className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        Localisation
+                      </p>
+                      <div className="grid gap-2">
+                        <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Commune</span>
+                            <input
+                              value={commune}
+                              onChange={(e) => setCommune(e.target.value)}
+                              placeholder="ex. Cocody"
+                              className={inputClass}
+                            />
+                          </label>
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Quartier</span>
+                            <input
+                              value={quartier}
+                              onChange={(e) => setQuartier(e.target.value)}
+                              placeholder="ex. Angré"
+                              className={inputClass}
+                            />
+                          </label>
+                        </div>
+                        <div className="grid gap-2 grid-cols-1 sm:grid-cols-2">
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Latitude GPS</span>
+                            <input
+                              value={gpsLat}
+                              onChange={(e) => setGpsLat(e.target.value)}
+                              placeholder="ex. 5.3599 (optionnel)"
+                              inputMode="decimal"
+                              className={inputClass}
+                            />
+                          </label>
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Longitude GPS</span>
+                            <input
+                              value={gpsLng}
+                              onChange={(e) => setGpsLng(e.target.value)}
+                              placeholder="ex. -4.0083 (optionnel)"
+                              inputMode="decimal"
+                              className={inputClass}
+                            />
+                          </label>
+                        </div>
+                      </div>
+                    </section>
+
+                    <section className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
+                      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">
+                        Statuts & bancarisation
+                      </p>
+                      <div className="grid gap-2">
+                        <p className="text-[11px] text-slate-600">
+                          Données reprises sur la fiche PDV à la signature / promotion du client.
+                        </p>
+                        <label className="grid gap-1">
+                          <span className="text-xs font-medium text-slate-700">Statut de bancarisation</span>
+                          <select
+                            aria-label="Statut de bancarisation"
+                            value={statutBancarisation}
+                            onChange={(e) => setStatutBancarisation(e.target.value as BancarisationStatut)}
+                            className={inputClass}
+                          >
+                            {BANCARISATION_STATUTS.map((s) => (
+                              <option key={s} value={s}>
+                                {BANCARISATION_STATUT_LABELS[s]}
+                              </option>
+                            ))}
+                          </select>
+                          <span className="rounded-md border border-cyan-100 bg-cyan-50 px-2 py-1 text-[11px] text-cyan-900">
+                            Le numéro de compte est obligatoire pour passer au statut BANCARISÉ.
+                          </span>
+                        </label>
+                        {statutBancarisation === "BANCARISE" ? (
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Numéro de compte bancaire *</span>
+                            <input
+                              value={compteBancaire}
+                              onChange={(e) => setCompteBancaire(e.target.value)}
+                              placeholder="Obligatoire si bancarisé"
+                              className={inputClass}
+                            />
+                          </label>
+                        ) : (
+                          <label className="grid gap-1">
+                            <span className="text-xs font-medium text-slate-700">Numéro de compte bancaire</span>
+                            <input
+                              value={compteBancaire}
+                              onChange={(e) => setCompteBancaire(e.target.value)}
+                              placeholder="Optionnel si non bancarisé"
+                              className={inputClass}
+                            />
+                          </label>
+                        )}
+                      </div>
+                    </section>
+                  </div>
 
                   <section className="rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm">
                     <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-slate-600">Observations</p>

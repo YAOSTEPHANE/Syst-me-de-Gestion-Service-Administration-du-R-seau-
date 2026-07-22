@@ -4,10 +4,12 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { isWorkflowSeparationError } from "@/lib/lonaci/workflow-separation";
+import { submitAndAutoValidateContratDossier } from "@/lib/lonaci/dossier-contrat-auto-validate";
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { ensureDossierIndexes, findVisibleDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
 import { userCanPerformDossierTransitionAtEtape } from "@/lib/auth/dossier-transition-rbac";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 
 const transitionSchema = z.object({
   action: z.enum([
@@ -148,6 +150,32 @@ export async function POST(request: NextRequest, context: RouteContext) {
       }
       return NextResponse.json(
         { dossier: finalized.dossier, contrat: finalized.contrat },
+        { status: 200 },
+      );
+    }
+
+    if (
+      (parsed.data.action === "SUBMIT" ||
+        parsed.data.action === "VALIDATE_N1" ||
+        parsed.data.action === "VALIDATE_N2") &&
+      before.type === "CONTRAT_ACTUALISATION" &&
+      !areWorkflowApprovalsEnabled()
+    ) {
+      const advanced = await submitAndAutoValidateContratDossier({
+        dossier: before,
+        actor: auth.user,
+        submitComment:
+          parsed.data.comment?.trim() ||
+          (parsed.data.action === "SUBMIT"
+            ? "Soumission et validation automatiques."
+            : "Validation automatique."),
+      });
+      return NextResponse.json(
+        {
+          dossier: advanced.dossier,
+          autoValidated: advanced.autoValidated,
+          finalized: advanced.finalized,
+        },
         { status: 200 },
       );
     }

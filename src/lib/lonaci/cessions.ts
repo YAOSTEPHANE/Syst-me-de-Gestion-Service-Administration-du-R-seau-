@@ -23,6 +23,7 @@ import {
   updateConcessionnaire,
 } from "@/lib/lonaci/concessionnaires";
 import { listProduits } from "@/lib/lonaci/referentials";
+import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { hasActiveContractForProduct, markActiveContratAsCedeForProduct } from "@/lib/lonaci/contracts";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
 import { type DossierDocumentChecklistPayload, type DossierDocumentChecklistStatut, type UserDocument, userDisplayName } from "@/lib/lonaci/types";
@@ -593,11 +594,11 @@ export function assertCessionTransitionAllowed(
 ) {
   if (usesSimplifiedDelocalisationCircuit(kind)) {
     if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
-      if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+      if (!roleMayAdvanceWorkflow(role, "CHEF_SECTION")) throw new Error("FORBIDDEN_TRANSITION");
       return;
     }
     if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDEE_CHEF_SERVICE") {
-      if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+      if (!roleMayAdvanceWorkflow(role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
       return;
     }
     if (target === "REJETEE") {
@@ -606,22 +607,24 @@ export function assertCessionTransitionAllowed(
         : from === "CONTROLE_CHEF_SECTION"
           ? "CHEF_SERVICE"
           : null;
-      if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
+      if (!expectedRole || !roleMayAdvanceWorkflow(role, expectedRole)) {
+        throw new Error("FORBIDDEN_TRANSITION");
+      }
       return;
     }
     throw new Error("INVALID_TRANSITION");
   }
 
   if (from === "SAISIE_AGENT" && target === "CONTROLE_CHEF_SECTION") {
-    if (role !== "CHEF_SECTION") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "CHEF_SECTION")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (from === "CONTROLE_CHEF_SECTION" && target === "VALIDATION_N2") {
-    if (role !== "ASSIST_CDS") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "ASSIST_CDS")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (from === "VALIDATION_N2" && target === "VALIDEE_CHEF_SERVICE") {
-    if (role !== "CHEF_SERVICE") throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     return;
   }
   if (target === "REJETEE") {
@@ -632,7 +635,9 @@ export function assertCessionTransitionAllowed(
         : from === "VALIDATION_N2"
           ? "CHEF_SERVICE"
           : null;
-    if (role !== expectedRole) throw new Error("FORBIDDEN_TRANSITION");
+    if (!expectedRole || !roleMayAdvanceWorkflow(role, expectedRole)) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
     return;
   }
   throw new Error("INVALID_TRANSITION");
