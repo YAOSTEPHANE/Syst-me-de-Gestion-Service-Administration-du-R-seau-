@@ -26,6 +26,13 @@ import { FormField } from "@/components/lonaci/ui/form-field";
 import { PageHeader } from "@/components/lonaci/ui/headers";
 import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Surface } from "@/components/lonaci/ui/surface";
+import {
+  AGREMENT_IMPORT_COLUMN_ORDER,
+  AGREMENT_IMPORT_HEADER_LABELS,
+  mapAgrementImportRowFromRecord,
+} from "@/lib/lonaci/agrements-import-map";
+import { matchAgenceFromImportToken } from "@/lib/lonaci/clients-import-map";
+import { assertExcelImportAllowed } from "@/lib/spreadsheet/import-format-policy";
 
 type AgrementStatus = "RECU" | "CONTROLE" | "TRANSMIS" | "FINALISE";
 interface AgrementItem {
@@ -63,74 +70,151 @@ function transitionLabel(target: AgrementStatus): string {
   return "Finaliser";
 }
 
-async function downloadAgrementsExcelTemplate() {
+async function downloadAgrementsExcelTemplate(opts?: { produitCode?: string }) {
   const XLSX = await import("xlsx");
-  const headers = [
-    "produitCode",
-    "dateReception",
-    "referenceOfficielle",
-    "agenceId",
-    "lonaciClientId",
-    "observations",
-    "documentPdfName",
-  ];
-  const sample = {
-    produitCode: "LOTO",
-    dateReception: new Date().toISOString(),
+  const frenchHeaders = AGREMENT_IMPORT_COLUMN_ORDER.map((key) => AGREMENT_IMPORT_HEADER_LABELS[key]);
+  const produitSample = opts?.produitCode?.trim().toUpperCase() || "LOTO";
+  const sampleByKey: Record<(typeof AGREMENT_IMPORT_COLUMN_ORDER)[number], string> = {
     referenceOfficielle: "AGR-2026-001",
-    agenceId: "ID_AGENCE",
-    lonaciClientId: "ID_CLIENT_LONACI",
-    observations: "Exemple import agrement",
-    documentPdfName: "obligatoire-via-formulaire.pdf",
+    dateReception: new Date().toISOString().slice(0, 10),
+    agence: "ABOBO",
+    produitCode: produitSample,
+    lonaciClientId: "",
+    observations: "Exemple import agrément",
   };
-  const ws = XLSX.utils.json_to_sheet([sample], { header: headers });
+  const sample = Object.fromEntries(
+    AGREMENT_IMPORT_COLUMN_ORDER.map((key) => [AGREMENT_IMPORT_HEADER_LABELS[key], sampleByKey[key]]),
+  );
+  const ws = XLSX.utils.json_to_sheet([sample], { header: frenchHeaders });
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "agrements");
-  XLSX.writeFile(wb, "modele-agrements.xlsx");
+  XLSX.writeFile(wb, `modele-agrements-${produitSample}.xlsx`);
 }
 
-async function normalizeImportFileForApi(file: File): Promise<File> {
-  const sanitize = (raw: Record<string, unknown>): Record<string, unknown> => ({
-    produitCode: (raw.produitCode as string | null) ?? null,
-    dateReception: (raw.dateReception as string | null) ?? null,
-    referenceOfficielle: (raw.referenceOfficielle as string | null) ?? null,
-    agenceId: (raw.agenceId as string | null) ?? null,
-    lonaciClientId: (raw.lonaciClientId as string | null) ?? (raw.concessionnaireId as string | null) ?? null,
-    observations: (raw.observations as string | null) ?? null,
+function isMostlyEmptyImportRow(row: Record<string, unknown>): boolean {
+  return !Object.values(row).some((value) => {
+    if (typeof value === "number" && Number.isFinite(value)) return true;
+    if (typeof value === "string") return value.trim().length > 0;
+    return false;
   });
+}
+
+type AgenceListItem = { id: string; code: string; libelle: string };
+
+function analyzeAgencesInAgrementRows(
+  rows: Record<string, unknown>[],
+  agences: AgenceListItem[],
+): {
+  agencesDetectees: Array<{ id: string; libelle: string; count: number }>;
+  lignesSansAgence: number;
+  tokensNonResolus: string[];
+} {
+  const counts = new Map<string, number>();
+  let lignesSansAgence = 0;
+  const unresolved = new Set<string>();
+
+  for (const row of rows) {
+    const mapped = mapAgrementImportRowFromRecord(row);
+    const token = mapped.agence.trim();
+    if (!token) {
+      lignesSansAgence += 1;
+      continue;
+    }
+    const resolved = matchAgenceFromImportToken(token, agences);
+    if (!resolved) {
+      unresolved.add(token);
+      lignesSansAgence += 1;
+      continue;
+    }
+    counts.set(resolved.id, (counts.get(resolved.id) ?? 0) + 1);
+  }
+
+  const agencesDetectees = [...counts.entries()]
+    .map(([id, count]) => {
+      const ag = agences.find((a) => a.id === id);
+      return { id, libelle: ag?.libelle ?? id, count };
+    })
+    .sort((a, b) => a.libelle.localeCompare(b.libelle, "fr", { sensitivity: "base" }));
+
+  return {
+    agencesDetectees,
+    lignesSansAgence,
+    tokensNonResolus: [...unresolved].slice(0, 8),
+  };
+}
+
+async function normalizeAgrementsImportFile(file: File): Promise<Record<string, unknown>[]> {
   const lower = file.name.toLowerCase();
-  if (lower.endsWith(".json") || lower.endsWith(".csv")) return file;
+  const keepRawRows = (rows: Record<string, unknown>[]) =>
+    rows.filter((row) => !isMostlyEmptyImportRow(row));
+
+  if (lower.endsWith(".json")) {
+    const parsed = JSON.parse(await file.text()) as unknown;
+    const rows = Array.isArray(parsed) ? parsed : [parsed];
+    return keepRawRows(rows as Record<string, unknown>[]);
+  }
+  if (lower.endsWith(".csv")) {
+    const text = await file.text();
+    const lines = text
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    if (lines.length < 2) return [];
+    const headers = lines[0]!.split(",").map((h) => h.trim().replace(/^"|"$/g, ""));
+    return keepRawRows(
+      lines.slice(1).map((line) => {
+        const values = line.split(",").map((v) => v.trim().replace(/^"|"$/g, ""));
+        const row: Record<string, unknown> = {};
+        headers.forEach((header, idx) => {
+          row[header] = values[idx] ?? "";
+        });
+        return row;
+      }),
+    );
+  }
   if (lower.endsWith(".xlsx") || lower.endsWith(".xls")) {
+    assertExcelImportAllowed("AGREMENTS");
     const { readWorkbookFromArrayBuffer, sheetToJsonFirstSheet } = await import(
       "@/lib/spreadsheet/safe-xlsx-read",
     );
     const wb = await readWorkbookFromArrayBuffer(await file.arrayBuffer());
-    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb);
-    const json = JSON.stringify(rows.map((r) => sanitize(r)));
-    return new File([json], file.name.replace(/\.(xlsx|xls)$/i, ".json"), { type: "application/json" });
+    const rows = await sheetToJsonFirstSheet<Record<string, unknown>>(wb, { defval: "" });
+    return keepRawRows(rows);
   }
   if (lower.endsWith(".pdf")) {
     const source = await extractPdfText(file, 8);
-    const row = sanitize({
-      produitCode:
-        captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase() ?? null,
-      dateReception: normalizeDateToIso(
-        captureByAliases(source, ["date reception", "date agrement", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
-      ),
-      referenceOfficielle: captureByAliases(
-        source,
-        ["reference officielle", "numero officielle", "num agrement"],
-        "[a-z0-9\\-_/]{3,80}",
-      ),
-      agenceId: captureByAliases(source, ["agence id", "id agence"], "[a-z0-9]{8,}"),
-      lonaciClientId: captureByAliases(source, ["client id", "id client", "lonaci client"], "[a-z0-9]{8,}"),
-      observations: captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}"),
-    });
-    const json = JSON.stringify([row]);
-    return new File([json], file.name.replace(/\.pdf$/i, ".json"), { type: "application/json" });
+    return [
+      {
+        produitCode:
+          captureByAliases(source, ["code produit", "produit"], "[a-z0-9_ -]{2,20}")?.toUpperCase() ??
+          "",
+        dateReception:
+          normalizeDateToIso(
+            captureByAliases(source, ["date reception", "date agrement", "date"], "[0-9/\\- :tTzZ.+]{8,40}"),
+          ) ?? "",
+        "Référence officielle":
+          captureByAliases(
+            source,
+            ["reference officielle", "numero officielle", "num agrement"],
+            "[a-z0-9\\-_/]{3,80}",
+          ) ?? "",
+        Agence: captureByAliases(source, ["agence", "code agence"], "[a-z0-9 _-]{2,40}") ?? "",
+        observations:
+          captureByAliases(source, ["observations", "commentaires", "commentaire"], "[^|;]{1,300}") ??
+          "",
+      },
+    ].filter((row) => !isMostlyEmptyImportRow(row));
   }
-  throw new Error("Format non supporte. Utilisez .json, .csv, .xlsx, .xls ou .pdf.");
+  throw new Error("Format non supporté. Utilisez .xlsx, .xls, .csv, .json ou .pdf.");
 }
+
+type PendingAgrementImport = {
+  fileName: string;
+  rows: Record<string, unknown>[];
+  agencesDetectees: Array<{ id: string; libelle: string; count: number }>;
+  lignesSansAgence: number;
+  tokensNonResolus: string[];
+};
 
 export default function AgrementsPanel() {
   const [items, setItems] = useState<AgrementItem[]>([]);
@@ -147,6 +231,8 @@ export default function AgrementsPanel() {
   const pdfInputRef = useRef<HTMLInputElement | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
+  const [pendingImport, setPendingImport] = useState<PendingAgrementImport | null>(null);
+  const [importProduitCode, setImportProduitCode] = useState("");
 
   const [filterAgence, setFilterAgence] = useState("");
   const [filterProduit, setFilterProduit] = useState("");
@@ -271,31 +357,103 @@ export default function AgrementsPanel() {
   async function onImportFileChange(e: ChangeEvent<HTMLInputElement>) {
     const source = e.target.files?.[0];
     if (!source) return;
-    setImportingFile(true);
-    setCreateError(null);
     try {
-      const file = await normalizeImportFileForApi(source);
-      const fd = new FormData();
-      fd.set("file", file);
-      fd.set("collection", "agreements");
-      fd.set("mode", "insert");
-      const res = await fetch("/api/import-data", { method: "POST", body: fd });
+      const agencesActives = agences.filter((a) => a.actif && a.id);
+      if (agencesActives.length === 0) {
+        throw new Error(
+          "Référentiel des agences non chargé. Attendez quelques secondes puis réessayez.",
+        );
+      }
+
+      const rawRows = await normalizeAgrementsImportFile(source);
+      if (rawRows.length === 0) {
+        throw new Error("Le fichier ne contient aucune ligne exploitable.");
+      }
+
+      const { agencesDetectees, lignesSansAgence, tokensNonResolus } = analyzeAgencesInAgrementRows(
+        rawRows,
+        agencesActives,
+      );
+
+      setImportProduitCode(filterProduit.trim().toUpperCase());
+      setPendingImport({
+        fileName: source.name,
+        rows: rawRows,
+        agencesDetectees,
+        lignesSansAgence,
+        tokensNonResolus,
+      });
+    } catch (err) {
+      notify.error(err instanceof Error ? err.message : "Lecture du fichier impossible.");
+    } finally {
+      e.target.value = "";
+    }
+  }
+
+  async function confirmPendingImport() {
+    if (!pendingImport || importingFile) return;
+
+    const produitCode = importProduitCode.trim().toUpperCase();
+    if (!produitCode) {
+      notify.error("Choisissez le produit concerné par cet import.");
+      return;
+    }
+
+    setImportingFile(true);
+    try {
+      const res = await fetch("/api/agrements/import", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rows: pendingImport.rows, produitCode }),
+      });
       const data = (await res.json().catch(() => null)) as
-        | { message?: string; inserted?: number; skippedExistingDuplicates?: number }
+        | {
+            message?: string;
+            inserted?: number;
+            updated?: number;
+            unchanged?: number;
+            failed?: number;
+            results?: Array<{ row: number; ok: boolean; error?: string }>;
+          }
         | null;
-      if (!res.ok) throw new Error(data?.message ?? "Import impossible");
+      if (!res.ok) {
+        throw new Error(data?.message ?? "Import impossible");
+      }
+
+      const inserted = data?.inserted ?? 0;
+      const updated = data?.updated ?? 0;
+      const unchanged = data?.unchanged ?? 0;
+      const failed = data?.failed ?? 0;
+      const firstErrors = (data?.results ?? [])
+        .filter((r) => !r.ok && r.error)
+        .slice(0, 3)
+        .map((r) => `L${r.row}: ${r.error}`)
+        .join(" · ");
+
+      const agencesCount = pendingImport.agencesDetectees.length;
+      setPendingImport(null);
+      setFilterProduit(produitCode);
       await load(1);
       window.dispatchEvent(new Event("lonaci:data-imported"));
-      notify.success(
-        `Import agréments terminé: ${data?.inserted ?? 0} ligne(s) insérée(s), ${data?.skippedExistingDuplicates ?? 0} doublon(s) ignoré(s).`,
-      );
+
+      const agencesLabel =
+        agencesCount > 0 ? `${agencesCount} agence(s)` : "agences du fichier";
+      if (inserted === 0 && updated === 0 && failed > 0 && unchanged === 0) {
+        notify.error(
+          firstErrors
+            ? `Import impossible (${agencesLabel} · ${produitCode}). ${firstErrors}`
+            : `Import impossible (${failed} erreur(s)).`,
+        );
+      } else {
+        notify.success(
+          `Import terminé (${agencesLabel} · ${produitCode}) : ${inserted} créé(s), ${updated} mis à jour, ${unchanged} inchangé(s)${failed ? `, ${failed} erreur(s)` : ""}.`,
+        );
+      }
     } catch (err) {
-      const message = friendlyErrorMessage(err instanceof Error ? err.message : "Import impossible");
-      setCreateError(message);
-      notify.error(message);
+      notify.error(err instanceof Error ? err.message : "Import agréments impossible.");
     } finally {
       setImportingFile(false);
-      e.target.value = "";
     }
   }
 
@@ -441,6 +599,37 @@ export default function AgrementsPanel() {
         description="Contrôle, validation et archivage des agréments produits."
         actions={
           <>
+            <input
+              ref={importFileInputRef}
+              type="file"
+              accept=".json,.csv,.xlsx,.xls,.pdf"
+              aria-label="Importer des agréments"
+              className="sr-only"
+              onChange={(e) => void onImportFileChange(e)}
+            />
+            {meRole !== "AUDITEUR" ? (
+              <Button
+                variant="secondary"
+                leadingIcon={Upload}
+                loading={importingFile}
+                onClick={() => importFileInputRef.current?.click()}
+              >
+                Importer
+              </Button>
+            ) : null}
+            {meRole !== "AUDITEUR" ? (
+              <Button
+                variant="secondary"
+                leadingIcon={Download}
+                onClick={() =>
+                  void downloadAgrementsExcelTemplate({
+                    produitCode: filterProduit || undefined,
+                  })
+                }
+              >
+                Modèle Excel
+              </Button>
+            ) : null}
             <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/agrements/export?format=excel&${exportQuery}`, "_blank")}>Excel</Button>
             <Button variant="secondary" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/export?format=pdf&${exportQuery}`, "_blank")}>PDF</Button>
             {meRole !== "AUDITEUR" ? <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Créer un agrément</Button> : null}
@@ -493,9 +682,6 @@ export default function AgrementsPanel() {
         size="lg"
         footer={
           <>
-            <input ref={importFileInputRef} type="file" accept=".json,.csv,.xlsx,.xls,.pdf" aria-label="Importer des agréments" className="sr-only" onChange={(e) => void onImportFileChange(e)} />
-            <Button variant="ghost" leadingIcon={Upload} loading={importingFile} onClick={() => importFileInputRef.current?.click()}>Importer</Button>
-            <Button variant="secondary" leadingIcon={Download} onClick={() => void downloadAgrementsExcelTemplate()}>Modèle Excel</Button>
             <Button variant="secondary" disabled={creating} onClick={closeCreate}>Annuler</Button>
             <Button type="submit" form="agrement-create-form" loading={creating}>Créer l’agrément</Button>
           </>
@@ -515,6 +701,100 @@ export default function AgrementsPanel() {
           </FormField>
           <FormField label="Observations"><textarea value={observations} onChange={(e) => setObservations(e.target.value)} rows={3} /></FormField>
         </form>
+      </Dialog>
+
+      <Dialog
+        open={pendingImport !== null}
+        onOpenChange={(open) => {
+          if (!open && !importingFile) {
+            setPendingImport(null);
+            setImportProduitCode("");
+          }
+        }}
+        title="Importer la liste agréments"
+        description="Chaque agrément est rangé automatiquement dans l’agence indiquée sur sa ligne. Choisissez uniquement le produit."
+        footer={
+          <>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                if (!importingFile) setPendingImport(null);
+              }}
+              disabled={importingFile}
+            >
+              Annuler
+            </Button>
+            <Button
+              leadingIcon={Upload}
+              loading={importingFile}
+              onClick={() => void confirmPendingImport()}
+            >
+              Importer
+            </Button>
+          </>
+        }
+      >
+        {pendingImport ? (
+          <div className="space-y-3">
+            <p className="text-sm text-slate-600">
+              {pendingImport.rows.length} ligne(s) · {pendingImport.fileName}
+            </p>
+            {pendingImport.agencesDetectees.length > 0 ? (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <p className="font-semibold text-slate-700">Agences détectées dans le fichier</p>
+                <ul className="mt-1 space-y-0.5 text-slate-600">
+                  {pendingImport.agencesDetectees.map((a) => (
+                    <li key={a.id}>
+                      {a.libelle} — {a.count} agrément(s)
+                    </li>
+                  ))}
+                </ul>
+                {pendingImport.lignesSansAgence > 0 ? (
+                  <p className="mt-2 text-xs text-amber-800">
+                    {pendingImport.lignesSansAgence} ligne(s) sans agence reconnue
+                    {pendingImport.tokensNonResolus.length > 0
+                      ? ` (ex. : ${pendingImport.tokensNonResolus.join(", ")})`
+                      : ""}
+                    .
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                {pendingImport.tokensNonResolus.length > 0 ? (
+                  <>
+                    Valeurs d’agence non reconnues :{" "}
+                    <strong>{pendingImport.tokensNonResolus.join(", ")}</strong>.
+                  </>
+                ) : (
+                  <>
+                    Aucune agence détectée dans le fichier. Ajoutez une colonne Agence (code ou
+                    libellé) pour classer les lignes.
+                  </>
+                )}
+              </p>
+            )}
+            <label className="block space-y-1 text-sm">
+              <span className="font-semibold text-slate-700">Produit concerné</span>
+              <select
+                value={importProduitCode}
+                onChange={(e) => setImportProduitCode(e.target.value)}
+                className="w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+                aria-label="Produit d’import"
+                disabled={importingFile}
+              >
+                <option value="">Sélectionner un produit</option>
+                {produits
+                  .filter((p) => p.actif)
+                  .map((p) => (
+                    <option key={p.code} value={p.code}>
+                      {p.code} — {p.libelle}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </div>
+        ) : null}
       </Dialog>
     </section>
   );

@@ -55,7 +55,7 @@ const IMPORT_MODULES: Array<{
   {
     key: "AGREMENTS",
     label: "Agréments",
-    collections: [{ value: "agreements", label: "Agréments", defaultUpsertBy: "reference" }],
+    collections: [{ value: "agrements", label: "Agréments", defaultUpsertBy: "referenceOfficielle" }],
   },
   {
     key: "PDV_INTEGRATIONS",
@@ -134,7 +134,7 @@ function detectTargetFromFileName(fileName: string): { moduleKey: ImportModuleKe
     return { moduleKey: "CAUTIONS", collection: "cautions", upsertBy: "contratId" };
   }
   if (name.includes("agrement")) {
-    return { moduleKey: "AGREMENTS", collection: "agreements", upsertBy: "reference" };
+    return { moduleKey: "AGREMENTS", collection: "agrements", upsertBy: "referenceOfficielle" };
   }
   if (name.includes("agence")) {
     return { moduleKey: "REFERENTIELS", collection: "agences", upsertBy: "code" };

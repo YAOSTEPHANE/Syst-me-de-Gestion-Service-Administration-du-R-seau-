@@ -105,6 +105,87 @@ export async function createAgrement(input: {
   return { id: result.insertedId.toHexString(), reference };
 }
 
+/**
+ * Import liste : crée ou met à jour un agrément sans PDF (document à joindre ensuite).
+ * Clé d’upsert : référence officielle + produit.
+ */
+export async function upsertAgrementFromImport(input: {
+  produitCode: string;
+  dateReception: Date;
+  referenceOfficielle: string;
+  agenceId: string | null;
+  concessionnaireId: string | null;
+  observations: string | null;
+  actorId: string;
+}): Promise<{ id: string; reference: string; outcome: "inserted" | "updated" | "unchanged" }> {
+  const db = await getDatabase();
+  const produitCode = input.produitCode.trim().toUpperCase();
+  const referenceOfficielle = input.referenceOfficielle.trim();
+  if (!referenceOfficielle) throw new Error("REFERENCE_OFFICIELLE_REQUIRED");
+  if (!produitCode) throw new Error("PRODUIT_REQUIRED");
+
+  const existing = await db.collection<AgrementStored>(COLLECTION).findOne({
+    deletedAt: null,
+    produitCode,
+    referenceOfficielle,
+  });
+
+  if (!existing) {
+    const created = await createAgrement({
+      produitCode,
+      dateReception: input.dateReception,
+      referenceOfficielle,
+      agenceId: input.agenceId,
+      concessionnaireId: input.concessionnaireId,
+      observations: input.observations,
+      documentFilename: "import-sans-document.pdf",
+      documentMimeType: "application/pdf",
+      documentSize: 0,
+      actorId: input.actorId,
+    });
+    return { ...created, outcome: "inserted" };
+  }
+
+  const nextAgenceId = input.agenceId;
+  const nextObservations = input.observations;
+  const nextConcessionnaireId = input.concessionnaireId;
+  const sameDate =
+    existing.dateReception.getTime() === input.dateReception.getTime();
+  const sameAgence = (existing.agenceId ?? "") === (nextAgenceId ?? "");
+  const sameObs = (existing.observations ?? "") === (nextObservations ?? "");
+  const sameClient =
+    (existing.concessionnaireId ?? "") === (nextConcessionnaireId ?? "");
+
+  if (sameDate && sameAgence && sameObs && sameClient) {
+    return {
+      id: existing._id.toHexString(),
+      reference: existing.reference,
+      outcome: "unchanged",
+    };
+  }
+
+  const now = new Date();
+  await db.collection(COLLECTION).updateOne(
+    { _id: existing._id },
+    {
+      $set: {
+        dateReception: input.dateReception,
+        agenceId: nextAgenceId,
+        concessionnaireId: nextConcessionnaireId,
+        observations: nextObservations,
+        updatedAt: now,
+        updatedByUserId: input.actorId,
+      },
+    },
+  );
+
+  return {
+    id: existing._id.toHexString(),
+    reference: existing.reference,
+    outcome: "updated",
+  };
+}
+
 export async function attachAgrementDocument(input: {
   id: string;
   storedRelativePath: string;
