@@ -102,6 +102,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
           reference: result.reference,
           signerName: result.signerName,
           signedAt: result.signedAt.toISOString(),
+          concessionnaireId: result.concessionnaireId,
+          concessionnaireCreated: result.concessionnaireCreated,
         },
       },
       { status: 200 },
@@ -119,6 +121,45 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (code === "DOSSIER_NOT_FOUND") {
       return notFound("Dossier introuvable.", "DOSSIER_NOT_FOUND");
+    }
+    if (code === "CLIENT_NOT_FOUND") {
+      return notFound("Client rattaché au dossier introuvable.", "CLIENT_NOT_FOUND");
+    }
+    if (code === "CLIENT_INSCRIPTION_PENDING") {
+      return conflict(
+        "Le client doit être validé avant la création de sa fiche concessionnaire.",
+        "CLIENT_INSCRIPTION_PENDING",
+      );
+    }
+    if (code === "CLIENT_BLOQUE") {
+      return conflict(
+        "Le statut du client ne permet pas la création de sa fiche concessionnaire.",
+        "CLIENT_BLOQUE",
+      );
+    }
+    if (code === "AGENCE_REQUIRED" || code === "AGENCE_INVALID") {
+      return conflict(
+        "L’agence de rattachement du dossier est invalide.",
+        "SIGNATURE_AGENCE_INVALID",
+      );
+    }
+    if (code === "AGENCE_INACTIVE") {
+      return conflict(
+        "L’agence de rattachement du dossier est inactive.",
+        "SIGNATURE_AGENCE_INACTIVE",
+      );
+    }
+    if (code === "CLIENT_PROMOTION_IN_PROGRESS") {
+      return conflict(
+        "La création de la fiche concessionnaire est déjà en cours. Réessayez dans un instant.",
+        "CLIENT_PROMOTION_IN_PROGRESS",
+      );
+    }
+    if (code === "SIGN_ACTOR_NOT_FOUND") {
+      return serverError(
+        "Impossible d’identifier l’agent responsable de ce lien de signature.",
+        "SIGN_ACTOR_UNAVAILABLE",
+      );
     }
     return serverError("Impossible d'enregistrer la signature.", "SIGNATURE_SAVE_FAILED");
   }

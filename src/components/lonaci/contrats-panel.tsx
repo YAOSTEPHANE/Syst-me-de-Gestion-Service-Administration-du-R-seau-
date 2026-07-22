@@ -17,6 +17,8 @@ import {
   userCanPerformDossierTransitionAtEtape,
   type DossierTransitionAction,
 } from "@/lib/auth/dossier-transition-rbac";
+import { getRoleWorkflowFilterStatuses } from "@/lib/lonaci/workflow-ui-policy";
+import type { LonaciRole } from "@/lib/lonaci/constants";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import {
@@ -1288,6 +1290,20 @@ export default function ContratsPanel() {
   const mayRejectDossier = userCanPerformDossierTransitionAtEtape(meRole, decisionEtape, "REJECT");
   const mayReturnDossier = userCanPerformDossierTransitionAtEtape(meRole, decisionEtape, "RETURN_PREVIOUS");
 
+  /** Un valideur ne voit que sa file ; l’agent conserve le suivi complet. */
+  const pipelineLevels = useMemo(() => {
+    switch (meRole) {
+      case "CHEF_SECTION":
+        return { showN1: true, showN2: false, showFinal: false };
+      case "ASSIST_CDS":
+        return { showN1: false, showN2: true, showFinal: false };
+      case "CHEF_SERVICE":
+        return { showN1: false, showN2: false, showFinal: true };
+      default:
+        return { showN1: true, showN2: true, showFinal: true };
+    }
+  }, [meRole]);
+
   const contractsKpis = useMemo(() => {
     if (!chartsData) {
       return {
@@ -1299,13 +1315,23 @@ export default function ContratsPanel() {
         pendingN2: 0,
         pendingFinal: 0,
         activeRate: 0,
+        showN1: pipelineLevels.showN1,
+        showN2: pipelineLevels.showN2,
+        showFinal: pipelineLevels.showFinal,
       };
     }
     const totals = chartsData.totalsByProduct ?? [];
     const weekly = totals.reduce((acc, row) => acc + (row.weekly ?? 0), 0);
     const monthly = totals.reduce((acc, row) => acc + (row.monthly ?? 0), 0);
     const p = chartsData.pendingByLevel ?? { n1: 0, n2: 0, final: 0 };
-    const pendingTotal = (p.n1 ?? 0) + (p.n2 ?? 0) + (p.final ?? 0);
+    const pendingN1 = p.n1 ?? 0;
+    const pendingN2 = p.n2 ?? 0;
+    const pendingFinal = p.final ?? 0;
+    const showN1 = pipelineLevels.showN1;
+    const showN2 = pipelineLevels.showN2;
+    const showFinal = pipelineLevels.showFinal;
+    const pendingTotal =
+      (showN1 ? pendingN1 : 0) + (showN2 ? pendingN2 : 0) + (showFinal ? pendingFinal : 0);
     const active = chartsData.statusCounts?.actif ?? 0;
     const resile = chartsData.statusCounts?.resile ?? 0;
     const totalStatuses = active + resile;
@@ -1314,12 +1340,38 @@ export default function ContratsPanel() {
       monthly,
       velocityPct: monthly > 0 ? Math.round((weekly / monthly) * 100) : 0,
       pendingTotal,
-      pendingN1: p.n1 ?? 0,
-      pendingN2: p.n2 ?? 0,
-      pendingFinal: p.final ?? 0,
+      pendingN1,
+      pendingN2,
+      pendingFinal,
       activeRate: totalStatuses > 0 ? Math.round((active / totalStatuses) * 100) : 0,
+      showN1,
+      showN2,
+      showFinal,
     };
-  }, [chartsData]);
+  }, [chartsData, pipelineLevels]);
+
+  const dossierEtapeFilterOptions = useMemo(() => {
+    const labels: Record<string, string> = {
+      BROUILLON: "Brouillon",
+      SOUMIS: "Soumis (att. N1)",
+      VALIDE_N1: "Validé N1 (att. N2)",
+      VALIDE_N2: "Validé N2 (à finaliser)",
+      FINALISE: "Finalisé",
+      REJETE: "Rejeté",
+    };
+    const role = (meRole ?? "AGENT") as LonaciRole;
+    const statuses = getRoleWorkflowFilterStatuses("DOSSIERS", role);
+    return statuses.map((value) => ({
+      value,
+      label: labels[value] ?? value,
+    }));
+  }, [meRole]);
+
+  useEffect(() => {
+    if (!listWorkflowStatus) return;
+    if (dossierEtapeFilterOptions.some((opt) => opt.value === listWorkflowStatus)) return;
+    setListWorkflowStatus("");
+  }, [dossierEtapeFilterOptions, listWorkflowStatus]);
 
   const portfolioTotal = (chartsData?.statusCounts.actif ?? 0) + (chartsData?.statusCounts.resile ?? 0);
   const activeCount = chartsData?.statusCounts.actif ?? 0;
@@ -1387,7 +1439,11 @@ export default function ContratsPanel() {
           <div className="rounded-2xl border border-amber-100 bg-gradient-to-br from-amber-50 to-white p-4">
             <div className="text-[11px] uppercase tracking-wide text-amber-700">En attente</div>
             <div className="mt-1 text-3xl font-bold tracking-tight text-slate-900">{contractsKpis.pendingTotal}</div>
-            <div className="text-[11px] text-slate-600">Toutes étapes cumulées</div>
+            <div className="text-[11px] text-slate-600">
+              {pipelineLevels.showN1 && pipelineLevels.showN2 && pipelineLevels.showFinal
+                ? "Toutes étapes cumulées"
+                : "Votre file active"}
+            </div>
           </div>
         </div>
 
@@ -1395,48 +1451,54 @@ export default function ContratsPanel() {
           <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-700">Pipeline de validation</h4>
             <div className="mt-3 space-y-3">
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
-                  <span>Soumis (N1)</span>
-                  <span className="font-semibold text-slate-900">{contractsKpis.pendingN1}</span>
+              {contractsKpis.showN1 ? (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
+                    <span>Soumis (N1)</span>
+                    <span className="font-semibold text-slate-900">{contractsKpis.pendingN1}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-sky-500"
+                      style={{
+                        width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingN1 / contractsKpis.pendingTotal) * 100)) : 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100">
-                  <div
-                    className="h-2 rounded-full bg-sky-500"
-                    style={{
-                      width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingN1 / contractsKpis.pendingTotal) * 100)) : 0}%`,
-                    }}
-                  />
+              ) : null}
+              {contractsKpis.showN2 ? (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
+                    <span>Validé N1 (att. N2)</span>
+                    <span className="font-semibold text-slate-900">{contractsKpis.pendingN2}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-violet-500"
+                      style={{
+                        width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingN2 / contractsKpis.pendingTotal) * 100)) : 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-              </div>
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
-                  <span>Validé N1</span>
-                  <span className="font-semibold text-slate-900">{contractsKpis.pendingN2}</span>
+              ) : null}
+              {contractsKpis.showFinal ? (
+                <div>
+                  <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
+                    <span>Validé N2 (à finaliser)</span>
+                    <span className="font-semibold text-slate-900">{contractsKpis.pendingFinal}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-100">
+                    <div
+                      className="h-2 rounded-full bg-emerald-500"
+                      style={{
+                        width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingFinal / contractsKpis.pendingTotal) * 100)) : 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
-                <div className="h-2 rounded-full bg-slate-100">
-                  <div
-                    className="h-2 rounded-full bg-violet-500"
-                    style={{
-                      width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingN2 / contractsKpis.pendingTotal) * 100)) : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
-              <div>
-                <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
-                  <span>Validé N2 (à finaliser)</span>
-                  <span className="font-semibold text-slate-900">{contractsKpis.pendingFinal}</span>
-                </div>
-                <div className="h-2 rounded-full bg-slate-100">
-                  <div
-                    className="h-2 rounded-full bg-emerald-500"
-                    style={{
-                      width: `${contractsKpis.pendingTotal > 0 ? Math.max(8, Math.round((contractsKpis.pendingFinal / contractsKpis.pendingTotal) * 100)) : 0}%`,
-                    }}
-                  />
-                </div>
-              </div>
+              ) : null}
             </div>
           </article>
 
@@ -1712,12 +1774,11 @@ export default function ContratsPanel() {
               className={inputClass}
             >
               <option value="">Toutes</option>
-              <option value="BROUILLON">Brouillon</option>
-              <option value="SOUMIS">Soumis (att. N1)</option>
-              <option value="VALIDE_N1">Validé N1 (att. N2)</option>
-              <option value="VALIDE_N2">Validé N2 (à finaliser)</option>
-              <option value="FINALISE">Finalisé</option>
-              <option value="REJETE">Rejeté</option>
+              {dossierEtapeFilterOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
             </select>
           </label>
           </div>}

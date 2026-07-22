@@ -10,6 +10,7 @@ export type SpreadsheetImportModule =
   | "AGREMENTS"
   | "ATTESTATIONS_DOMICILIATION"
   | "CESSIONS"
+  | "CLIENTS"
   | "CONCESSIONNAIRES"
   | "RESILIATIONS";
 

@@ -13,6 +13,24 @@ export function normalizeClientCategorie(value: string | null | undefined): Clie
   return "PARTICULIER";
 }
 
+/** Type de concession rattaché au client. */
+export const CLIENT_TYPE_CONCESSION = ["NOUVEAU", "ANCIEN"] as const;
+export type ClientTypeConcession = (typeof CLIENT_TYPE_CONCESSION)[number];
+
+export const CLIENT_TYPE_CONCESSION_LABELS: Record<ClientTypeConcession, string> = {
+  NOUVEAU: "Nouveau",
+  ANCIEN: "Ancien",
+};
+
+export function normalizeClientTypeConcession(
+  value: string | null | undefined,
+): ClientTypeConcession | null {
+  const v = (value ?? "").trim().toUpperCase();
+  if (v === "NOUVEAU" || v === "NOUVEAU CONCESSION" || v === "NEW") return "NOUVEAU";
+  if (v === "ANCIEN" || v === "ANCIENNE" || v === "OLD") return "ANCIEN";
+  return null;
+}
+
 /** Libellé principal affiché selon la catégorie. */
 export function clientDisplayName(client: {
   categorie?: string | null;
@@ -36,9 +54,9 @@ export const CLIENT_STATUTS = [
 export type ClientStatut = (typeof CLIENT_STATUTS)[number];
 
 export const CLIENT_STATUT_LABELS: Record<ClientStatut, string> = {
-  EN_ATTENTE_N1: "En attente validation N1 (Chef de section)",
-  REJETE: "Rejeté (N1)",
-  DOSSIER_EN_COURS: "Dossier en cours (avant paiement caution)",
+  EN_ATTENTE_N1: "Dossier en cours",
+  REJETE: "Rejeté",
+  DOSSIER_EN_COURS: "Dossier en cours",
   ACTIF: "Actif",
   INACTIF: "Inactif",
 };

@@ -655,7 +655,7 @@ export default function ConcessionnaireFicheModal({
       const ct = codeTerminal.trim();
       const cc = codeConcessionnaire.trim();
       if (ct.length > 64 || cc.length > 64) {
-        throw new Error("Code terminal et code concessionnaire : 64 caractères maximum.");
+        throw new Error("Code machine et code concessionnaire : 64 caractères maximum.");
       }
       const la = Number(lat.replace(",", "."));
       const lo = Number(lng.replace(",", "."));
@@ -1081,7 +1081,7 @@ export default function ConcessionnaireFicheModal({
                   </label>
                   <div className="grid gap-2 sm:grid-cols-2">
                     <label className="grid gap-1">
-                      <span className="text-xs font-medium text-slate-700">Code terminal</span>
+                      <span className="text-xs font-medium text-slate-700">Code machine</span>
                       <input
                         value={codeTerminal}
                         onChange={(e) => setCodeTerminal(e.target.value)}

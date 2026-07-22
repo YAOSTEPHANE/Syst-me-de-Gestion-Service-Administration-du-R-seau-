@@ -39,12 +39,17 @@ const patchSchema = z
       },
       z.union([z.string().min(4).max(64), z.null()]).optional(),
     ),
+    codeMachine: z.union([z.string().min(1).max(64), z.null()]).optional(),
     nomContact: z.union([z.string().min(2).max(200), z.null()]).optional(),
     email: z.union([z.string().email(), z.null()]).optional(),
     telephone: z.union([z.string().min(6).max(32), z.null()]).optional(),
     adresse: z.union([z.string().max(500), z.null()]).optional(),
     ville: z.union([z.string().max(120), z.null()]).optional(),
     codePostal: z.union([z.string().max(12), z.null()]).optional(),
+    typeConcession: z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
+    nombreTpm: z.union([z.number().int().min(0).max(9999), z.null()]).optional(),
+    numeroDistributeur: z.union([z.string().min(1).max(64), z.null()]).optional(),
+    numeroTpm: z.union([z.string().min(1).max(64), z.null()]).optional(),
     agenceId: z.union([z.string().min(1), z.null()]).optional(),
     produitsAutorises: z.array(z.string().min(1)).optional(),
     documentChecklist: documentChecklistPatchSchema.optional(),
@@ -131,7 +136,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   const nextCategorie = normalizeClientCategorie(patch.categorie ?? existing.categorie);
   const nextNomComplet = (patch.nomComplet ?? existing.nomComplet ?? "").trim();
-  const nextRaisonSociale = (patch.raisonSociale ?? existing.raisonSociale ?? "").trim();
+  const nextRaisonSocialeRaw = (patch.raisonSociale ?? existing.raisonSociale ?? "").trim();
+  const nextRaisonSociale =
+    nextCategorie === "ENTREPRISE" ? nextRaisonSocialeRaw : nextNomComplet;
 
   if (nextCategorie === "ENTREPRISE" && nextRaisonSociale.length < 2) {
     return badRequest("La raison sociale est obligatoire pour une entreprise.", "CLIENT_RAISON_SOCIALE_REQUISE");
@@ -142,7 +149,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
   if (patch.categorie !== undefined) patch.categorie = nextCategorie;
   if (patch.nomComplet !== undefined) patch.nomComplet = nextNomComplet;
-  if (patch.raisonSociale !== undefined) patch.raisonSociale = nextRaisonSociale;
+  if (nextCategorie === "PARTICULIER") {
+    // Particulier : pas d’enseigne séparée — la raison sociale suit le nom complet.
+    patch.raisonSociale = nextNomComplet;
+  } else if (patch.raisonSociale !== undefined) {
+    patch.raisonSociale = nextRaisonSociale;
+  }
 
   try {
     const updated = await updateClient(id, patch, auth.user);

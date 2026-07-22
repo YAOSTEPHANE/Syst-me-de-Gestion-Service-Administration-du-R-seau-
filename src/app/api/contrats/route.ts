@@ -48,6 +48,7 @@ import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants"
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { buildWorkflowVisibilityMongoFilter } from "@/lib/auth/workflow-visibility";
 
 const checklistItemSchema = z.object({
   itemId: z.string().min(1),
@@ -340,13 +341,25 @@ export async function GET(request: NextRequest) {
       };
     }),
   );
-  const dossierFilter: Record<string, unknown> = {
-    deletedAt: null,
-    type: "CONTRAT_ACTUALISATION",
-  };
-  if (mongoAgenceFilter) dossierFilter.agenceId = mongoAgenceFilter;
-  if (parsed.data.concessionnaireId) dossierFilter.concessionnaireId = parsed.data.concessionnaireId;
-  if (parsed.data.produitCode) dossierFilter["payload.produitCode"] = parsed.data.produitCode.trim().toUpperCase();
+  const dossierVisibility = buildWorkflowVisibilityMongoFilter({
+    workflow: "DOSSIERS",
+    role: auth.user.role,
+    userId: auth.user._id ?? "",
+  });
+  const dossierFilterConditions: Record<string, unknown>[] = [
+    { deletedAt: null },
+    { type: "CONTRAT_ACTUALISATION" },
+    dossierVisibility ?? { _id: { $in: [] } },
+  ];
+  if (mongoAgenceFilter) dossierFilterConditions.push({ agenceId: mongoAgenceFilter });
+  if (parsed.data.concessionnaireId) {
+    dossierFilterConditions.push({ concessionnaireId: parsed.data.concessionnaireId });
+  }
+  if (parsed.data.produitCode) {
+    dossierFilterConditions.push({
+      "payload.produitCode": parsed.data.produitCode.trim().toUpperCase(),
+    });
+  }
 
   const range: Record<string, Date> = {};
   if (parsed.data.monthCurrent) {
@@ -360,8 +373,10 @@ export async function GET(request: NextRequest) {
     if (parsed.data.dateTo) range.$lte = new Date(parsed.data.dateTo);
   }
   if (Object.keys(range).length > 0) {
-    dossierFilter["payload.dateOperation"] = range;
+    dossierFilterConditions.push({ "payload.dateOperation": range });
   }
+
+  const dossierFilter: Record<string, unknown> = { $and: dossierFilterConditions };
 
   const dossiersRows = await db
     .collection<{
@@ -388,18 +403,20 @@ export async function GET(request: NextRequest) {
     final: dossiersRows.filter((d) => d.status === "VALIDE_N2").length,
   };
 
-  /** File « à finaliser » (signature) : hors filtre mois — périmètre agence respecté. */
-  const toSignFilter: Record<string, unknown> = {
-    deletedAt: null,
-    type: "CONTRAT_ACTUALISATION",
-    status: "VALIDE_N2",
-  };
+  /** File « à finaliser » (signature) : hors filtre mois — périmètre agence + visibilité. */
+  const toSignFilterConditions: Record<string, unknown>[] = [
+    { deletedAt: null },
+    { type: "CONTRAT_ACTUALISATION" },
+    { status: "VALIDE_N2" },
+    dossierVisibility ?? { _id: { $in: [] } },
+  ];
   if (mongoAgenceFilter) {
-    toSignFilter.agenceId = mongoAgenceFilter;
+    toSignFilterConditions.push({ agenceId: mongoAgenceFilter });
   }
   if (parsed.data.concessionnaireId?.trim()) {
-    toSignFilter.concessionnaireId = parsed.data.concessionnaireId.trim();
+    toSignFilterConditions.push({ concessionnaireId: parsed.data.concessionnaireId.trim() });
   }
+  const toSignFilter: Record<string, unknown> = { $and: toSignFilterConditions };
   const toSignDocs = await db
     .collection<{
       _id: ObjectId;

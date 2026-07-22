@@ -53,12 +53,30 @@ const createSchema = z.object({
     z.union([z.string().min(2).max(300), z.null()]).optional(),
   ),
   cniNumero: z.string().trim().min(4).max(64),
+  codeMachine: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   nomContact: z.preprocess(emptyStringToNull, z.union([z.string().min(2).max(200), z.null()]).optional()),
   email: z.preprocess(emptyStringToNull, z.union([z.string().email(), z.null()]).optional()),
   telephone: z.preprocess(emptyStringToNull, z.union([z.string().min(6).max(32), z.null()]).optional()),
   adresse: z.preprocess(emptyStringToNull, z.union([z.string().max(500), z.null()]).optional()),
   ville: z.preprocess(emptyStringToNull, z.union([z.string().max(120), z.null()]).optional()),
   codePostal: z.preprocess(emptyStringToNull, z.union([z.string().max(12), z.null()]).optional()),
+  typeConcession: z.preprocess(
+    emptyStringToNull,
+    z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
+  ),
+  nombreTpm: z.preprocess(
+    (v) => {
+      if (v === undefined || v === null || v === "") return null;
+      const n = typeof v === "number" ? v : Number(v);
+      return Number.isFinite(n) ? n : null;
+    },
+    z.union([z.number().int().min(0).max(9999), z.null()]).optional(),
+  ),
+  numeroDistributeur: z.preprocess(
+    emptyStringToNull,
+    z.union([z.string().min(1).max(64), z.null()]).optional(),
+  ),
+  numeroTpm: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   agenceId: z.preprocess(emptyStringToNull, z.union([z.string().min(1), z.null()]).optional()),
   produitsAutorises: z.array(z.string().min(1)).optional().default([]),
   documentChecklist: documentChecklistPatchSchema.optional(),
@@ -71,6 +89,7 @@ const listQuerySchema = z.object({
   q: z.string().optional(),
   statut: z.enum(CLIENT_STATUTS).optional(),
   categorie: z.enum(CLIENT_CATEGORIES).optional(),
+  produitCode: z.string().trim().min(1).max(32).optional(),
   eligibleForCaution: z.enum(["true", "false"]).optional(),
   eligibleForContrat: z.enum(["true", "false"]).optional(),
   eligibleForPromotion: z.enum(["true", "false"]).optional(),
@@ -110,6 +129,7 @@ export async function GET(request: NextRequest) {
     q: parsed.data.q,
     statut: parsed.data.statut,
     categorie: parsed.data.categorie,
+    produitCode: parsed.data.produitCode?.toUpperCase(),
     eligibleForCaution: parsed.data.eligibleForCaution === "true",
     eligibleForContrat: parsed.data.eligibleForContrat === "true",
     eligibleForPromotion: parsed.data.eligibleForPromotion === "true",
@@ -192,9 +212,7 @@ export async function POST(request: NextRequest) {
   const raisonSociale =
     categorie === "ENTREPRISE"
       ? raisonSocialeRaw
-      : raisonSocialeRaw.length >= 2
-        ? raisonSocialeRaw
-        : nomCompletRaw;
+      : nomCompletRaw;
   const nomComplet =
     categorie === "ENTREPRISE"
       ? nomCompletRaw.length >= 2
@@ -210,6 +228,7 @@ export async function POST(request: NextRequest) {
         categorie,
         nomComplet,
         raisonSociale,
+        codeMachine: parsed.data.codeMachine ?? null,
         cniNumero: parsed.data.cniNumero.trim(),
         nomContact: parsed.data.nomContact ?? null,
         email: parsed.data.email ?? null,
@@ -217,6 +236,10 @@ export async function POST(request: NextRequest) {
         adresse: parsed.data.adresse ?? null,
         ville: parsed.data.ville ?? null,
         codePostal: parsed.data.codePostal ?? null,
+        typeConcession: parsed.data.typeConcession ?? null,
+        nombreTpm: parsed.data.nombreTpm ?? null,
+        numeroDistributeur: parsed.data.numeroDistributeur ?? null,
+        numeroTpm: parsed.data.numeroTpm ?? null,
         agenceId,
         produitsAutorises,
         documentChecklist: parsed.data.documentChecklist,

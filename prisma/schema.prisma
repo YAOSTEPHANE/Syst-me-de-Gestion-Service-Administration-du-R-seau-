@@ -172,6 +172,8 @@ model LonaciClient {
   raisonSociale   String
   /** Nom et prénom(s) du client (identité principale). */
   nomComplet      String?
+  /** Code machine / terminal métier (saisie libre). */
+  codeMachine     String?
   cniNumero       String?
   nomContact      String?
   email           String?
@@ -179,6 +181,14 @@ model LonaciClient {
   adresse         String?
   ville           String?
   codePostal      String?
+  /** Type de concession : NOUVEAU | ANCIEN. */
+  typeConcession  String?
+  /** Nombre de TPM. */
+  nombreTpm       Int?
+  /** N° Distributeur. */
+  numeroDistributeur String?
+  /** N° TPM. */
+  numeroTpm       String?
   agenceId        String?
   produitsAutorises String[]
   statut          String

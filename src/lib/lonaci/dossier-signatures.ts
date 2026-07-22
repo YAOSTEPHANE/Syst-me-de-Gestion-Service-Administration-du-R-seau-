@@ -2,8 +2,9 @@ import { createHash, randomBytes } from "node:crypto";
 import { ObjectId } from "mongodb";
 
 import { env } from "@/lib/env";
-import { findDossierById } from "@/lib/lonaci/dossiers";
 import { appendAuditLog } from "@/lib/lonaci/audit";
+import { promoteSignedDossierClient } from "@/lib/lonaci/client-to-concessionnaire";
+import { findDossierById } from "@/lib/lonaci/dossiers";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "dossier_signatures";
@@ -21,6 +22,8 @@ type DossierSignatureRecord = {
   signerName: string | null;
   signerIp: string | null;
   signerUserAgent: string | null;
+  concessionnaireId?: string | null;
+  concessionnaireCreated?: boolean;
 };
 
 function hashToken(rawToken: string): string {
@@ -135,9 +138,24 @@ export async function signDossierByToken(input: {
     throw new Error("DOSSIER_NOT_FOUND");
   }
 
+  let concessionnaireId: string | null = null;
+  let concessionnaireCreated = false;
+  if (dossier.lonaciClientId) {
+    const promotion = await promoteSignedDossierClient({
+      sourceLonaciClientId: dossier.lonaciClientId,
+      dossierAgenceId: dossier.agenceId,
+      actorUserId: record.createdByUserId,
+    });
+    concessionnaireId = promotion.concessionnaire._id ?? null;
+    if (!concessionnaireId) {
+      throw new Error("CONCESSIONNAIRE_CREATE_FAILED");
+    }
+    concessionnaireCreated = promotion.created;
+  }
+
   const now = new Date();
   const db = await getDatabase();
-  await db.collection<DossierSignatureRecord>(COLLECTION).updateOne(
+  const updateResult = await db.collection<DossierSignatureRecord>(COLLECTION).updateOne(
     { _id: record._id, status: "PENDING" },
     {
       $set: {
@@ -146,9 +164,30 @@ export async function signDossierByToken(input: {
         signerName: input.signerName,
         signerIp: input.signerIp,
         signerUserAgent: input.signerUserAgent,
+        concessionnaireId,
+        concessionnaireCreated,
       },
     },
   );
+  if (updateResult.modifiedCount === 0) {
+    const current = await db
+      .collection<DossierSignatureRecord>(COLLECTION)
+      .findOne({ _id: record._id });
+    if (current?.status === "SIGNED") {
+      return {
+        dossierId: record.dossierId,
+        reference: dossier.reference,
+        signedAt: current.signedAt ?? now,
+        signerName: current.signerName ?? input.signerName,
+        concessionnaireId: current.concessionnaireId ?? concessionnaireId,
+        concessionnaireCreated:
+          current.concessionnaireCreated ?? concessionnaireCreated,
+      };
+    }
+    throw new Error(
+      current?.status === "EXPIRED" ? "SIGN_TOKEN_EXPIRED" : "SIGN_ALREADY_DONE",
+    );
+  }
 
   await appendAuditLog({
     entityType: "DOSSIER",
@@ -159,6 +198,8 @@ export async function signDossierByToken(input: {
       signerName: input.signerName,
       signedAt: now.toISOString(),
       signerIp: input.signerIp,
+      concessionnaireId,
+      concessionnaireCreated,
     },
   });
 
@@ -167,5 +208,7 @@ export async function signDossierByToken(input: {
     reference: dossier.reference,
     signedAt: now,
     signerName: input.signerName,
+    concessionnaireId,
+    concessionnaireCreated,
   };
 }

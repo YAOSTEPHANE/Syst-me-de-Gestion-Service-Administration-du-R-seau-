@@ -1,16 +1,41 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
 import { isClientStatutEligibleForPromotionConcessionnaire } from "@/lib/lonaci/client-constants";
 import {
   findLonaciClientById,
   parseClientDocumentChecklist,
 } from "@/lib/lonaci/clients";
-import { createConcessionnaire } from "@/lib/lonaci/concessionnaires";
+import { appendAuditLog } from "@/lib/lonaci/audit";
+import {
+  createConcessionnaire,
+  findConcessionnaireById,
+} from "@/lib/lonaci/concessionnaires";
 import { buildInscriptionChecklistForProducts } from "@/lib/lonaci/concessionnaire-inscription";
 import type { BancarisationStatut } from "@/lib/lonaci/constants";
-import { listProduits } from "@/lib/lonaci/referentials";
+import { getDatabase } from "@/lib/mongodb";
+import { findAgenceById, listProduits } from "@/lib/lonaci/referentials";
+import { findUserById } from "@/lib/lonaci/users";
 import { prisma } from "@/lib/prisma";
-import type { ConcessionnaireDocument, UserDocument } from "@/lib/lonaci/types";
+import type {
+  ConcessionnaireDocument,
+  GpsPoint,
+  UserDocument,
+} from "@/lib/lonaci/types";
+
+const PROMOTION_LOCKS_COLLECTION = "client_concessionnaire_promotion_locks";
+const PROMOTION_LOCK_TTL_MS = 60_000;
+
+type PromotionLockRecord = {
+  _id: string;
+  ownerId: string;
+  expiresAt: Date;
+};
+
+type LonaciClientDocument = NonNullable<
+  Awaited<ReturnType<typeof findLonaciClientById>>
+>;
 
 function isObjectId(id: string): boolean {
   return /^[a-f\d]{24}$/i.test(id);
@@ -24,8 +49,7 @@ export async function findConcessionnaireBySourceClientId(
     where: { sourceLonaciClientId: clientId, deletedAt: null },
   });
   if (!row) return null;
-  const { findConcessionnaireById } = await import("@/lib/lonaci/concessionnaires");
-  return findConcessionnaireById(row.id);
+  return await findConcessionnaireById(row.id);
 }
 
 /** Vérifie qu'un client a terminé son parcours avant promotion PDV. */
@@ -57,13 +81,82 @@ function splitNomComplet(nomComplet: string | null | undefined): { nom: string; 
   return { nom: parts[parts.length - 1]!, prenom: parts.slice(0, -1).join(" ") };
 }
 
+async function createConcessionnaireFromResolvedClient(input: {
+  client: LonaciClientDocument;
+  agenceCode: string;
+  agenceId: string;
+  codeTerminal?: string | null;
+  codeConcessionnaire?: string | null;
+  gps: GpsPoint | null;
+  statutBancarisation?: string;
+  compteBancaire?: string | null;
+  banqueEtablissement?: string | null;
+  observations?: string | null;
+  notesInternes?: string | null;
+  actor: UserDocument;
+}): Promise<ConcessionnaireDocument> {
+  const identity = splitNomComplet(input.client.nomComplet);
+  const nomComplet = (input.client.nomComplet ?? input.client.raisonSociale).trim();
+  const produits = input.client.produitsAutorises ?? [];
+  const produitRefs = await listProduits();
+  const clientChecklist = parseClientDocumentChecklist(input.client.documentChecklist);
+  const checklist = buildInscriptionChecklistForProducts(produits, produitRefs, clientChecklist);
+
+  const created = await createConcessionnaire({
+    nom: identity.nom || nomComplet,
+    prenom: identity.prenom || nomComplet,
+    nomComplet,
+    codeTerminal: input.codeTerminal ?? null,
+    codeConcessionnaire: input.codeConcessionnaire ?? null,
+    cniNumero: input.client.cniNumero,
+    photoUrl: null,
+    email: input.client.email,
+    telephonePrincipal: input.client.telephone,
+    telephoneSecondaire: null,
+    adresse: input.client.adresse,
+    ville: input.client.ville,
+    codePostal: input.client.codePostal,
+    agenceId: input.agenceId,
+    agenceCode: input.agenceCode,
+    produitsAutorises: produits,
+    statutBancarisation: (input.statutBancarisation ?? "NON_BANCARISE") as BancarisationStatut,
+    compteBancaire: input.compteBancaire ?? null,
+    banqueEtablissement: input.banqueEtablissement ?? null,
+    gps: input.gps,
+    observations: input.observations ?? input.client.notes,
+    notesInternes: input.notesInternes ?? null,
+    createdByUserId: input.actor._id ?? "",
+    sourceLonaciClientId: input.client.id,
+    initialDocumentChecklist: checklist,
+  });
+
+  await prisma.lonaciClient.update({
+    where: { id: input.client.id },
+    data: {
+      statut: "INACTIF",
+      updatedByUserId: input.actor._id ?? "",
+      updatedAt: new Date(),
+    },
+  });
+
+  await appendAuditLog({
+    entityType: "CLIENT",
+    entityId: input.client.id,
+    action: "CLIENT_PROMOTED_TO_CONCESSIONNAIRE",
+    userId: input.actor._id ?? "",
+    details: { concessionnaireId: created._id, code: input.client.code },
+  });
+
+  return created;
+}
+
 export async function createConcessionnaireFromClient(input: {
   sourceLonaciClientId: string;
   agenceCode: string;
   agenceId: string;
   codeTerminal?: string | null;
   codeConcessionnaire?: string | null;
-  gps: { lat: number; lng: number };
+  gps: GpsPoint;
   statutBancarisation?: string;
   compteBancaire?: string | null;
   banqueEtablissement?: string | null;
@@ -75,58 +168,113 @@ export async function createConcessionnaireFromClient(input: {
   const client = await findLonaciClientById(input.sourceLonaciClientId);
   if (!client) throw new Error("CLIENT_NOT_FOUND");
 
-  const identity = splitNomComplet(client.nomComplet);
-  const nomComplet = (client.nomComplet ?? client.raisonSociale).trim();
-  const produits = client.produitsAutorises ?? [];
-  const produitRefs = await listProduits();
-  const clientChecklist = parseClientDocumentChecklist(client.documentChecklist);
-  const checklist = buildInscriptionChecklistForProducts(produits, produitRefs, clientChecklist);
-
-  const created = await createConcessionnaire({
-    nom: identity.nom || nomComplet,
-    prenom: identity.prenom || nomComplet,
-    nomComplet,
-    codeTerminal: input.codeTerminal ?? null,
-    codeConcessionnaire: input.codeConcessionnaire ?? null,
-    cniNumero: client.cniNumero,
-    photoUrl: null,
-    email: client.email,
-    telephonePrincipal: client.telephone,
-    telephoneSecondaire: null,
-    adresse: client.adresse,
-    ville: client.ville,
-    codePostal: client.codePostal,
-    agenceId: input.agenceId,
-    agenceCode: input.agenceCode,
-    produitsAutorises: produits,
-    statutBancarisation: (input.statutBancarisation ?? "NON_BANCARISE") as BancarisationStatut,
-    compteBancaire: input.compteBancaire ?? null,
-    banqueEtablissement: input.banqueEtablissement ?? null,
-    gps: input.gps,
-    observations: input.observations ?? client.notes,
-    notesInternes: input.notesInternes ?? null,
-    createdByUserId: input.actor._id ?? "",
-    sourceLonaciClientId: input.sourceLonaciClientId,
-    initialDocumentChecklist: checklist,
+  return await createConcessionnaireFromResolvedClient({
+    ...input,
+    client,
   });
+}
 
-  await prisma.lonaciClient.update({
-    where: { id: client.id },
-    data: {
-      statut: "INACTIF",
-      updatedByUserId: input.actor._id ?? "",
-      updatedAt: new Date(),
-    },
-  });
+function isDuplicateKeyError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === 11000
+  );
+}
 
-  const { appendAuditLog } = await import("@/lib/lonaci/audit");
-  await appendAuditLog({
-    entityType: "CLIENT",
-    entityId: client.id,
-    action: "CLIENT_PROMOTED_TO_CONCESSIONNAIRE",
-    userId: input.actor._id ?? "",
-    details: { concessionnaireId: created._id, code: client.code },
-  });
+async function acquirePromotionLock(clientId: string): Promise<string> {
+  const ownerId = randomUUID();
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + PROMOTION_LOCK_TTL_MS);
+  const db = await getDatabase();
+  try {
+    await db.collection<PromotionLockRecord>(PROMOTION_LOCKS_COLLECTION).updateOne(
+      {
+        _id: clientId,
+        expiresAt: { $lte: now },
+      },
+      {
+        $set: { ownerId, expiresAt },
+      },
+      { upsert: true },
+    );
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      throw new Error("CLIENT_PROMOTION_IN_PROGRESS");
+    }
+    throw error;
+  }
+  return ownerId;
+}
 
-  return created;
+async function releasePromotionLock(clientId: string, ownerId: string): Promise<void> {
+  const db = await getDatabase();
+  await db
+    .collection<PromotionLockRecord>(PROMOTION_LOCKS_COLLECTION)
+    .deleteOne({ _id: clientId, ownerId });
+}
+
+/**
+ * Promotion déclenchée après signature : idempotente, GPS facultatif et statuts
+ * autorisés limités à DOSSIER_EN_COURS / ACTIF.
+ */
+export async function promoteSignedDossierClient(input: {
+  sourceLonaciClientId: string;
+  dossierAgenceId: string | null;
+  actorUserId: string;
+}): Promise<{ concessionnaire: ConcessionnaireDocument; created: boolean }> {
+  const existing = await findConcessionnaireBySourceClientId(input.sourceLonaciClientId);
+  if (existing) {
+    return { concessionnaire: existing, created: false };
+  }
+
+  const ownerId = await acquirePromotionLock(input.sourceLonaciClientId);
+  try {
+    const existingAfterLock = await findConcessionnaireBySourceClientId(
+      input.sourceLonaciClientId,
+    );
+    if (existingAfterLock) {
+      return { concessionnaire: existingAfterLock, created: false };
+    }
+
+    const client = await findLonaciClientById(input.sourceLonaciClientId);
+    if (!client) {
+      throw new Error("CLIENT_NOT_FOUND");
+    }
+    if (client.statut !== "DOSSIER_EN_COURS" && client.statut !== "ACTIF") {
+      if (client.statut === "EN_ATTENTE_N1" || client.statut === "REJETE") {
+        throw new Error("CLIENT_INSCRIPTION_PENDING");
+      }
+      throw new Error("CLIENT_BLOQUE");
+    }
+
+    const agenceId = input.dossierAgenceId?.trim() || client.agenceId?.trim() || "";
+    if (!agenceId) {
+      throw new Error("AGENCE_REQUIRED");
+    }
+    const agence = await findAgenceById(agenceId);
+    if (!agence || agence.code.trim().length < 2) {
+      throw new Error("AGENCE_INVALID");
+    }
+    if (!agence.actif) {
+      throw new Error("AGENCE_INACTIVE");
+    }
+
+    const actor = await findUserById(input.actorUserId);
+    if (!actor) {
+      throw new Error("SIGN_ACTOR_NOT_FOUND");
+    }
+
+    const concessionnaire = await createConcessionnaireFromResolvedClient({
+      client,
+      agenceId,
+      agenceCode: agence.code.trim().toUpperCase(),
+      gps: null,
+      actor,
+    });
+    return { concessionnaire, created: true };
+  } finally {
+    await releasePromotionLock(input.sourceLonaciClientId, ownerId);
+  }
 }

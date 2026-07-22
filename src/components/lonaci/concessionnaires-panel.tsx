@@ -618,7 +618,7 @@ export default function ConcessionnairesPanel() {
       const ct = codeTerminal.trim();
       const cc = codeConcessionnaire.trim();
       if (ct.length > 64 || cc.length > 64) {
-        throw new Error("Code terminal et code concessionnaire : 64 caractères maximum.");
+        throw new Error("Code machine et code concessionnaire : 64 caractères maximum.");
       }
 
       const body: Record<string, unknown> = {
@@ -1272,7 +1272,7 @@ export default function ConcessionnairesPanel() {
                         <input readOnly value={cniNumero} className={`${inputClass} bg-slate-50`} />
                       </label>
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Code terminal</span>
+                        <span className="text-xs font-medium text-slate-700">Code machine</span>
                         <input
                           value={codeTerminal}
                           onChange={(e) => setCodeTerminal(e.target.value)}
@@ -1568,19 +1568,23 @@ export default function ConcessionnairesPanel() {
           <div className="hidden max-h-[min(70vh,36rem)] overflow-y-auto overflow-x-auto overscroll-y-contain md:block">
               <table className="w-full min-w-[980px] table-fixed border-collapse text-left text-xs">
                 <colgroup>
-                  <col style={{ width: "13%" }} />
-                  <col style={{ width: "19%" }} />
                   <col style={{ width: "11%" }} />
-                  <col style={{ width: "17%" }} />
+                  <col style={{ width: "11%" }} />
+                  <col style={{ width: "16%" }} />
+                  <col style={{ width: "10%" }} />
+                  <col style={{ width: "15%" }} />
                   <col style={{ width: "7%" }} />
-                  <col style={{ width: "13%" }} />
                   <col style={{ width: "12%" }} />
+                  <col style={{ width: "10%" }} />
                   <col style={{ width: "8%" }} />
                 </colgroup>
                 <thead className="sticky top-0 z-10 border-b border-slate-200 bg-slate-50 text-slate-600 shadow-[0_1px_0_0_rgb(226_232_240)]">
                   <tr>
                     <th className="px-2 py-2 font-medium" scope="col">
                       Code PDV
+                    </th>
+                    <th className="px-2 py-2 font-medium" scope="col">
+                      Code machine
                     </th>
                     <th className="px-2 py-2 font-medium" scope="col">
                       Nom
@@ -1624,6 +1628,11 @@ export default function ConcessionnairesPanel() {
                       <td className="px-2 py-1.5 font-mono text-[11px] leading-tight text-slate-600 whitespace-nowrap">
                         <span className="block truncate" title={row.codePdv ?? undefined}>
                           {row.codePdv ?? "—"}
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 font-mono text-[11px] leading-tight text-slate-600 whitespace-nowrap">
+                        <span className="block truncate" title={row.codeTerminal ?? undefined}>
+                          {row.codeTerminal?.trim() || "—"}
                         </span>
                       </td>
                       <td className="max-w-0 px-2 py-1.5 font-medium leading-tight text-slate-900">
@@ -1730,7 +1739,7 @@ export default function ConcessionnairesPanel() {
                   })}
                   {!items.length ? (
                     <tr>
-                      <td colSpan={8} className="px-3 py-4 text-center text-slate-500">
+                      <td colSpan={9} className="px-3 py-4 text-center text-slate-500">
                         Aucun concessionnaire.
                       </td>
                     </tr>
@@ -1757,6 +1766,7 @@ export default function ConcessionnairesPanel() {
                         </StatusBadge>
                       </div>
                       <dl className="mt-4 grid gap-3 text-sm">
+                        <div><dt className="font-semibold text-slate-500">Code machine</dt><dd className="mt-1 font-mono text-xs">{row.codeTerminal?.trim() || "—"}</dd></div>
                         <div><dt className="font-semibold text-slate-500">Agence</dt><dd className="mt-1">{agence ? `${agence.code} — ${agence.libelle}` : "—"}</dd></div>
                         <div><dt className="font-semibold text-slate-500">Produits</dt><dd className="mt-1 flex flex-wrap gap-1">{row.produitsAutorises?.length ? row.produitsAutorises.map((code) => <Badge key={code}>{code}</Badge>) : "—"}</dd></div>
                         <div><dt className="font-semibold text-slate-500">Bancarisation</dt><dd className="mt-1">{BANCARISATION_STATUT_LABELS[sb] ?? row.statutBancarisation}</dd></div>
