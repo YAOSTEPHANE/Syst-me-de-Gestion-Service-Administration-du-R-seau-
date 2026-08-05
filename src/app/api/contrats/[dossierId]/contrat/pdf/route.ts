@@ -81,7 +81,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
   }
 
-  const view = await buildContratDocumentView(dossierId, undefined, genere.produitCode);
+  const view = await buildContratDocumentView(dossierId, undefined, genere.produitCode, auth.user);
   if (!view) {
     return NextResponse.json({ message: "Vue contrat indisponible." }, { status: 500 });
   }

@@ -5,8 +5,10 @@ import {
 } from "@/lib/lonaci/access";
 import {
   clientCodeSuffix,
+  isClientCategorieEntreprise,
   normalizeClientCategorie,
   normalizeClientTypeDistributeur,
+  parseClientCategorie,
   remapClientCodeToAgence,
   type ClientCategorie,
 } from "@/lib/lonaci/client-constants";
@@ -101,9 +103,12 @@ export function normalizeClientImportRow(
 
   const categorieRaw = mapped.categorie;
   if (categorieRaw) {
-    const upper = categorieRaw.toUpperCase();
-    if (upper !== "PARTICULIER" && upper !== "ENTREPRISE") {
-      return { ok: false, error: "categorie invalide (PARTICULIER|ENTREPRISE)" };
+    const parsed = parseClientCategorie(categorieRaw);
+    if (!parsed) {
+      return {
+        ok: false,
+        error: "categorie invalide (PARTICULIER|ENTREPRISE|CANAL_ALTERNATIF)",
+      };
     }
   }
   const categorie: ClientCategorie = categorieRaw
@@ -113,9 +118,12 @@ export function normalizeClientImportRow(
   const nomComplet = resolveImportNomComplet(mapped, row);
   const raisonSocialeRaw = mapped.raisonSociale.trim();
 
-  if (categorie === "ENTREPRISE") {
+  if (isClientCategorieEntreprise(categorie)) {
     if (raisonSocialeRaw.length < 2) {
-      return { ok: false, error: "raisonSociale obligatoire pour ENTREPRISE" };
+      return {
+        ok: false,
+        error: "raisonSociale obligatoire pour ENTREPRISE / CANAL_ALTERNATIF",
+      };
     }
   } else if (nomComplet.length < 2) {
     const headers = listImportRowHeaders(row);
@@ -130,20 +138,18 @@ export function normalizeClientImportRow(
   /** Peut être vide si l’import force une agence via options.agenceId. */
   const agenceRaw = mapped.agence;
 
-  const resolvedNomComplet =
-    categorie === "ENTREPRISE"
-      ? mapped.nomComplet.trim().length >= 2
-        ? mapped.nomComplet.trim()
-        : nomComplet.length >= 2
-          ? nomComplet
-          : raisonSocialeRaw
-      : nomComplet;
-  const resolvedRaisonSociale =
-    categorie === "ENTREPRISE"
+  const resolvedNomComplet = isClientCategorieEntreprise(categorie)
+    ? mapped.nomComplet.trim().length >= 2
+      ? mapped.nomComplet.trim()
+      : nomComplet.length >= 2
+        ? nomComplet
+        : raisonSocialeRaw
+    : nomComplet;
+  const resolvedRaisonSociale = isClientCategorieEntreprise(categorie)
+    ? raisonSocialeRaw
+    : raisonSocialeRaw.length >= 2
       ? raisonSocialeRaw
-      : raisonSocialeRaw.length >= 2
-        ? raisonSocialeRaw
-        : nomComplet;
+      : nomComplet;
 
   return {
     ok: true,

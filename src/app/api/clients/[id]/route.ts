@@ -4,7 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { badRequest } from "@/lib/api/error-responses";
 import { canMutateClientCore, canReadClientDirectory } from "@/lib/lonaci/access";
-import { CLIENT_STATUTS, CLIENT_CATEGORIES, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
+import { CLIENT_STATUTS, CLIENT_CATEGORIES, isClientCategorieEntreprise, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import {
   findClientById,
   sanitizeClientPublic,
@@ -138,18 +138,18 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
   const nextNomComplet = (patch.nomComplet ?? existing.nomComplet ?? "").trim();
   const nextRaisonSocialeRaw = (patch.raisonSociale ?? existing.raisonSociale ?? "").trim();
   const nextRaisonSociale =
-    nextCategorie === "ENTREPRISE" ? nextRaisonSocialeRaw : nextNomComplet;
+    isClientCategorieEntreprise(nextCategorie) ? nextRaisonSocialeRaw : nextNomComplet;
 
-  if (nextCategorie === "ENTREPRISE" && nextRaisonSociale.length < 2) {
-    return badRequest("La raison sociale est obligatoire pour une entreprise.", "CLIENT_RAISON_SOCIALE_REQUISE");
+  if (isClientCategorieEntreprise(nextCategorie) && nextRaisonSociale.length < 2) {
+    return badRequest("La raison sociale est obligatoire pour cette catégorie.", "CLIENT_RAISON_SOCIALE_REQUISE");
   }
-  if (nextCategorie === "PARTICULIER" && nextNomComplet.length < 2) {
+  if (!isClientCategorieEntreprise(nextCategorie) && nextNomComplet.length < 2) {
     return badRequest("Le nom complet est obligatoire pour un particulier.", "CLIENT_NOM_COMPLET_REQUIS");
   }
 
   if (patch.categorie !== undefined) patch.categorie = nextCategorie;
   if (patch.nomComplet !== undefined) patch.nomComplet = nextNomComplet;
-  if (nextCategorie === "PARTICULIER") {
+  if (!isClientCategorieEntreprise(nextCategorie)) {
     // Particulier : pas d’enseigne séparée — la raison sociale suit le nom complet.
     patch.raisonSociale = nextNomComplet;
   } else if (patch.raisonSociale !== undefined) {

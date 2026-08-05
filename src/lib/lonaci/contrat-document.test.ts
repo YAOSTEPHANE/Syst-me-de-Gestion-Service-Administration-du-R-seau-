@@ -77,6 +77,7 @@ function createContratView(): ContratDocumentView {
     signedAt: new Date("2026-07-21T08:30:00.000Z"),
     signerName: "Chef de Service",
     finalized: true,
+    agentNom: "Agent Test LONACI",
   };
 }
 
@@ -189,6 +190,10 @@ describe("rendus PDF contrat et annexe", () => {
     expect(text).toContain("DIST-100");
     expect(text).toContain("N° TPM");
     expect(text).toContain("TPM-200");
+    expect(text).toContain("DOCUMENT OFFICIEL — CONTRAT");
+    expect(text).toContain("Générée par");
+    expect(text).toContain("Agent Test LONACI");
+    expect(text).not.toContain("MODULE CONTRATS");
     for (const [index, page] of parsed.pages.entries()) {
       expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
     }
@@ -212,6 +217,8 @@ describe("rendus PDF contrat et annexe", () => {
     expect(text).toContain("ANNEXE-LOTO-2026-07-0001");
     expect(text).toContain("CONTRAT-LOTO-2026-07-0001");
     expect(text).toContain("Cette annexe accompagne le contrat");
+    expect(text).toContain("Générée par");
+    expect(text).toContain("Agent Test LONACI");
     for (const [index, page] of parsed.pages.entries()) {
       expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
     }

@@ -75,6 +75,7 @@ export interface CautionFicheDefinitiveDto {
   paymentReference: string;
   modeReglement: CautionEncaissementMode;
   montant: number;
+  agentNom?: string;
   emailSent?: boolean;
   emailSkippedReason?: string;
   destinataireEmail?: string | null;
@@ -293,6 +294,7 @@ export async function createCaution(input: {
       paidAt: null,
       immutableAfterFinal: false,
       createdByUserId: input.actor._id ?? "",
+      createdByDisplayName: actionBy,
       updatedByUserId: input.actor._id ?? "",
       createdAt: now,
       updatedAt: now,
@@ -321,6 +323,7 @@ export async function createCaution(input: {
       paidAt: null,
       immutableAfterFinal: false,
       createdByUserId: input.actor._id ?? "",
+      createdByDisplayName: actionBy,
       updatedByUserId: input.actor._id ?? "",
       createdAt: now,
       updatedAt: now,
@@ -369,6 +372,7 @@ export async function createCaution(input: {
       paidAt: null,
       immutableAfterFinal: false,
       createdByUserId: input.actor._id ?? "",
+      createdByDisplayName: actionBy,
       updatedByUserId: input.actor._id ?? "",
       createdAt: now,
       updatedAt: now,
@@ -447,6 +451,7 @@ export async function regulariserCautionPaiement(input: {
   const numeroFicheDefinitive =
     caution.numeroFicheDefinitive?.trim() || (await nextNumeroFicheDefinitive());
   const ficheDefinitiveEmiseLe = caution.ficheDefinitiveEmiseLe ?? now;
+  const actionBy = userDisplayName(input.actor);
   const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
     { _id: new ObjectId(input.cautionId) },
     {
@@ -457,13 +462,13 @@ export async function regulariserCautionPaiement(input: {
         dueDate: due,
         numeroFicheDefinitive,
         ficheDefinitiveEmiseLe,
+        ficheDefinitiveGeneratedByName: actionBy,
         updatedAt: now,
         updatedByUserId: input.actor._id ?? "",
       },
     },
   );
   if (result.matchedCount === 0) throw new Error("CAUTION_WRONG_STATUS");
-  const actionBy = userDisplayName(input.actor);
   const auditEnt = cautionAuditEntity({
     contratId: caution.contratId,
     lonaciClientId: caution.lonaciClientId ?? null,
@@ -503,6 +508,7 @@ export async function regulariserCautionPaiement(input: {
     paymentReference: ref,
     modeReglement: input.modeReglement,
     montant: caution.montant,
+    agentNom: actionBy,
     emailSent: emailResult?.emailSent,
     emailSkippedReason: emailResult?.emailSkippedReason,
     destinataireEmail: emailResult?.destinataireEmail ?? null,
@@ -599,6 +605,7 @@ export async function finalizeCaution(
       ficheDefinitiveEmiseLe = now;
     }
   }
+  const actionBy = userDisplayName(actor);
   const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
     { _id: new ObjectId(cautionId), status: "VALIDE_N2", immutableAfterFinal: false },
     {
@@ -608,7 +615,13 @@ export async function finalizeCaution(
         immutableAfterFinal: true,
         ...(paid && paymentReferenceForPayee ? { paymentReference: paymentReferenceForPayee } : {}),
         ...(paid && numeroFicheDefinitive
-          ? { numeroFicheDefinitive, ficheDefinitiveEmiseLe: ficheDefinitiveEmiseLe ?? now }
+          ? {
+              numeroFicheDefinitive,
+              ficheDefinitiveEmiseLe: ficheDefinitiveEmiseLe ?? now,
+              ...(hadFicheDefinitive
+                ? {}
+                : { ficheDefinitiveGeneratedByName: actionBy }),
+            }
           : {}),
         updatedAt: now,
         updatedByUserId: actor._id ?? "",
@@ -632,7 +645,6 @@ export async function finalizeCaution(
       ...(paid && paymentReferenceForPayee ? { paymentReference: paymentReferenceForPayee } : {}),
     },
   });
-  const actionBy = userDisplayName(actor);
   const dossier = caution.contratId?.trim()
     ? `contrat ${caution.contratId}`
     : caution.lonaciClientId?.trim()
@@ -673,6 +685,7 @@ export async function finalizeCaution(
     paymentReference: caution.paymentReference,
     modeReglement: caution.modeReglement as CautionEncaissementMode,
     montant: caution.montant,
+    agentNom: caution.ficheDefinitiveGeneratedByName?.trim() || actionBy,
     emailSent: emailResult?.emailSent,
     emailSkippedReason: emailResult?.emailSkippedReason,
     destinataireEmail: emailResult?.destinataireEmail ?? null,

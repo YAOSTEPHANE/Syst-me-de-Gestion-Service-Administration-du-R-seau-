@@ -15,9 +15,11 @@ import {
   sumCautionProduitLignes,
 } from "@/lib/lonaci/caution-fiche-provisoire";
 import type { CautionDocument, ConcessionnaireDocument } from "@/lib/lonaci/types";
+import { userDisplayName } from "@/lib/lonaci/types";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { ensureSprint4Indexes } from "@/lib/lonaci/sprint4";
+import { findUserById } from "@/lib/lonaci/users";
 import { getDatabase } from "@/lib/mongodb";
 
 const CAUTIONS_COLLECTION = "cautions";
@@ -110,6 +112,8 @@ export async function ensureInscriptionCautionProvisoireOnCreate(input: {
   due.setDate(due.getDate() + settings.alertCautionMaxDays);
 
   const now = new Date();
+  const actor = await findUserById(input.actorUserId);
+  const createdByDisplayName = actor ? userDisplayName(actor) : null;
   const doc: InsertCaution = {
     concessionnaireId: pdvId,
     produitCode: primaryCode,
@@ -124,6 +128,7 @@ export async function ensureInscriptionCautionProvisoireOnCreate(input: {
     paidAt: null,
     immutableAfterFinal: false,
     createdByUserId: input.actorUserId,
+    createdByDisplayName,
     updatedByUserId: input.actorUserId,
     createdAt: now,
     updatedAt: now,

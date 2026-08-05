@@ -55,7 +55,11 @@ export async function readWorkbookFromArrayBuffer(buffer: ArrayBuffer): Promise<
 
 export async function sheetToJsonFirstSheet<T extends Record<string, unknown>>(
   wb: WorkBook,
-  options?: { defval?: string | number | boolean | null },
+  options?: {
+    defval?: string | number | boolean | null;
+    /** false = valeurs affichées (téléphones/dates lisibles). Défaut true. */
+    raw?: boolean;
+  },
 ): Promise<T[]> {
   const XLSX = await import("xlsx");
   const name = wb.SheetNames[0];
@@ -67,5 +71,6 @@ export async function sheetToJsonFirstSheet<T extends Record<string, unknown>>(
     throw new Error(`Trop de lignes dans la feuille (maximum ${SPREADSHEET_IMPORT_MAX_ROWS}).`);
   }
   const defval = options?.defval ?? null;
-  return XLSX.utils.sheet_to_json<T>(sheet, { defval });
+  const raw = options?.raw ?? true;
+  return XLSX.utils.sheet_to_json<T>(sheet, { defval, raw });
 }

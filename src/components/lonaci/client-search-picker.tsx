@@ -28,7 +28,12 @@ export function formatClientPickerLabel(c: ClientPickerRow): string {
   });
   const code = (c.code || "").trim();
   const categorie = normalizeClientCategorie(c.categorie);
-  const typeTag = categorie === "ENTREPRISE" ? " [Entreprise]" : "";
+  const typeTag =
+    categorie === "ENTREPRISE"
+      ? " [Entreprise]"
+      : categorie === "CANAL_ALTERNATIF"
+        ? " [Canal alternatif]"
+        : "";
   if (code && name) return `${code} — ${name}${typeTag}`;
   return `${name || code || c.id}${typeTag}`;
 }

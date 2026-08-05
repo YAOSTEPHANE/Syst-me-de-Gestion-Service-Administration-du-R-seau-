@@ -12,11 +12,20 @@ import {
 } from "@/lib/lonaci/constants";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { cautionFicheAgrementTitle } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import type { CautionDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { renderPremiumCautionFicheDefinitivePdf } from "@/lib/pdf/caution-fiche-definitive";
+
+function splitNomPrenoms(full: string): { nom: string; prenoms: string } {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { nom: "—", prenoms: "—" };
+  if (parts.length === 1) return { nom: parts[0]!, prenoms: "—" };
+  return { nom: parts[parts.length - 1]!, prenoms: parts.slice(0, -1).join(" ") };
+}
 
 export {
   CAUTION_FICHE_DEFINITIVE_TITLE,
@@ -42,14 +51,22 @@ export interface CautionFicheDefinitiveView {
   modeLibelle: string;
   identiteLabel: string;
   identiteDetail: string;
+  nom: string;
+  prenoms: string;
   clientCode: string | null;
   lonaciClientId: string | null;
   contratId: string | null;
+  codeConcessionnaire: string | null;
+  numeroTerminal: string | null;
+  telephone: string | null;
+  situationGeographique: string | null;
   produitCode: string;
   produitLibelle: string | null;
+  titreDocument: string;
   agenceLabel: string;
   numeroFicheProvisoire: string | null;
   destinataireEmail: string | null;
+  agentNom: string;
 }
 
 export interface CautionFicheEmailResult {
@@ -146,9 +163,15 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
 
   let identiteLabel = "Porteur / client";
   let identiteDetail = "—";
+  let nom = "—";
+  let prenoms = "—";
   let clientCode: string | null = null;
   let lonaciClientId: string | null = null;
   let contratId: string | null = null;
+  let codeConcessionnaire: string | null = null;
+  let numeroTerminal: string | null = null;
+  let telephone: string | null = null;
+  let situationGeographique: string | null = null;
   let agenceIdForLabel: string | null = null;
 
   const pdvLinkId = caution.concessionnaireId?.trim();
@@ -156,6 +179,17 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
     const conc = await findConcessionnaireById(pdvLinkId);
     identiteLabel = "Concessionnaire";
     identiteDetail = conc?.raisonSociale ?? conc?.nomComplet ?? "—";
+    nom = conc?.nom?.trim() || splitNomPrenoms(identiteDetail).nom;
+    prenoms = conc?.prenom?.trim() || splitNomPrenoms(identiteDetail).prenoms;
+    codeConcessionnaire = conc?.codeConcessionnaire?.trim() || null;
+    numeroTerminal = conc?.codeTerminal?.trim() || null;
+    telephone =
+      conc?.telephonePrincipal?.trim() ||
+      conc?.telephone?.trim() ||
+      conc?.telephoneSecondaire?.trim() ||
+      null;
+    situationGeographique =
+      [conc?.adresse?.trim(), conc?.ville?.trim()].filter(Boolean).join(", ") || null;
     agenceIdForLabel = conc?.agenceId ?? null;
   } else {
     const lid = caution.lonaciClientId?.trim();
@@ -163,7 +197,18 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
       lonaciClientId = lid;
       const client = await findLonaciClientById(lid);
       clientCode = client?.code ?? null;
+      codeConcessionnaire = client?.numeroDistributeur?.trim() || null;
       identiteDetail = client?.nomComplet?.trim() || client?.raisonSociale || "—";
+      if (client?.raisonSociale?.trim()) {
+        nom = client.raisonSociale.trim();
+        prenoms = "—";
+      } else {
+        const split = splitNomPrenoms(identiteDetail);
+        nom = split.nom;
+        prenoms = split.prenoms;
+      }
+      telephone = client?.telephone?.trim() || null;
+      situationGeographique = client?.adresse?.trim() || null;
       agenceIdForLabel = client?.agenceId ?? null;
     } else if (caution.contratId?.trim()) {
       contratId = caution.contratId.trim();
@@ -175,6 +220,17 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
         const conc = await findConcessionnaireById(contrat.concessionnaireId);
         identiteLabel = "Concessionnaire";
         identiteDetail = conc?.raisonSociale ?? conc?.nomComplet ?? "—";
+        nom = conc?.nom?.trim() || splitNomPrenoms(identiteDetail).nom;
+        prenoms = conc?.prenom?.trim() || splitNomPrenoms(identiteDetail).prenoms;
+        codeConcessionnaire = conc?.codeConcessionnaire?.trim() || null;
+        numeroTerminal = conc?.codeTerminal?.trim() || null;
+        telephone =
+          conc?.telephonePrincipal?.trim() ||
+          conc?.telephone?.trim() ||
+          conc?.telephoneSecondaire?.trim() ||
+          null;
+        situationGeographique =
+          [conc?.adresse?.trim(), conc?.ville?.trim()].filter(Boolean).join(", ") || null;
         agenceIdForLabel = conc?.agenceId ?? null;
       }
     }
@@ -187,6 +243,11 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
 
   const datePaiement = (caution.ficheDefinitiveEmiseLe ?? caution.paidAt ?? caution.updatedAt).toISOString();
   const destinataireEmail = await resolveDestinataireEmail(caution);
+  const agentNom = await resolveDocumentAgentName({
+    persistedName: caution.ficheDefinitiveGeneratedByName,
+    userId: caution.updatedByUserId || caution.createdByUserId,
+  });
+  const produitCode = pcode || (caution.produitCode ?? "—");
 
   return {
     cautionId,
@@ -194,19 +255,27 @@ export async function buildCautionFicheDefinitiveView(cautionId: string): Promis
     paymentReference: caution.paymentReference,
     datePaiement,
     emiseLe: (caution.ficheDefinitiveEmiseLe ?? caution.updatedAt).toISOString(),
-    montantFCFA: caution.montant,
+    montantFCFA: Math.round(caution.montant),
     modeReglement: caution.modeReglement,
     modeLibelle: getCautionEncaissementModeLabel(caution.modeReglement),
     identiteLabel,
     identiteDetail,
+    nom,
+    prenoms,
     clientCode,
     lonaciClientId,
     contratId,
-    produitCode: pcode || (caution.produitCode ?? "—"),
+    codeConcessionnaire,
+    numeroTerminal,
+    telephone,
+    situationGeographique,
+    produitCode,
     produitLibelle: produit?.libelle ?? null,
+    titreDocument: cautionFicheAgrementTitle(produitCode && produitCode !== "—" ? [produitCode] : []),
     agenceLabel,
     numeroFicheProvisoire: caution.numeroFicheProvisoire ?? null,
     destinataireEmail,
+    agentNom,
   };
 }
 

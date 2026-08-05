@@ -44,6 +44,15 @@ async function main() {
   console.log("\n=== Données de test : PDV-DEMO-*, dossiers, contrats, etc. ===\n");
   execSync("npm run seed:demo", opts);
 
+  console.log("\n=== Données de test : soumissions (phoning / fiche caisse) ===\n");
+  execSync("npm run seed:soumissions", {
+    ...opts,
+    env: {
+      ...env,
+      ALLOW_SEED_SOUMISSIONS: "true",
+    },
+  });
+
   console.log("\nTerminé. Connectez-vous avec ADMIN_EMAIL / ADMIN_PASSWORD (.env.local).");
 }
 

@@ -9,7 +9,7 @@ import {
   enforcedAgenceIdOnCreate,
   resolveListAgenceFilter,
 } from "@/lib/lonaci/access";
-import { CLIENT_STATUTS, CLIENT_CATEGORIES } from "@/lib/lonaci/client-constants";
+import { CLIENT_STATUTS, CLIENT_CATEGORIES, isClientCategorieEntreprise, parseClientCategorie, type ClientCategorie } from "@/lib/lonaci/client-constants";
 import {
   createClient,
   sanitizeClientPublic,
@@ -89,6 +89,8 @@ const listQuerySchema = z.object({
   q: z.string().optional(),
   statut: z.enum(CLIENT_STATUTS).optional(),
   categorie: z.enum(CLIENT_CATEGORIES).optional(),
+  /** Catégories séparées par des virgules (ex. ENTREPRISE,CANAL_ALTERNATIF). */
+  categories: z.string().optional(),
   produitCode: z.string().trim().min(1).max(32).optional(),
   sansProduit: z.enum(["true", "false"]).optional(),
   sansAgence: z.enum(["true", "false"]).optional(),
@@ -99,6 +101,15 @@ const listQuerySchema = z.object({
   agenceId: z.string().optional(),
   includeDeleted: z.enum(["true", "false"]).optional(),
 });
+
+function parseCategoriesParam(raw: string | undefined): ClientCategorie[] | undefined {
+  if (!raw?.trim()) return undefined;
+  const parsed = raw
+    .split(",")
+    .map((part) => parseClientCategorie(part))
+    .filter((c): c is ClientCategorie => c != null);
+  return parsed.length > 0 ? parsed : undefined;
+}
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request);
@@ -131,12 +142,14 @@ export async function GET(request: NextRequest) {
   }
 
   const readerScope = await buildClientAgenceReadScopeWhere(auth.user);
+  const categories = parseCategoriesParam(parsed.data.categories);
   const result = await searchClients({
     page: parsed.data.page,
     pageSize: parsed.data.pageSize,
     q: parsed.data.q,
     statut: parsed.data.statut,
     categorie: parsed.data.categorie,
+    categories: parsed.data.categorie ? undefined : categories,
     produitCode: sansProduit ? undefined : parsed.data.produitCode?.toUpperCase(),
     sansProduit,
     sansAgence,
@@ -211,24 +224,22 @@ export async function POST(request: NextRequest) {
   const nomCompletRaw = parsed.data.nomComplet?.trim() ?? "";
   const raisonSocialeRaw = parsed.data.raisonSociale?.trim() ?? "";
 
-  if (categorie === "ENTREPRISE") {
+  if (isClientCategorieEntreprise(categorie)) {
     if (raisonSocialeRaw.length < 2) {
-      return badRequest("La raison sociale est obligatoire pour une entreprise.", "CLIENT_RAISON_SOCIALE_REQUISE");
+      return badRequest("La raison sociale est obligatoire pour cette catégorie.", "CLIENT_RAISON_SOCIALE_REQUISE");
     }
   } else if (nomCompletRaw.length < 2) {
     return badRequest("Le nom complet est obligatoire pour un particulier.", "CLIENT_NOM_COMPLET_REQUIS");
   }
 
-  const raisonSociale =
-    categorie === "ENTREPRISE"
-      ? raisonSocialeRaw
-      : nomCompletRaw;
-  const nomComplet =
-    categorie === "ENTREPRISE"
-      ? nomCompletRaw.length >= 2
-        ? nomCompletRaw
-        : raisonSociale
-      : nomCompletRaw;
+  const raisonSociale = isClientCategorieEntreprise(categorie)
+    ? raisonSocialeRaw
+    : nomCompletRaw;
+  const nomComplet = isClientCategorieEntreprise(categorie)
+    ? nomCompletRaw.length >= 2
+      ? nomCompletRaw
+      : raisonSociale
+    : nomCompletRaw;
 
   try {
     const row = await createClient(

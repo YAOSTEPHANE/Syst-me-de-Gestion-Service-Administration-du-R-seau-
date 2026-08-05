@@ -102,8 +102,9 @@ export function buildClientDocumentChecklistForProducts(
   produitCodes: string[],
   produits: ProduitDocument[],
   previous?: DossierDocumentChecklistPayload | null,
+  clientCategorie?: import("@/lib/lonaci/client-constants").ClientCategorie | null,
 ): DossierDocumentChecklistPayload {
-  const template = mergeProductChecklistTemplates(produitCodes, produits);
+  const template = mergeProductChecklistTemplates(produitCodes, produits, clientCategorie);
   if (!template.length) return { entries: [], complet: true };
   return buildChecklistFromTemplate(template, previous?.entries ?? null);
 }
@@ -122,6 +123,8 @@ export function buildClientListWhere(params: {
   q?: string;
   statut?: ClientStatut;
   categorie?: ClientCategorie;
+  /** Filtre multi-catégories (ex. ENTREPRISE + CANAL_ALTERNATIF). Ignoré si `categorie` est fourni. */
+  categories?: readonly ClientCategorie[];
   /** Filtre les clients autorisés pour ce code produit. */
   produitCode?: string;
   /** Clients sans aucun produit rattaché (imports non catégorisés). */
@@ -166,6 +169,8 @@ export function buildClientListWhere(params: {
 
   if (params.categorie) {
     parts.push({ categorie: params.categorie });
+  } else if (params.categories && params.categories.length > 0) {
+    parts.push({ categorie: { in: [...params.categories] } });
   }
 
   if (params.sansProduit) {
@@ -210,6 +215,7 @@ export async function searchClients(params: {
   q?: string;
   statut?: ClientStatut;
   categorie?: ClientCategorie;
+  categories?: readonly ClientCategorie[];
   produitCode?: string;
   sansProduit?: boolean;
   sansAgence?: boolean;
@@ -227,6 +233,7 @@ export async function searchClients(params: {
     q: params.q,
     statut: params.statut,
     categorie: params.categorie,
+    categories: params.categories,
     produitCode: params.produitCode,
     sansProduit: params.sansProduit,
     sansAgence: params.sansAgence,

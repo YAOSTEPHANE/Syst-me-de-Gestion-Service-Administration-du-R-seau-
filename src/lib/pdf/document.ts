@@ -25,6 +25,8 @@ export interface PremiumPageChrome {
   documentLabel?: string;
   organizationSubtitle?: string;
   locale?: string;
+  /** Nom de l’agent ayant généré le document (affiché en pied de page). */
+  generatedBy?: string;
 }
 
 function pageMargins(
@@ -129,6 +131,10 @@ function drawPremiumFooter(
   const locale = chrome.locale ?? "fr-FR";
   const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(chrome.issuedAt);
   const originalBottomMargin = doc.page.margins.bottom;
+  const agent = chrome.generatedBy?.trim();
+  const leftLabel = agent
+    ? `Réf. ${chrome.reference} · ${date} · Générée par ${agent}`
+    : `Réf. ${chrome.reference} · ${date}`;
 
   doc.save();
   // PDFKit déclenche sinon une page automatique dès qu'un texte est placé
@@ -144,7 +150,7 @@ function drawPremiumFooter(
     .fillColor(PDF_COLORS.muted)
     .font("Helvetica")
     .fontSize(PDF_TYPOGRAPHY.small)
-    .text(`Réf. ${chrome.reference} · ${date}`, left, y, {
+    .text(leftLabel, left, y, {
       width: width * 0.72,
       lineBreak: false,
     });

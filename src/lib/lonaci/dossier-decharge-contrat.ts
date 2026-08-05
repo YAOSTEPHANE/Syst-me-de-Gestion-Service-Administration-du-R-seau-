@@ -8,6 +8,7 @@ import {
 import { parseContratsGeneresPayload, referenceAnnexeFromContrat } from "@/lib/lonaci/contrat-document";
 import { loadPartySnapshotForDossier } from "@/lib/lonaci/contrat-party-snapshot";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import type { DossierDocument, UserDocument } from "@/lib/lonaci/types";
 import { userDisplayName } from "@/lib/lonaci/types";
@@ -54,7 +55,7 @@ export interface DossierDechargeContratView {
   codePdv: string;
   agenceLabel: string;
   produits: DechargeContratProduitRow[];
-  etabliPar: string;
+  agentNom: string;
 }
 
 async function resolveEtabliParLabel(dossier: DossierDocument, actor: UserDocument): Promise<string> {
@@ -117,6 +118,10 @@ export async function buildDossierDechargeContratView(
   }
 
   const etabliPar = await resolveEtabliParLabel(dossier, actor);
+  const agentNom = await resolveDocumentAgentName({
+    persistedName: etabliPar,
+    actor,
+  });
   const dateRemise = resolveDateRemise(dossier);
 
   return {
@@ -129,7 +134,7 @@ export async function buildDossierDechargeContratView(
     codePdv: partySnapshot.codePdv,
     agenceLabel: partySnapshot.agenceLabel,
     produits,
-    etabliPar,
+    agentNom,
   };
 }
 
@@ -138,6 +143,7 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
     metadata: {
       title: DECHARGE_CONTRAT_TITLE,
       subject: `Remise des contrats du dossier ${view.dossierReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -145,7 +151,7 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
     drawTitle(
       doc,
       DECHARGE_CONTRAT_TITLE,
-      `Réf. dossier : ${view.dossierReference} · Date : ${view.dateRemise.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
+      `Réf. dossier : ${view.dossierReference} · Date : ${view.dateRemise.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(doc, view.mention, "info");
 
@@ -163,7 +169,7 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
             ? `${view.produits[0]!.produitCode} — ${view.produits[0]!.produitLibelle}`
             : `${view.produits.length.toLocaleString("fr-FR")} produits — voir la liste détaillée ci-dessous`,
       },
-      { label: "Établi par", value: view.etabliPar },
+      { label: "Générée par", value: view.agentNom },
     ];
     drawSection(doc, "Identification du bénéficiaire");
     drawInformationCard(doc, identityFields);
@@ -207,6 +213,7 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
       reference: view.dossierReference,
       issuedAt: view.generatedAt,
       documentLabel: "REMISE DE CONTRAT",
+      generatedBy: view.agentNom,
     });
   });
 }

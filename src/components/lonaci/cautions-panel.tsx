@@ -30,7 +30,7 @@ import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-e
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
-import { CLIENT_CODE_PREFIX } from "@/lib/lonaci/client-constants";
+import { CLIENT_CODE_PREFIX, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import {
   CautionFicheDefinitiveModal,
   type CautionFicheDefinitiveModalData,
@@ -39,6 +39,7 @@ import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fic
 import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
 import { aggregateEtatMensuelLatestMonth } from "@/lib/lonaci/caution-etat-mensuel-display";
 import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
+import type { ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
 import { CLIENT_PDF_COLORS } from "@/lib/pdf/client-premium";
 import { notify } from "@/lib/toast";
 
@@ -64,33 +65,8 @@ interface ProvisionalSlipData {
   cautionId: string;
   /** Référence interne enregistrée sur la caution (ex. PROVISOIRE:FPC-…), distincte de la référence de paiement caisse. */
   referenceInterneLonaci: string;
-}
-
-function cautionListItemFromProvisionalSlip(slip: ProvisionalSlipData): CautionListItem {
-  return {
-    id: slip.cautionId,
-    contratId: "",
-    lonaciClientId: slip.lonaciClientId,
-    clientCode: slip.clientCode,
-    concessionnaireNom: slip.clientLabel,
-    produitCode: slip.produitCode === "—" ? "" : slip.produitCode,
-    agenceLabel: slip.agenceInscriptionLabel || "Sans agence",
-    montant: slip.montantFCFA,
-    modeReglement: "PAIEMENT_DIFFERE",
-    status: "EN_ATTENTE",
-    paymentReference: slip.referenceInterneLonaci,
-    observations: null,
-    dueDate: slip.dueDate,
-    paidAt: null,
-    daysOverdue: 0,
-    immutableAfterFinal: false,
-    pdvCode: slip.clientCode || "—",
-    depotAt: null,
-    ficheProvisoire: true,
-    numeroFicheProvisoire: slip.numero,
-    numeroFicheDefinitive: null,
-    ficheDefinitiveEmiseLe: null,
-  };
+  /** Agent LONACI ayant généré la fiche. */
+  agentNom: string;
 }
 
 interface CautionCounters {
@@ -224,11 +200,13 @@ function buildCautionFicheModalData(
     datePaiement?: string;
     paymentReference?: string;
     modeReglement?: CautionEncaissementMode;
+    agentNom?: string;
     emailSent?: boolean;
     emailSkippedReason?: string;
     destinataireEmail?: string | null;
   },
   apresValidationPaiement: boolean,
+  fallbackAgentNom = "",
 ): CautionFicheDefinitiveModalData {
   const mode =
     fiche.modeReglement ??
@@ -243,6 +221,7 @@ function buildCautionFicheModalData(
     clientCode: row.clientCode ?? null,
     lonaciClientId: row.lonaciClientId ?? null,
     contratId: row.contratId.trim() || null,
+    codeConcessionnaire: null,
     produitCode: row.produitCode,
     produitLibelle: null,
     agenceLabel: row.agenceLabel,
@@ -252,6 +231,7 @@ function buildCautionFicheModalData(
     datePaiement: fiche.datePaiement ?? fiche.emiseLe,
     ancienneFicheProvisoire: row.numeroFicheProvisoire,
     apresValidationPaiement,
+    agentNom: (fiche.agentNom ?? "").trim() || fallbackAgentNom.trim() || "Agent LONACI",
     emailSent: fiche.emailSent,
     emailSkippedReason: fiche.emailSkippedReason,
     destinataireEmail: fiche.destinataireEmail,
@@ -392,6 +372,7 @@ async function fetchAlerts(): Promise<AlertItem[]> {
 type LonaciClientSearchHit = {
   id: string;
   code: string;
+  categorie?: string | null;
   nomComplet: string | null;
   raisonSociale: string;
   statut?: string;
@@ -405,7 +386,7 @@ type ReferentialProduitRow = {
   actif: boolean;
   prix?: number;
   prixKit?: number;
-  documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+  documentsChecklist?: ProduitDocumentChecklistItem[];
 };
 
 function formatClientHitLabel(hit: LonaciClientSearchHit): string {
@@ -570,6 +551,7 @@ function provisionalBundleClipboardLines(slips: ProvisionalSlipData[]): string[]
     `Code client: ${head.clientCode}`,
     `${CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL}: ${head.agenceInscriptionLabel || "Sans agence"}`,
     `ID client Lonaci: ${head.lonaciClientId || "—"}`,
+    `Générée par: ${head.agentNom || "—"}`,
     `Total FCFA à encaisser: ${total}`,
     `Nombre de cautions / produits: ${slips.length}`,
     "",
@@ -658,6 +640,7 @@ export default function CautionsPanel() {
     id: string;
     label: string;
     code: string;
+    categorie?: string | null;
     agenceInscriptionLabel: string;
     produitsAutorises?: string[];
   } | null>(null);
@@ -693,6 +676,7 @@ export default function CautionsPanel() {
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const reloadCautionsListRef = useRef<(() => Promise<void>) | null>(null);
   const [meRole, setMeRole] = useState<string | null>(null);
+  const [meDisplayName, setMeDisplayName] = useState<string>("");
   const meRbacRole = useMemo<LonaciRole | null>(
     () => (meRole && LONACI_ROLES.includes(meRole as LonaciRole) ? (meRole as LonaciRole) : null),
     [meRole],
@@ -796,7 +780,7 @@ export default function CautionsPanel() {
               }}
               className="rounded-lg border border-amber-600 bg-amber-500 px-2 py-1 text-[10px] font-semibold text-white"
             >
-              Régulariser paiement
+              Enregistrer le paiement
             </button>
           ) : null}
           {showFinalize ? (
@@ -1087,10 +1071,17 @@ export default function CautionsPanel() {
         setEtatMensuelRows([]);
       }
       if (meRes?.ok) {
-        const me = (await meRes.json()) as { user?: { role?: string } };
+        const me = (await meRes.json()) as {
+          user?: { role?: string; prenom?: string; nom?: string; email?: string; matricule?: string };
+        };
         setMeRole(me.user?.role ?? null);
+        const full = `${me.user?.prenom ?? ""} ${me.user?.nom ?? ""}`.trim();
+        setMeDisplayName(
+          full || me.user?.email?.trim() || me.user?.matricule?.trim() || "",
+        );
       } else {
         setMeRole(null);
+        setMeDisplayName("");
       }
       // Déclenche aussi le rechargement des compteurs.
       // (On ne casse pas l'affichage si les stats échouent.)
@@ -1194,6 +1185,7 @@ export default function CautionsPanel() {
                 montant?: number;
                 dueDate?: string;
                 paymentReference?: string;
+                createdByDisplayName?: string | null;
               };
             }
           | null;
@@ -1210,6 +1202,10 @@ export default function CautionsPanel() {
             typeof c.paymentReference === "string" && c.paymentReference.trim()
               ? c.paymentReference.trim()
               : `PROVISOIRE:${c.numeroFicheProvisoire}`;
+          const agentNom =
+            (typeof c.createdByDisplayName === "string" && c.createdByDisplayName.trim()) ||
+            meDisplayName.trim() ||
+            "Agent LONACI";
           slipsOut.push({
             numero: c.numeroFicheProvisoire,
             montantFCFA: typeof c.montant === "number" ? c.montant : montantLigne,
@@ -1222,6 +1218,7 @@ export default function CautionsPanel() {
             produitLibelle,
             cautionId,
             referenceInterneLonaci: refInterne,
+            agentNom,
           });
         }
       }
@@ -1280,22 +1277,23 @@ export default function CautionsPanel() {
           emiseLe: string;
           paymentReference: string;
           modeReglement: CautionEncaissementMode;
+          agentNom?: string;
         };
       } | null;
       if (!res.ok) {
-        throw new Error(raw?.message ?? "Régularisation impossible");
+        throw new Error(raw?.message ?? "Enregistrement du paiement impossible");
       }
       const targetRow = regularizeTarget;
       setRegularizeTarget(null);
       setRegularizeRef("");
       window.dispatchEvent(new Event("lonaci:data-imported"));
       if (targetRow && raw?.fiche?.numeroFicheDefinitive) {
-        setCautionPayeeSlip(buildCautionFicheModalData(targetRow, raw.fiche, true));
+        setCautionPayeeSlip(buildCautionFicheModalData(targetRow, raw.fiche, true, meDisplayName));
       }
       notify.success(
         raw?.fiche?.numeroFicheDefinitive
           ? `Paiement validé — fiche définitive ${raw.fiche.numeroFicheDefinitive} générée.`
-          : "Paiement régularisé — finalisation possible.",
+          : "Paiement enregistré — finalisation possible.",
       );
     } catch (err) {
       notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
@@ -1388,6 +1386,7 @@ export default function CautionsPanel() {
           emiseLe: string;
           paymentReference: string;
           modeReglement: CautionEncaissementMode;
+          agentNom?: string;
         } | null;
       } | null;
       if (!response.ok) {
@@ -1396,7 +1395,7 @@ export default function CautionsPanel() {
       const paidRow =
         decision === "APPROUVER" ? (rowSnapshot ?? items.find((r) => r.id === cautionId)) ?? null : null;
       if (paidRow && body?.fiche?.numeroFicheDefinitive) {
-        setCautionPayeeSlip(buildCautionFicheModalData(paidRow, body.fiche, false));
+        setCautionPayeeSlip(buildCautionFicheModalData(paidRow, body.fiche, false, meDisplayName));
       } else if (paidRow && paidRow.numeroFicheDefinitive) {
         setCautionPayeeSlip(
           buildCautionFicheModalData(
@@ -1407,6 +1406,7 @@ export default function CautionsPanel() {
               datePaiement: paidRow.ficheDefinitiveEmiseLe ?? new Date().toISOString(),
             },
             false,
+            meDisplayName,
           ),
         );
       }
@@ -1553,7 +1553,7 @@ export default function CautionsPanel() {
                   <strong>1.</strong> Choisir un <strong>client Lonaci</strong> (module Clients). <strong>2.</strong>{" "}
                   Choisir le <strong>produit</strong> dans le référentiel : le montant suit le tarif produit.{" "}
                   <strong>3.</strong> Générer en principe une <strong>fiche pour la caisse</strong> ; après encaissement,
-                  régulariser dans Lonaci.
+                  enregistrer le paiement dans Lonaci.
                 </p>
               </div>
               <IconButton
@@ -1623,6 +1623,7 @@ export default function CautionsPanel() {
                                 id: hit.id,
                                 label,
                                 code: hit.code,
+                                categorie: hit.categorie,
                                 agenceInscriptionLabel: hit.agenceInscriptionLabel?.trim() || "Sans agence",
                                 produitsAutorises: autorises,
                               });
@@ -1785,8 +1786,13 @@ export default function CautionsPanel() {
                   <ProduitSelectedPiecesChecklist
                     selectedProduitCodes={selectedProduitCodes}
                     produits={referentialProduits}
+                    clientCategorie={
+                      clientFromPick?.categorie
+                        ? normalizeClientCategorie(clientFromPick.categorie)
+                        : null
+                    }
                     title="Pièces à fournir (produits sélectionnés)"
-                    hint="Liste issue du référentiel produit — cochez les pièces remises avant constitution de la caution."
+                    hint="Liste issue du référentiel produit, filtrée selon le type de client — cochez les pièces remises avant constitution de la caution."
                   />
                 ) : null}
 
@@ -1797,7 +1803,7 @@ export default function CautionsPanel() {
                   <p className="mb-3 text-[11px] leading-relaxed text-slate-600">
                     Remplissez ce formulaire avec le client inscrit, puis le porteur présente la{" "}
                     <strong>fiche de paiement caution</strong> (FPC-…) à la caisse. Après paiement :{" "}
-                    <strong>Régulariser paiement</strong> dans Lonaci avec la référence reçue.
+                    <strong>Enregistrer le paiement</strong> dans Lonaci avec la référence reçue.
                   </p>
 
                   <div className="grid gap-2.5 sm:grid-cols-2">
@@ -1837,7 +1843,8 @@ export default function CautionsPanel() {
                         className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 outline-none focus:ring-2 focus:ring-indigo-500/20"
                       />
                       <p className="mt-1 text-[11px] text-slate-500">
-                        Échéance pour les alertes et le suivi jusqu&apos;à la régularisation après passage en caisse.
+                        Échéance pour les alertes et le suivi jusqu&apos;à l&apos;enregistrement du paiement après passage
+                        en caisse.
                       </p>
                     </div>
                   </div>
@@ -1917,7 +1924,7 @@ export default function CautionsPanel() {
             className="w-full max-w-md rounded-2xl border-2 border-indigo-200 bg-gradient-to-b from-indigo-50/50 to-white p-4 shadow-2xl"
           >
             <h4 id="regularize-caution-title" className="text-base font-semibold text-slate-900">
-              Régulariser le paiement
+              Enregistrer le paiement
             </h4>
             <p className="mt-1 text-xs text-slate-600">
               Fiche{" "}
@@ -1934,7 +1941,7 @@ export default function CautionsPanel() {
                 <label className="block text-sm">
                   <span className="text-slate-600">Mode de règlement *</span>
                   <select
-                    aria-label="Mode de règlement après régularisation"
+                    aria-label="Mode de règlement du paiement"
                     value={regularizeMode}
                     onChange={(e) => setRegularizeMode(e.target.value as CautionEncaissementMode)}
                     className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
@@ -1984,7 +1991,7 @@ export default function CautionsPanel() {
                 disabled={regularizing}
                 className="rounded-lg border border-indigo-600 bg-indigo-600 px-3 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-50"
               >
-                {regularizing ? "Enregistrement…" : "Valider la régularisation"}
+                {regularizing ? "Enregistrement…" : "Valider le paiement"}
               </button>
             </div>
           </form>
@@ -2006,7 +2013,9 @@ export default function CautionsPanel() {
                 <p className="text-right text-[11px] text-slate-500">
                   Loterie Nationale de Côte d’Ivoire
                   <br />
-                  Module Cautions
+                  <span className="mt-1 inline-block font-semibold text-slate-700">
+                    Générée par {provisionalSlips[0]!.agentNom || "—"}
+                  </span>
                 </p>
               </div>
               <p className="mt-2 max-w-2xl text-sm text-slate-600 print:hidden">
@@ -2082,8 +2091,7 @@ export default function CautionsPanel() {
                 Produits et cautions (fiche unique)
               </h4>
               <p className="mt-1 text-xs text-slate-600">
-                Chaque ligne correspond à une caution Lonaci ; régularisez le paiement ligne par ligne après
-                encaissement.
+                Chaque ligne correspond à une caution Lonaci créée pour cette opération.
               </p>
               <div className="fiche-print-table-wrap mt-3 overflow-x-auto rounded-lg border border-slate-200 bg-white print:overflow-visible print:mt-2">
                 <table className="w-full min-w-[44rem] border-collapse text-left text-sm print:min-w-0 print:table-fixed print:text-[7.5pt]">
@@ -2104,9 +2112,6 @@ export default function CautionsPanel() {
                       </th>
                       <th scope="col" className="px-2 py-2 whitespace-nowrap">
                         Échéance
-                      </th>
-                      <th scope="col" className="print:hidden px-2 py-2 text-right">
-                        Action
                       </th>
                     </tr>
                   </thead>
@@ -2136,28 +2141,6 @@ export default function CautionsPanel() {
                             timeStyle: "short",
                           })}
                         </td>
-                        <td className="print:hidden px-2 py-2 align-top text-right">
-                          <button
-                            type="button"
-                            disabled={!/^[a-f\d]{24}$/i.test(row.cautionId)}
-                            title={
-                              /^[a-f\d]{24}$/i.test(row.cautionId)
-                                ? "Régulariser cette ligne"
-                                : "ID caution manquant"
-                            }
-                            onClick={() => {
-                              if (!/^[a-f\d]{24}$/i.test(row.cautionId)) return;
-                              setRegularizeTarget(cautionListItemFromProvisionalSlip(row));
-                              setRegularizeRef("");
-                              setRegularizeMode("VIREMENT");
-                              setRegularizeDue(isoToDatetimeLocalValue(row.dueDate));
-                              setProvisionalSlips([]);
-                            }}
-                            className="rounded-md border border-indigo-400 bg-indigo-50 px-2 py-1 text-[11px] font-medium text-indigo-900 hover:bg-indigo-100 disabled:cursor-not-allowed disabled:opacity-40"
-                          >
-                            Régulariser
-                          </button>
-                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -2170,23 +2153,18 @@ export default function CautionsPanel() {
                         {provisionalSlipsTotalFcfa.toLocaleString("fr-FR")}{" "}
                         <span className="text-xs font-normal text-slate-500">FCFA</span>
                       </td>
-                      <td colSpan={4} className="px-2 py-2" />
+                      <td className="px-2 py-2" />
                     </tr>
                   </tfoot>
                 </table>
               </div>
-              <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3 text-xs leading-relaxed text-indigo-950 print:bg-white">
-                <p className="font-semibold text-indigo-950">Après paiement à la caisse (Lonaci)</p>
-                <p className="mt-1 text-indigo-900/95">
-                  Liste <strong>Cautions</strong> — onglet <strong>Attendu caution</strong>, pour <strong>chaque ligne</strong> du tableau :{" "}
-                  <strong>Régulariser paiement</strong> et saisir le mode ainsi que la référence figurant sur le reçu
-                  caisse. La référence <strong>FPC</strong> identifie chaque dossier.
-                </p>
-              </div>
             </section>
 
             <footer className="provisional-slip-footer hidden items-center justify-between border-t border-orange-200 pt-2 text-[8pt] text-slate-500">
-              <span>LONACI · Fiche groupée de paiement caution · Document interne</span>
+              <span>
+                LONACI · Fiche groupée de paiement caution · Générée par{" "}
+                {provisionalSlips[0]!.agentNom || "—"}
+              </span>
               <span className="page-number" />
             </footer>
 
@@ -2672,7 +2650,8 @@ export default function CautionsPanel() {
         elevated
       >
         <p className="mb-3 text-xs text-slate-600">
-          Rôle requis : chef(fe) de service. Régulariser toute fiche provisoire avant finalisation. Double confirmation avant envoi.
+          Rôle requis : chef(fe) de service. Enregistrer le paiement de toute fiche provisoire avant finalisation.
+          Double confirmation avant envoi.
         </p>
         <div className="flex flex-wrap gap-2">
           <input
@@ -2740,13 +2719,13 @@ export default function CautionsPanel() {
               <div className="mt-2 rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5 text-[11px] text-rose-950">
                 {finalizeModal.row.ficheProvisoire ? (
                   <>
-                    Fiche provisoire active : <strong>régularisez le paiement</strong> avec la référence
+                    Fiche provisoire active : <strong>enregistrez le paiement</strong> avec la référence
                     d&apos;encaissement avant d&apos;approuver (statut PAYÉE).
                   </>
                 ) : (
                   <>
                     <strong>Référence de paiement obligatoire</strong> pour passer en PAYÉE — saisissez-la via
-                    régularisation ou à la création de la caution.
+                    l&apos;enregistrement du paiement ou à la création de la caution.
                   </>
                 )}
               </div>

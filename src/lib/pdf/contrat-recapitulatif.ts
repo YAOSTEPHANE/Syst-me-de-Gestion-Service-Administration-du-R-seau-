@@ -45,18 +45,24 @@ const HISTORY_COLUMNS: readonly PdfTableColumn<DossierValidationStep>[] = [
 export async function renderContratRecapitulatifPdf(
   dossier: DossierDocument,
   issuedAt = new Date(),
+  agentNom = "Agent LONACI",
 ): Promise<Buffer> {
   const doc = createPremiumPdfDocument({
     metadata: {
       title: `Récapitulatif dossier contrat ${dossier.reference}`,
       subject: "Synthèse du dossier contrat et historique des validations",
+      author: agentNom,
       keywords: ["contrat", "dossier", "récapitulatif"],
       creationDate: issuedAt,
     },
   });
 
   return collectPdfBuffer(doc, () => {
-    drawTitle(doc, "Récapitulatif du dossier contrat", `Référence ${dossier.reference}`);
+    drawTitle(
+      doc,
+      "Récapitulatif du dossier contrat",
+      `Référence ${dossier.reference} · Générée par ${agentNom}`,
+    );
     drawStatusBadge(doc, printable(dossier.status), statusTone(dossier.status));
 
     drawSection(doc, "Identification");
@@ -65,6 +71,7 @@ export async function renderContratRecapitulatifPdf(
       { label: "Client", value: printable(dossier.lonaciClientId) },
       { label: "Concessionnaire", value: printable(dossier.concessionnaireId) },
       { label: "Agence", value: printable(dossier.agenceId) },
+      { label: "Générée par", value: agentNom },
     ]);
 
     drawSection(doc, "Opération contractuelle");
@@ -90,6 +97,7 @@ export async function renderContratRecapitulatifPdf(
       reference: dossier.reference,
       issuedAt,
       documentLabel: "RÉCAPITULATIF CONTRAT",
+      generatedBy: agentNom,
     });
   });
 }

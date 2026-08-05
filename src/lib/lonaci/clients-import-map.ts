@@ -226,7 +226,7 @@ const FIELD_ALIASES: Record<(typeof CLIENT_IMPORT_COLUMN_ORDER)[number], string[
     "terminal",
     "machine",
   ],
-  categorie: ["categorie", "Catégorie", "categorie client", "typeClient", "type client"],
+  categorie: ["categorie", "Catégorie", "categorie client", "typeClient", "type client", "canal"],
   nomComplet: [
     "nomComplet",
     "Nom complet",

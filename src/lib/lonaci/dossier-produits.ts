@@ -13,6 +13,7 @@ import {
   mergeProductDossierAndAnnexeTemplates,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
+import type { ClientCategorie } from "@/lib/lonaci/client-constants";
 import type { DossierDocumentChecklistPayload, UserDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -128,9 +129,10 @@ export async function resolveDossierCautionsStatus(
 export async function ensureChecklistForDossierProduits(
   payload: Record<string, unknown>,
   produitCodes: string[],
+  clientCategorie?: ClientCategorie | null,
 ): Promise<DossierDocumentChecklistPayload> {
   const produits = await listProduits();
-  const template = mergeProductDossierAndAnnexeTemplates(produitCodes, produits);
+  const template = mergeProductDossierAndAnnexeTemplates(produitCodes, produits, clientCategorie);
   return ensureDossierDocumentChecklist(payload, template);
 }
 

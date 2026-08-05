@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 import {
   ensureDossierDocumentChecklist,
@@ -41,6 +42,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     dossier.payload ?? {},
     produit?.documentsChecklist ?? [],
   );
+  const agentNom = await resolveDocumentAgentName({ actor: auth.user });
 
   const pdf = await renderDossierChecklistPdf({
     dossierReference: dossier.reference,
@@ -49,6 +51,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     concessionnaireLabel: concessionnaire.nomComplet || concessionnaire.codePdv || "—",
     checklist,
     generatedAt: new Date(),
+    agentNom,
   });
 
   const filename = `checklist-${dossier.reference.replace(/[^\w-]+/g, "_")}.pdf`;

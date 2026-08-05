@@ -264,12 +264,13 @@ export function canCreateConcessionnaireForAgence(
   }
   if (user.role === "AGENT" || user.role === "CHEF_SECTION") {
     if (user.agenceId) {
-      return agenceId === user.agenceId;
+      return agenceId !== null && user.agenceId === agenceId;
     }
     if (user.agencesAutorisees.length > 0) {
       return agenceId !== null && user.agencesAutorisees.includes(agenceId);
     }
-    return false;
+    // Legacy : sans rattachement ni liste, autoriser toute agence (comme userMatchesAgence).
+    return agenceId !== null;
   }
   return false;
 }

@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 
 import { Surface } from "@/components/lonaci/ui/surface";
+import type { ClientCategorie } from "@/lib/lonaci/client-constants";
 import { mergeProductChecklistTemplates } from "@/lib/lonaci/produit-document-checklist";
 import type { ProduitDocument, ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
 
@@ -27,6 +28,8 @@ function toProduitDocuments(rows: ReferentialProduitPieces[]): ProduitDocument[]
 type Props = {
   selectedProduitCodes: string[];
   produits: ReferentialProduitPieces[];
+  /** Filtre les pièces selon le type de client (omit = toutes). */
+  clientCategorie?: ClientCategorie | null;
   title?: string;
   hint?: string;
   className?: string;
@@ -38,16 +41,21 @@ type Props = {
 export default function ProduitSelectedPiecesChecklist({
   selectedProduitCodes,
   produits,
+  clientCategorie = null,
   title = "Pièces à fournir",
-  hint = "Cochez les pièces remises par le client (selon le référentiel produit).",
+  hint = "Cochez les pièces remises par le client (selon le référentiel produit et le type de client).",
   className = "",
   value,
   onChange,
 }: Props) {
   const items = useMemo(() => {
     if (!selectedProduitCodes.length) return [];
-    return mergeProductChecklistTemplates(selectedProduitCodes, toProduitDocuments(produits));
-  }, [selectedProduitCodes, produits]);
+    return mergeProductChecklistTemplates(
+      selectedProduitCodes,
+      toProduitDocuments(produits),
+      clientCategorie,
+    );
+  }, [selectedProduitCodes, produits, clientCategorie]);
 
   const itemIdsKey = useMemo(() => items.map((i) => i.id).sort().join("|"), [items]);
 

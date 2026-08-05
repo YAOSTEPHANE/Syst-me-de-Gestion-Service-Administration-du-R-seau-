@@ -12,7 +12,8 @@ export type SpreadsheetImportModule =
   | "CESSIONS"
   | "CLIENTS"
   | "CONCESSIONNAIRES"
-  | "RESILIATIONS";
+  | "RESILIATIONS"
+  | "SOUMISSIONS";
 
 const allowExcelModulesRaw = process.env.NEXT_PUBLIC_IMPORT_ALLOW_EXCEL_MODULES ?? "";
 const allowExcelModules = allowExcelModulesRaw

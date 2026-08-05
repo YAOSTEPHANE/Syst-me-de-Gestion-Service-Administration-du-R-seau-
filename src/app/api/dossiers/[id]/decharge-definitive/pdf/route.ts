@@ -29,7 +29,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Decharge reservee aux dossiers contrat." }, { status: 400 });
   }
 
-  const view = await buildDossierDechargeDefinitiveView(id);
+  const view = await buildDossierDechargeDefinitiveView(id, auth.user);
   if (!view) {
     return NextResponse.json(
       {

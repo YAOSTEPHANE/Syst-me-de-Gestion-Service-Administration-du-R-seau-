@@ -23,7 +23,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return notFound("Courrier comptabilité indisponible.", "COURRIER_COMPTABILITE_NOT_FOUND");
   }
   try {
-    const view = await buildCourrierComptabiliteFromCautionId(id);
+    const view = await buildCourrierComptabiliteFromCautionId(id, null, auth.user);
     if (!view) {
       return notFound(
         "Courrier comptabilité indisponible : la caution doit être payée et une fiche définitive émise.",

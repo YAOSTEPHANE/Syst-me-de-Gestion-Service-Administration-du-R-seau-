@@ -4,6 +4,8 @@ import { ObjectId } from "mongodb";
 
 import { findActiveContratIdForProduct } from "@/lib/lonaci/contracts";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
+import type { UserDocument } from "@/lib/lonaci/types";
 import { formatAgenceLibelle, loadAgenceLibelleMap, type AgenceLibelleDoc } from "@/lib/lonaci/zones-abidjan";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { getDatabase } from "@/lib/mongodb";
@@ -62,6 +64,7 @@ export interface ActeCessionView {
   cedant: ActeCessionPartyView;
   beneficiaire: ActeCessionPartyView;
   emisLe: string;
+  agentNom: string;
 }
 
 function partyFromConcessionnaire(
@@ -82,7 +85,10 @@ function partyFromConcessionnaire(
   };
 }
 
-export async function buildActeCessionView(cessionId: string): Promise<ActeCessionView | null> {
+export async function buildActeCessionView(
+  cessionId: string,
+  actor?: UserDocument | null,
+): Promise<ActeCessionView | null> {
   if (!ObjectId.isValid(cessionId)) return null;
   const db = await getDatabase();
   const row = await db.collection<CessionRow>(COLLECTION).findOne({
@@ -107,6 +113,7 @@ export async function buildActeCessionView(cessionId: string): Promise<ActeCessi
     concessionnaireId: row.cedantId,
     produitCode: pcode,
   });
+  const agentNom = await resolveDocumentAgentName({ actor });
 
   return {
     cessionId: row._id.toHexString(),
@@ -120,6 +127,7 @@ export async function buildActeCessionView(cessionId: string): Promise<ActeCessi
     cedant: partyFromConcessionnaire(cedant, agenceMap),
     beneficiaire: partyFromConcessionnaire(beneficiaire, agenceMap),
     emisLe: new Date().toISOString(),
+    agentNom,
   };
 }
 
@@ -141,6 +149,7 @@ export async function renderActeCessionPdf(view: ActeCessionView): Promise<Buffe
     metadata: {
       title: ACTE_CESSION_TITLE,
       subject: `Acte de cession ${view.reference}`,
+      author: view.agentNom,
       creationDate: issuedAt,
     },
   });
@@ -148,7 +157,7 @@ export async function renderActeCessionPdf(view: ActeCessionView): Promise<Buffe
     drawTitle(
       doc,
       ACTE_CESSION_TITLE,
-      `Référence dossier : ${view.reference} · Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })} · Émis le : ${issuedAt.toLocaleString("fr-FR")}`,
+      `Référence dossier : ${view.reference} · Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })} · Émis le : ${issuedAt.toLocaleString("fr-FR")} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(doc, view.statut, "info");
 
@@ -173,6 +182,7 @@ export async function renderActeCessionPdf(view: ActeCessionView): Promise<Buffe
           ]
         : []),
       { label: "Motif déclaré", value: view.motif },
+      { label: "Générée par", value: view.agentNom },
     ];
     drawSection(doc, "Objet de la cession");
     drawInformationCard(doc, objectFields);
@@ -207,6 +217,7 @@ export async function renderActeCessionPdf(view: ActeCessionView): Promise<Buffe
       reference: view.reference,
       issuedAt,
       documentLabel: "ACTE DE CESSION",
+      generatedBy: view.agentNom,
     });
   });
 }

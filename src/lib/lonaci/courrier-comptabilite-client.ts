@@ -8,6 +8,7 @@ import {
 } from "@/lib/lonaci/caution-fiche-definitive";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import type { CautionDocument } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import { cautionEligibleCourrierComptabilite } from "@/lib/lonaci/courrier-comptabilite-constants";
@@ -43,6 +44,7 @@ export interface CourrierComptabiliteClientView {
   numeroFicheProvisoire: string | null;
   dossierReference: string | null;
   etabliParAgence: string;
+  agentNom: string;
 }
 
 function referenceCourrierFromFiche(numeroFicheDefinitive: string): string {
@@ -51,7 +53,12 @@ function referenceCourrierFromFiche(numeroFicheDefinitive: string): string {
 
 function viewFromCautionFiche(
   fiche: CautionFicheDefinitiveView,
-  options?: { dossierReference?: string | null; codePdv?: string | null; raisonSociale?: string },
+  options?: {
+    dossierReference?: string | null;
+    codePdv?: string | null;
+    raisonSociale?: string;
+    agentNom?: string;
+  },
 ): CourrierComptabiliteClientView {
   const raisonSociale = options?.raisonSociale?.trim() || fiche.identiteDetail.trim() || "—";
   const codePdv = options?.codePdv?.trim() || fiche.clientCode?.trim() || null;
@@ -74,6 +81,7 @@ function viewFromCautionFiche(
     numeroFicheProvisoire: fiche.numeroFicheProvisoire,
     dossierReference: options?.dossierReference?.trim() || null,
     etabliParAgence: fiche.agenceLabel,
+    agentNom: options?.agentNom?.trim() || fiche.agentNom,
   };
 }
 
@@ -113,6 +121,7 @@ async function resolveCourrierPartyCodes(fiche: CautionFicheDefinitiveView): Pro
 export async function buildCourrierComptabiliteFromCautionId(
   cautionId: string,
   dossierReference?: string | null,
+  actor?: UserDocument | null,
 ): Promise<CourrierComptabiliteClientView | null> {
   const fiche = await buildCautionFicheDefinitiveView(cautionId);
   if (!fiche || !cautionEligibleCourrierComptabilite(fiche.numeroFicheDefinitive)) {
@@ -120,18 +129,22 @@ export async function buildCourrierComptabiliteFromCautionId(
   }
 
   const party = await resolveCourrierPartyCodes(fiche);
+  const agentNom = await resolveDocumentAgentName({
+    persistedName: fiche.agentNom,
+    actor,
+  });
   return viewFromCautionFiche(fiche, {
     dossierReference,
     codePdv: party.codePdv,
     raisonSociale: party.raisonSociale,
+    agentNom,
   });
 }
 
 export async function buildCourrierComptabiliteFromDossierId(
   dossierId: string,
-  _actor: UserDocument,
+  actor: UserDocument,
 ): Promise<CourrierComptabiliteClientView | null> {
-  void _actor;
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt || dossier.type !== "CONTRAT_ACTUALISATION") {
     return null;
@@ -147,7 +160,7 @@ export async function buildCourrierComptabiliteFromDossierId(
   const cautionId = primaryLink?.cautionId?.trim();
   if (!cautionId) return null;
 
-  return buildCourrierComptabiliteFromCautionId(cautionId, dossier.reference);
+  return buildCourrierComptabiliteFromCautionId(cautionId, dossier.reference, actor);
 }
 
 export async function assertCourrierComptabiliteDossierReadable(

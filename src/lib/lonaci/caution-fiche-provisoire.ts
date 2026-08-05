@@ -3,8 +3,10 @@ import "server-only";
 import { ObjectId } from "mongodb";
 
 import { getLonaciCautionBankReferences } from "@/lib/lonaci/caution-fiche-provisoire-constants";
+import { cautionFicheAgrementTitle } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
@@ -33,17 +35,29 @@ export interface CautionFicheProvisoireView {
   cautionId: string;
   numeroDossier: string;
   generatedAt: string;
+  /** Agent LONACI ayant généré la fiche. */
+  agentNom: string;
+  /** Titre affiché (ex. FICHE CAUTION AGREMENT PMU ALR). */
+  titreDocument: string;
   identiteLabel: string;
   identiteDetail: string;
+  nom: string;
+  prenoms: string;
   /** Libellé du champ identifiant métier (ex. « Identifiant client » ou « Code PDV »). */
   identifiantLabel: string;
   /** Valeur affichée pour l'identifiant (code client CLI-… ou code PDV). */
   identifiantValue: string | null;
+  codeConcessionnaire: string | null;
+  numeroTerminal: string | null;
   cniNumero: string | null;
   codePdv: string | null;
   agenceLabel: string;
+  situationGeographique: string | null;
+  telephone: string | null;
   produitLignes: CautionProduitLigne[];
   montantTotalFCFA: number;
+  /** Caution déjà versée (0 tant que provisoire / en attente). */
+  cautionVerseeFCFA: number;
   dueDate: string;
   bank: ReturnType<typeof getLonaciCautionBankReferences>;
 }
@@ -107,10 +121,23 @@ export async function findInscriptionCautionForConcessionnaire(
 interface CautionPartyInfo {
   identiteLabel: string;
   identiteDetail: string;
+  nom: string;
+  prenoms: string;
   cniNumero: string | null;
   codePdv: string | null;
+  codeConcessionnaire: string | null;
+  numeroTerminal: string | null;
+  telephone: string | null;
+  situationGeographique: string | null;
   agenceId: string | null;
   produitsAutorises: string[];
+}
+
+function splitNomPrenoms(full: string): { nom: string; prenoms: string } {
+  const parts = full.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return { nom: "—", prenoms: "—" };
+  if (parts.length === 1) return { nom: parts[0]!, prenoms: "—" };
+  return { nom: parts[parts.length - 1]!, prenoms: parts.slice(0, -1).join(" ") };
 }
 
 async function resolveCautionPartyInfo(caution: StoredCaution): Promise<CautionPartyInfo | null> {
@@ -118,11 +145,28 @@ async function resolveCautionPartyInfo(caution: StoredCaution): Promise<CautionP
   if (pdvId) {
     const conc = await findConcessionnaireById(pdvId);
     if (!conc) return null;
+    const nom =
+      conc.nom?.trim() ||
+      splitNomPrenoms(conc.nomComplet || conc.raisonSociale || "").nom;
+    const prenoms =
+      conc.prenom?.trim() ||
+      splitNomPrenoms(conc.nomComplet || conc.raisonSociale || "").prenoms;
+    const situation = [conc.adresse?.trim(), conc.ville?.trim()].filter(Boolean).join(", ") || null;
     return {
       identiteLabel: "Concessionnaire",
       identiteDetail: conc.raisonSociale?.trim() || conc.nomComplet || "—",
+      nom: nom || "—",
+      prenoms: prenoms || "—",
       cniNumero: conc.cniNumero,
       codePdv: conc.codePdv,
+      codeConcessionnaire: conc.codeConcessionnaire?.trim() || null,
+      numeroTerminal: conc.codeTerminal,
+      telephone:
+        conc.telephonePrincipal?.trim() ||
+        conc.telephone?.trim() ||
+        conc.telephoneSecondaire?.trim() ||
+        null,
+      situationGeographique: situation,
       agenceId: conc.agenceId,
       produitsAutorises: conc.produitsAutorises ?? [],
     };
@@ -132,11 +176,19 @@ async function resolveCautionPartyInfo(caution: StoredCaution): Promise<CautionP
   if (clientId) {
     const client = await findLonaciClientById(clientId);
     if (!client) return null;
+    const label = client.raisonSociale?.trim() || client.nomComplet?.trim() || "—";
+    const { nom, prenoms } = splitNomPrenoms(client.nomComplet?.trim() || label);
     return {
       identiteLabel: "Client",
-      identiteDetail: client.raisonSociale?.trim() || client.nomComplet?.trim() || "—",
+      identiteDetail: label,
+      nom: client.raisonSociale?.trim() ? label : nom,
+      prenoms: client.raisonSociale?.trim() ? "—" : prenoms,
       cniNumero: client.cniNumero,
       codePdv: client.code,
+      codeConcessionnaire: client.numeroDistributeur?.trim() || null,
+      numeroTerminal: null,
+      telephone: client.telephone?.trim() || null,
+      situationGeographique: client.adresse?.trim() || null,
       agenceId: client.agenceId,
       produitsAutorises: client.produitsAutorises ?? [],
     };
@@ -184,19 +236,38 @@ export async function buildCautionFicheProvisoireView(
 
   const isClientParty = party.identiteLabel === "Client";
 
+  const agentNom = await resolveDocumentAgentName({
+    persistedName: caution.createdByDisplayName,
+    userId: caution.createdByUserId,
+  });
+
+  const paid =
+    !caution.ficheProvisoire &&
+    (caution.status === "PAYEE" || Boolean(caution.paidAt));
+  const cautionVerseeFCFA = paid ? Math.round(caution.montant) : 0;
+
   return {
     cautionId,
     numeroDossier,
     generatedAt: caution.createdAt.toISOString(),
+    agentNom,
+    titreDocument: cautionFicheAgrementTitle(lignes.map((l) => l.code)),
     identiteLabel: party.identiteLabel,
     identiteDetail: party.identiteDetail,
+    nom: party.nom,
+    prenoms: party.prenoms,
     identifiantLabel: isClientParty ? "Identifiant client" : "Code PDV",
     identifiantValue: party.codePdv,
+    codeConcessionnaire: party.codeConcessionnaire,
+    numeroTerminal: party.numeroTerminal,
     cniNumero: party.cniNumero,
     codePdv: party.codePdv,
     agenceLabel,
+    situationGeographique: party.situationGeographique,
+    telephone: party.telephone,
     produitLignes: lignes,
-    montantTotalFCFA: caution.montant,
+    montantTotalFCFA: Math.round(caution.montant),
+    cautionVerseeFCFA,
     dueDate: caution.dueDate.toISOString(),
     bank: getLonaciCautionBankReferences(),
   };

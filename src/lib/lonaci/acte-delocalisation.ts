@@ -3,6 +3,8 @@ import "server-only";
 import { ObjectId } from "mongodb";
 
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
+import type { UserDocument } from "@/lib/lonaci/types";
 import { formatAgenceLibelle, loadAgenceLibelleMap, type AgenceLibelleDoc } from "@/lib/lonaci/zones-abidjan";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { getDatabase } from "@/lib/mongodb";
@@ -59,6 +61,7 @@ export interface ActeDelocalisationView {
   nouvelleGps: { lat: number; lng: number };
   emisLe: string;
   linkedOperationId: string | null;
+  agentNom: string;
 }
 
 function resolveConcessionnaireId(row: CessionRow): string | null {
@@ -67,7 +70,10 @@ function resolveConcessionnaireId(row: CessionRow): string | null {
   return null;
 }
 
-export async function buildActeDelocalisationView(cessionId: string): Promise<ActeDelocalisationView | null> {
+export async function buildActeDelocalisationView(
+  cessionId: string,
+  actor?: UserDocument | null,
+): Promise<ActeDelocalisationView | null> {
   if (!ObjectId.isValid(cessionId)) return null;
   const db = await getDatabase();
   const row = await db.collection<CessionRow>(COLLECTION).findOne({
@@ -88,6 +94,7 @@ export async function buildActeDelocalisationView(cessionId: string): Promise<Ac
 
   const pcode = row.produitCode?.trim().toUpperCase() ?? null;
   const produit = pcode ? produits.find((p) => p.code.trim().toUpperCase() === pcode) : null;
+  const agentNom = await resolveDocumentAgentName({ actor });
 
   return {
     cessionId: row._id.toHexString(),
@@ -108,6 +115,7 @@ export async function buildActeDelocalisationView(cessionId: string): Promise<Ac
     nouvelleGps: row.newGps,
     emisLe: new Date().toISOString(),
     linkedOperationId: (row as { linkedOperationId?: string | null }).linkedOperationId ?? null,
+    agentNom,
   };
 }
 
@@ -117,6 +125,7 @@ export async function renderActeDelocalisationPdf(view: ActeDelocalisationView):
     metadata: {
       title: ACTE_DELOCALISATION_TITLE,
       subject: `Acte de délocalisation ${view.reference}`,
+      author: view.agentNom,
       creationDate: issuedAt,
     },
   });
@@ -124,7 +133,7 @@ export async function renderActeDelocalisationPdf(view: ActeDelocalisationView):
     drawTitle(
       doc,
       ACTE_DELOCALISATION_TITLE,
-      `Référence dossier : ${view.reference} · Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })}`,
+      `Référence dossier : ${view.reference} · Date de demande : ${new Date(view.dateDemande).toLocaleDateString("fr-FR", { dateStyle: "long" })} · Générée par ${view.agentNom}`,
     );
 
     const partyFields: PdfField[] = [
@@ -143,6 +152,7 @@ export async function renderActeDelocalisationPdf(view: ActeDelocalisationView):
       ...(view.linkedOperationId
         ? [{ label: "Opération liée", value: view.linkedOperationId }]
         : []),
+      { label: "Générée par", value: view.agentNom },
     ];
     drawSection(doc, "Concessionnaire concerné");
     drawInformationCard(doc, partyFields);
@@ -186,6 +196,7 @@ export async function renderActeDelocalisationPdf(view: ActeDelocalisationView):
       reference: view.reference,
       issuedAt,
       documentLabel: "ACTE DE DÉLOCALISATION",
+      generatedBy: view.agentNom,
     });
   });
 }

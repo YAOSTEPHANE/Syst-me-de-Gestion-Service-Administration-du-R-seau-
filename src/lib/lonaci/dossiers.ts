@@ -41,6 +41,7 @@ import { findContratById, hasActiveContractForParty } from "@/lib/lonaci/contrac
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { normalizeClientCategorie } from "@/lib/lonaci/client-constants";
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import {
@@ -162,6 +163,8 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
     if (operationType === "ACTUALISATION" && produitCodes.length > 1) {
       throw new Error("PRODUIT_ACTUALISATION_UNIQUE");
     }
+    const partyClient = await findLonaciClientById(party.lonaciClientId);
+    const partyProduits = partyClient?.produitsAutorises ?? [];
     for (const produitCode of produitCodes) {
       const produit = await resolveProduitForContratWorkflow(produitCode);
       if (!produit) {
@@ -173,12 +176,15 @@ export async function createDossier(input: CreateDossierInput): Promise<DossierD
           throw new Error("ACTIVE_CONTRACT_EXISTS");
         }
       }
-      const partyProduits = (await findLonaciClientById(party.lonaciClientId))?.produitsAutorises ?? [];
       if (!produitAutorisePourConcessionnaire(partyProduits, produitCode)) {
         throw new Error("PRODUIT_NOT_ALLOWED");
       }
     }
-    const checklist = await ensureChecklistForDossierProduits(input.payload, produitCodes);
+    const checklist = await ensureChecklistForDossierProduits(
+      input.payload,
+      produitCodes,
+      normalizeClientCategorie(partyClient?.categorie),
+    );
     const mergedChecklist = input.documentChecklist?.length
       ? mergeChecklistStatutPatch(checklist, input.documentChecklist)
       : checklist;

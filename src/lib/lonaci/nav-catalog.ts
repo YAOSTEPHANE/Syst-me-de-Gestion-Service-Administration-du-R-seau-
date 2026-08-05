@@ -20,6 +20,7 @@ export type MenuOrderValidationIssue = {
 export const LONACI_NAV_CATALOG = [
   { href: "/dashboard", label: "Tableau de bord", section: "Principal" },
   { href: "/clients", label: "Clients", section: "Parcours" },
+  { href: "/soumissions", label: "Soumission" },
   { href: "/dossiers", label: "Dossiers" },
   { href: "/cautions", label: "Cautions" },
   { href: "/concessionnaires", label: "Concessionnaires" },

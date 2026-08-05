@@ -153,7 +153,10 @@ async function createConcessionnaireFromResolvedClient(input: {
     prenom: identity.prenom || nomComplet,
     nomComplet,
     codeTerminal: input.codeTerminal ?? null,
-    codeConcessionnaire: input.codeConcessionnaire ?? null,
+    codeConcessionnaire:
+      input.codeConcessionnaire?.trim() ||
+      input.client.numeroDistributeur?.trim() ||
+      null,
     cniNumero: input.client.cniNumero,
     photoUrl: null,
     email: input.client.email,

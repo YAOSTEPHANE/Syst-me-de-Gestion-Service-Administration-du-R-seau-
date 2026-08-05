@@ -88,6 +88,7 @@ const API_PASSWORD_ROTATION_CODE = "PASSWORD_ROTATION_REQUIRED";
 const NAV_RBAC_RULES: Partial<Record<string, { resource: RbacResource; action: RbacAction }>> = {
   "/concessionnaires": { resource: "CONCESSIONNAIRES", action: "READ" },
   "/clients": { resource: "CLIENTS", action: "READ" },
+  "/soumissions": { resource: "SOUMISSIONS", action: "READ" },
   "/agrements": { resource: "AGREMENTS", action: "READ" },
   "/cautions": { resource: "CAUTIONS", action: "READ" },
   "/contrats": { resource: "CONTRATS", action: "READ" },
@@ -256,7 +257,10 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
         if (!ct?.includes("application/json")) return res;
         const body = (await res.clone().json()) as { code?: string };
         if (res.status === 403 && body?.code === API_PASSWORD_ROTATION_CODE) {
-          window.location.assign("/parametres?motDePasse=obligatoire");
+          const path = window.location.pathname;
+          if (!path.startsWith("/parametres") && !path.startsWith("/login")) {
+            window.location.assign("/parametres?motDePasse=obligatoire");
+          }
           return res;
         }
         if (res.status === 401 && body?.code && API_SESSION_REDIRECT_CODES.has(body.code)) {

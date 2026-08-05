@@ -296,6 +296,25 @@ describe("requireApiAuth module authorization", () => {
     expect("error" in result).toBe(false);
   });
 
+  it("autorise /api/menu-order malgré la rotation requise", async () => {
+    const start = new Date();
+    const old = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth(), 1, 0, 0, 0, 0));
+    const beforeMonth = new Date(old.getTime() - 86_400_000);
+    findUserByIdMock.mockResolvedValue(
+      makeBaseUser({
+        role: "CHEF_SERVICE",
+        passwordChangedAt: beforeMonth,
+        createdAt: beforeMonth,
+        modulesAutorises: [],
+      }),
+    );
+
+    const req = new NextRequest("http://localhost:3000/api/menu-order", { method: "GET" });
+    const result = await requireApiAuth(req);
+
+    expect("error" in result).toBe(false);
+  });
+
   it("applique un override RBAC explicite", async () => {
     findUserByIdMock.mockResolvedValue(
       makeBaseUser({

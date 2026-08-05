@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!visible || (visible.kind !== "CESSION" && visible.kind !== "CESSION_DELOCALISATION")) {
       return notFound("Demande de cession introuvable.", "ACTE_CESSION_NOT_FOUND");
     }
-    const view = await buildActeCessionView(id);
+    const view = await buildActeCessionView(id, auth.user);
     if (!view) {
       return notFound("Demande de cession introuvable.", "ACTE_CESSION_NOT_FOUND");
     }

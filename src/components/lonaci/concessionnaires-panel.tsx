@@ -1282,11 +1282,11 @@ export default function ConcessionnairesPanel() {
                         />
                       </label>
                       <label className="grid gap-1">
-                        <span className="text-xs font-medium text-slate-700">Code concessionnaire</span>
+                        <span className="text-xs font-medium text-slate-700">N° Distributeur</span>
                         <input
                           value={codeConcessionnaire}
                           onChange={(e) => setCodeConcessionnaire(e.target.value)}
-                          placeholder="Optionnel"
+                          placeholder="N° distributeur"
                           maxLength={64}
                           className={inputClass}
                         />

@@ -26,10 +26,14 @@ import {
   CLIENT_STATUTS,
   CLIENT_CATEGORIES,
   CLIENT_CATEGORIE_LABELS,
+  CLIENT_CATEGORIES_FORME_ENTREPRISE,
+  CLIENT_CATEGORIES_FORME_PARTICULIER,
   CLIENT_TYPE_DISTRIBUTEUR,
   CLIENT_TYPE_DISTRIBUTEUR_LABELS,
   clientDisplayName,
   clientCodePrefixForAgence,
+  isClientCategorieEntreprise,
+  normalizeClientCategorie,
   type ClientCategorie,
   type ClientStatut,
   type ClientTypeDistributeur,
@@ -62,6 +66,28 @@ function isMostlyEmptyImportRow(row: Record<string, unknown>): boolean {
 
 const FILTER_SANS_AGENCE = "__SANS_AGENCE__";
 const FILTER_SANS_PRODUIT = "__SANS_PRODUIT__";
+
+type ClientListScope = "tous" | "particuliers" | "entreprises";
+
+function applyClientListScopeParams(
+  params: URLSearchParams,
+  scope: ClientListScope,
+  filterCategorie: string,
+) {
+  if (scope === "tous") {
+    if (filterCategorie) params.set("categorie", filterCategorie);
+    return;
+  }
+  if (scope === "particuliers") {
+    params.set("categorie", "PARTICULIER");
+    return;
+  }
+  if (filterCategorie && (CLIENT_CATEGORIES_FORME_ENTREPRISE as readonly string[]).includes(filterCategorie)) {
+    params.set("categorie", filterCategorie);
+    return;
+  }
+  params.set("categories", CLIENT_CATEGORIES_FORME_ENTREPRISE.join(","));
+}
 
 async function downloadClientsExcelTemplate(opts?: { produitCode?: string; agenceCode?: string }) {
   const XLSX = await import("xlsx");
@@ -353,6 +379,7 @@ export default function ClientsPanel() {
   const [q, setQ] = useState("");
   const [filterStatut, setFilterStatut] = useState("");
   const [filterCategorie, setFilterCategorie] = useState("");
+  const [listScope, setListScope] = useState<ClientListScope>("tous");
   const [filterAgence, setFilterAgence] = useState("");
   const [filterProduit, setFilterProduit] = useState("");
   const [agences, setAgences] = useState<AgenceRef[]>([]);
@@ -423,6 +450,52 @@ export default function ClientsPanel() {
     () => CLIENT_STATUTS.filter((s) => s !== "EN_ATTENTE_N1" && s !== "REJETE"),
     [],
   );
+  const formCategorieOptions = useMemo(() => {
+    const base: ClientCategorie[] =
+      listScope === "entreprises"
+        ? [...CLIENT_CATEGORIES_FORME_ENTREPRISE]
+        : listScope === "particuliers"
+          ? [...CLIENT_CATEGORIES_FORME_PARTICULIER]
+          : [...CLIENT_CATEGORIES];
+    if (editingId && !(base as readonly string[]).includes(form.categorie)) {
+      return [form.categorie, ...base];
+    }
+    return base;
+  }, [listScope, editingId, form.categorie]);
+  const isEntreprisesList = listScope === "entreprises";
+  const isParticuliersList = listScope === "particuliers";
+  const showCategorieColumn = !isParticuliersList;
+  const showCategorieFilter = listScope === "tous" || isEntreprisesList;
+  const listTitle =
+    listScope === "tous"
+      ? "Clients"
+      : isEntreprisesList
+        ? "Entreprises & canaux alternatifs"
+        : "Clients particuliers";
+  const listDescription =
+    listScope === "tous"
+      ? "Liste globale de tous les clients (particuliers, entreprises et canaux alternatifs)."
+      : isEntreprisesList
+        ? "Liste dédiée aux entreprises et canaux alternatifs (raison sociale)."
+        : "Liste dédiée aux clients particuliers.";
+  const newClientLabel =
+    listScope === "tous"
+      ? "Nouveau client"
+      : isEntreprisesList
+        ? "Nouvelle entreprise"
+        : "Nouveau particulier";
+  const countLabel =
+    listScope === "tous"
+      ? "client(s)"
+      : isEntreprisesList
+        ? "entreprise(s) / canal(aux)"
+        : "particulier(s)";
+  const nameColumnLabel =
+    listScope === "tous"
+      ? "Nom / Raison sociale"
+      : isEntreprisesList
+        ? "Raison sociale"
+        : "Nom complet";
   const produitsTries = useMemo(
     () => [...produits].sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")),
     [produits],
@@ -461,9 +534,10 @@ export default function ClientsPanel() {
     const template = mergeProductChecklistTemplates(
       produitsAutorises,
       produitsToDocumentRows(produits),
+      form.categorie,
     );
     setClientChecklist((prev) => buildChecklistFromTemplate(template, prev?.entries ?? null));
-  }, [modalOpen, produitsAutorises, produits]);
+  }, [modalOpen, produitsAutorises, produits, form.categorie]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -475,7 +549,7 @@ export default function ClientsPanel() {
       });
       if (q.trim()) params.set("q", q.trim());
       if (filterStatut) params.set("statut", filterStatut);
-      if (filterCategorie) params.set("categorie", filterCategorie);
+      applyClientListScopeParams(params, listScope, filterCategorie);
       if (filterAgence === FILTER_SANS_AGENCE) params.set("sansAgence", "true");
       else if (filterAgence) params.set("agenceId", filterAgence);
       if (filterProduit === FILTER_SANS_PRODUIT) params.set("sansProduit", "true");
@@ -493,7 +567,7 @@ export default function ClientsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, q, filterStatut, filterCategorie, filterAgence, filterProduit]);
+  }, [page, pageSize, q, filterStatut, filterCategorie, filterAgence, filterProduit, listScope]);
 
   useEffect(() => {
     void load();
@@ -522,8 +596,10 @@ export default function ClientsPanel() {
   }, []);
 
   function resetForm() {
+    const defaultCategorie: ClientCategorie =
+      listScope === "entreprises" ? "ENTREPRISE" : "PARTICULIER";
     setForm({
-      categorie: "PARTICULIER",
+      categorie: defaultCategorie,
       clientCodeSuffix: "",
       nomComplet: "",
       raisonSociale: "",
@@ -780,7 +856,7 @@ export default function ClientsPanel() {
         clientCodeSuffix,
         categorie,
         nomComplet: c.nomComplet ?? "",
-        raisonSociale: categorie === "ENTREPRISE" ? (c.raisonSociale ?? "") : "",
+        raisonSociale: isClientCategorieEntreprise(categorie) ? (c.raisonSociale ?? "") : "",
         codeMachine: c.codeMachine ?? "",
         cniNumero: c.cniNumero ?? "",
         nomContact: c.nomContact ?? "",
@@ -811,9 +887,9 @@ export default function ClientsPanel() {
 
   async function saveClient(e: React.FormEvent) {
     e.preventDefault();
-    const isEntreprise = form.categorie === "ENTREPRISE";
+    const isEntreprise = isClientCategorieEntreprise(form.categorie);
     if (isEntreprise && !form.raisonSociale.trim()) {
-      setError("La raison sociale est obligatoire pour une entreprise.");
+      setError("La raison sociale est obligatoire pour cette catégorie.");
       return;
     }
     if (!isEntreprise && !form.nomComplet.trim()) {
@@ -982,7 +1058,7 @@ export default function ClientsPanel() {
       });
       if (q.trim()) params.set("q", q.trim());
       if (filterStatut) params.set("statut", filterStatut);
-      if (filterCategorie) params.set("categorie", filterCategorie);
+      applyClientListScopeParams(params, listScope, filterCategorie);
       if (filterAgence === FILTER_SANS_AGENCE) params.set("sansAgence", "true");
       else if (filterAgence) params.set("agenceId", filterAgence);
       if (filterProduit === FILTER_SANS_PRODUIT) params.set("sansProduit", "true");
@@ -1064,6 +1140,14 @@ export default function ClientsPanel() {
 
   function displayNomPrincipal(row: ListItem): string {
     return clientDisplayName(row);
+  }
+
+  function displayCategorie(row: ListItem): string {
+    return CLIENT_CATEGORIE_LABELS[normalizeClientCategorie(row.categorie)];
+  }
+
+  function categorieTone(row: ListItem): Tone {
+    return isClientCategorieEntreprise(normalizeClientCategorie(row.categorie)) ? "brand" : "neutral";
   }
 
   async function confirmClientAction() {
@@ -1192,6 +1276,7 @@ export default function ClientsPanel() {
         <ProduitSelectedPiecesChecklist
           selectedProduitCodes={produitsAutorises}
           produits={produits}
+          clientCategorie={form.categorie}
           className="mt-3"
           value={piecesFourniesIds}
           onChange={(ids) => setClientChecklist((prev) => applyPiecesFournies(prev, ids))}
@@ -1204,11 +1289,11 @@ export default function ClientsPanel() {
     <div className="space-y-4">
       <PageHeader
         eyebrow="Référentiel"
-        title="Clients"
+        title={listTitle}
         description={
           scopeImportLabel
             ? `Liste filtrée sur ${selectedAgenceLabel ?? "agence"} · ${selectedProduitLabel ?? filterProduit}.`
-            : `Comptes clients et tiers, distincts des concessionnaires PDV. À l’import, choisissez l’agence et le produit concernés.`
+            : `${listDescription} Distincts des concessionnaires PDV. À l’import, choisissez l’agence et le produit concernés.`
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
@@ -1240,7 +1325,7 @@ export default function ClientsPanel() {
               {importingFile ? "Import…" : "Importer Excel"}
             </Button>
             <Button leadingIcon={Plus} onClick={openCreate}>
-              Nouveau client
+              {newClientLabel}
             </Button>
           </div>
         }
@@ -1249,6 +1334,67 @@ export default function ClientsPanel() {
       {error ? (
         <FeedbackState tone="danger" title="Opération impossible" description={error} aria-live="assertive" />
       ) : null}
+
+      <Surface elevated padding="sm">
+        <div
+          className="flex flex-wrap gap-1.5"
+          role="tablist"
+          aria-label="Type de liste clients"
+          aria-orientation="horizontal"
+        >
+          <button
+            type="button"
+            role="tab"
+            aria-selected={listScope === "tous"}
+            onClick={() => {
+              setPage(1);
+              setFilterCategorie("");
+              setListScope("tous");
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              listScope === "tous"
+                ? "bg-[#102a43] text-white shadow-md"
+                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+            }`}
+          >
+            Tous les clients
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={listScope === "particuliers"}
+            onClick={() => {
+              setPage(1);
+              setFilterCategorie("");
+              setListScope("particuliers");
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              listScope === "particuliers"
+                ? "bg-[#102a43] text-white shadow-md"
+                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+            }`}
+          >
+            Particuliers
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={listScope === "entreprises"}
+            onClick={() => {
+              setPage(1);
+              setFilterCategorie("");
+              setListScope("entreprises");
+            }}
+            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+              listScope === "entreprises"
+                ? "bg-[#102a43] text-white shadow-md"
+                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+            }`}
+          >
+            Entreprises & canaux alternatifs
+          </button>
+        </div>
+      </Surface>
 
       <Surface elevated padding="sm" className="overflow-x-auto [scrollbar-width:thin]">
         <div
@@ -1411,22 +1557,28 @@ export default function ClientsPanel() {
               </option>
             ))}
           </select>
-          <select
-            value={filterCategorie}
-            aria-label="Catégorie"
-            onChange={(e) => {
-              setPage(1);
-              setFilterCategorie(e.target.value);
-            }}
-            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-          >
-            <option value="">Toutes les catégories</option>
-            {CLIENT_CATEGORIES.map((c) => (
-              <option key={c} value={c}>
-                {CLIENT_CATEGORIE_LABELS[c]}
+          {showCategorieFilter ? (
+            <select
+              value={filterCategorie}
+              aria-label="Catégorie"
+              onChange={(e) => {
+                setPage(1);
+                setFilterCategorie(e.target.value);
+              }}
+              className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+            >
+              <option value="">
+                {isEntreprisesList ? "Entreprises & canaux" : "Toutes les catégories"}
               </option>
-            ))}
-          </select>
+              {(isEntreprisesList ? CLIENT_CATEGORIES_FORME_ENTREPRISE : CLIENT_CATEGORIES).map(
+                (c) => (
+                  <option key={c} value={c}>
+                    {CLIENT_CATEGORIE_LABELS[c]}
+                  </option>
+                ),
+              )}
+            </select>
+          ) : null}
             </>
           }
           actions={
@@ -1449,7 +1601,7 @@ export default function ClientsPanel() {
 
         <div className="my-4 flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm font-semibold text-slate-700">
-            {total} client(s)
+            {total} {countLabel}
             {scopeImportLabel ? (
               <span className="ml-2 font-normal text-slate-500">· {scopeImportLabel}</span>
             ) : selectedAgenceLabel || selectedProduitLabel ? (
@@ -1482,22 +1634,28 @@ export default function ClientsPanel() {
         ) : (
           <>
         <div className="hidden overflow-x-auto md:block">
-          <table className="w-full min-w-[980px] border-collapse text-left text-xs leading-snug">
+          <table className="w-full min-w-[1080px] border-collapse text-left text-xs leading-snug">
             <colgroup>
-              <col className="w-[16%]" />
-              <col className="w-[12%]" />
-              <col className="w-[9%]" />
-              <col className="w-[6%]" />
-              <col className="w-[12%]" />
-              <col className="w-[9%]" />
-              <col className="w-[8%]" />
+              <col className="w-[14%]" />
               <col className="w-[10%]" />
+              <col className="w-[11%]" />
               <col className="w-[8%]" />
+              <col className="w-[5%]" />
+              <col className="w-[11%]" />
+              <col className="w-[8%]" />
+              <col className="w-[7%]" />
+              <col className="w-[9%]" />
+              <col className="w-[7%]" />
               <col className="w-[10%]" />
             </colgroup>
             <thead>
               <tr className="border-b border-slate-200 bg-slate-50/80 text-[10px] uppercase tracking-wide text-slate-500">
-                <th className="whitespace-nowrap px-2 py-2 font-semibold">Nom complet</th>
+                <th className="whitespace-nowrap px-2 py-2 font-semibold">
+                  {nameColumnLabel}
+                </th>
+                {showCategorieColumn ? (
+                  <th className="whitespace-nowrap px-2 py-2 font-semibold">Catégorie</th>
+                ) : null}
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Contact</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Type distributeur</th>
                 <th className="whitespace-nowrap px-2 py-2 text-center font-semibold">Nb TPM</th>
@@ -1531,6 +1689,13 @@ export default function ClientsPanel() {
                     >
                       {displayNomPrincipal(row)}
                     </td>
+                    {showCategorieColumn ? (
+                      <td className="whitespace-nowrap px-2 py-2">
+                        <StatusBadge tone={categorieTone(row)} title={displayCategorie(row)}>
+                          {displayCategorie(row)}
+                        </StatusBadge>
+                      </td>
+                    ) : null}
                     <td className="truncate px-2 py-2 text-slate-700" title={contactTitle || undefined}>
                       {contactLine}
                     </td>
@@ -1583,6 +1748,11 @@ export default function ClientsPanel() {
                 <div className="min-w-0">
                   <p className="font-mono text-xs font-semibold text-orange-700">{row.code}</p>
                   <h3 className="mt-1 text-base font-bold text-slate-950">{displayNomPrincipal(row)}</h3>
+                  {showCategorieColumn ? (
+                    <div className="mt-2">
+                      <StatusBadge tone={categorieTone(row)}>{displayCategorie(row)}</StatusBadge>
+                    </div>
+                  ) : null}
                 </div>
                 <StatusBadge
                   tone={CLIENT_STATUS_TONES[row.statut] ?? "neutral"}
@@ -1734,16 +1904,17 @@ export default function ClientsPanel() {
                   value={form.categorie}
                   onChange={(e) => {
                     const next = e.target.value as ClientCategorie;
+                    const nextIsEntreprise = isClientCategorieEntreprise(next);
                     setForm((f) => ({
                       ...f,
                       categorie: next,
-                      raisonSociale: next === "ENTREPRISE" ? f.raisonSociale : "",
-                      nomComplet: next === "ENTREPRISE" ? f.nomComplet : f.nomComplet || f.raisonSociale,
+                      raisonSociale: nextIsEntreprise ? f.raisonSociale : "",
+                      nomComplet: nextIsEntreprise ? f.nomComplet : f.nomComplet || f.raisonSociale,
                     }));
                   }}
                   className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
                 >
-                  {CLIENT_CATEGORIES.map((c) => (
+                  {formCategorieOptions.map((c) => (
                     <option key={c} value={c}>
                       {CLIENT_CATEGORIE_LABELS[c]}
                     </option>
@@ -1810,29 +1981,33 @@ export default function ClientsPanel() {
                   </label>
                   <label className="block text-sm">
                     <span className="text-slate-600">
-                      {form.categorie === "ENTREPRISE" ? "Raison sociale *" : "Nom complet *"}
+                      {isClientCategorieEntreprise(form.categorie) ? "Raison sociale *" : "Nom complet *"}
                     </span>
                     <input
                       required
-                      value={form.categorie === "ENTREPRISE" ? form.raisonSociale : form.nomComplet}
+                      value={
+                        isClientCategorieEntreprise(form.categorie) ? form.raisonSociale : form.nomComplet
+                      }
                       onChange={(e) =>
                         setForm((f) =>
-                          f.categorie === "ENTREPRISE"
+                          isClientCategorieEntreprise(f.categorie)
                             ? { ...f, raisonSociale: e.target.value }
                             : { ...f, nomComplet: e.target.value },
                         )
                       }
                       className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                      autoComplete={form.categorie === "ENTREPRISE" ? "organization" : "name"}
+                      autoComplete={
+                        isClientCategorieEntreprise(form.categorie) ? "organization" : "name"
+                      }
                     />
                   </label>
-                  {form.categorie === "ENTREPRISE" ? (
+                  {isClientCategorieEntreprise(form.categorie) ? (
                     <label className="block text-sm">
                       <span className="text-slate-600">Nom du contact / représentant (optionnel)</span>
                       <input
                         value={form.nomComplet}
                         onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
-                        placeholder="Personne à joindre au sein de l’entreprise"
+                        placeholder="Personne à joindre au sein de l’organisation"
                         className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
                         autoComplete="name"
                       />
@@ -1989,23 +2164,27 @@ export default function ClientsPanel() {
                 <>
                   <label className="block text-sm">
                     <span className="text-slate-600">
-                      {form.categorie === "ENTREPRISE" ? "Raison sociale *" : "Nom complet *"}
+                      {isClientCategorieEntreprise(form.categorie) ? "Raison sociale *" : "Nom complet *"}
                     </span>
                     <input
                       required
-                      value={form.categorie === "ENTREPRISE" ? form.raisonSociale : form.nomComplet}
+                      value={
+                        isClientCategorieEntreprise(form.categorie) ? form.raisonSociale : form.nomComplet
+                      }
                       onChange={(e) =>
                         setForm((f) =>
-                          f.categorie === "ENTREPRISE"
+                          isClientCategorieEntreprise(f.categorie)
                             ? { ...f, raisonSociale: e.target.value }
                             : { ...f, nomComplet: e.target.value },
                         )
                       }
                       className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                      autoComplete={form.categorie === "ENTREPRISE" ? "organization" : "name"}
+                      autoComplete={
+                        isClientCategorieEntreprise(form.categorie) ? "organization" : "name"
+                      }
                     />
                   </label>
-                  {form.categorie === "ENTREPRISE" ? (
+                  {isClientCategorieEntreprise(form.categorie) ? (
                     <label className="block text-sm">
                       <span className="text-slate-600">Nom du contact / représentant</span>
                       <input
@@ -2191,14 +2370,12 @@ export default function ClientsPanel() {
               <div className="mt-2 flex flex-wrap gap-2 text-xs">
                 <StatusBadge
                   tone={
-                    viewingClient.categorie === "ENTREPRISE" ? "brand" : "neutral"
+                    isClientCategorieEntreprise(normalizeClientCategorie(viewingClient.categorie))
+                      ? "brand"
+                      : "neutral"
                   }
                 >
-                  {CLIENT_CATEGORIE_LABELS[
-                    (CLIENT_CATEGORIES as readonly string[]).includes(viewingClient.categorie)
-                      ? (viewingClient.categorie as ClientCategorie)
-                      : "PARTICULIER"
-                  ]}
+                  {CLIENT_CATEGORIE_LABELS[normalizeClientCategorie(viewingClient.categorie)]}
                 </StatusBadge>
                 <StatusBadge tone="info">
                   {CLIENT_STATUT_LABELS[
@@ -2213,13 +2390,14 @@ export default function ClientsPanel() {
             <dl className="grid gap-3 sm:grid-cols-2">
               {[
                 {
-                  label: viewingClient.categorie === "ENTREPRISE" ? "Raison sociale" : "Nom complet",
-                  value:
-                    viewingClient.categorie === "ENTREPRISE"
-                      ? viewingClient.raisonSociale
-                      : viewingClient.nomComplet || viewingClient.raisonSociale,
+                  label: isClientCategorieEntreprise(normalizeClientCategorie(viewingClient.categorie))
+                    ? "Raison sociale"
+                    : "Nom complet",
+                  value: isClientCategorieEntreprise(normalizeClientCategorie(viewingClient.categorie))
+                    ? viewingClient.raisonSociale
+                    : viewingClient.nomComplet || viewingClient.raisonSociale,
                 },
-                ...(viewingClient.categorie === "ENTREPRISE"
+                ...(isClientCategorieEntreprise(normalizeClientCategorie(viewingClient.categorie))
                   ? [{ label: "Contact / représentant", value: viewingClient.nomComplet }]
                   : []),
                 { label: "N° CNI", value: viewingClient.cniNumero },

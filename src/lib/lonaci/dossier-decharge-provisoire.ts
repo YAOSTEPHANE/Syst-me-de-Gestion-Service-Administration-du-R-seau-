@@ -6,6 +6,7 @@ import {
   DECHARGE_PROVISOIRE_DISCLAIMER,
   DECHARGE_PROVISOIRE_TITLE,
 } from "@/lib/lonaci/dossier-decharge-constants";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { loadDossierContratParty } from "@/lib/lonaci/dossier-contrat-party";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import {
@@ -14,7 +15,13 @@ import {
 } from "@/lib/lonaci/dossier-produits";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import { DOSSIER_CHECKLIST_STATUT_LABELS } from "@/lib/lonaci/produit-document-checklist";
-import type { CautionDocument, DossierDocument, DossierDocumentChecklistPayload, DossierStatus } from "@/lib/lonaci/types";
+import type {
+  CautionDocument,
+  DossierDocument,
+  DossierDocumentChecklistPayload,
+  DossierStatus,
+  UserDocument,
+} from "@/lib/lonaci/types";
 import { formatAgenceLibelle, loadAgenceLibelleMap } from "@/lib/lonaci/zones-abidjan";
 import { getDatabase } from "@/lib/mongodb";
 import {
@@ -70,6 +77,7 @@ export interface DossierDechargeProvisoireView {
   documentsManquants: string[];
   caution: DossierDechargeProvisoireCautionInfo | null;
   cautions: DossierDechargeProvisoireCautionInfo[];
+  agentNom: string;
 }
 
 export function dossierEligibleDechargeProvisoire(
@@ -222,6 +230,7 @@ function splitChecklistDocuments(checklist: DossierDocumentChecklistPayload): {
 
 export async function buildDossierDechargeProvisoireView(
   dossierId: string,
+  actor?: UserDocument | null,
 ): Promise<DossierDechargeProvisoireView | null> {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt || dossier.type !== "CONTRAT_ACTUALISATION") {
@@ -269,6 +278,7 @@ export async function buildDossierDechargeProvisoireView(
     : "Sans agence";
 
   const { documentsFournis, documentsManquants } = splitChecklistDocuments(checklist);
+  const agentNom = await resolveDocumentAgentName({ actor });
 
   return {
     dossierReference: dossier.reference,
@@ -287,6 +297,7 @@ export async function buildDossierDechargeProvisoireView(
     documentsManquants,
     caution: cautions[0] ?? null,
     cautions,
+    agentNom,
   };
 }
 
@@ -295,6 +306,7 @@ export async function renderDossierDechargeProvisoirePdf(view: DossierDechargePr
     metadata: {
       title: DECHARGE_PROVISOIRE_TITLE,
       subject: `Décharge provisoire du dossier ${view.dossierReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -302,7 +314,7 @@ export async function renderDossierDechargeProvisoirePdf(view: DossierDechargePr
     drawTitle(
       doc,
       DECHARGE_PROVISOIRE_TITLE,
-      `Réf. dossier : ${view.dossierReference} · Date : ${view.generatedAt.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
+      `Réf. dossier : ${view.dossierReference} · Date : ${view.generatedAt.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(doc, "DOSSIER INCOMPLET", "warning");
 
@@ -312,6 +324,7 @@ export async function renderDossierDechargeProvisoirePdf(view: DossierDechargePr
       ...(view.cniNumero ? [{ label: "N° CNI", value: view.cniNumero }] : []),
       { label: "Agence", value: view.agenceLabel },
       { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+      { label: "Générée par", value: view.agentNom },
     ];
     drawSection(doc, "Identification du dossier");
     drawInformationCard(doc, identityFields);
@@ -349,11 +362,15 @@ export async function renderDossierDechargeProvisoirePdf(view: DossierDechargePr
       reference: view.dossierReference,
       issuedAt: view.generatedAt,
       documentLabel: "DÉCHARGE PROVISOIRE",
+      generatedBy: view.agentNom,
     });
   });
 }
 
-export async function buildDechargeFromDossier(dossier: DossierDocument): Promise<DossierDechargeProvisoireView | null> {
+export async function buildDechargeFromDossier(
+  dossier: DossierDocument,
+  actor?: UserDocument | null,
+): Promise<DossierDechargeProvisoireView | null> {
   if (!dossier._id) return null;
-  return buildDossierDechargeProvisoireView(dossier._id);
+  return buildDossierDechargeProvisoireView(dossier._id, actor);
 }

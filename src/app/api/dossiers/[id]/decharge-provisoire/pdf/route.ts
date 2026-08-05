@@ -34,7 +34,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
 
-  const view = await buildDossierDechargeProvisoireView(id);
+  const view = await buildDossierDechargeProvisoireView(id, auth.user);
   if (!view) {
     return NextResponse.json(
       {

@@ -28,7 +28,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!visible || (visible.kind !== "DELOCALISATION" && visible.kind !== "CESSION_DELOCALISATION")) {
       return notFound("Demande de délocalisation introuvable.", "ACTE_DELOCALISATION_NOT_FOUND");
     }
-    const view = await buildActeDelocalisationView(id);
+    const view = await buildActeDelocalisationView(id, auth.user);
     if (!view) {
       return notFound("Demande de délocalisation introuvable.", "ACTE_DELOCALISATION_NOT_FOUND");
     }

@@ -16,6 +16,7 @@ import {
   Import,
   Map,
   MapPinned,
+  PhoneCall,
   ReceiptText,
   ScanLine,
   ScrollText,
@@ -45,6 +46,7 @@ type LonaciNavVisual = Pick<LonaciNavItem, "icon" | "iconColor" | "badge" | "dis
 const LONACI_NAV_VISUALS: Record<KnownNavHref, LonaciNavVisual> = {
   "/dashboard": { icon: Gauge, iconColor: "#38bdf8" },
   "/clients": { icon: Users, iconColor: "#22d3ee" },
+  "/soumissions": { icon: PhoneCall, iconColor: "#38bdf8" },
   "/dossiers": { icon: FolderKanban, iconColor: "#f472b6", badge: "dossiers" },
   "/cautions": { icon: HandCoins, iconColor: "#fbbf24", badge: "cautions" },
   "/concessionnaires": { icon: Building2, iconColor: "#fb923c" },

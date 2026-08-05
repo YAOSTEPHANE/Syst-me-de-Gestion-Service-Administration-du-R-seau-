@@ -118,12 +118,24 @@ function parseIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-const RL_AUTH_MAX = parseIntEnv("PROXY_RATE_LIMIT_AUTH_MAX", 20);
+const RL_AUTH_MAX = parseIntEnv("PROXY_RATE_LIMIT_AUTH_MAX", 60);
 const RL_PUBLIC_MAX = parseIntEnv("PROXY_RATE_LIMIT_PUBLIC_MAX", 120);
 const RL_PRIVATE_MAX = parseIntEnv("PROXY_RATE_LIMIT_PRIVATE_MAX", 300);
 const RL_WINDOW_MS = parseIntEnv("PROXY_RATE_LIMIT_WINDOW_MS", 60_000);
-const PROXY_RATE_LIMIT_ENABLED =
-  process.env.PROXY_RATE_LIMIT_ENABLED === "true" || process.env.NODE_ENV !== "production";
+/**
+ * Limite proxy en mémoire : opt-in via `PROXY_RATE_LIMIT_ENABLED=true`.
+ * Désactivée par défaut (dev + prod multi-instance) — le durcissement auth
+ * reste sur `enforceRateLimit` Mongo (login / reset-password).
+ */
+const PROXY_RATE_LIMIT_ENABLED = process.env.PROXY_RATE_LIMIT_ENABLED === "true";
+
+function isAuthAbusePath(pathname: string): boolean {
+  return (
+    pathname === "/api/auth/login" ||
+    pathname === "/api/auth/logout" ||
+    pathname.startsWith("/api/auth/reset-password")
+  );
+}
 
 function consumeProxyRateLimit(request: NextRequest, keyKind: "auth" | "public" | "private"): number | null {
   if (request.method === "OPTIONS") return null;
@@ -214,8 +226,11 @@ export function proxy(request: NextRequest) {
 
   if (effectivePathname !== "/api/health") {
     if (PROXY_RATE_LIMIT_ENABLED) {
-      const keyKind: "auth" | "public" | "private" =
-        effectivePathname.startsWith("/api/auth/") ? "auth" : isPublicApiPath(effectivePathname) ? "public" : "private";
+      const keyKind: "auth" | "public" | "private" = isAuthAbusePath(effectivePathname)
+        ? "auth"
+        : isPublicApiPath(effectivePathname)
+          ? "public"
+          : "private";
       const retryAfterSec = consumeProxyRateLimit(request, keyKind);
       if (retryAfterSec) {
         const limited = NextResponse.json(

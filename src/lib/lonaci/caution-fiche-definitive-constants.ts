@@ -1,3 +1,4 @@
 /** Libellés partagés (client + serveur) — sans dépendances Node. */
-export const CAUTION_FICHE_DEFINITIVE_TITLE = "FICHE DE PAIEMENT DE CAUTION — RÉGLÉE";
+/** Titre de base aligné sur LONACI_DVGR_PR02_ENREG (produits ajoutés dynamiquement). */
+export const CAUTION_FICHE_DEFINITIVE_TITLE = "FICHE CAUTION AGREMENT";
 export const CAUTION_FICHE_PAYEE_MENTION = "CAUTION PAYÉE";

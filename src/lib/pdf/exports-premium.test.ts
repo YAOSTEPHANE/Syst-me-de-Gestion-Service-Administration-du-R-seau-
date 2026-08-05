@@ -175,12 +175,14 @@ describe("exports PDF premium", () => {
       updatedAt: issuedAt,
       deletedAt: null,
     };
-    const parsed = await readPdf(await renderContratRecapitulatifPdf(dossier, issuedAt));
+    const parsed = await readPdf(await renderContratRecapitulatifPdf(dossier, issuedAt, "Agent Test LONACI"));
     expect(parsed.pageCount).toBeGreaterThan(1);
     const text = parsed.pages.join(" ");
     expect(text).toContain("Identification");
     expect(text).toContain("Opération contractuelle");
     expect(text).toContain("Validation historique 70");
+    expect(text).toContain("Générée par");
+    expect(text).toContain("Agent Test LONACI");
     assertPremiumChrome(parsed);
   });
 });

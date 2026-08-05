@@ -81,7 +81,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
     });
   }
 
-  const view = await buildAnnexeDocumentView(dossierId, undefined, genere.produitCode);
+  const view = await buildAnnexeDocumentView(dossierId, undefined, genere.produitCode, auth.user);
   if (!view) {
     return NextResponse.json({ message: "Vue annexe indisponible." }, { status: 500 });
   }

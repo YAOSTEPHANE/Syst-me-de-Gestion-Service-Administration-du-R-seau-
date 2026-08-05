@@ -8,12 +8,14 @@ import {
   ensureReferentialsIndexes,
   listProduits,
 } from "@/lib/lonaci/referentials";
+import { CLIENT_CATEGORIES } from "@/lib/lonaci/client-constants";
 import { normalizeChecklistTemplate } from "@/lib/lonaci/produit-document-checklist";
 
 const checklistItemSchema = z.object({
   id: z.string().min(1).max(64).optional(),
   libelle: z.string().min(2).max(200),
   obligatoire: z.boolean().optional(),
+  categories: z.array(z.enum(CLIENT_CATEGORIES)).max(CLIENT_CATEGORIES.length).optional(),
 });
 
 const createProduitSchema = z.object({

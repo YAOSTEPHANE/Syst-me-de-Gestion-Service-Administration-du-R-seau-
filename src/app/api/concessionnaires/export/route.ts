@@ -20,7 +20,7 @@ function toCsv(rows: Awaited<ReturnType<typeof searchConcessionnaires>>["items"]
   const header = [
     "Code PDV",
     "Code terminal",
-    "Code concessionnaire",
+    "N° Distributeur",
     "Nom complet",
     "CNI",
     "Telephone principal",

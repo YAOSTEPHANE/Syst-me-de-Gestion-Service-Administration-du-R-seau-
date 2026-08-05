@@ -36,6 +36,7 @@ export async function renderPremiumCourrierComptabiliteClientPdf(
     metadata: {
       title: COURRIER_COMPTABILITE_TITLE,
       subject: COURRIER_COMPTABILITE_OBJET,
+      author: view.agentNom,
       keywords: ["LONACI", "comptabilité", "caution", "attestation"],
       creationDate: view.generatedAt,
     },
@@ -45,7 +46,11 @@ export async function renderPremiumCourrierComptabiliteClientPdf(
     : view.produitCode;
 
   return collectPdfBuffer(doc, () => {
-    drawTitle(doc, COURRIER_COMPTABILITE_TITLE, `Réf. courrier : ${view.referenceCourrier}`);
+    drawTitle(
+      doc,
+      COURRIER_COMPTABILITE_TITLE,
+      `Réf. courrier : ${view.referenceCourrier} · Générée par ${view.agentNom}`,
+    );
 
     doc
       .fillColor(PDF_COLORS.ink)
@@ -119,6 +124,7 @@ export async function renderPremiumCourrierComptabiliteClientPdf(
         value: view.dossierReference,
       });
     }
+    paymentFields.push({ label: "Générée par", value: view.agentNom });
     drawInformationCard(doc, paymentFields);
 
     drawParagraph(
@@ -128,7 +134,8 @@ export async function renderPremiumCourrierComptabiliteClientPdf(
     drawSignatureBlock(doc, [
       {
         label: "Pour la LONACI",
-        name: view.etabliParAgence,
+        name: view.agentNom,
+        role: view.etabliParAgence,
         footerLabel: "Cachet et signature",
       },
     ]);
@@ -146,6 +153,7 @@ export async function renderPremiumCourrierComptabiliteClientPdf(
       reference: view.referenceCourrier,
       issuedAt: view.generatedAt,
       documentLabel: "COURRIER · COMPTABILITÉ CLIENT",
+      generatedBy: view.agentNom,
     });
   });
 }

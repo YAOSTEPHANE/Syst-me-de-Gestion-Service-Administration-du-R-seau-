@@ -6,7 +6,6 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
-  FilePlus2,
   Files,
   Package,
   Pencil,
@@ -62,8 +61,11 @@ export default function AdminProduitsPanel() {
   const [editPrixKit, setEditPrixKit] = useState("");
   const [editActif, setEditActif] = useState(true);
   const [editChecklistItems, setEditChecklistItems] = useState<ProduitPieceDraft[]>([]);
+  const [editAnnexeItems, setEditAnnexeItems] = useState<ProduitPieceDraft[]>([]);
   const [createChecklistItems, setCreateChecklistItems] = useState<ProduitPieceDraft[]>([]);
+  const [createAnnexeItems, setCreateAnnexeItems] = useState<ProduitPieceDraft[]>([]);
   const [showCreatePieces, setShowCreatePieces] = useState(false);
+  const [showCreateAnnexe, setShowCreateAnnexe] = useState(false);
   const [piecesModalProduit, setPiecesModalProduit] = useState<ProduitRow | null>(null);
   const [piecesModalItems, setPiecesModalItems] = useState<ProduitPieceDraft[]>([]);
   const [annexeModalProduit, setAnnexeModalProduit] = useState<ProduitRow | null>(null);
@@ -128,6 +130,7 @@ export default function AdminProduitsPanel() {
     setEditPrixKit(typeof p.prixKit === "number" ? String(p.prixKit) : "");
     setEditActif(p.actif);
     setEditChecklistItems(piecesFromStored(p.documentsChecklist));
+    setEditAnnexeItems(piecesFromStored(p.documentsAnnexe));
   }
 
   function openPiecesModal(p: ProduitRow) {
@@ -171,7 +174,7 @@ export default function AdminProduitsPanel() {
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
       notify.success(
-        `Documents annexe du produit « ${body.produit.code} » enregistrés (${body.produit.documentsAnnexe?.length ?? 0}).`,
+        `Pièces contrat du produit « ${body.produit.code} » enregistrées (${body.produit.documentsAnnexe?.length ?? 0}).`,
       );
       closeAnnexeModal();
     } catch {
@@ -200,7 +203,7 @@ export default function AdminProduitsPanel() {
       }
       setProduits((prev) => prev.map((row) => (row._id === body.produit!._id ? body.produit! : row)));
       notify.success(
-        `Pièces du produit « ${body.produit.code} » enregistrées (${body.produit.documentsChecklist?.length ?? 0}).`,
+        `Pièces caution du produit « ${body.produit.code} » enregistrées (${body.produit.documentsChecklist?.length ?? 0}).`,
       );
       closePiecesModal();
     } catch {
@@ -248,6 +251,7 @@ export default function AdminProduitsPanel() {
           prixKit: prixKitNum,
           actif: editActif,
           documentsChecklist: piecesToApiPayload(editChecklistItems),
+          documentsAnnexe: piecesToApiPayload(editAnnexeItems),
         }),
       });
       const body = (await res.json().catch(() => null)) as
@@ -441,6 +445,7 @@ export default function AdminProduitsPanel() {
           prix: prixNum,
           prixKit: prixKitNum,
           documentsChecklist: piecesToApiPayload(createChecklistItems),
+          documentsAnnexe: piecesToApiPayload(createAnnexeItems),
         }),
       });
       const body = (await res.json().catch(() => null)) as
@@ -467,7 +472,9 @@ export default function AdminProduitsPanel() {
       setPrix("");
       setPrixKit("");
       setCreateChecklistItems([]);
+      setCreateAnnexeItems([]);
       setShowCreatePieces(false);
+      setShowCreateAnnexe(false);
       notify.success(`Produit « ${body?.produit?.code ?? c} » créé.`);
     } catch {
       notify.error("Erreur réseau ou serveur.");
@@ -508,7 +515,7 @@ export default function AdminProduitsPanel() {
       <PageHeader
         eyebrow="Administration · Référentiel"
         title="Produits"
-        description="Pilotez les produits, les cautions attendues et les pièces injectées dans les dossiers."
+        description="Pilotez les produits, les cautions attendues et les pièces à fournir (caution et contrat)."
         actions={
           <Button
             variant="secondary"
@@ -522,67 +529,105 @@ export default function AdminProduitsPanel() {
 
       <Surface padding="lg" elevated>
         <SectionHeader title="Nouveau produit" description="Création réservée au chef de service." />
-      <form onSubmit={onCreate} className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4 xl:items-end">
-        <FormField label="Code produit" htmlFor="produit-code" required>
-          <input
-            id="produit-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Ex. LOTO"
-            maxLength={32}
-            className={inputClass}
-            autoComplete="off"
-          />
-        </FormField>
-        <FormField label="Libellé" htmlFor="produit-libelle" required>
-          <input
-            id="produit-libelle"
-            value={libelle}
-            onChange={(e) => setLibelle(e.target.value)}
-            placeholder="Ex. Loterie nationale"
-            maxLength={200}
-            className={inputClass}
-          />
-        </FormField>
-        <FormField label="Montant attendu caution (FCFA)" htmlFor="produit-prix" required>
-          <input
-            id="produit-prix"
-            value={prix}
-            onChange={(e) => setPrix(e.target.value.replace(/[^\d\s]/g, ""))}
-            placeholder="Ex. 500"
-            inputMode="numeric"
-            className={inputClass}
-            autoComplete="off"
-          />
-        </FormField>
-        <FormField label="Prix kit (FCFA)" htmlFor="produit-prix-kit">
-          <input
-            id="produit-prix-kit"
-            value={prixKit}
-            onChange={(e) => setPrixKit(e.target.value.replace(/[^\d\s]/g, ""))}
-            placeholder="Optionnel — accompagne le produit"
-            inputMode="numeric"
-            className={inputClass}
-            autoComplete="off"
-          />
-        </FormField>
-        <Button type="submit" leadingIcon={Plus} loading={creating}>Créer le produit</Button>
-      </form>
+      <form onSubmit={onCreate} className="mt-4 space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          <FormField label="Code produit" htmlFor="produit-code" required>
+            <input
+              id="produit-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Ex. LOTO"
+              maxLength={32}
+              className={inputClass}
+              autoComplete="off"
+            />
+          </FormField>
+          <FormField label="Libellé" htmlFor="produit-libelle" required>
+            <input
+              id="produit-libelle"
+              value={libelle}
+              onChange={(e) => setLibelle(e.target.value)}
+              placeholder="Ex. Loterie nationale"
+              maxLength={200}
+              className={inputClass}
+            />
+          </FormField>
+          <FormField label="Montant attendu caution (FCFA)" htmlFor="produit-prix" required>
+            <input
+              id="produit-prix"
+              value={prix}
+              onChange={(e) => setPrix(e.target.value.replace(/[^\d\s]/g, ""))}
+              placeholder="Ex. 500"
+              inputMode="numeric"
+              className={inputClass}
+              autoComplete="off"
+            />
+          </FormField>
+          <FormField label="Prix kit (FCFA)" htmlFor="produit-prix-kit">
+            <input
+              id="produit-prix-kit"
+              value={prixKit}
+              onChange={(e) => setPrixKit(e.target.value.replace(/[^\d\s]/g, ""))}
+              placeholder="Optionnel — accompagne le produit"
+              inputMode="numeric"
+              className={inputClass}
+              autoComplete="off"
+            />
+          </FormField>
+        </div>
 
-      <div className="mt-4 border-t border-slate-200 pt-4">
-        <Button
-          variant="ghost"
-          leadingIcon={showCreatePieces ? ChevronUp : ChevronDown}
-          onClick={() => setShowCreatePieces((v) => !v)}
-        >
-          Pièces à fournir à la création (optionnel)
-        </Button>
-        {showCreatePieces ? (
-          <div className="mt-3">
-            <ProduitPiecesEditor items={createChecklistItems} onChange={setCreateChecklistItems} />
+        <div className="space-y-3 border-t border-slate-200 pt-4">
+          <div>
+            <Button
+              type="button"
+              variant="ghost"
+              leadingIcon={showCreatePieces ? ChevronUp : ChevronDown}
+              onClick={() => setShowCreatePieces((v) => !v)}
+            >
+              Pièces à fournir pour la caution (optionnel)
+            </Button>
+            {showCreatePieces ? (
+              <div className="mt-3">
+                <ProduitPiecesEditor
+                  items={createChecklistItems}
+                  onChange={setCreateChecklistItems}
+                  disabled={creating}
+                  helpText="Ces pièces apparaissent à la constitution de caution / dossier client. Elles sont enregistrées avec le produit."
+                />
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
+          <div>
+            <Button
+              type="button"
+              variant="ghost"
+              leadingIcon={showCreateAnnexe ? ChevronUp : ChevronDown}
+              onClick={() => setShowCreateAnnexe((v) => !v)}
+            >
+              Pièces à fournir pour le contrat (optionnel)
+            </Button>
+            {showCreateAnnexe ? (
+              <div className="mt-3">
+                <ProduitPiecesEditor
+                  items={createAnnexeItems}
+                  onChange={setCreateAnnexeItems}
+                  disabled={creating}
+                  helpText="Ces pièces sont associées à l’annexe du contrat et à la checklist à la création d’un contrat. Elles sont enregistrées avec le produit."
+                />
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center justify-end gap-3 border-t border-slate-200 pt-4">
+          <p className="mr-auto text-xs text-slate-500">
+            Les pièces ci-dessus sont enregistrées en même temps que le produit.
+          </p>
+          <Button type="submit" leadingIcon={Plus} loading={creating}>
+            Créer le produit
+          </Button>
+        </div>
+      </form>
       </Surface>
 
       {error ? <FeedbackState tone="danger" title="Action impossible" description={error} /> : null}
@@ -637,7 +682,7 @@ export default function AdminProduitsPanel() {
               <th className="px-3 py-2 font-semibold">Libellé</th>
               <th className="px-3 py-2 font-semibold">Caution (FCFA)</th>
               <th className="px-3 py-2 font-semibold">Prix kit (FCFA)</th>
-              <th className="px-3 py-2 font-semibold">Pièces à fournir</th>
+              <th className="px-3 py-2 font-semibold">Pièces caution / contrat</th>
               <th className="px-3 py-2 font-semibold">Statut</th>
               <th className="px-3 py-2 font-semibold">Actions</th>
               <th className="px-3 py-2 font-mono font-normal text-slate-500">ID</th>
@@ -709,12 +754,26 @@ export default function AdminProduitsPanel() {
                           />
                           <span className="text-xs font-medium text-slate-700">Actif</span>
                         </label>
-                        <div className="grid gap-1 sm:col-span-2 lg:col-span-12">
-                          <span className="text-xs font-medium text-slate-700">Pièces à fournir</span>
+                        <div className="grid gap-1 sm:col-span-2 lg:col-span-6">
+                          <span className="text-xs font-medium text-slate-700">
+                            Pièces à fournir (caution)
+                          </span>
                           <ProduitPiecesEditor
                             items={editChecklistItems}
                             onChange={setEditChecklistItems}
                             disabled={savingId === p._id}
+                            helpText="Injectées dans la caution / le dossier client."
+                          />
+                        </div>
+                        <div className="grid gap-1 sm:col-span-2 lg:col-span-6">
+                          <span className="text-xs font-medium text-slate-700">
+                            Pièces à fournir (contrat)
+                          </span>
+                          <ProduitPiecesEditor
+                            items={editAnnexeItems}
+                            onChange={setEditAnnexeItems}
+                            disabled={savingId === p._id}
+                            helpText="Injectées dans la checklist et l’annexe du contrat."
                           />
                         </div>
                         <div className="flex flex-wrap gap-2 lg:col-span-2">
@@ -799,8 +858,8 @@ export default function AdminProduitsPanel() {
                       <div className="flex flex-col gap-1">
                         <span className="text-[11px] text-slate-600">
                           {(p.documentsChecklist?.length ?? 0) === 0
-                            ? "Aucune"
-                            : `${p.documentsChecklist!.length} pièce${p.documentsChecklist!.length > 1 ? "s" : ""}`}
+                            ? "Aucune pièce caution"
+                            : `${p.documentsChecklist!.length} pièce${p.documentsChecklist!.length > 1 ? "s" : ""} caution`}
                         </span>
                         <Button
                           variant="secondary"
@@ -809,12 +868,12 @@ export default function AdminProduitsPanel() {
                           onClick={() => openPiecesModal(p)}
                           disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
                         >
-                          Gérer les pièces
+                          Gérer pièces caution
                         </Button>
                         <span className="text-[11px] text-slate-600">
                           {(p.documentsAnnexe?.length ?? 0) === 0
-                            ? "Aucun doc. annexe"
-                            : `${p.documentsAnnexe!.length} doc. annexe`}
+                            ? "Aucune pièce contrat"
+                            : `${p.documentsAnnexe!.length} pièce${p.documentsAnnexe!.length > 1 ? "s" : ""} contrat`}
                         </span>
                         <Button
                           variant="secondary"
@@ -823,7 +882,7 @@ export default function AdminProduitsPanel() {
                           onClick={() => openAnnexeModal(p)}
                           disabled={deletingId === p._id || editingId !== null || quickUpdatingId === p._id}
                         >
-                          Docs annexe contrat
+                          Gérer pièces contrat
                         </Button>
                       </div>
                     </td>
@@ -887,8 +946,21 @@ export default function AdminProduitsPanel() {
                     <option value="true">Actif</option><option value="false">Inactif</option>
                   </select>
                 </FormField>
-                <FormField label="Pièces à fournir">
-                  <ProduitPiecesEditor items={editChecklistItems} onChange={setEditChecklistItems} disabled={savingId === p._id} />
+                <FormField label="Pièces à fournir (caution)">
+                  <ProduitPiecesEditor
+                    items={editChecklistItems}
+                    onChange={setEditChecklistItems}
+                    disabled={savingId === p._id}
+                    helpText="Injectées dans la caution / le dossier client."
+                  />
+                </FormField>
+                <FormField label="Pièces à fournir (contrat)">
+                  <ProduitPiecesEditor
+                    items={editAnnexeItems}
+                    onChange={setEditAnnexeItems}
+                    disabled={savingId === p._id}
+                    helpText="Injectées dans la checklist et l’annexe du contrat."
+                  />
                 </FormField>
                 <div className="flex justify-end gap-2">
                   <Button variant="secondary" size="sm" onClick={cancelEdit} disabled={savingId === p._id}>Annuler</Button>
@@ -926,34 +998,42 @@ export default function AdminProduitsPanel() {
         <Dialog
           open
           onOpenChange={(open) => { if (!open && savingPiecesId === null) closePiecesModal(); }}
-          title={`Pièces à fournir — ${piecesModalProduit.code}`}
+          title={`Pièces à fournir (caution) — ${piecesModalProduit.code}`}
           description={piecesModalProduit.libelle}
           size="lg"
-        >
-            <form onSubmit={(e) => void savePiecesModal(e)} className="space-y-4">
-              <ProduitPiecesEditor
-                items={piecesModalItems}
-                onChange={setPiecesModalItems}
+          footer={
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="secondary"
                 disabled={savingPiecesId === piecesModalProduit._id}
-              />
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={savingPiecesId === piecesModalProduit._id}
-                  onClick={closePiecesModal}
-                >
-                  Annuler
-                </Button>
-                <Button
-                  type="submit"
-                  leadingIcon={Save}
-                  loading={savingPiecesId === piecesModalProduit._id}
-                  disabled={savingPiecesId === piecesModalProduit._id}
-                >
-                  Enregistrer les pièces
-                </Button>
-              </div>
-            </form>
+                onClick={closePiecesModal}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="submit"
+                form="produit-pieces-caution-form"
+                leadingIcon={Save}
+                loading={savingPiecesId === piecesModalProduit._id}
+                disabled={savingPiecesId === piecesModalProduit._id}
+              >
+                Enregistrer les pièces
+              </Button>
+            </div>
+          }
+        >
+          <form
+            id="produit-pieces-caution-form"
+            onSubmit={(e) => void savePiecesModal(e)}
+            className="space-y-4"
+          >
+            <ProduitPiecesEditor
+              items={piecesModalItems}
+              onChange={setPiecesModalItems}
+              disabled={savingPiecesId === piecesModalProduit._id}
+              helpText="Ces pièces apparaissent à la constitution de caution / dossier client. Choisissez les types de clients concernés."
+            />
+          </form>
         </Dialog>
       ) : null}
 
@@ -961,35 +1041,42 @@ export default function AdminProduitsPanel() {
         <Dialog
           open
           onOpenChange={(open) => { if (!open && savingAnnexeId === null) closeAnnexeModal(); }}
-          title={`Documents annexe au contrat — ${annexeModalProduit.code}`}
+          title={`Pièces à fournir (contrat) — ${annexeModalProduit.code}`}
           description={annexeModalProduit.libelle}
           size="lg"
-        >
-            <form onSubmit={(e) => void saveAnnexeModal(e)} className="space-y-4">
-              <ProduitPiecesEditor
-                items={annexeModalItems}
-                onChange={setAnnexeModalItems}
+          footer={
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button
+                variant="secondary"
                 disabled={savingAnnexeId === annexeModalProduit._id}
-                helpText="Ces documents sont associés à l’annexe du contrat (PDF annexe et checklist dossier). Marquez-les comme fournis avant la génération du contrat."
-              />
-              <div className="flex justify-end gap-2">
-                <Button
-                  variant="secondary"
-                  disabled={savingAnnexeId === annexeModalProduit._id}
-                  onClick={closeAnnexeModal}
-                >
-                  Annuler
-                </Button>
-                <Button
-                  type="submit"
-                  leadingIcon={FilePlus2}
-                  loading={savingAnnexeId === annexeModalProduit._id}
-                  disabled={savingAnnexeId === annexeModalProduit._id}
-                >
-                  Enregistrer les documents annexe
-                </Button>
-              </div>
-            </form>
+                onClick={closeAnnexeModal}
+              >
+                Annuler
+              </Button>
+              <Button
+                type="submit"
+                form="produit-pieces-contrat-form"
+                leadingIcon={Save}
+                loading={savingAnnexeId === annexeModalProduit._id}
+                disabled={savingAnnexeId === annexeModalProduit._id}
+              >
+                Enregistrer les pièces
+              </Button>
+            </div>
+          }
+        >
+          <form
+            id="produit-pieces-contrat-form"
+            onSubmit={(e) => void saveAnnexeModal(e)}
+            className="space-y-4"
+          >
+            <ProduitPiecesEditor
+              items={annexeModalItems}
+              onChange={setAnnexeModalItems}
+              disabled={savingAnnexeId === annexeModalProduit._id}
+              helpText="Ces documents sont associés à l’annexe du contrat et à la checklist à la création d’un contrat."
+            />
+          </form>
         </Dialog>
       ) : null}
       <ConfirmDialog

@@ -58,7 +58,7 @@ import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import {
   buildChecklistFromTemplate,
-  mergeProductChecklistTemplates,
+  mergeProductDossierAndAnnexeTemplates,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { DossierDocumentChecklistPayload, ProduitDocument } from "@/lib/lonaci/types";
@@ -92,6 +92,7 @@ interface ProduitRef {
   libelle: string;
   actif: boolean;
   documentsChecklist?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+  documentsAnnexe?: Array<{ id: string; libelle: string; obligatoire?: boolean; annexe?: boolean }>;
 }
 
 function produitsToDocumentRows(produits: ProduitRef[]): ProduitDocument[] {
@@ -100,6 +101,7 @@ function produitsToDocumentRows(produits: ProduitRef[]): ProduitDocument[] {
     libelle: p.libelle,
     actif: p.actif,
     documentsChecklist: p.documentsChecklist,
+    documentsAnnexe: p.documentsAnnexe,
     createdAt: new Date(0),
     updatedAt: new Date(0),
   }));
@@ -866,9 +868,13 @@ export default function ContratsPanel() {
       setCreateChecklist(null);
       return;
     }
-    const template = mergeProductChecklistTemplates(createProduitCodes, produitsToDocumentRows(produits));
+    const template = mergeProductDossierAndAnnexeTemplates(
+      createProduitCodes,
+      produitsToDocumentRows(produits),
+      selectedClient ? normalizeClientCategorie(selectedClient.categorie) : null,
+    );
     setCreateChecklist((prev) => buildChecklistFromTemplate(template, prev?.entries ?? null));
-  }, [createOpen, createProduitCodes, produits]);
+  }, [createOpen, createProduitCodes, produits, selectedClient]);
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -2916,7 +2922,7 @@ export default function ContratsPanel() {
                           editable
                           onChange={setCreateChecklist}
                           title="Pièces à fournir pour ce(s) contrat(s)"
-                          hint={`Liste fusionnée des pièces des ${createProduitCodes.length} produit(s) — marquez chaque pièce Fourni, Manquant ou En attente.`}
+                          hint={`Liste fusionnée des pièces dossier et annexe des ${createProduitCodes.length} produit(s), filtrées selon le type de client — marquez chaque pièce Fourni, Manquant ou En attente.`}
                         />
                       ) : (
                         <p className="text-xs text-slate-500">Préparation de la checklist…</p>

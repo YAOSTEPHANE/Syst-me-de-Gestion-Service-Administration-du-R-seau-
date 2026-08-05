@@ -7,6 +7,7 @@ import {
   DECHARGE_DEFINITIVE_TITLE,
   dossierEligibleDechargeDefinitive,
 } from "@/lib/lonaci/dossier-decharge-constants";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { loadPartySnapshotForDossier } from "@/lib/lonaci/contrat-party-snapshot";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 import { findDossierById } from "@/lib/lonaci/dossiers";
@@ -18,6 +19,7 @@ import {
 import type {
   CautionDocument,
   DossierDocument,
+  UserDocument,
 } from "@/lib/lonaci/types";
 import { getDatabase } from "@/lib/mongodb";
 import {
@@ -75,6 +77,7 @@ export interface DossierDechargeDefinitiveView {
   numeroFicheProvisoire: string | null;
   numeroFicheDefinitive: string | null;
   cautionReferenceLabel: string;
+  agentNom: string;
 }
 
 async function loadPaidCautionRecord(cautionId: string): Promise<StoredCaution | null> {
@@ -100,6 +103,7 @@ function resolveDateValidation(dossier: DossierDocument, caution: StoredCaution)
 
 export async function buildDossierDechargeDefinitiveView(
   dossierId: string,
+  actor?: UserDocument | null,
 ): Promise<DossierDechargeDefinitiveView | null> {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt || dossier.type !== "CONTRAT_ACTUALISATION") {
@@ -142,6 +146,7 @@ export async function buildDossierDechargeDefinitiveView(
     caution!.numeroFicheDefinitive?.trim() ||
     caution!.numeroFicheProvisoire?.trim() ||
     paymentReference;
+  const agentNom = await resolveDocumentAgentName({ actor });
 
   return {
     dossierReference: dossier.reference,
@@ -170,6 +175,7 @@ export async function buildDossierDechargeDefinitiveView(
     numeroFicheProvisoire: caution!.numeroFicheProvisoire ?? null,
     numeroFicheDefinitive: caution!.numeroFicheDefinitive ?? null,
     cautionReferenceLabel,
+    agentNom,
   };
 }
 
@@ -178,6 +184,7 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
     metadata: {
       title: DECHARGE_DEFINITIVE_TITLE,
       subject: `Décharge définitive du dossier ${view.dossierReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -185,7 +192,7 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
     drawTitle(
       doc,
       DECHARGE_DEFINITIVE_TITLE,
-      `Réf. dossier : ${view.dossierReference} · Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
+      `Réf. dossier : ${view.dossierReference} · Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(doc, view.mention, "success");
 
@@ -195,7 +202,7 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
       { label: "Code PDV", value: view.codePdv },
       ...(view.codeTerminal ? [{ label: "Code terminal", value: view.codeTerminal }] : []),
       ...(view.codeConcessionnaire
-        ? [{ label: "Code concessionnaire", value: view.codeConcessionnaire }]
+        ? [{ label: "N° Distributeur", value: view.codeConcessionnaire }]
         : []),
       ...(view.cniNumero ? [{ label: "N° CNI", value: view.cniNumero }] : []),
       ...(view.email ? [{ label: "E-mail", value: view.email }] : []),
@@ -204,6 +211,7 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
       ...(view.ville ? [{ label: "Ville", value: view.ville }] : []),
       { label: "Agence", value: view.agenceLabel },
       { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
+      { label: "Générée par", value: view.agentNom },
     ];
     drawSection(doc, "Identification");
     drawInformationCard(doc, identityFields);
@@ -246,6 +254,7 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
       reference: view.dossierReference,
       issuedAt: view.generatedAt,
       documentLabel: "DÉCHARGE DÉFINITIVE",
+      generatedBy: view.agentNom,
     });
   });
 }

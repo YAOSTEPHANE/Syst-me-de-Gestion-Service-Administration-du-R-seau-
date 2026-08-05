@@ -76,6 +76,7 @@ const provisoireView: DossierDechargeProvisoireView = {
     numeroFicheDefinitive: null,
   },
   cautions: [],
+  agentNom: "Agent Test LONACI",
 };
 
 const definitiveView: DossierDechargeDefinitiveView = {
@@ -105,6 +106,7 @@ const definitiveView: DossierDechargeDefinitiveView = {
   numeroFicheProvisoire: "FPC-002",
   numeroFicheDefinitive: "FPD-002",
   cautionReferenceLabel: "FPD-002",
+  agentNom: "Agent Test LONACI",
 };
 
 const contratView: DossierDechargeContratView = {
@@ -124,7 +126,7 @@ const contratView: DossierDechargeContratView = {
       referenceAnnexe: "ANN-2026-001",
     },
   ],
-  etabliPar: "Agent LONACI",
+  agentNom: "Agent LONACI",
 };
 
 const cessionView: ActeCessionView = {
@@ -155,6 +157,7 @@ const cessionView: ActeCessionView = {
     agenceLabel: "Agence Treichville",
   },
   emisLe: generatedAt.toISOString(),
+  agentNom: "Agent Test LONACI",
 };
 
 const delocalisationView: ActeDelocalisationView = {
@@ -173,6 +176,7 @@ const delocalisationView: ActeDelocalisationView = {
   nouvelleGps: { lat: 5.3651, lng: -3.9952 },
   emisLe: generatedAt.toISOString(),
   linkedOperationId: "OP-2026-009",
+  agentNom: "Agent Test LONACI",
 };
 
 describe("documents métier migrés vers le socle PDF", () => {

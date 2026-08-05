@@ -95,6 +95,11 @@ export interface ProduitDocumentChecklistItem {
   obligatoire?: boolean;
   /** Pièce rattachée à l’annexe contrat (et non au seul dossier). */
   annexe?: boolean;
+  /**
+   * Types de clients concernés.
+   * Absent ou vide = toutes les catégories (PARTICULIER, ENTREPRISE, CANAL_ALTERNATIF).
+   */
+  categories?: Array<"PARTICULIER" | "ENTREPRISE" | "CANAL_ALTERNATIF">;
 }
 
 export type DossierDocumentChecklistStatut = "FOURNI" | "MANQUANT" | "EN_ATTENTE";
@@ -325,11 +330,15 @@ export interface CautionDocument {
   numeroFicheDefinitive?: string | null;
   /** Date d’émission de la fiche définitive. */
   ficheDefinitiveEmiseLe?: Date | null;
+  /** Nom de l’agent ayant émis la fiche définitive (régularisation / validation paiement). */
+  ficheDefinitiveGeneratedByName?: string | null;
   paidAt: Date | null;
   /** Première alerte automatique J+10 émise (statut métier EN RETARD). */
   j10AlertSentAt?: Date | null;
   immutableAfterFinal: boolean;
   createdByUserId: string;
+  /** Nom affiché de l’agent ayant généré la fiche de paiement caution. */
+  createdByDisplayName?: string | null;
   updatedByUserId: string;
   createdAt: Date;
   updatedAt: Date;

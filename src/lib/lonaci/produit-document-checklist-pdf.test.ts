@@ -32,6 +32,7 @@ describe("renderDossierChecklistPdf", () => {
       produitLibelle: "Pari Mutuel Urbain",
       concessionnaireLabel: "Établissements Konan",
       generatedAt: new Date("2026-07-21T08:00:00.000Z"),
+      agentNom: "Agent Test LONACI",
       checklist: {
         complet: false,
         entries: Array.from({ length: 74 }, (_, index) => ({
@@ -51,6 +52,8 @@ describe("renderDossierChecklistPdf", () => {
     expect(text).toContain("DOS-2026-0099");
     expect(text).toContain("Document de constitution numéro 74");
     expect(text).toContain("(obligatoire)");
+    expect(text).toContain("Générée par");
+    expect(text).toContain("Agent Test LONACI");
     for (const [index, page] of parsed.pages.entries()) {
       expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
     }

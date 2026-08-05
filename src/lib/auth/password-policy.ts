@@ -48,6 +48,8 @@ export function isApiPathExemptFromPasswordRotation(pathname: string): boolean {
   const p = pathname.toLowerCase();
   if (p === "/api/auth/me") return true;
   if (p === "/api/auth/reset-password") return true;
+  /** Ordre du menu (chrome shell) — évite 403 → rechargement en boucle sur Paramètres. */
+  if (p === "/api/menu-order") return true;
   /** Catalogue agences / produits (GET uniquement côté route) — évite des 403 inutiles dans les formulaires. */
   if (p === "/api/referentials") return true;
   return false;

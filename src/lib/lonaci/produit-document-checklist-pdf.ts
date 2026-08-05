@@ -20,6 +20,7 @@ export interface DossierChecklistPdfView {
   concessionnaireLabel: string;
   checklist: DossierDocumentChecklistPayload;
   generatedAt: Date;
+  agentNom: string;
 }
 
 export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): Promise<Buffer> {
@@ -27,6 +28,7 @@ export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): 
     metadata: {
       title: "Checklist documents — constitution de dossier",
       subject: `Checklist du dossier ${view.dossierReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -35,7 +37,7 @@ export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): 
     drawTitle(
       doc,
       "Checklist documents — constitution de dossier",
-      `Référence dossier : ${view.dossierReference}`,
+      `Référence dossier : ${view.dossierReference} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(
       doc,
@@ -48,6 +50,7 @@ export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): 
       { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
       { label: "Concessionnaire", value: view.concessionnaireLabel },
       { label: "Généré le", value: view.generatedAt.toLocaleString("fr-FR") },
+      { label: "Générée par", value: view.agentNom },
     ]);
 
     drawSection(doc, "Documents à constituer");
@@ -66,6 +69,7 @@ export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): 
       reference: view.dossierReference,
       issuedAt: view.generatedAt,
       documentLabel: "CHECKLIST DOCUMENTS",
+      generatedBy: view.agentNom,
     });
   });
 }

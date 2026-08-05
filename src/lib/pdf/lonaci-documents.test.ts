@@ -46,35 +46,51 @@ const definitiveView: CautionFicheDefinitiveView = {
   modeLibelle: "Virement",
   identiteLabel: "Concessionnaire",
   identiteDetail: "Société Exemple Distribution",
+  nom: "KOUASSI",
+  prenoms: "Jean",
   clientCode: "CLI-00123",
   lonaciClientId: null,
   contratId: "CTR-2026-001",
+  codeConcessionnaire: "CC-0001",
+  numeroTerminal: "T-9988",
+  telephone: "0700000000",
+  situationGeographique: "Cocody, Abidjan",
   produitCode: "PMU",
   produitLibelle: "Pari mutuel urbain",
+  titreDocument: "FICHE CAUTION AGREMENT PMU",
   agenceLabel: "Agence Abidjan Centre",
   numeroFicheProvisoire: "FPC-2026-000123",
   destinataireEmail: null,
+  agentNom: "Agent Test LONACI",
 };
 
 describe("documents LONACI sur le moteur PDF premium", () => {
-  it("pagine la fiche provisoire, conserve le filigrane et les coordonnées", async () => {
+  it("reproduit le formulaire officiel caution agrément (LONACI_DVGR_PR02_ENREG)", async () => {
     const view: CautionFicheProvisoireView = {
       cautionId: "507f1f77bcf86cd799439011",
       numeroDossier: "CAU-2026-TEST-0001",
       generatedAt: "2026-07-20T08:00:00.000Z",
-      identiteLabel: "Client",
-      identiteDetail: "Client de contrôle structurel",
-      identifiantLabel: "Identifiant client",
-      identifiantValue: "CLI-0001",
+      agentNom: "Agent Test LONACI",
+      titreDocument: "FICHE CAUTION AGREMENT PMU ALR",
+      identiteLabel: "Concessionnaire",
+      identiteDetail: "Kouassi Jean",
+      nom: "KOUASSI",
+      prenoms: "Jean",
+      identifiantLabel: "Code PDV",
+      identifiantValue: "PDV-0001",
+      codeConcessionnaire: "CC-0001",
+      numeroTerminal: "T-9988",
       cniNumero: "CI0123456789",
       codePdv: "PDV-0001",
       agenceLabel: "Agence de test",
-      produitLignes: Array.from({ length: 42 }, (_, index) => ({
-        code: `P${String(index + 1).padStart(2, "0")}`,
-        libelle: `Produit de caution longue ligne ${index + 1}`,
-        montantFCFA: 10_000 + index,
-      })),
-      montantTotalFCFA: 420_861,
+      situationGeographique: "Cocody, Abidjan",
+      telephone: "0700000000",
+      produitLignes: [
+        { code: "PMU", libelle: "PMU", montantFCFA: 100_000 },
+        { code: "ALR", libelle: "ALR", montantFCFA: 150_000 },
+      ],
+      montantTotalFCFA: 250_000,
+      cautionVerseeFCFA: 0,
       dueDate: "2026-08-20T00:00:00.000Z",
       bank: {
         banque: "Banque partenaire LONACI",
@@ -85,18 +101,23 @@ describe("documents LONACI sur le moteur PDF premium", () => {
     };
 
     const parsed = await readPdf(await renderPremiumCautionFicheProvisoirePdf(view));
+    const text = parsed.pages.join(" ");
 
-    expect(parsed.pageCount).toBeGreaterThan(1);
-    for (const pageText of parsed.pages) {
-      expect(pageText).toContain("EN ATTENTE DE PAIEMENT");
-      expect(pageText).toContain("LONACI");
-      expect(pageText).toMatch(/Page \d+\/\d+/);
-    }
-    expect(parsed.pages.join(" ")).toContain("Produit de caution longue ligne 42");
-    expect(parsed.pages.join(" ")).toContain("CI93 0000 0000");
+    expect(text).toContain("LONACI_DVGR_PR02_ENREG");
+    expect(text).toContain("FICHE CAUTION AGREMENT PMU ALR");
+    expect(text).toContain("KOUASSI");
+    expect(text).toContain("Jean");
+    expect(text).toContain("CC-0001");
+    expect(text).toContain("T-9988");
+    expect(text).toContain("Cocody, Abidjan");
+    expect(text).toContain("deux cent cinquante mille francs CFA");
+    expect(text).toContain("Agent Test LONACI");
+    expect(text).toContain("Administration du réseau");
+    expect(text).toContain("EN ATTENTE DE PAIEMENT");
+    expect(text).toMatch(/Page \d+\/\d+/);
   });
 
-  it("intègre un vrai QR dans le bloc de vérification de la fiche définitive", async () => {
+  it("reproduit le formulaire officiel FPD (LONACI_DVGR_PR02_ENREG) avec QR", async () => {
     const qrPng = await QRCode.toBuffer(
       `LONACI|CAUTION|${definitiveView.cautionId}|${definitiveView.numeroFicheDefinitive}|${definitiveView.paymentReference}`,
       { type: "png", margin: 1, width: 180 },
@@ -107,9 +128,20 @@ describe("documents LONACI sur le moteur PDF premium", () => {
     );
     const text = parsed.pages.join(" ");
 
+    expect(text).toContain("LONACI_DVGR_PR02_ENREG");
+    expect(text).toContain("FICHE CAUTION AGREMENT PMU");
+    expect(text).toContain("KOUASSI");
+    expect(text).toContain("Jean");
+    expect(text).toContain("CC-0001");
+    expect(text).toContain("T-9988");
+    expect(text).toContain("Cocody, Abidjan");
+    expect(text).toContain("CAUTION VERSEE");
+    expect(text).toContain("deux cent cinquante mille francs CFA");
+    expect(text).toContain("CAUTION PAYÉE");
     expect(text).toContain("Vérification QR");
     expect(text).toContain("PAY-2026-000123");
-    expect(text).toContain("CAUTION · FICHE DÉFINITIVE");
+    expect(text).toContain("CAUTION · AGREMENT");
+    expect(text).toContain("Agent Test LONACI");
     expect(text).toContain("Page 1/1");
   });
 
@@ -137,6 +169,7 @@ describe("documents LONACI sur le moteur PDF premium", () => {
       numeroFicheProvisoire: "FPC-2026-000123",
       dossierReference: "DOS-2026-00123",
       etabliParAgence: "Agence Abidjan Centre",
+      agentNom: "Agent Test LONACI",
     };
 
     const parsed = await readPdf(await renderPremiumCourrierComptabiliteClientPdf(view));
@@ -144,8 +177,9 @@ describe("documents LONACI sur le moteur PDF premium", () => {
 
     expect(parsed.pageCount).toBeGreaterThan(1);
     expect(signaturePage).toContain("Pour la LONACI");
-    expect(signaturePage).toContain("Agence Abidjan Centre");
+    expect(signaturePage).toContain("Agent Test LONACI");
     expect(parsed.pages.join(" ")).toContain("PAY-2026-000123");
+    expect(parsed.pages.join(" ")).toContain("Générée par");
     for (const pageText of parsed.pages) {
       expect(pageText).toMatch(/Page \d+\/\d+/);
     }

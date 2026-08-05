@@ -3,6 +3,7 @@ import "server-only";
 import { ObjectId } from "mongodb";
 
 import { loadPartySnapshotForDossier, parseContratPartySnapshot, type ContratPartySnapshot } from "@/lib/lonaci/contrat-party-snapshot";
+import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { dossierEligibleDechargeDefinitive } from "@/lib/lonaci/dossier-decharge-constants";
 import { buildDossierDechargeDefinitiveView } from "@/lib/lonaci/dossier-decharge-definitive";
 import { findDossierById } from "@/lib/lonaci/dossiers";
@@ -62,7 +63,7 @@ export function partyIdentityPdfFields(party: ContratPartySnapshot): PdfField[] 
   pushIfPresent(fields, isClient ? "Identifiant client" : "Code PDV", party.codePdv);
   pushIfPresent(fields, "Catégorie", party.categorieLabel ?? party.categorie);
   pushIfPresent(fields, "Code machine / terminal", party.codeMachine ?? party.codeTerminal);
-  pushIfPresent(fields, "Code concessionnaire", party.codeConcessionnaire);
+  pushIfPresent(fields, "N° Distributeur", party.codeConcessionnaire);
   pushIfPresent(fields, "N° CNI", party.cniNumero);
   pushIfPresent(fields, "Nom du contact", party.nomContact);
   pushIfPresent(fields, "E-mail", party.email);
@@ -160,6 +161,7 @@ export interface ContratDocumentView {
   signedAt: Date | null;
   signerName: string | null;
   finalized: boolean;
+  agentNom: string;
 }
 
 type DossierSignatureRow = {
@@ -391,6 +393,7 @@ export async function buildContratDocumentView(
   dossierId: string,
   contratReference?: string,
   produitCode?: string,
+  actor?: UserDocument | null,
 ): Promise<ContratDocumentView | null> {
   const dossier = await findDossierById(dossierId);
   if (!dossier || dossier.deletedAt) return null;
@@ -420,6 +423,10 @@ export async function buildContratDocumentView(
   const signature = await loadLatestSignature(dossierId);
   const ref = contratReference?.trim() || genere.contratSigneArchive?.contratReference || genere.referenceContratPreview;
   const liveParty = await loadPartySnapshotForDossier(dossier);
+  const agentNom = await resolveDocumentAgentName({
+    actor,
+    userId: genere.generatedByUserId,
+  });
 
   return {
     dossierReference: dossier.reference,
@@ -437,6 +444,7 @@ export async function buildContratDocumentView(
     signedAt: signature?.signedAt ?? null,
     signerName: signature?.signerName ?? null,
     finalized: dossier.status === "FINALISE",
+    agentNom,
   };
 }
 
@@ -445,6 +453,7 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
     metadata: {
       title: CONTRAT_OFFICIEL_TITLE,
       subject: `Contrat ${view.contratReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -453,7 +462,7 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
     drawTitle(
       doc,
       CONTRAT_OFFICIEL_TITLE,
-      `Réf. contrat : ${view.contratReference} · Réf. dossier : ${view.dossierReference}`,
+      `Réf. contrat : ${view.contratReference} · Réf. dossier : ${view.dossierReference} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(
       doc,
@@ -501,6 +510,9 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
       ]);
     }
 
+    drawSection(doc, "Agent émetteur");
+    drawInformationCard(doc, [{ label: "Générée par", value: view.agentNom }]);
+
     ensureSpace(doc, 36);
     doc
       .fillColor(PDF_COLORS.muted)
@@ -516,7 +528,8 @@ export async function renderContratDocumentPdf(view: ContratDocumentView): Promi
     finalizePremiumPages(doc, {
       reference: view.contratReference,
       issuedAt: view.generatedAt,
-      documentLabel: "DOCUMENT OFFICIEL — MODULE CONTRATS",
+      documentLabel: "DOCUMENT OFFICIEL — CONTRAT",
+      generatedBy: view.agentNom,
     });
   });
 }
@@ -525,8 +538,9 @@ export async function buildAnnexeDocumentView(
   dossierId: string,
   annexeReference?: string,
   produitCode?: string,
+  actor?: UserDocument | null,
 ): Promise<AnnexeDocumentView | null> {
-  const view = await buildContratDocumentView(dossierId, undefined, produitCode);
+  const view = await buildContratDocumentView(dossierId, undefined, produitCode, actor);
   if (!view) return null;
 
   const dossier = await findDossierById(dossierId);
@@ -554,6 +568,7 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
     metadata: {
       title: CONTRAT_ANNEXE_TITLE,
       subject: `Annexe ${view.annexeReference}`,
+      author: view.agentNom,
       creationDate: view.generatedAt,
     },
   });
@@ -562,7 +577,7 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
     drawTitle(
       doc,
       CONTRAT_ANNEXE_TITLE,
-      `Réf. annexe : ${view.annexeReference} · Contrat parent : ${view.contratParentReference} · Réf. dossier : ${view.dossierReference}`,
+      `Réf. annexe : ${view.annexeReference} · Contrat parent : ${view.contratParentReference} · Réf. dossier : ${view.dossierReference} · Générée par ${view.agentNom}`,
     );
     drawStatusBadge(
       doc,
@@ -604,6 +619,9 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
       ]);
     }
 
+    drawSection(doc, "Agent émetteur");
+    drawInformationCard(doc, [{ label: "Générée par", value: view.agentNom }]);
+
     ensureSpace(doc, 36);
     doc
       .fillColor(PDF_COLORS.muted)
@@ -620,6 +638,7 @@ export async function renderAnnexeDocumentPdf(view: AnnexeDocumentView): Promise
       reference: view.annexeReference,
       issuedAt: view.generatedAt,
       documentLabel: "DOCUMENT OFFICIEL — ANNEXE CONTRAT",
+      generatedBy: view.agentNom,
     });
   });
 }
@@ -630,7 +649,7 @@ export async function archiveAnnexeSigneForDossier(
   actor: UserDocument,
   produitCode?: string,
 ): Promise<ContratGenerePayload> {
-  const view = await buildAnnexeDocumentView(dossierId, annexeReference, produitCode);
+  const view = await buildAnnexeDocumentView(dossierId, annexeReference, produitCode, actor);
   if (!view) throw new Error("CONTRAT_GENERE_MISSING");
   view.finalized = true;
   view.annexeReference = annexeReference;
@@ -731,7 +750,7 @@ export async function archiveContratSigneForDossier(
   actor: UserDocument,
   produitCode?: string,
 ): Promise<ContratGenerePayload> {
-  const view = await buildContratDocumentView(dossierId, contratReference, produitCode);
+  const view = await buildContratDocumentView(dossierId, contratReference, produitCode, actor);
   if (!view) throw new Error("CONTRAT_GENERE_MISSING");
   view.finalized = true;
   view.contratReference = contratReference;

@@ -1,3 +1,8 @@
+import {
+  CLIENT_CATEGORIES,
+  parseClientCategorie,
+  type ClientCategorie,
+} from "@/lib/lonaci/client-constants";
 import type {
   DossierDocumentChecklistEntry,
   DossierDocumentChecklistPayload,
@@ -22,6 +27,19 @@ export const DOSSIER_CHECKLIST_STATUT_LABELS: Record<DossierDocumentChecklistSta
 
 const PAYLOAD_KEY = "documentChecklist";
 
+function normalizeItemCategories(raw: unknown): ClientCategorie[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const seen = new Set<ClientCategorie>();
+  for (const value of raw) {
+    const parsed = parseClientCategorie(typeof value === "string" ? value : String(value ?? ""));
+    if (parsed) seen.add(parsed);
+  }
+  if (seen.size === 0) return undefined;
+  // Toutes les catégories = pas de restriction (équivalent à champ absent).
+  if (seen.size >= CLIENT_CATEGORIES.length) return undefined;
+  return [...CLIENT_CATEGORIES].filter((c) => seen.has(c));
+}
+
 export function normalizeChecklistTemplate(
   items: Array<Partial<ProduitDocumentChecklistItem> & { libelle?: string }> | null | undefined,
 ): ProduitDocumentChecklistItem[] {
@@ -40,14 +58,34 @@ export function normalizeChecklistTemplate(
       id = `${id}_${out.length + 1}`;
     }
     seen.add(id);
+    const categories = normalizeItemCategories(raw.categories);
     out.push({
       id,
       libelle,
       obligatoire: raw.obligatoire !== false,
       ...(raw.annexe === true ? { annexe: true } : {}),
+      ...(categories?.length ? { categories } : {}),
     });
   }
   return out;
+}
+
+/** True si la pièce s’applique à la catégorie client (ou à toutes si non restreinte). */
+export function checklistItemMatchesClientCategorie(
+  item: Pick<ProduitDocumentChecklistItem, "categories">,
+  clientCategorie?: ClientCategorie | null,
+): boolean {
+  if (!item.categories?.length) return true;
+  if (!clientCategorie) return true;
+  return item.categories.includes(clientCategorie);
+}
+
+export function filterChecklistItemsByClientCategorie(
+  items: ProduitDocumentChecklistItem[],
+  clientCategorie?: ClientCategorie | null,
+): ProduitDocumentChecklistItem[] {
+  if (!clientCategorie) return items;
+  return items.filter((item) => checklistItemMatchesClientCategorie(item, clientCategorie));
 }
 
 export function isChecklistStatut(value: unknown): value is DossierDocumentChecklistStatut {
@@ -177,14 +215,21 @@ export function ensureDossierDocumentChecklist(
   return buildChecklistFromTemplate(template, existing.entries);
 }
 
-export function mergeProductAnnexeTemplates(produitCodes: string[], produits: ProduitDocument[]) {
+export function mergeProductAnnexeTemplates(
+  produitCodes: string[],
+  produits: ProduitDocument[],
+  clientCategorie?: ClientCategorie | null,
+) {
   const seen = new Set<string>();
   const merged: ReturnType<typeof normalizeChecklistTemplate> = [];
   for (const rawCode of produitCodes) {
     const code = rawCode.trim().toUpperCase();
     if (!code || code === OTHER_PRODUCT_CODE) continue;
     const produit = produits.find((p) => p.code.trim().toUpperCase() === code);
-    for (const item of normalizeChecklistTemplate(produit?.documentsAnnexe)) {
+    for (const item of filterChecklistItemsByClientCategorie(
+      normalizeChecklistTemplate(produit?.documentsAnnexe),
+      clientCategorie,
+    )) {
       if (seen.has(item.id)) continue;
       seen.add(item.id);
       merged.push({ ...item, annexe: true });
@@ -194,9 +239,13 @@ export function mergeProductAnnexeTemplates(produitCodes: string[], produits: Pr
 }
 
 /** Pièces dossier + documents annexe contrat (union dédupliquée par id). */
-export function mergeProductDossierAndAnnexeTemplates(produitCodes: string[], produits: ProduitDocument[]) {
-  const dossier = mergeProductChecklistTemplates(produitCodes, produits);
-  const annexe = mergeProductAnnexeTemplates(produitCodes, produits);
+export function mergeProductDossierAndAnnexeTemplates(
+  produitCodes: string[],
+  produits: ProduitDocument[],
+  clientCategorie?: ClientCategorie | null,
+) {
+  const dossier = mergeProductChecklistTemplates(produitCodes, produits, clientCategorie);
+  const annexe = mergeProductAnnexeTemplates(produitCodes, produits, clientCategorie);
   const seen = new Set(dossier.map((item) => item.id));
   const merged = [...dossier];
   for (const item of annexe) {
@@ -207,14 +256,21 @@ export function mergeProductDossierAndAnnexeTemplates(produitCodes: string[], pr
   return merged;
 }
 
-export function mergeProductChecklistTemplates(produitCodes: string[], produits: ProduitDocument[]) {
+export function mergeProductChecklistTemplates(
+  produitCodes: string[],
+  produits: ProduitDocument[],
+  clientCategorie?: ClientCategorie | null,
+) {
   const seen = new Set<string>();
   const merged: ReturnType<typeof normalizeChecklistTemplate> = [];
   for (const rawCode of produitCodes) {
     const code = rawCode.trim().toUpperCase();
     if (!code || code === OTHER_PRODUCT_CODE) continue;
     const produit = produits.find((p) => p.code.trim().toUpperCase() === code);
-    for (const item of normalizeChecklistTemplate(produit?.documentsChecklist)) {
+    for (const item of filterChecklistItemsByClientCategorie(
+      normalizeChecklistTemplate(produit?.documentsChecklist),
+      clientCategorie,
+    )) {
       if (seen.has(item.id)) continue;
       seen.add(item.id);
       merged.push(item);

@@ -75,7 +75,7 @@ export function Dialog({
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
-        onOpenChangeRef.current(false);
+        onOpenChangeRef.current?.(false);
         return;
       }
       if (event.key !== "Tab" || !panelRef.current) return;
@@ -110,11 +110,15 @@ export function Dialog({
 
   if (!mounted || !open) return null;
 
+  function requestClose() {
+    onOpenChangeRef.current?.(false);
+  }
+
   return createPortal(
     <div
       className="lonaci-ui-dialog-backdrop"
       onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onOpenChange(false);
+        if (event.target === event.currentTarget) requestClose();
       }}
     >
       <div
@@ -131,7 +135,7 @@ export function Dialog({
             <h2 id={titleId}>{title}</h2>
             {description ? <p id={descriptionId}>{description}</p> : null}
           </div>
-          <IconButton icon={X} label={closeLabel} size="sm" onClick={() => onOpenChange(false)} />
+          <IconButton icon={X} label={closeLabel} size="sm" onClick={requestClose} />
         </div>
         <div className="lonaci-ui-dialog__body">{children}</div>
         {footer ? <div className="lonaci-ui-dialog__footer">{footer}</div> : null}

@@ -1,16 +1,61 @@
 /** Statuts du référentiel Clients (module /clients). Fichier dédié pour éviter les soucis de chargement côté client. */
-export const CLIENT_CATEGORIES = ["PARTICULIER", "ENTREPRISE"] as const;
+export const CLIENT_CATEGORIES = ["PARTICULIER", "ENTREPRISE", "CANAL_ALTERNATIF"] as const;
 export type ClientCategorie = (typeof CLIENT_CATEGORIES)[number];
 
 export const CLIENT_CATEGORIE_LABELS: Record<ClientCategorie, string> = {
   PARTICULIER: "Particulier",
   ENTREPRISE: "Entreprise",
+  CANAL_ALTERNATIF: "Canal alternatif",
 };
 
 export function normalizeClientCategorie(value: string | null | undefined): ClientCategorie {
-  const v = (value ?? "").trim().toUpperCase();
+  return parseClientCategorie(value) ?? "PARTICULIER";
+}
+
+/** Parse strict : null si la valeur n’est pas une catégorie connue. */
+export function parseClientCategorie(value: string | null | undefined): ClientCategorie | null {
+  const v = (value ?? "")
+    .trim()
+    .toUpperCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[\s/-]+/g, "_");
+  if (!v) return null;
   if (v === "ENTREPRISE") return "ENTREPRISE";
-  return "PARTICULIER";
+  if (
+    v === "CANAL_ALTERNATIF" ||
+    v === "CANALALTERNATIF" ||
+    v === "CANAL_ALT" ||
+    v === "ALTERNATIF"
+  ) {
+    return "CANAL_ALTERNATIF";
+  }
+  if (v === "PARTICULIER") return "PARTICULIER";
+  return null;
+}
+
+/** Entreprise et canal alternatif : formulaire / validation en raison sociale. */
+export function isClientCategorieEntreprise(categorie: ClientCategorie): boolean {
+  return categorie === "ENTREPRISE" || categorie === "CANAL_ALTERNATIF";
+}
+
+/** Catégories de la liste « Entreprises & canaux alternatifs ». */
+export const CLIENT_CATEGORIES_FORME_ENTREPRISE = ["ENTREPRISE", "CANAL_ALTERNATIF"] as const satisfies readonly ClientCategorie[];
+
+/** Catégories de la liste « Particuliers ». */
+export const CLIENT_CATEGORIES_FORME_PARTICULIER = ["PARTICULIER"] as const satisfies readonly ClientCategorie[];
+
+/** Libellé principal affiché selon la catégorie. */
+export function clientDisplayName(client: {
+  categorie?: string | null;
+  nomComplet?: string | null;
+  raisonSociale: string;
+}): string {
+  const categorie = normalizeClientCategorie(client.categorie);
+  if (isClientCategorieEntreprise(categorie)) {
+    return client.raisonSociale.trim() || client.nomComplet?.trim() || "—";
+  }
+  return client.nomComplet?.trim() || client.raisonSociale.trim() || "—";
 }
 
 /** Type de distributeur rattaché au client. */
@@ -36,19 +81,6 @@ export function normalizeClientTypeDistributeur(
   }
   if (v === "ANCIEN" || v === "ANCIENNE" || v === "OLD") return "ANCIEN";
   return null;
-}
-
-/** Libellé principal affiché selon la catégorie. */
-export function clientDisplayName(client: {
-  categorie?: string | null;
-  nomComplet?: string | null;
-  raisonSociale: string;
-}): string {
-  const categorie = normalizeClientCategorie(client.categorie);
-  if (categorie === "ENTREPRISE") {
-    return client.raisonSociale.trim() || client.nomComplet?.trim() || "—";
-  }
-  return client.nomComplet?.trim() || client.raisonSociale.trim() || "—";
 }
 
 export const CLIENT_STATUTS = [
