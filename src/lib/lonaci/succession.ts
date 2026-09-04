@@ -16,6 +16,8 @@ import {
   patchSuccessionDocumentChecklistStatuts,
   successionChecklistWithActeDeces,
 } from "@/lib/lonaci/succession-document-checklist";
+import { applyDocumentsFournisToChecklist } from "@/lib/lonaci/produit-document-checklist";
+import { getSuccessionChecklistTemplate } from "@/lib/lonaci/succession-checklist-settings";
 import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut } from "@/lib/lonaci/types";
 import { canReadConcessionnaire } from "@/lib/lonaci/access";
 import {
@@ -78,17 +80,45 @@ function requireSuccessionTransitionStage(
   }
 }
 
+function checklistPayloadEquals(
+  a: DossierDocumentChecklistPayload,
+  b: DossierDocumentChecklistPayload | null,
+): boolean {
+  if (!b) return false;
+  if (a.complet !== b.complet || a.entries.length !== b.entries.length) return false;
+  return a.entries.every((entry, index) => {
+    const other = b.entries[index];
+    if (!other) return false;
+    return (
+      entry.itemId === other.itemId &&
+      entry.libelle === other.libelle &&
+      entry.obligatoire === other.obligatoire &&
+      entry.statut === other.statut
+    );
+  });
+}
+
 async function ensureRowDocumentChecklist(row: StoredSuccession): Promise<DossierDocumentChecklistPayload> {
   const parsed = parseSuccessionDocumentChecklist(row.documentChecklist);
-  if (parsed?.entries.length) {
-    return successionChecklistWithActeDeces(parsed, Boolean(row.acteDeces));
-  }
-  const built = buildSuccessionDocumentChecklist({ acteDecesUploaded: Boolean(row.acteDeces) });
-  const db = await getDatabase();
-  await db.collection<StoredSuccession>(COLLECTION).updateOne(
-    { _id: row._id },
-    { $set: { documentChecklist: built, updatedAt: new Date(), ...successionStaleAlertResetFields() } },
+  const template = await getSuccessionChecklistTemplate();
+  const built = buildSuccessionDocumentChecklist(
+    { acteDecesUploaded: Boolean(row.acteDeces) },
+    template,
+    parsed,
   );
+  if (!checklistPayloadEquals(built, parsed)) {
+    const db = await getDatabase();
+    await db.collection<StoredSuccession>(COLLECTION).updateOne(
+      { _id: row._id },
+      {
+        $set: {
+          documentChecklist: built,
+          updatedAt: new Date(),
+          ...successionStaleAlertResetFields(),
+        },
+      },
+    );
+  }
   return built;
 }
 
@@ -143,6 +173,7 @@ export interface CreateSuccessionInput {
   dateDeces: Date | null;
   comment: string | null;
   acteDeces: { filename: string; mimeType: string; size: number; storedRelativePath: string } | null;
+  documentsFournis?: string[];
   actor: UserDocument;
 }
 
@@ -183,7 +214,13 @@ export async function createSuccessionCase(input: CreateSuccessionInput): Promis
     ayantDroitLienParente: null,
     ayantDroitTelephone: null,
     ayantDroitEmail: null,
-    documentChecklist: buildSuccessionDocumentChecklist({ acteDecesUploaded: true }),
+    documentChecklist: applyDocumentsFournisToChecklist(
+      buildSuccessionDocumentChecklist(
+        { acteDecesUploaded: true },
+        await getSuccessionChecklistTemplate(),
+      ),
+      input.documentsFournis,
+    ),
     documents: [],
     decision: null,
     validationN1At: null,

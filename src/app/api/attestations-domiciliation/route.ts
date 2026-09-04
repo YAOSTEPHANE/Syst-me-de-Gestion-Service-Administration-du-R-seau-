@@ -31,6 +31,7 @@ const createSchema = z.object({
   produitCode: z.string().trim().min(1).nullable().optional(),
   dateDemande: z.string().datetime(),
   observations: z.string().trim().max(4000).nullable().optional(),
+  documentsFournis: z.array(z.string().trim().min(1)).optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -105,6 +106,7 @@ export async function POST(request: NextRequest) {
     produitCode: parsed.data.produitCode ?? null,
     dateDemande,
     observations: parsed.data.observations ?? null,
+    documentsFournis: parsed.data.documentsFournis,
     actorId: auth.user._id ?? "",
   });
 

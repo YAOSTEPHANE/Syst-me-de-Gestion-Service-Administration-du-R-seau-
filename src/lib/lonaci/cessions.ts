@@ -22,7 +22,9 @@ import {
   softDeleteConcessionnaire,
   updateConcessionnaire,
 } from "@/lib/lonaci/concessionnaires";
+import { getCessionChecklistTemplate } from "@/lib/lonaci/cession-checklist-settings";
 import { listProduits } from "@/lib/lonaci/referentials";
+import { applyDocumentsFournisToChecklist } from "@/lib/lonaci/produit-document-checklist";
 import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { hasActiveContractForProduct, markActiveContratAsCedeForProduct } from "@/lib/lonaci/contracts";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
@@ -121,6 +123,28 @@ export interface CessionListItem {
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number; uploadedAt: string }>;
   createdAt: string;
   updatedAt: string;
+}
+
+function kindUsesCessionBaseChecklist(kind: CessionDossierKind): boolean {
+  return kind === "CESSION" || kind === "CESSION_DELOCALISATION";
+}
+
+function checklistPayloadEquals(
+  a: DossierDocumentChecklistPayload,
+  b: DossierDocumentChecklistPayload | null | undefined,
+): boolean {
+  if (!b) return false;
+  if (a.complet !== b.complet || a.entries.length !== b.entries.length) return false;
+  return a.entries.every((entry, index) => {
+    const other = b.entries[index];
+    if (!other) return false;
+    return (
+      entry.itemId === other.itemId &&
+      entry.libelle === other.libelle &&
+      entry.obligatoire === other.obligatoire &&
+      entry.statut === other.statut
+    );
+  });
 }
 
 function mapCession(row: CessionStored): CessionListItem {
@@ -265,6 +289,7 @@ export interface CreateCessionInput {
   dateDemande: Date;
   motif: string;
   commentaire?: string | null;
+  documentsFournis?: string[];
   actor: UserDocument;
 }
 
@@ -317,8 +342,14 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
   const now = new Date();
   const reference = await nextReference();
   const produits = kindHasDocumentChecklist(input.kind) ? await listProduits() : [];
-  const documentChecklist = kindHasDocumentChecklist(input.kind)
-    ? buildDocumentChecklistForKind(input.kind, produitCodeNorm, produits)
+  const cessionBase = kindUsesCessionBaseChecklist(input.kind)
+    ? await getCessionChecklistTemplate()
+    : undefined;
+  const documentChecklistRaw = kindHasDocumentChecklist(input.kind)
+    ? buildDocumentChecklistForKind(input.kind, produitCodeNorm, produits, null, cessionBase)
+    : null;
+  const documentChecklist = documentChecklistRaw
+    ? applyDocumentsFournisToChecklist(documentChecklistRaw, input.documentsFournis)
     : null;
   const linkedOperationId = input.kind === "CESSION_DELOCALISATION" ? randomUUID() : null;
 
@@ -443,16 +474,27 @@ export async function addCessionAttachment(input: {
 async function ensureDocumentChecklistStored(row: CessionStored): Promise<CessionStored> {
   if (!kindHasDocumentChecklist(row.kind)) return row;
   const parsed = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
-  if (parsed?.entries.length) return row;
   const produits = await listProduits();
-  const checklist = buildDocumentChecklistForKind(row.kind, row.produitCode, produits);
-  const db = await getDatabase();
-  const now = new Date();
-  await db.collection<CessionStored>(COLLECTION).updateOne(
-    { _id: row._id },
-    { $set: { documentChecklist: checklist, updatedAt: now } },
+  const cessionBase = kindUsesCessionBaseChecklist(row.kind)
+    ? await getCessionChecklistTemplate()
+    : undefined;
+  const checklist = buildDocumentChecklistForKind(
+    row.kind,
+    row.produitCode,
+    produits,
+    parsed,
+    cessionBase,
   );
-  return { ...row, documentChecklist: checklist };
+  if (!checklistPayloadEquals(checklist, parsed)) {
+    const db = await getDatabase();
+    const now = new Date();
+    await db.collection<CessionStored>(COLLECTION).updateOne(
+      { _id: row._id },
+      { $set: { documentChecklist: checklist, updatedAt: now } },
+    );
+    return { ...row, documentChecklist: checklist };
+  }
+  return row;
 }
 
 export async function getCessionById(id: string, actor: UserDocument): Promise<CessionListItem | null> {
@@ -660,7 +702,8 @@ export async function transitionCession(input: {
   assertCessionTransitionAllowed(input.actor.role, row.statut, input.target, row.kind);
 
   if (input.target === "CONTROLE_CHEF_SECTION" && kindHasDocumentChecklist(row.kind)) {
-    const checklist = parseDocumentChecklistForKind(row.kind, row.documentChecklist);
+    const synced = await ensureDocumentChecklistStored(row);
+    const checklist = parseDocumentChecklistForKind(synced.kind, synced.documentChecklist);
     if (!isDocumentChecklistCompleteForKind(row.kind, checklist)) {
       throw new Error("CHECKLIST_INCOMPLETE");
     }

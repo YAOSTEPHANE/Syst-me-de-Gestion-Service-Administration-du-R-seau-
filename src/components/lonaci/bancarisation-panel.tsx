@@ -38,6 +38,10 @@ import { notify } from "@/lib/toast";
 import { Download, FilePlus2, Landmark, Paperclip, Upload } from "lucide-react";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button } from "@/components/lonaci/ui/button";
+import ModuleCourrierPdfActions, {
+  moduleCourrierDownloadFilename,
+} from "@/components/lonaci/module-courrier-pdf-actions";
+import { moduleCourrierPdfUrl } from "@/lib/lonaci/module-courrier-url";
 import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
 import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
@@ -682,6 +686,19 @@ export default function BancarisationPanel() {
     { id: "concessionnaire", header: "Concessionnaire", cell: (row) => <span className="font-mono text-xs">{row.concessionnaireId}</span> },
     { id: "demande", header: "Demande", cell: (row) => <div className="flex items-center gap-2"><StatusBadge className={statutBancBadge(row.statutActuel)}>{bancarisationStatutLabel(row.statutActuel)}</StatusBadge><span aria-hidden="true">→</span><StatusBadge className={statutBancBadge(row.nouveauStatut)}>{bancarisationStatutLabel(row.nouveauStatut)}</StatusBadge></div> },
     { id: "justificatif", header: "Justificatif", cell: (row) => <a href={row.justificatif.url} target="_blank" rel="noopener noreferrer">{row.justificatif.filename || "Ouvrir"}</a> },
+    {
+      id: "courrier",
+      header: "Courrier",
+      cell: (row) => (
+        <ModuleCourrierPdfActions
+          pdfUrl={moduleCourrierPdfUrl("bancarisation", row.id)}
+          filename={moduleCourrierDownloadFilename("bancarisation", row.id)}
+          layout="inline"
+          tone="slate"
+          className="!mt-0"
+        />
+      ),
+    },
     { id: "commentaire", header: "Commentaire", cell: (row) => row.validationComment || "—" },
     {
       id: "action",

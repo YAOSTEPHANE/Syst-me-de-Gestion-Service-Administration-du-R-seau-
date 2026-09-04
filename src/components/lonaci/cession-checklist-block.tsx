@@ -98,6 +98,7 @@ export default function CessionChecklistBlock({
   return (
     <ChecklistEditor
       title="Documents à fournir"
+      description="Cochez chaque pièce remise par le client."
       entries={checklist.entries}
       statuses={DOSSIER_CHECKLIST_STATUTS}
       statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}

@@ -23,8 +23,11 @@ export type RateLimitResult = { allowed: true } | { allowed: false; retryAfterSe
 
 /**
  * Fenêtre fixe par identifiant (ex. IP). Compte atomiquement ; refuse si la limite est dépassée.
- * En cas d’erreur Mongo : fail-open par défaut ; si `RATE_LIMIT_FAIL_CLOSED=true`, refus (429) pour ne pas
- * laisser passer le trafic sans comptage.
+ * En cas d’erreur Mongo : fail-open hors production (ou si `RATE_LIMIT_FAIL_CLOSED=false`) ;
+ * fail-closed en production (ou si `RATE_LIMIT_FAIL_CLOSED=true`) → 429.
+ * En local, un DNS Atlas en timeout (queryTxt ETIMEOUT) peut donc provoquer des 429 login
+ * si fail-closed est forcé : préférer `MONGODB_DNS_SERVERS` / `MONGODB_SRV_TO_STANDARD`
+ * ou `RATE_LIMIT_FAIL_CLOSED=false` temporairement.
  */
 export async function consumeRateLimit(
   namespace: string,

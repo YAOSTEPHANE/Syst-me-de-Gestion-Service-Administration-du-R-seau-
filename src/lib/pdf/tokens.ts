@@ -40,3 +40,25 @@ export const PDF_PAGE = {
   topMargin: 86,
   bottomMargin: 58,
 } as const;
+
+/** Palette éditoriale premium (courriers, exports, fiches, contrats). */
+export const PDF_PREMIUM = {
+  navy: "#0B1220",
+  navySoft: "#1E293B",
+  ink: "#0F172A",
+  inkSoft: "#334155",
+  muted: "#64748B",
+  mutedLight: "#94A3B8",
+  gold: "#C9A227",
+  goldSoft: "#FEF9E7",
+  accent: PDF_COLORS.orange,
+  accentDark: PDF_COLORS.orangeDark,
+  accentSoft: "#FFF7ED",
+  accentLine: "#FDBA74",
+  border: "#E2E8F0",
+  shadow: "#CBD5E1",
+  card: "#F8FAFC",
+  cardStroke: "#E2E8F0",
+  white: "#FFFFFF",
+  tableStripe: "#F1F5F9",
+} as const;

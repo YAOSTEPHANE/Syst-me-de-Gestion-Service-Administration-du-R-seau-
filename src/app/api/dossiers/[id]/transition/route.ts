@@ -10,6 +10,7 @@ import { ensureDossierIndexes, findVisibleDossierById, transitionDossier } from 
 import { userCanPerformDossierTransitionAtEtape } from "@/lib/auth/dossier-transition-rbac";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
+import { logWorkflowDenied } from "@/lib/observability/workflow-events";
 
 const transitionSchema = z.object({
   action: z.enum([
@@ -92,6 +93,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (
     !userCanPerformDossierTransitionAtEtape(auth.user.role, before.status, guardedAction)
   ) {
+    logWorkflowDenied({
+      module: "DOSSIERS",
+      code: "ACTION_NOT_ALLOWED_AT_STAGE",
+      role: auth.user.role,
+      entityId: id,
+      action: guardedAction,
+    });
     return NextResponse.json(
       { message: "Cette action n’est pas autorisée à l’étape actuelle du dossier." },
       { status: 403 },
@@ -185,6 +193,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "ROLE_FORBIDDEN" || code === "AGENCE_FORBIDDEN" || isWorkflowSeparationError(code)) {
+      logWorkflowDenied({
+        module: "DOSSIERS",
+        code,
+        role: auth.user.role,
+        entityId: id,
+        action: parsed.data.action,
+        target,
+      });
       return NextResponse.json(
         { message: friendlyErrorMessage(code), code },
         { status: 403 },
@@ -203,6 +219,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return NextResponse.json({ message: "Transition de statut invalide." }, { status: 409 });
     }
     if (code === "DOSSIER_CHECKLIST_INCOMPLETE") {
+      logWorkflowDenied({
+        module: "DOSSIERS",
+        code,
+        role: auth.user.role,
+        entityId: id,
+        action: parsed.data.action,
+      });
       return NextResponse.json(
         {
           message:

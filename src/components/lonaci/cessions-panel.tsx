@@ -10,6 +10,8 @@ import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericS
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CessionChecklistBlock from "@/components/lonaci/cession-checklist-block";
+import DocumentsAFournirChecklist from "@/components/lonaci/documents-a-fournir-checklist";
+import { ModuleCourrierPdfActionsByModule } from "@/components/lonaci/module-courrier-pdf-actions";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button, IconButton } from "@/components/lonaci/ui/button";
@@ -20,7 +22,7 @@ import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Surface } from "@/components/lonaci/ui/surface";
 import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 import { canRole } from "@/lib/auth/rbac";
-import { CESSION_CHECKLIST_ITEMS_SPEC_52 } from "@/lib/lonaci/cession-document-checklist";
+import { CESSION_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/cession-checklist-defaults";
 import { usesSimplifiedDelocalisationCircuit } from "@/lib/lonaci/cession-dossier-checklist";
 import { CESSION_STATUTS_SPEC_54 } from "@/lib/lonaci/cession-statut-metier";
 import { operationStatutMetierBadgeClass } from "@/lib/lonaci/cession-operation-statut-metier";
@@ -243,6 +245,7 @@ export default function CessionsPanel() {
   const [motif, setMotif] = useState("");
   const [commentaire, setCommentaire] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
+  const [createDocumentsFournis, setCreateDocumentsFournis] = useState<Set<string>>(() => new Set());
   const docsInputRef = useRef<HTMLInputElement | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -254,6 +257,13 @@ export default function CessionsPanel() {
     obligatoiresFournis: number;
     obligatoiresTotal: number;
   } | null>(null);
+  const [checklistTemplateItems, setChecklistTemplateItems] = useState(
+    CESSION_CHECKLIST_DEFAULT_ITEMS.map((item) => ({
+      itemId: item.id,
+      libelle: item.libelle,
+      obligatoire: item.obligatoire !== false,
+    })),
+  );
 
   const [concessionnaires, setConcessionnaires] = useState<ConcessionnaireOption[]>([]);
   const [produits, setProduits] = useState<ProduitRef[]>([]);
@@ -325,6 +335,40 @@ export default function CessionsPanel() {
         setMeRole(null);
       }
     })();
+  }, []);
+
+  useEffect(() => {
+    async function loadChecklistTemplate() {
+      try {
+        const res = await fetch("/api/cessions/checklist-template", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          items?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+        };
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          setChecklistTemplateItems(
+            data.items.map((item) => ({
+              itemId: item.id,
+              libelle: item.libelle,
+              obligatoire: item.obligatoire !== false,
+            })),
+          );
+        }
+      } catch {
+        // conserve le modèle local par défaut
+      }
+    }
+    void loadChecklistTemplate();
+    const onTemplateUpdated = () => {
+      void loadChecklistTemplate();
+    };
+    window.addEventListener("lonaci:cession-checklist-updated", onTemplateUpdated);
+    return () => {
+      window.removeEventListener("lonaci:cession-checklist-updated", onTemplateUpdated);
+    };
   }, []);
 
   useEffect(() => {
@@ -417,6 +461,7 @@ export default function CessionsPanel() {
     setMotif("");
     setCommentaire("");
     setDocuments([]);
+    setCreateDocumentsFournis(new Set());
     setCreateError(null);
   }
 
@@ -475,6 +520,7 @@ export default function CessionsPanel() {
       form.set("motif", motif);
       form.set("commentaire", commentaire);
       for (const f of documents) form.append("documents", f);
+      for (const id of createDocumentsFournis) form.append("documentsFournis", id);
       const res = await fetch("/api/cessions", { method: "POST", credentials: "include", body: form });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -657,8 +703,8 @@ export default function CessionsPanel() {
               </p>
               <p>
                 <span className="font-semibold text-indigo-900">Checklist :</span> pièces obligatoires à
-                compléter par l&apos;agent ({CESSION_CHECKLIST_ITEMS_SPEC_52.length} pièces communes + documents
-                produit le cas échéant).
+                cocher dans le formulaire de création et dans la fiche dossier (
+                {checklistTemplateItems.length} pièces communes + documents produit le cas échéant).
               </p>
               <p>
                 <span className="font-semibold text-indigo-900">Export de la liste PDF :</span> téléchargement de la
@@ -1162,6 +1208,19 @@ export default function CessionsPanel() {
                       </a>
                     </section>
                   )}
+                  {detailItem.kind === "CESSION" ? (
+                    <section className="rounded-xl border border-violet-200 bg-violet-50/70 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-violet-800">
+                        Courrier de demande
+                      </p>
+                      <ModuleCourrierPdfActionsByModule
+                        moduleId="cession"
+                        dossierId={detailItem.id}
+                        reference={detailItem.reference}
+                        tone="violet"
+                      />
+                    </section>
+                  ) : null}
                   {(detailItem.kind === "DELOCALISATION" || detailItem.kind === "CESSION_DELOCALISATION") && (
                     <section className="rounded-xl border border-cyan-200 bg-cyan-50/80 p-3">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-800">
@@ -1177,6 +1236,19 @@ export default function CessionsPanel() {
                       </a>
                     </section>
                   )}
+                  {detailItem.kind === "DELOCALISATION" || detailItem.kind === "CESSION_DELOCALISATION" ? (
+                    <section className="rounded-xl border border-teal-200 bg-teal-50/70 p-3">
+                      <p className="text-[11px] font-semibold uppercase tracking-wide text-teal-800">
+                        Courrier de délocalisation
+                      </p>
+                      <ModuleCourrierPdfActionsByModule
+                        moduleId="delocalisation"
+                        dossierId={detailItem.id}
+                        reference={detailItem.reference}
+                        tone="teal"
+                      />
+                    </section>
+                  ) : null}
                   {detailItem.documentChecklist ? (
                     <CessionChecklistBlock
                       cessionId={detailItem.id}
@@ -1436,6 +1508,19 @@ export default function CessionsPanel() {
                     <span className="text-slate-500">Parcourir</span>
                   </button>
                 </label>
+                {kind === "CESSION" || kind === "CESSION_DELOCALISATION" ? (
+                  <DocumentsAFournirChecklist
+                    className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3"
+                    items={checklistTemplateItems.map((row) => ({
+                      id: row.itemId,
+                      libelle: row.libelle,
+                      obligatoire: row.obligatoire,
+                    }))}
+                    value={createDocumentsFournis}
+                    onChange={setCreateDocumentsFournis}
+                    hint="Cochez les pièces déjà remises lors de la création de la demande."
+                  />
+                ) : null}
                 </section>
               </div>
             </form>

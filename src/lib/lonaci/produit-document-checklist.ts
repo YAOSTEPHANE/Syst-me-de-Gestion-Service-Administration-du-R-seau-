@@ -97,6 +97,20 @@ export function computeChecklistComplet(entries: DossierDocumentChecklistEntry[]
   return entries.every((e) => !e.obligatoire || e.statut === "FOURNI");
 }
 
+/** Applique les ids cochés à la création (FOURNI) ; sans effet si la liste est vide. */
+export function applyDocumentsFournisToChecklist(
+  checklist: DossierDocumentChecklistPayload,
+  documentsFournis: readonly string[] | undefined | null,
+): DossierDocumentChecklistPayload {
+  const fourniSet = new Set((documentsFournis ?? []).map((id) => id.trim()).filter(Boolean));
+  if (!fourniSet.size || !checklist.entries.length) return checklist;
+  const entries = checklist.entries.map((entry) => ({
+    ...entry,
+    statut: fourniSet.has(entry.itemId) ? ("FOURNI" as const) : entry.statut,
+  }));
+  return { entries, complet: computeChecklistComplet(entries) };
+}
+
 /** Calcul temps réel (UI) à partir des statuts locaux par itemId. */
 export function computeChecklistProgress(
   entries: DossierDocumentChecklistEntry[],
@@ -234,6 +248,25 @@ export function mergeProductAnnexeTemplates(
       seen.add(item.id);
       merged.push({ ...item, annexe: true });
     }
+  }
+  return merged;
+}
+
+/** Pièces communes contrat + pièces dossier produit + documents annexe (union dédupliquée par id). */
+export function mergeContratChecklistTemplate(
+  produitCodes: string[],
+  produits: ProduitDocument[],
+  clientCategorie?: ClientCategorie | null,
+  baseItems: ProduitDocumentChecklistItem[] = [],
+) {
+  const base = normalizeChecklistTemplate(baseItems);
+  const productMerged = mergeProductDossierAndAnnexeTemplates(produitCodes, produits, clientCategorie);
+  const seen = new Set(base.map((item) => item.id));
+  const merged = [...base];
+  for (const item of productMerged) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
   }
   return merged;
 }

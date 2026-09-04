@@ -4,6 +4,9 @@ import ClientSearchPicker, {
   pickProduitCodeFromClient,
   type ClientPickerRow,
 } from "@/components/lonaci/client-search-picker";
+import AttestationDomiciliationChecklistBlock from "@/components/lonaci/attestation-domiciliation-checklist-block";
+import { ModuleCourrierPdfActionsByModule } from "@/components/lonaci/module-courrier-pdf-actions";
+import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
@@ -14,12 +17,15 @@ import {
   ATTESTATION_DOMICILIATION_STATUTS_SPEC_44,
   ATTESTATION_DOMICILIATION_TYPE_LABELS,
 } from "@/lib/lonaci/constants";
+import { ATTESTATION_DOMICILIATION_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/attestation-domiciliation-checklist-defaults";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
-import type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation";
+import type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation-types";
+import { attestationDomiciliationChecklistProgress } from "@/lib/lonaci/attestations-domiciliation-checklist-progress";
+import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { notify } from "@/lib/toast";
-import { Download, FilePlus2, Send, Upload } from "lucide-react";
+import { Download, FilePlus2, Send, Upload, X } from "lucide-react";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
-import { Button } from "@/components/lonaci/ui/button";
+import { Button, IconButton } from "@/components/lonaci/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
 import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
@@ -43,6 +49,7 @@ interface DemandeItem {
   dateDemande: string;
   statut: DemandeStatut;
   observations: string | null;
+  documentChecklist: DossierDocumentChecklistPayload | null;
   delaiTraitementClientJours: number | null;
   clientEmailSentTo: string | null;
   sentToClientAt: string | null;
@@ -168,10 +175,22 @@ export default function AttestationsDomiciliationPanel() {
   const [produitCode, setProduitCode] = useState("");
   const [dateDemande, setDateDemande] = useState("");
   const [observations, setObservations] = useState("");
+  const [createDocumentsFournis, setCreateDocumentsFournis] = useState<Set<string>>(new Set());
+  const [checklistTemplateItems, setChecklistTemplateItems] = useState(
+    ATTESTATION_DOMICILIATION_CHECKLIST_DEFAULT_ITEMS,
+  );
   const [creating, setCreating] = useState(false);
   const [pendingAction, setPendingAction] = useState<{
     row: DemandeItem;
     kind: "TRANSMIS" | "FINALISE" | "VALIDE" | "ENVOYER";
+  } | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const [detailItem, setDetailItem] = useState<DemandeItem | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailChecklistLive, setDetailChecklistLive] = useState<{
+    complet: boolean;
+    obligatoiresFournis: number;
+    obligatoiresTotal: number;
   } | null>(null);
 
   const listQueryParams = useMemo(() => {
@@ -228,6 +247,52 @@ export default function AttestationsDomiciliationPanel() {
     }
   }
 
+  async function loadChecklistTemplate() {
+    try {
+      const res = await fetch("/api/attestations-domiciliation/checklist-template", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        items?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+      };
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        setChecklistTemplateItems(
+          data.items.map((item) => ({
+            id: item.id,
+            libelle: item.libelle,
+            obligatoire: item.obligatoire !== false,
+          })),
+        );
+      }
+    } catch {
+      // conserve le modèle local par défaut
+    }
+  }
+
+  useEffect(() => {
+    void loadChecklistTemplate();
+    const onTemplateUpdated = () => {
+      void loadChecklistTemplate();
+    };
+    window.addEventListener("lonaci:attestation-domiciliation-checklist-updated", onTemplateUpdated);
+    return () => {
+      window.removeEventListener("lonaci:attestation-domiciliation-checklist-updated", onTemplateUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
+    setCreateDocumentsFournis((prev) => {
+      const valid = new Set(checklistTemplateItems.map((item) => item.id));
+      const next = new Set<string>();
+      for (const id of prev) {
+        if (valid.has(id)) next.add(id);
+      }
+      return next;
+    });
+  }, [checklistTemplateItems]);
+
   useEffect(() => {
     void load(1);
     void loadIndicators();
@@ -253,6 +318,7 @@ export default function AttestationsDomiciliationPanel() {
         produitCode: produitCode.trim() ? produitCode.trim().toUpperCase() : null,
         dateDemande: new Date(dateDemande).toISOString(),
         observations: observations.trim() ? observations.trim() : null,
+        documentsFournis: [...createDocumentsFournis],
       };
       const res = await fetch("/api/attestations-domiciliation", {
         method: "POST",
@@ -264,10 +330,13 @@ export default function AttestationsDomiciliationPanel() {
         const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Création impossible");
       }
+      const created = (await res.json()) as { item?: { id?: string } };
+      const createdId = created.item?.id;
       closeCreate();
       notify.success("Demande enregistrée (statut Demande reçue).");
       await load(1);
       void loadIndicators();
+      if (createdId) void openDetail(createdId);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
       setCreateError(message);
@@ -278,6 +347,19 @@ export default function AttestationsDomiciliationPanel() {
   }
 
   async function transition(id: string, target: "TRANSMIS" | "FINALISE" | "VALIDE") {
+    if (target === "TRANSMIS") {
+      const row = detailId === id && detailItem ? detailItem : items.find((r) => r.id === id);
+      const checklistComplet =
+        detailId === id && detailChecklistLive
+          ? detailChecklistLive.complet
+          : row?.documentChecklist?.complet;
+      if (row?.documentChecklist && checklistComplet === false) {
+        notify.error(
+          "Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » avant transmission au DFC.",
+        );
+        return;
+      }
+    }
     setBusyId(id);
     setListError(null);
     try {
@@ -398,6 +480,7 @@ export default function AttestationsDomiciliationPanel() {
     setProduitCode("");
     setDateDemande("");
     setObservations("");
+    setCreateDocumentsFournis(new Set());
   }
 
   function closeCreate() {
@@ -463,7 +546,56 @@ export default function AttestationsDomiciliationPanel() {
     const label = actionLabel(row);
     if (!label) return null;
     const kind = row.statut === "DEMANDE_RECUE" ? "TRANSMIS" : row.statut === "TRANSMIS" ? "FINALISE" : row.statut === "FINALISE" ? "VALIDE" : "ENVOYER";
-    return <Button size="sm" leadingIcon={kind === "ENVOYER" ? Send : undefined} loading={busyId === row.id} onClick={() => setPendingAction({ row, kind })}>{label}</Button>;
+    const checklistBlocked =
+      row.statut === "DEMANDE_RECUE" &&
+      row.documentChecklist != null &&
+      row.documentChecklist.complet === false;
+    return (
+      <Button
+        size="sm"
+        leadingIcon={kind === "ENVOYER" ? Send : undefined}
+        loading={busyId === row.id}
+        disabled={checklistBlocked}
+        title={checklistBlocked ? "Checklist incomplète" : undefined}
+        onClick={() => setPendingAction({ row, kind })}
+      >
+        {label}
+      </Button>
+    );
+  }
+
+  async function openDetail(id: string) {
+    setDetailId(id);
+    setDetailLoading(true);
+    setDetailItem(null);
+    setDetailChecklistLive(null);
+    try {
+      const res = await fetch(`/api/attestations-domiciliation/${encodeURIComponent(id)}`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) throw new Error("Chargement du dossier impossible");
+      const data = (await res.json()) as { item: DemandeItem };
+      setDetailItem(data.item);
+      setDetailChecklistLive(attestationDomiciliationChecklistProgress(data.item.documentChecklist));
+    } catch (e) {
+      notify.error(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
+      setDetailId(null);
+    } finally {
+      setDetailLoading(false);
+    }
+  }
+
+  function closeDetail() {
+    setDetailId(null);
+    setDetailItem(null);
+    setDetailChecklistLive(null);
+  }
+
+  function syncItemChecklist(id: string, checklist: DossierDocumentChecklistPayload) {
+    setItems((prev) => prev.map((r) => (r.id === id ? { ...r, documentChecklist: checklist } : r)));
+    setDetailItem((prev) => (prev && prev.id === id ? { ...prev, documentChecklist: checklist } : prev));
+    setDetailChecklistLive(attestationDomiciliationChecklistProgress(checklist));
   }
 
   const columns: DataTableColumn<DemandeItem>[] = [
@@ -472,9 +604,41 @@ export default function AttestationsDomiciliationPanel() {
     { id: "client", header: "Concessionnaire", cell: (row) => <span className="font-mono text-xs">{row.concessionnaireId ?? "—"}</span> },
     { id: "date", header: "Date de demande", cell: (row) => new Date(row.dateDemande).toLocaleString("fr-FR") },
     { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statutBadgeClass(row.statut)} title={ATTESTATION_DOMICILIATION_STATUT_DESCRIPTIONS[row.statut]}>{ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}</StatusBadge> },
+    {
+      id: "dossier",
+      header: "Dossier",
+      cell: (row) => {
+        const progress = attestationDomiciliationChecklistProgress(row.documentChecklist);
+        return row.documentChecklist ? (
+          <DossierCompletIndicator
+            complet={progress.complet}
+            size="sm"
+            obligatoiresFournis={progress.obligatoiresFournis}
+            obligatoiresTotal={progress.obligatoiresTotal}
+          />
+        ) : (
+          "—"
+        );
+      },
+    },
     { id: "delai", header: "Délai", cell: (row) => row.delaiTraitementClientJours != null ? `${row.delaiTraitementClientJours} j` : "—" },
     { id: "observations", header: "Observations", cell: (row) => row.observations ?? "—" },
-    { id: "action", header: "Action", align: "right", cell: (row) => row.statut === "ENVOYE_CLIENT" ? (row.sentToClientAt ? new Date(row.sentToClientAt).toLocaleString("fr-FR") : "—") : requestAction(row) },
+  {
+      id: "action",
+      header: "Action",
+      align: "right",
+      cell: (row) =>
+        row.statut === "ENVOYE_CLIENT" ? (
+          row.sentToClientAt ? new Date(row.sentToClientAt).toLocaleString("fr-FR") : "—"
+        ) : (
+          <div className="flex flex-wrap justify-end gap-1">
+            <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>
+              Dossier
+            </Button>
+            {requestAction(row)}
+          </div>
+        ),
+    },
   ];
 
   return (
@@ -545,7 +709,24 @@ export default function AttestationsDomiciliationPanel() {
               <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3"><div><strong>{ATTESTATION_DOMICILIATION_TYPE_LABELS[row.type]}</strong><p className="mt-1 text-sm text-slate-600">{row.produitCode ?? "Sans produit"}</p></div><StatusBadge className={statutBadgeClass(row.statut)}>{ATTESTATION_DOMICILIATION_STATUT_LABELS[row.statut]}</StatusBadge></div>
                 <dl className="mt-4 grid grid-cols-2 gap-3 text-sm"><div><dt className="text-slate-500">Date de demande</dt><dd className="mt-1 font-medium">{new Date(row.dateDemande).toLocaleString("fr-FR")}</dd></div><div><dt className="text-slate-500">Délai</dt><dd className="mt-1 font-medium">{row.delaiTraitementClientJours != null ? `${row.delaiTraitementClientJours} j` : "—"}</dd></div></dl>
-                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{requestAction(row)}</div>
+                {row.documentChecklist ? (
+                  <div className="mt-3">
+                    <DossierCompletIndicator
+                      complet={attestationDomiciliationChecklistProgress(row.documentChecklist).complet}
+                      size="sm"
+                      obligatoiresFournis={
+                        attestationDomiciliationChecklistProgress(row.documentChecklist).obligatoiresFournis
+                      }
+                      obligatoiresTotal={
+                        attestationDomiciliationChecklistProgress(row.documentChecklist).obligatoiresTotal
+                      }
+                    />
+                  </div>
+                ) : null}
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
+                  <Button size="sm" variant="secondary" onClick={() => void openDetail(row.id)}>Dossier</Button>
+                  {requestAction(row)}
+                </div>
               </article>
             )}
           />
@@ -568,6 +749,45 @@ export default function AttestationsDomiciliationPanel() {
           <FormField label="Produit concerné" error={referentialsError}><select value={produitCode} onChange={(e) => setProduitCode(e.target.value)} disabled={referentialsLoading}><option value="">Aucun produit</option>{produits.filter((p) => p.actif).map((p) => <option key={p.code} value={p.code}>{p.code} — {p.libelle}</option>)}</select></FormField>
           <FormField label="Date de la demande" required><input ref={dateInputRef} required type="datetime-local" value={dateDemande} onChange={(e) => setDateDemande(e.target.value)} /></FormField>
           <FormField label="Observations" className="sm:col-span-2"><textarea value={observations} onChange={(e) => setObservations(e.target.value)} rows={3} /></FormField>
+          <div className="sm:col-span-2 rounded-xl border border-cyan-200 bg-cyan-50/40 p-4">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-cyan-950">Documents à fournir</p>
+              <span className="text-[10px] font-medium text-slate-600">
+                {createDocumentsFournis.size}/{checklistTemplateItems.length} coché
+                {checklistTemplateItems.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+            <p className="mb-2 text-[11px] text-slate-600">
+              Cochez les pièces déjà remises par le client.
+            </p>
+            <ul className="space-y-1.5">
+              {checklistTemplateItems.map((item) => (
+                <li key={item.id}>
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md px-1 py-0.5 text-xs text-slate-800 hover:bg-white/70">
+                    <input
+                      type="checkbox"
+                      checked={createDocumentsFournis.has(item.id)}
+                      onChange={(e) =>
+                        setCreateDocumentsFournis((prev) => {
+                          const next = new Set(prev);
+                          if (e.target.checked) next.add(item.id);
+                          else next.delete(item.id);
+                          return next;
+                        })
+                      }
+                      className="mt-0.5 rounded border-slate-300 text-cyan-600"
+                    />
+                    <span>
+                      {item.libelle}
+                      {item.obligatoire !== false ? (
+                        <span className="ml-1 text-[10px] font-semibold text-rose-700">*</span>
+                      ) : null}
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          </div>
         </form>
       </Dialog>
 
@@ -586,6 +806,61 @@ export default function AttestationsDomiciliationPanel() {
           setPendingAction(null);
         }}
       />
+
+      {detailId ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="attestation-detail-title">
+          <button type="button" className="absolute inset-0 bg-slate-900/60" aria-label="Fermer" onClick={closeDetail} />
+          <div className="relative z-10 flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl">
+              <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 bg-linear-to-r from-cyan-50 via-white to-violet-50 px-4 py-3">
+              <div>
+                <h3 id="attestation-detail-title" className="text-sm font-semibold text-slate-900">
+                  Dossier {detailItem ? ATTESTATION_DOMICILIATION_TYPE_LABELS[detailItem.type] : "attestation / domiciliation"}
+                </h3>
+                <p className="mt-0.5 text-[11px] text-slate-600">
+                  {detailItem
+                    ? `${detailItem.produitCode ?? "Sans produit"} · ${new Date(detailItem.dateDemande).toLocaleDateString("fr-FR")}`
+                    : "…"}
+                </p>
+                {detailItem ? (
+                  <ModuleCourrierPdfActionsByModule
+                    moduleId="attestation-domiciliation"
+                    dossierId={detailItem.id}
+                    reference={detailItem.id}
+                    layout="inline"
+                    tone="cyan"
+                  />
+                ) : null}
+              </div>
+              <IconButton icon={X} label="Fermer le détail" size="sm" onClick={closeDetail} />
+            </div>
+            {detailItem?.documentChecklist ? (
+              <div className="shrink-0 border-b border-slate-200 px-4 py-2">
+                <DossierCompletIndicator
+                  complet={detailChecklistLive?.complet ?? detailItem.documentChecklist.complet}
+                  size="banner"
+                  live={detailItem.statut === "DEMANDE_RECUE"}
+                  obligatoiresFournis={detailChecklistLive?.obligatoiresFournis}
+                  obligatoiresTotal={detailChecklistLive?.obligatoiresTotal}
+                />
+              </div>
+            ) : null}
+            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3">
+              {detailLoading ? <p className="text-sm text-slate-500">Chargement du dossier…</p> : null}
+              {!detailLoading && detailItem?.documentChecklist ? (
+                <AttestationDomiciliationChecklistBlock
+                  demandeId={detailItem.id}
+                  checklist={detailItem.documentChecklist}
+                  editable={detailItem.statut === "DEMANDE_RECUE"}
+                  onUpdated={(checklist) => syncItemChecklist(detailItem.id, checklist)}
+                  onProgressChange={setDetailChecklistLive}
+                />
+              ) : !detailLoading ? (
+                <p className="text-sm text-slate-500">Checklist non disponible sur ce dossier.</p>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

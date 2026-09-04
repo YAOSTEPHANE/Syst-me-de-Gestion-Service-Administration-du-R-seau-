@@ -7,7 +7,6 @@ import { Button } from "@/components/lonaci/ui/button";
 import { Surface } from "@/components/lonaci/ui/surface";
 import { downloadLonaciPdf } from "@/lib/lonaci/download-pdf";
 import {
-  DOSSIER_CHECKLIST_STATUTS,
   DOSSIER_CHECKLIST_STATUT_LABELS,
   computeChecklistProgress,
 } from "@/lib/lonaci/produit-document-checklist";
@@ -53,7 +52,7 @@ export default function ProduitDocumentChecklistEditor({
   pdfUrl,
   className = "",
   title = "Checklist documents",
-  hint = "Marquez chaque pièce : Fourni, Manquant ou En attente. Les pièces obligatoires doivent être « Fourni » pour un dossier complet.",
+  hint = "Cochez chaque pièce remise. Les pièces obligatoires doivent être cochées pour un dossier complet.",
 }: Props) {
   const checklistVersion = useMemo(
     () => checklist.entries.map((e) => `${e.itemId}:${e.statut}:${e.libelle}`).join("|"),
@@ -143,10 +142,40 @@ export default function ProduitDocumentChecklistEditor({
       <ul className="space-y-2">
         {checklist.entries.map((entry) => {
           const statut = localStatuts[entry.itemId] ?? entry.statut;
+          const checked = statut === "FOURNI";
+          const inputId = `produit-checklist-${entry.itemId}`;
+          if (editable) {
+            return (
+              <li key={entry.itemId}>
+                <label
+                  htmlFor={inputId}
+                  className="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 transition hover:border-cyan-300 hover:bg-cyan-50/40"
+                >
+                  <input
+                    id={inputId}
+                    type="checkbox"
+                    checked={checked}
+                    onChange={(e) =>
+                      applyStatut(entry.itemId, e.target.checked ? "FOURNI" : "EN_ATTENTE")
+                    }
+                    className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="text-sm font-medium text-slate-900">{entry.libelle}</span>
+                    {entry.obligatoire ? (
+                      <span className="ml-1 text-[10px] font-semibold text-rose-700">*</span>
+                    ) : (
+                      <span className="ml-1 text-[10px] text-slate-500">(facultatif)</span>
+                    )}
+                  </span>
+                </label>
+              </li>
+            );
+          }
           return (
             <li
               key={entry.itemId}
-              className="flex flex-col gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+              className="flex items-start justify-between gap-2 rounded-lg border border-slate-100 bg-slate-50 px-3 py-2"
             >
               <div>
                 <p className="text-sm font-medium text-slate-900">{entry.libelle}</p>
@@ -156,36 +185,18 @@ export default function ProduitDocumentChecklistEditor({
                   <p className="text-[10px] uppercase tracking-wide text-slate-400">Facultatif</p>
                 )}
               </div>
-              {editable ? (
-                <div className="flex flex-wrap gap-1" role="group" aria-label={`Statut de ${entry.libelle}`}>
-                  {DOSSIER_CHECKLIST_STATUTS.map((s) => {
-                    const selected = statut === s;
-                    return (
-                      <button
-                        key={s}
-                        type="button"
-                        onClick={() => applyStatut(entry.itemId, s)}
-                        aria-pressed={selected}
-                        className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
-                          selected
-                            ? statutBadgeClass(s)
-                            : "border-slate-200 bg-white text-slate-600 hover:bg-slate-100"
-                        }`}
-                      >
-                        {DOSSIER_CHECKLIST_STATUT_LABELS[s]}
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : (
-                <span className={`rounded-md border px-2 py-1 text-[11px] font-medium ${statutBadgeClass(statut)}`}>
-                  {DOSSIER_CHECKLIST_STATUT_LABELS[statut]}
-                </span>
-              )}
+              <span className={`rounded-md border px-2 py-1 text-[11px] font-medium ${statutBadgeClass(statut)}`}>
+                {DOSSIER_CHECKLIST_STATUT_LABELS[statut]}
+              </span>
             </li>
           );
         })}
       </ul>
+      {editable && checklist.entries.some((e) => e.obligatoire) ? (
+        <p className="mt-2 text-[10px] text-slate-500">
+          <span className="font-semibold text-rose-700">*</span> Pièce obligatoire
+        </p>
+      ) : null}
     </Surface>
   );
 }

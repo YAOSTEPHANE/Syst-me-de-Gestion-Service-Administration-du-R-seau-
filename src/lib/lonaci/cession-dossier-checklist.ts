@@ -17,6 +17,7 @@ import type {
   DossierDocumentChecklistPayload,
   DossierDocumentChecklistStatut,
   ProduitDocument,
+  ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
 export type CessionDossierKind = "CESSION" | "DELOCALISATION" | "CESSION_DELOCALISATION";
@@ -29,8 +30,9 @@ export function usesSimplifiedDelocalisationCircuit(kind: CessionDossierKind): b
 export function mergeCessionDelocalisationChecklistTemplate(
   produitCode: string | null | undefined,
   produits: ProduitDocument[],
+  cessionBaseItems?: ProduitDocumentChecklistItem[],
 ) {
-  const cession = mergeCessionChecklistTemplate(produitCode, produits);
+  const cession = mergeCessionChecklistTemplate(produitCode, produits, cessionBaseItems);
   const deloc = mergeDelocalisationChecklistTemplate(produitCode, produits);
   const seen = new Set<string>();
   const merged = [];
@@ -47,14 +49,15 @@ export function buildDocumentChecklistForKind(
   produitCode: string | null | undefined,
   produits: ProduitDocument[],
   previous?: DossierDocumentChecklistPayload | null,
+  cessionBaseItems?: ProduitDocumentChecklistItem[],
 ): DossierDocumentChecklistPayload {
   if (kind === "CESSION") {
-    return buildCessionDocumentChecklist(produitCode, produits, previous);
+    return buildCessionDocumentChecklist(produitCode, produits, previous, cessionBaseItems);
   }
   if (kind === "DELOCALISATION") {
     return buildDelocalisationDocumentChecklist(produitCode, produits, previous);
   }
-  const template = mergeCessionDelocalisationChecklistTemplate(produitCode, produits);
+  const template = mergeCessionDelocalisationChecklistTemplate(produitCode, produits, cessionBaseItems);
   if (!template.length) return { entries: [], complet: true };
   return buildChecklistFromTemplate(template, previous?.entries ?? null);
 }

@@ -58,10 +58,11 @@ import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-
 import { ContratEtatMensuelProduitAgenceMatrix } from "@/components/lonaci/contrat-etat-mensuel-produit-agence-matrix";
 import {
   buildChecklistFromTemplate,
-  mergeProductDossierAndAnnexeTemplates,
+  mergeContratChecklistTemplate,
   parseDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
-import type { DossierDocumentChecklistPayload, ProduitDocument } from "@/lib/lonaci/types";
+import { CONTRAT_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/contrat-checklist-defaults";
+import type { DossierDocumentChecklistPayload, ProduitDocument, ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -461,6 +462,9 @@ export default function ContratsPanel() {
     useState<BancarisationStatut>("NON_BANCARISE");
   const [compteBancaire, setCompteBancaire] = useState("");
   const [createChecklist, setCreateChecklist] = useState<DossierDocumentChecklistPayload | null>(null);
+  const [contratChecklistBaseItems, setContratChecklistBaseItems] = useState<ProduitDocumentChecklistItem[]>(
+    () => CONTRAT_CHECKLIST_DEFAULT_ITEMS,
+  );
 
   const createChecklistObligatoires = useMemo(() => {
     if (!createChecklist?.entries.length) return { total: 0, fournis: 0, complet: true };
@@ -864,17 +868,52 @@ export default function ContratsPanel() {
   }, [operationType, parentsActifs]);
 
   useEffect(() => {
+    async function loadContratChecklistTemplate() {
+      try {
+        const res = await fetch("/api/contrats/checklist-template", {
+          credentials: "include",
+          cache: "no-store",
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          items?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+        };
+        if (Array.isArray(data.items) && data.items.length > 0) {
+          setContratChecklistBaseItems(
+            data.items.map((item) => ({
+              id: item.id,
+              libelle: item.libelle,
+              obligatoire: item.obligatoire !== false,
+            })),
+          );
+        }
+      } catch {
+        // conserve le modèle local par défaut
+      }
+    }
+    void loadContratChecklistTemplate();
+    const onUpdated = () => {
+      void loadContratChecklistTemplate();
+    };
+    window.addEventListener("lonaci:contrat-checklist-updated", onUpdated);
+    return () => {
+      window.removeEventListener("lonaci:contrat-checklist-updated", onUpdated);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!createOpen || createProduitCodes.length === 0) {
       setCreateChecklist(null);
       return;
     }
-    const template = mergeProductDossierAndAnnexeTemplates(
+    const template = mergeContratChecklistTemplate(
       createProduitCodes,
       produitsToDocumentRows(produits),
       selectedClient ? normalizeClientCategorie(selectedClient.categorie) : null,
+      contratChecklistBaseItems,
     );
     setCreateChecklist((prev) => buildChecklistFromTemplate(template, prev?.entries ?? null));
-  }, [createOpen, createProduitCodes, produits, selectedClient]);
+  }, [createOpen, createProduitCodes, produits, selectedClient, contratChecklistBaseItems]);
 
   useEffect(() => {
     if (!selectedClient) return;
@@ -930,7 +969,7 @@ export default function ContratsPanel() {
     }
     if (createChecklist?.entries.length && !createChecklistObligatoires.complet) {
       fail(
-        `Checklist incomplète : marquez toutes les pièces obligatoires comme « Fourni » (${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total}).`,
+        `Checklist incomplète : cochez toutes les pièces obligatoires (${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total}).`,
       );
       return;
     }
@@ -2914,15 +2953,15 @@ export default function ContratsPanel() {
                   {createProduitCodes.length > 0 ? (
                     <section className="rounded-xl border border-emerald-200/80 bg-white p-2.5 shadow-sm">
                       <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-emerald-800">
-                        Documents du produit
+                        Documents à fournir — signature de contrat
                       </p>
                       {createChecklist ? (
                         <ProduitDocumentChecklistEditor
                           checklist={createChecklist}
                           editable
                           onChange={setCreateChecklist}
-                          title="Pièces à fournir pour ce(s) contrat(s)"
-                          hint={`Liste fusionnée des pièces dossier et annexe des ${createProduitCodes.length} produit(s), filtrées selon le type de client — marquez chaque pièce Fourni, Manquant ou En attente.`}
+                          title="Pièces à cocher"
+                          hint="Cochez chaque pièce déjà remise. Liste commune signature de contrat + pièces produit / annexe, filtrées selon le type de client."
                         />
                       ) : (
                         <p className="text-xs text-slate-500">Préparation de la checklist…</p>
@@ -2937,9 +2976,14 @@ export default function ContratsPanel() {
                             ? areWorkflowApprovalsEnabled()
                               ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
                               : "Checklist complète — le dossier sera soumis et validé automatiquement."
-                            : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) marquée(s) « Fourni ».`}
+                            : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) cochée(s).`}
                         </p>
-                      ) : null}
+                      ) : (
+                        <p className="mt-2 text-[11px] text-amber-900">
+                          Aucune pièce configurée. Renseignez le référentiel dans Paramètres → Signature de contrat
+                          (et pièces produit si besoin).
+                        </p>
+                      )}
                     </section>
                   ) : null}
 

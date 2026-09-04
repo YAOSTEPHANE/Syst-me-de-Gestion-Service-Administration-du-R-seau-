@@ -7,8 +7,10 @@ import ClientSearchPicker, {
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import type { ChangeEvent } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import DocumentsAFournirChecklist from "@/components/lonaci/documents-a-fournir-checklist";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import ResiliationChecklistBlock from "@/components/lonaci/resiliation-checklist-block";
+import { ModuleCourrierPdfActionsByModule } from "@/components/lonaci/module-courrier-pdf-actions";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button, IconButton } from "@/components/lonaci/ui/button";
 import { ConfirmDialog } from "@/components/lonaci/ui/dialog";
@@ -161,6 +163,7 @@ export default function ResiliationsPanel() {
   const [motif, setMotif] = useState("");
   const [commentaire, setCommentaire] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
+  const [createDocumentsFournis, setCreateDocumentsFournis] = useState<Set<string>>(() => new Set());
   const docsRef = useRef<HTMLInputElement | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -247,6 +250,7 @@ export default function ResiliationsPanel() {
       form.set("motif", motif);
       form.set("commentaire", commentaire);
       for (const f of documents) form.append("documents", f);
+      for (const id of createDocumentsFournis) form.append("documentsFournis", id);
       const res = await fetch("/api/resiliations", { method: "POST", credentials: "include", body: form });
       if (!res.ok) {
         const b = (await res.json().catch(() => null)) as { message?: string } | null;
@@ -258,6 +262,7 @@ export default function ResiliationsPanel() {
       setMotif("");
       setCommentaire("");
       setDocuments([]);
+      setCreateDocumentsFournis(new Set());
       setCreateOpen(false);
       notify.success("Dossier de résiliation créé (statut DOSSIER_REÇU).");
       await load(1);
@@ -435,6 +440,7 @@ export default function ResiliationsPanel() {
     setMotif("");
     setCommentaire("");
     setDocuments([]);
+    setCreateDocumentsFournis(new Set());
   }
   const exportBase = `/api/resiliations/export?${new URLSearchParams({
     ...(fStatus ? { statut: fStatus } : {}),
@@ -459,23 +465,10 @@ export default function ResiliationsPanel() {
           <div className="mt-3 max-w-2xl space-y-2 text-[11px] leading-snug text-slate-600">
             <p>
               <span className="font-semibold text-cyan-900">Checklist :</span> dossier complet obligatoire avant
-              traitement ({RESILIATION_CHECKLIST_ITEMS_SPEC_71.length} pièces communes + documents produit le cas
-              échéant).
-            </p>
-            <div className="rounded-xl border border-cyan-200 bg-cyan-50/50 p-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-cyan-900">
-                Documents à fournir
-              </p>
-              <ul className="mt-2 list-inside list-disc space-y-1 text-slate-700">
-                {RESILIATION_CHECKLIST_ITEMS_SPEC_71.map((item) => (
-                  <li key={item.id}>{item.libelle}</li>
-                ))}
-              </ul>
-            </div>
-            <p className="text-[11px] text-slate-600">
-              Indicateur <span className="font-semibold">DOSSIER COMPLET / INCOMPLET</span> mis à jour en temps réel
-              lors de la saisie de la checklist. À la validation finale, le contrat passe en statut{" "}
-              <span className="font-semibold">RÉSILIÉ (archivé)</span> — il n&apos;est jamais supprimé (piste d&apos;audit).
+              traitement — cochez les pièces dans le formulaire de création et dans la fiche (
+              {RESILIATION_CHECKLIST_ITEMS_SPEC_71.length} pièces communes + documents produit le cas
+              échéant). À la validation finale, le contrat passe en{" "}
+              <span className="font-semibold">RÉSILIÉ (archivé)</span>.
             </p>
             <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
               <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-900">
@@ -821,6 +814,19 @@ export default function ResiliationsPanel() {
               ) : !detailLoading ? (
                 <p className="text-sm text-slate-500">Checklist non disponible sur ce dossier.</p>
               ) : null}
+              {!detailLoading && detailItem ? (
+                <section className="mt-4 rounded-xl border border-rose-200 bg-rose-50/70 p-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-rose-800">
+                    Courrier de demande
+                  </p>
+                  <ModuleCourrierPdfActionsByModule
+                    moduleId="resiliation"
+                    dossierId={detailItem.id}
+                    reference={detailItem.contratReference ?? detailItem.id}
+                    tone="rose"
+                  />
+                </section>
+              ) : null}
               {!detailLoading && detailItem?.attachments.length ? (
                 <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50/60 p-3">
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-700">Pièces jointes</p>
@@ -989,6 +995,17 @@ export default function ResiliationsPanel() {
                     <span className="shrink-0 text-slate-500">Parcourir</span>
                   </button>
                 </label>
+                <DocumentsAFournirChecklist
+                  className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-3"
+                  items={RESILIATION_CHECKLIST_ITEMS_SPEC_71.map((item) => ({
+                    id: item.id,
+                    libelle: item.libelle,
+                    obligatoire: item.obligatoire !== false,
+                  }))}
+                  value={createDocumentsFournis}
+                  onChange={setCreateDocumentsFournis}
+                  hint="Cochez les pièces déjà remises lors de la création de la demande."
+                />
                 <label className="grid gap-1">
                   <span className="text-xs font-medium text-slate-700">Motif de résiliation *</span>
                   <textarea required rows={2} value={motif} onChange={(e) => setMotif(e.target.value)} className={inputClass} />

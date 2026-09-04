@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/** Politique par étape : vérifier la propriété de file avec validations hiérarchiques. */
+vi.mock("@/lib/lonaci/workflow-approvals", async (importOriginal) => {
+  const { mockWorkflowApprovalsHierarchical } = await import(
+    "@/test/mock-workflow-approvals-hierarchical"
+  );
+  return mockWorkflowApprovalsHierarchical(importOriginal);
+});
 
 import {
   canFinalizeCaution,

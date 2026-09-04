@@ -37,6 +37,7 @@ vi.mock("@/lib/lonaci/concessionnaires", () => ({
 
 vi.mock("@/lib/lonaci/referentials", () => ({
   findAgenceById: vi.fn().mockResolvedValue({ code: "ABJ" }),
+  listProduits: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/lib/prisma", () => ({
@@ -235,7 +236,30 @@ describe("Chef de section - Validation N1", () => {
           concessionnaireId: validObjectId,
           reference: "CESS-001",
           commentaire: null,
-          documentChecklist: { entries: [], complet: true },
+          documentChecklist: {
+            entries: [
+              { itemId: "deloc_formulaire_signe", libelle: "Formulaire", obligatoire: true, statut: "FOURNI" },
+              {
+                itemId: "deloc_identite_concessionnaire",
+                libelle: "Identité",
+                obligatoire: true,
+                statut: "FOURNI",
+              },
+              {
+                itemId: "deloc_justificatif_nouveau_site",
+                libelle: "Nouveau site",
+                obligatoire: true,
+                statut: "FOURNI",
+              },
+              {
+                itemId: "deloc_contrat_en_cours",
+                libelle: "Contrat",
+                obligatoire: true,
+                statut: "FOURNI",
+              },
+            ],
+            complet: true,
+          },
           deletedAt: null,
         }),
         updateOne: updateOneMock,

@@ -174,6 +174,31 @@ export async function findBancarisationRequestById(id: string) {
   return row ? mapRequest(row) : null;
 }
 
+export async function findVisibleBancarisationRequestById(id: string, actor: UserDocument) {
+  const row = await findBancarisationRequestById(id);
+  if (!row) return null;
+  if (
+    !isWorkflowDocumentVisible({
+      workflow: "BANCARISATION",
+      role: actor.role,
+      userId: actor._id ?? "",
+      creatorId: row.createdByUserId,
+      status: row.status,
+    })
+  ) {
+    return null;
+  }
+  const concessionnaire = await findConcessionnaireById(row.concessionnaireId);
+  if (
+    !concessionnaire ||
+    concessionnaire.deletedAt ||
+    !canReadConcessionnaire(actor, concessionnaire)
+  ) {
+    return null;
+  }
+  return row;
+}
+
 const BANCARISATION_PENDING_STATUSES = ["SOUMIS", "VALIDE_N1", "VALIDE_N2"] as const;
 
 export async function countBancarisationRequestsByStatus(

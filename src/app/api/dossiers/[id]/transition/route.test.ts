@@ -33,6 +33,11 @@ vi.mock("@/lib/lonaci/contracts", () => ({
   finalizeContratFromDossier: finalizeContratFromDossierMock,
 }));
 
+vi.mock("@/lib/observability/workflow-events", () => ({
+  logWorkflowDenied: vi.fn(),
+  logPdfFailure: vi.fn(),
+}));
+
 import { POST } from "./route";
 
 const actor = { _id: "u1", role: "CHEF_SERVICE" } as const;

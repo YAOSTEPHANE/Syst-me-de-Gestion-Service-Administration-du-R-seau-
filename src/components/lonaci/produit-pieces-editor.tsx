@@ -88,6 +88,8 @@ type ProduitPiecesEditorProps = {
   disabled?: boolean;
   compact?: boolean;
   helpText?: string;
+  /** Affiche le filtre par type de client (produits PDV). */
+  showClientCategories?: boolean;
 };
 
 export default function ProduitPiecesEditor({
@@ -96,6 +98,7 @@ export default function ProduitPiecesEditor({
   disabled = false,
   compact = false,
   helpText = "Ces pièces alimentent automatiquement les checklists. Choisissez les types de clients concernés (tous si aucune case cochée).",
+  showClientCategories = true,
 }: ProduitPiecesEditorProps) {
   function updateAt(index: number, patch: Partial<ProduitPieceDraft>) {
     onChange(items.map((row, i) => (i === index ? { ...row, ...patch } : row)));
@@ -182,6 +185,7 @@ export default function ProduitPiecesEditor({
                       </Button>
                     </div>
                   </div>
+                  {showClientCategories ? (
                   <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pl-8">
                     <span className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                       Types de clients
@@ -229,6 +233,7 @@ export default function ProduitPiecesEditor({
                       <span className="text-[10px] text-slate-500">(tous)</span>
                     ) : null}
                   </div>
+                  ) : null}
                 </Surface>
               </li>
             );

@@ -2,6 +2,7 @@
 
 import { ChecklistEditor } from "@/components/lonaci/workflow/checklist-editor";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { SUCCESSION_ACTE_DECES_ITEM_ID } from "@/lib/lonaci/succession-checklist-defaults";
 import {
   DOSSIER_CHECKLIST_STATUTS,
   DOSSIER_CHECKLIST_STATUT_LABELS,
@@ -50,7 +51,7 @@ export default function SuccessionChecklistBlock({
     const map: Record<string, DossierDocumentChecklistStatut> = {};
     for (const e of checklist.entries) {
       map[e.itemId] =
-        e.itemId === "succession_acte_deces_officiel" && acteDecesPresent ? "FOURNI" : e.statut;
+        e.itemId === SUCCESSION_ACTE_DECES_ITEM_ID && acteDecesPresent ? "FOURNI" : e.statut;
     }
     setLocalStatuts(map);
   }, [checklist, acteDecesPresent]);
@@ -101,7 +102,7 @@ export default function SuccessionChecklistBlock({
   return (
     <ChecklistEditor
       title="Documents à fournir"
-      description="Circuit documentaire strict avant la vérification juridique (étape 4)."
+      description="Cochez chaque pièce remise. Circuit documentaire strict avant la vérification juridique (étape 4)."
       entries={checklist.entries}
       statuses={DOSSIER_CHECKLIST_STATUTS}
       statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}
@@ -117,10 +118,10 @@ export default function SuccessionChecklistBlock({
         void saveStatuts(next);
       }}
       isItemEditable={(entry) =>
-        !(entry.itemId === "succession_acte_deces_officiel" && acteDecesPresent)
+        !(entry.itemId === SUCCESSION_ACTE_DECES_ITEM_ID && acteDecesPresent)
       }
       readOnlySuffix={(entry) =>
-        entry.itemId === "succession_acte_deces_officiel" && acteDecesPresent && editable
+        entry.itemId === SUCCESSION_ACTE_DECES_ITEM_ID && acteDecesPresent && editable
           ? " (acte joint)"
           : null
       }

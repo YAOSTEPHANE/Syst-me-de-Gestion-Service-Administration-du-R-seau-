@@ -3,7 +3,6 @@ import type { Prisma } from "@prisma/client";
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import {
   CLIENT_STATUTS,
-  clientDisplayName,
   normalizeClientCategorie,
   normalizeClientCodeForAgence,
   normalizeClientTypeDistributeur,

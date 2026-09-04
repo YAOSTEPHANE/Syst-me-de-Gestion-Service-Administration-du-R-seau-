@@ -2,14 +2,25 @@ import { ObjectId } from "mongodb";
 
 import { sendSmtpEmail } from "@/lib/email/smtp";
 import {
+  buildAttestationDomiciliationDocumentChecklist,
+  isAttestationDomiciliationChecklistComplete,
+  parseAttestationDomiciliationDocumentChecklist,
+  patchAttestationDomiciliationDocumentChecklistStatuts,
+} from "@/lib/lonaci/attestation-domiciliation-document-checklist";
+import { getAttestationDomiciliationChecklistTemplate } from "@/lib/lonaci/attestation-domiciliation-checklist-settings";
+import {
   concessionnaireListScopeAgenceId,
   findConcessionnaireById,
 } from "@/lib/lonaci/concessionnaires";
 import type { AttestationDomiciliationStatus, AttestationDomiciliationType } from "@/lib/lonaci/constants";
+import type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation-types";
+import { computeChecklistComplet } from "@/lib/lonaci/produit-document-checklist";
 import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
-import type { UserDocument } from "@/lib/lonaci/types";
+import type { DossierDocumentChecklistPayload, DossierDocumentChecklistStatut, UserDocument } from "@/lib/lonaci/types";
 import { prisma } from "@/lib/prisma";
+
+export { attestationDomiciliationChecklistProgress } from "@/lib/lonaci/attestations-domiciliation-checklist-progress";
 
 const COLLECTION = "attestations_domiciliation";
 
@@ -34,9 +45,42 @@ interface DemandeStored {
   sentToClientAt: Date | null;
   clientEmailSentTo: string | null;
   submittedAt: Date;
+  documentChecklist: DossierDocumentChecklistPayload | null;
   createdAt: Date;
   updatedAt: Date;
   deletedAt: Date | null;
+}
+
+function checklistPayloadEquals(
+  a: DossierDocumentChecklistPayload,
+  b: DossierDocumentChecklistPayload | null,
+): boolean {
+  if (!b) return false;
+  if (a.complet !== b.complet || a.entries.length !== b.entries.length) return false;
+  return a.entries.every((entry, index) => {
+    const other = b.entries[index];
+    if (!other) return false;
+    return (
+      entry.itemId === other.itemId &&
+      entry.libelle === other.libelle &&
+      entry.obligatoire === other.obligatoire &&
+      entry.statut === other.statut
+    );
+  });
+}
+
+async function ensureRowDocumentChecklist(row: DemandeStored): Promise<DossierDocumentChecklistPayload> {
+  const parsed = parseAttestationDomiciliationDocumentChecklist(row.documentChecklist);
+  const template = await getAttestationDomiciliationChecklistTemplate();
+  const built = buildAttestationDomiciliationDocumentChecklist(template, parsed);
+  if (!checklistPayloadEquals(built, parsed)) {
+    const db = await getDatabase();
+    await db.collection<DemandeStored>(COLLECTION).updateOne(
+      { _id: row._id },
+      { $set: { documentChecklist: built, updatedAt: new Date() } },
+    );
+  }
+  return built;
 }
 
 export function attestationsListScopeAgenceId(user: UserDocument): string | undefined {
@@ -96,11 +140,22 @@ export async function createDemandeAttestationDomiciliation(input: {
   produitCode: string | null;
   dateDemande: Date;
   observations: string | null;
+  documentsFournis?: string[];
   actorId: string;
 }) {
   const db = await getDatabase();
   const now = new Date();
   const agenceId = await resolveAgenceIdForConcessionnaire(input.concessionnaireId);
+  const fourniSet = new Set((input.documentsFournis ?? []).map((id) => id.trim()).filter(Boolean));
+  const template = await getAttestationDomiciliationChecklistTemplate();
+  const documentChecklist = buildAttestationDomiciliationDocumentChecklist(template);
+  if (fourniSet.size > 0) {
+    documentChecklist.entries = documentChecklist.entries.map((entry) => ({
+      ...entry,
+      statut: fourniSet.has(entry.itemId) ? "FOURNI" : entry.statut,
+    }));
+    documentChecklist.complet = computeChecklistComplet(documentChecklist.entries);
+  }
   const doc: Omit<DemandeStored, "_id"> = {
     type: input.type,
     concessionnaireId: input.concessionnaireId,
@@ -121,6 +176,7 @@ export async function createDemandeAttestationDomiciliation(input: {
     sentToClientAt: null,
     clientEmailSentTo: null,
     submittedAt: input.dateDemande,
+    documentChecklist,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
@@ -151,6 +207,10 @@ export async function transitionDemandeAttestationDomiciliation(input: {
 
   if (row.statut === "DEMANDE_RECUE" && input.target === "TRANSMIS") {
     if (!roleMayAdvanceWorkflow(input.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
+    const checklist = await ensureRowDocumentChecklist(row);
+    if (!isAttestationDomiciliationChecklistComplete(checklist)) {
+      throw new Error("CHECKLIST_INCOMPLETE");
+    }
     $set.transmittedAt = now;
     $set.transmittedByUserId = input.actorId;
   } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {
@@ -324,24 +384,7 @@ async function buildAttestationsDomiciliationFilter(
 }
 
 /** Indicateurs du tableau de bord des attestations. */
-export interface AttestationsDomiciliationDashboardIndicators {
-  type: AttestationDomiciliationType | null;
-  agenceId: string | null;
-  /** Compteur total des demandes en cours et traitées (périmètre filtré). */
-  nombreDemandes: number;
-  enCours: number;
-  transmisDfc: number;
-  finalise: number;
-  valide: number;
-  envoyeClient: number;
-  /** Délai moyen soumission → transmission au client (jours). */
-  tempsTraitementMoyenClientJours: number | null;
-  tempsTraitementEchantillon: number;
-  enAttentePlus7Jours: number;
-  finaliseThisMonth: number;
-  createdThisMonth: number;
-  tauxFinalisationClientPct: number | null;
-}
+export type { AttestationsDomiciliationDashboardIndicators } from "@/lib/lonaci/attestations-domiciliation-types";
 
 export async function getAttestationsDomiciliationDashboardIndicators(
   input: AttestationsDomiciliationListFilters,
@@ -444,7 +487,10 @@ export async function getAttestationsDomiciliationDashboardIndicators(
   };
 }
 
-function mapDemandeToListItem(r: DemandeStored) {
+function mapDemandeToListItem(
+  r: DemandeStored,
+  documentChecklist: DossierDocumentChecklistPayload | null,
+) {
   const delaiTraitementClientJours = computeDelaiTraitementClientJours(
     r.dateDemande,
     r.sentToClientAt,
@@ -458,6 +504,7 @@ function mapDemandeToListItem(r: DemandeStored) {
     dateDemande: r.dateDemande.toISOString(),
     statut: r.statut,
     observations: r.observations,
+    documentChecklist,
     transmittedAt: r.transmittedAt?.toISOString() ?? null,
     finalizedAt: r.finalizedAt?.toISOString() ?? null,
     validatedAt: r.validatedAt?.toISOString() ?? null,
@@ -468,6 +515,51 @@ function mapDemandeToListItem(r: DemandeStored) {
     createdAt: r.createdAt.toISOString(),
     updatedAt: r.updatedAt.toISOString(),
   };
+}
+
+export async function getDemandeAttestationDomiciliationById(id: string, actor: UserDocument) {
+  void actor;
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDatabase();
+  const row = await db
+    .collection<DemandeStored>(COLLECTION)
+    .findOne({ _id: new ObjectId(id), deletedAt: null });
+  if (!row) return null;
+  const documentChecklist = await ensureRowDocumentChecklist(row);
+  return mapDemandeToListItem(row, documentChecklist);
+}
+
+export async function patchDemandeAttestationDomiciliationChecklist(input: {
+  id: string;
+  entries: Array<{ itemId: string; statut: DossierDocumentChecklistStatut }>;
+  actor: UserDocument;
+}) {
+  if (!ObjectId.isValid(input.id)) throw new Error("DEMANDE_NOT_FOUND");
+  const db = await getDatabase();
+  const row = await db
+    .collection<DemandeStored>(COLLECTION)
+    .findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  if (!row) throw new Error("DEMANDE_NOT_FOUND");
+  if (row.statut !== "DEMANDE_RECUE") throw new Error("DEMANDE_IMMUTABLE");
+
+  const current = await ensureRowDocumentChecklist(row);
+  if (!current.entries.length) throw new Error("CHECKLIST_NOT_FOUND");
+
+  const next = patchAttestationDomiciliationDocumentChecklistStatuts(current, input.entries);
+  const now = new Date();
+  await db.collection<DemandeStored>(COLLECTION).updateOne(
+    { _id: row._id },
+    {
+      $set: {
+        documentChecklist: next,
+        updatedAt: now,
+        updatedByUserId: input.actor._id ?? "",
+      },
+    },
+  );
+  const updated = await db.collection<DemandeStored>(COLLECTION).findOne({ _id: row._id });
+  if (!updated) throw new Error("DEMANDE_NOT_FOUND");
+  return mapDemandeToListItem(updated, next);
 }
 
 export async function listDemandesAttestationsDomiciliation(input: {
@@ -484,8 +576,15 @@ export async function listDemandesAttestationsDomiciliation(input: {
     col.find(filter).sort({ dateDemande: -1, createdAt: -1 }).skip(skip).limit(input.pageSize).toArray(),
   ]);
 
+  const items = await Promise.all(
+    rows.map(async (row) => {
+      const documentChecklist = await ensureRowDocumentChecklist(row);
+      return mapDemandeToListItem(row, documentChecklist);
+    }),
+  );
+
   return {
-    items: rows.map(mapDemandeToListItem),
+    items,
     total,
     page: input.page,
     pageSize: input.pageSize,

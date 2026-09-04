@@ -1,4 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+/** Propriété de file : vérifier la séparation des rôles avec validations hiérarchiques. */
+vi.mock("@/lib/lonaci/workflow-approvals", async (importOriginal) => {
+  const { mockWorkflowApprovalsHierarchical } = await import(
+    "@/test/mock-workflow-approvals-hierarchical"
+  );
+  return mockWorkflowApprovalsHierarchical(importOriginal);
+});
 
 import { assertCessionTransitionAllowed } from "@/lib/lonaci/cessions";
 import { assertResiliationTransitionAllowed } from "@/lib/lonaci/resiliations";

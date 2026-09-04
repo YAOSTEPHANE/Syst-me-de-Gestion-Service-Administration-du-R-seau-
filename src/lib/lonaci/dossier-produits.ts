@@ -8,9 +8,10 @@ import type { DossierDocument } from "@/lib/lonaci/types";
 import { hasActiveContractForParty } from "@/lib/lonaci/contracts";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produits";
 import { listProduits } from "@/lib/lonaci/referentials";
+import { getContratChecklistTemplate } from "@/lib/lonaci/contrat-checklist-settings";
 import {
   ensureDossierDocumentChecklist,
-  mergeProductDossierAndAnnexeTemplates,
+  mergeContratChecklistTemplate,
   serializeDocumentChecklistPayload,
 } from "@/lib/lonaci/produit-document-checklist";
 import type { ClientCategorie } from "@/lib/lonaci/client-constants";
@@ -131,8 +132,8 @@ export async function ensureChecklistForDossierProduits(
   produitCodes: string[],
   clientCategorie?: ClientCategorie | null,
 ): Promise<DossierDocumentChecklistPayload> {
-  const produits = await listProduits();
-  const template = mergeProductDossierAndAnnexeTemplates(produitCodes, produits, clientCategorie);
+  const [produits, baseItems] = await Promise.all([listProduits(), getContratChecklistTemplate()]);
+  const template = mergeContratChecklistTemplate(produitCodes, produits, clientCategorie, baseItems);
   return ensureDossierDocumentChecklist(payload, template);
 }
 

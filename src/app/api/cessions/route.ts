@@ -207,6 +207,10 @@ export async function POST(request: NextRequest) {
   }
 
   await ensureCessionIndexes();
+  const documentsFournis = form
+    .getAll("documentsFournis")
+    .map((v) => String(v).trim())
+    .filter(Boolean);
   try {
     const created = await createCession({
       kind: cessionKind,
@@ -222,6 +226,7 @@ export async function POST(request: NextRequest) {
       dateDemande,
       motif,
       commentaire: commentaire || null,
+      documentsFournis,
       actor: auth.user,
     });
 

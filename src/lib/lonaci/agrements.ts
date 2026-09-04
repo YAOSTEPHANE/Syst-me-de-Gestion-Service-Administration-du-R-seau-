@@ -341,3 +341,24 @@ export async function getAgrementDocumentMeta(id: string, actor: UserDocument) {
   };
 }
 
+export async function getAgrementById(
+  id: string,
+  actor: UserDocument,
+): Promise<{
+  id: string;
+  reference: string;
+  agenceId: string | null;
+  concessionnaireId: string | null;
+} | null> {
+  if (!ObjectId.isValid(id)) return null;
+  const db = await getDatabase();
+  const row = await db.collection<AgrementStored>(COLLECTION).findOne({ _id: new ObjectId(id), deletedAt: null });
+  if (!row || !canAccessAgrement(row, actor)) return null;
+  return {
+    id: row._id.toHexString(),
+    reference: row.reference,
+    agenceId: row.agenceId,
+    concessionnaireId: row.concessionnaireId,
+  };
+}
+

@@ -11,32 +11,69 @@ import {
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
-import type { ChartOptions } from "chart.js";
+import type { ChartArea } from "chart.js";
 import {
   ArcElement,
   BarElement,
   CategoryScale,
   Chart as ChartJS,
+  Filler,
   Legend,
   LinearScale,
   LineElement,
   PointElement,
+  PolarAreaController,
+  RadarController,
+  RadialLinearScale,
   Tooltip,
 } from "chart.js";
-import { Bar, Doughnut, Line } from "react-chartjs-2";
+import { Bar, Doughnut, Line, PolarArea, Radar } from "react-chartjs-2";
 import Link from "next/link";
 
 import type { LonaciKpiPayload } from "@/lib/lonaci/lonaci-kpi-types";
+import { registerPremiumChartPlugins } from "@/lib/lonaci/premium-chart-plugins";
+import {
+  areaFillGradient,
+  barHorizontalGradientScriptable,
+  barVerticalGradientScriptable,
+  horizontalGradient,
+  paletteSlice,
+  PREMIUM_BAR_GRADIENTS,
+  PREMIUM_PALETTE,
+  premiumBarOptions,
+  premiumDoughnutOptions,
+  premiumHorizontalBarOptions,
+  premiumLineOptions,
+  premiumPolarOptions,
+  premiumRadarOptions,
+  verticalGradient,
+  withExecutiveOverlays,
+} from "@/lib/lonaci/premium-charts";
 import { calculateRasterPageSlices, CLIENT_PDF_COLORS } from "@/lib/pdf/client-premium";
 import { notify } from "@/lib/toast";
 import { Badge } from "@/components/lonaci/ui/badge";
 import { Button } from "@/components/lonaci/ui/button";
 import { ChartCard, KpiCard } from "@/components/lonaci/ui/dashboard-cards";
+import { AnimatedMetric } from "@/components/lonaci/ui/animated-metric";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Surface } from "@/components/lonaci/ui/surface";
 
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ArcElement, BarElement, Tooltip, Legend);
+ChartJS.register(
+  CategoryScale,
+  LinearScale,
+  PointElement,
+  LineElement,
+  ArcElement,
+  BarElement,
+  RadialLinearScale,
+  RadarController,
+  PolarAreaController,
+  Filler,
+  Tooltip,
+  Legend,
+);
+registerPremiumChartPlugins(ChartJS);
 
 type Period = "daily" | "weekly" | "monthly";
 type ProductTrendFilter = "all" | "up" | "down";
@@ -107,6 +144,8 @@ export default function ReportsPanel() {
   const [compareAgences, setCompareAgences] = useState(true);
   const [topAgences, setTopAgences] = useState(8);
   const [productTrendFilter, setProductTrendFilter] = useState<ProductTrendFilter>("all");
+  const [moduleViz, setModuleViz] = useState<"donut" | "polar">("donut");
+  const [riskViz, setRiskViz] = useState<"bar" | "radar">("radar");
 
   async function load() {
     setLoading(true);
@@ -193,36 +232,64 @@ export default function ReportsPanel() {
 
   const lineData = useMemo(() => {
     const rows = kpi?.activity7d ?? [];
+    const series = [
+      { label: "Contrats", color: "#f97316", pick: (r: (typeof rows)[number]) => r.contracts },
+      { label: "Cautions", color: "#0f766e", pick: (r: (typeof rows)[number]) => r.cautions },
+      { label: "Intégrations", color: "#1e3a5f", pick: (r: (typeof rows)[number]) => r.integrations },
+    ] as const;
     return {
       labels: rows.map((r) => r.label),
-      datasets: [
-        {
-          label: "Volume agrégé (contrats + cautions + intégr.)",
-          data: rows.map((r) => r.contracts + r.cautions + r.integrations),
-          borderColor: "#f59e0b",
-          backgroundColor: "rgba(245,158,11,0.12)",
-          tension: 0.35,
-          fill: true,
-          pointRadius: 3,
+      datasets: series.map((s) => ({
+        label: s.label,
+        data: rows.map((r) => s.pick(r)),
+        borderColor: s.color,
+        borderWidth: 2.75,
+        tension: 0.42,
+        fill: true,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        backgroundColor: (context: {
+          chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea };
+        }) => {
+          const { ctx, chartArea } = context.chart;
+          return areaFillGradient(ctx, chartArea, s.color, 0.28, 0.02);
         },
-      ],
+      })),
     };
   }, [kpi]);
 
-  const lineOpts = useMemo<ChartOptions<"line">>(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: "#475569", font: { size: 12 } } },
-      },
-      scales: {
-        x: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" } },
-        y: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
-      },
-    }),
+  const lineOpts = useMemo(
+    () =>
+      withExecutiveOverlays(
+        premiumLineOptions({
+          plugins: {
+            legend: {
+              display: true,
+              position: "bottom",
+              labels: {
+                color: "#475569",
+                font: { size: 11, weight: 600 },
+                usePointStyle: true,
+                pointStyle: "circle",
+                padding: 14,
+              },
+            },
+            tooltip: {
+              callbacks: {
+                footer: (items) => {
+                  if (!items.length) return "";
+                  const sum = items.reduce((s, it) => s + (Number(it.parsed.y) || 0), 0);
+                  return `Total : ${sum}`;
+                },
+              },
+            },
+          },
+        }),
+      ),
     [],
   );
+
+  const multiLineOpts = useMemo(() => withExecutiveOverlays(premiumLineOptions()), []);
 
   const moduleDistribution = useMemo(() => {
     const contracts = summary?.modules?.contrats?.actifs ?? summary?.contrats?.actifs ?? 0;
@@ -237,6 +304,11 @@ export default function ReportsPanel() {
     };
   }, [summary]);
 
+  const moduleTotal = useMemo(
+    () => moduleDistribution.values.reduce((s, n) => s + n, 0),
+    [moduleDistribution],
+  );
+
   const moduleDoughnutData = useMemo(
     () => ({
       labels: moduleDistribution.labels,
@@ -244,8 +316,27 @@ export default function ReportsPanel() {
         {
           label: "Répartition des volumes",
           data: moduleDistribution.values,
-          backgroundColor: ["#f97316", "#ef4444", "#22c55e", "#1e3a5f", "#0f766e", "#64748b"],
-          borderColor: "rgba(255,255,255,0.85)",
+          backgroundColor: [...PREMIUM_PALETTE].slice(0, 6),
+          borderColor: "rgba(255,255,255,0.95)",
+          borderWidth: 2.5,
+          hoverOffset: 12,
+          spacing: 2,
+          borderRadius: 6,
+        },
+      ],
+    }),
+    [moduleDistribution],
+  );
+
+  const modulePolarData = useMemo(
+    () => ({
+      labels: moduleDistribution.labels,
+      datasets: [
+        {
+          label: "Volumes",
+          data: moduleDistribution.values,
+          backgroundColor: [...PREMIUM_PALETTE].slice(0, 6).map((c) => `${c}cc`),
+          borderColor: [...PREMIUM_PALETTE].slice(0, 6),
           borderWidth: 1.5,
         },
       ],
@@ -253,23 +344,56 @@ export default function ReportsPanel() {
     [moduleDistribution],
   );
 
-  const riskBarData = useMemo(() => {
+  const riskValues = useMemo(() => {
     const cautionAlert = summary?.modules?.cautions?.alertesJ10 ?? summary?.cautions?.alertesJ10 ?? 0;
     const successionStale = summary?.modules?.succession?.stale30j ?? summary?.succession?.stale30j ?? 0;
     const pdvPending = summary?.modules?.pdvIntegrations?.nonFinalise ?? summary?.pdvIntegrations?.nonFinalise ?? 0;
     const contratsResilie = summary?.modules?.contrats?.resilie ?? summary?.contrats?.resilie ?? 0;
-    return {
-      labels: ["Cautions J+10", "Successions sans activité 30j", "PDV non finalisés", "Contrats résiliés"],
+    return [cautionAlert, successionStale, pdvPending, contratsResilie] as const;
+  }, [summary]);
+
+  const riskBarData = useMemo(
+    () => ({
+      labels: ["Cautions J+10", "Succ. 30j", "PDV en cours", "Résiliés"],
       datasets: [
         {
           label: "Indicateurs de risque",
-          data: [cautionAlert, successionStale, pdvPending, contratsResilie],
-          backgroundColor: ["#f97316", "#ef4444", "#eab308", "#1e3a5f"],
-          borderRadius: 8,
+          data: [...riskValues],
+          borderSkipped: false as const,
+          borderRadius: { topLeft: 10, topRight: 10, bottomLeft: 3, bottomRight: 3 } as const,
+          maxBarThickness: 36,
+          backgroundColor: (context: {
+            dataIndex: number;
+            chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea };
+          }) => {
+            const g = PREMIUM_BAR_GRADIENTS[context.dataIndex] ?? PREMIUM_BAR_GRADIENTS[0]!;
+            return verticalGradient(context.chart.ctx, context.chart.chartArea, g.top, g.bottom);
+          },
         },
       ],
-    };
-  }, [summary]);
+    }),
+    [riskValues],
+  );
+
+  const riskRadarData = useMemo(
+    () => ({
+      labels: ["Cautions J+10", "Succ. 30j", "PDV", "Résiliés"],
+      datasets: [
+        {
+          label: "Exposition",
+          data: [...riskValues],
+          borderColor: "#f97316",
+          backgroundColor: "rgba(249, 115, 22, 0.22)",
+          pointBackgroundColor: "#fff",
+          pointBorderColor: "#f97316",
+          pointHoverBackgroundColor: "#f97316",
+          pointHoverBorderColor: "#fff",
+          borderWidth: 2.5,
+        },
+      ],
+    }),
+    [riskValues],
+  );
 
   const dossiersStatusData = useMemo(() => {
     const statuses = summary?.dossiers?.byStatus ?? {};
@@ -281,10 +405,18 @@ export default function ReportsPanel() {
         {
           label: "Dossiers par statut",
           data: values,
-          backgroundColor: "rgba(249,115,22,0.78)",
-          borderColor: "#c2410c",
-          borderWidth: 1,
-          borderRadius: 6,
+          borderSkipped: false as const,
+          borderRadius: { topLeft: 10, topRight: 10, bottomLeft: 3, bottomRight: 3 } as const,
+          maxBarThickness: 42,
+          backgroundColor: (context: {
+            dataIndex: number;
+            chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea };
+          }) => {
+            const g =
+              PREMIUM_BAR_GRADIENTS[context.dataIndex % PREMIUM_BAR_GRADIENTS.length] ??
+              PREMIUM_BAR_GRADIENTS[0]!;
+            return verticalGradient(context.chart.ctx, context.chart.chartArea, g.top, g.bottom);
+          },
         },
       ],
     };
@@ -313,18 +445,12 @@ export default function ReportsPanel() {
         {
           label: "Contrats actifs",
           data: productActiveRows.map((row) => row.count),
-          backgroundColor: [
-            "#f97316",
-            "#14b8a6",
-            "#1e3a5f",
-            "#f59e0b",
-            "#ef4444",
-            "#334155",
-            "#22c55e",
-            "#64748b",
-          ],
-          borderColor: "rgba(255,255,255,0.9)",
-          borderWidth: 1.5,
+          backgroundColor: paletteSlice(productActiveRows.length),
+          borderColor: "rgba(255,255,255,0.95)",
+          borderWidth: 2.5,
+          hoverOffset: 12,
+          spacing: 2,
+          borderRadius: 5,
         },
       ],
     }),
@@ -338,18 +464,18 @@ export default function ReportsPanel() {
         {
           label: "Période courante",
           data: productWindowRows.map((row) => row.currentWindow),
-          backgroundColor: "rgba(249,115,22,0.82)",
-          borderColor: "#c2410c",
-          borderWidth: 1,
-          borderRadius: 8,
+          borderSkipped: false as const,
+          borderRadius: { topLeft: 8, topRight: 8, bottomLeft: 2, bottomRight: 2 } as const,
+          maxBarThickness: 22,
+          backgroundColor: barVerticalGradientScriptable("#fdba74", "#c2410c"),
         },
         {
           label: "Période précédente",
           data: productWindowRows.map((row) => row.previousWindow),
-          backgroundColor: "rgba(148,163,184,0.72)",
-          borderColor: "#64748b",
-          borderWidth: 1,
-          borderRadius: 8,
+          borderSkipped: false as const,
+          borderRadius: { topLeft: 8, topRight: 8, bottomLeft: 2, bottomRight: 2 } as const,
+          maxBarThickness: 22,
+          backgroundColor: barVerticalGradientScriptable("#cbd5e1", "#475569"),
         },
       ],
     }),
@@ -363,65 +489,127 @@ export default function ReportsPanel() {
         {
           label: "Variation (%)",
           data: filteredProductTrendRows.map((row) => row.trendPct),
-          backgroundColor: filteredProductTrendRows.map((row) =>
-            row.trendPct >= 0 ? "rgba(34,197,94,0.75)" : "rgba(239,68,68,0.75)",
-          ),
-          borderColor: filteredProductTrendRows.map((row) => (row.trendPct >= 0 ? "#15803d" : "#b91c1c")),
-          borderWidth: 1,
+          borderSkipped: false as const,
           borderRadius: 8,
+          maxBarThickness: 18,
+          backgroundColor: (context: {
+            dataIndex: number;
+            chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea };
+          }) => {
+            const row = filteredProductTrendRows[context.dataIndex];
+            const up = (row?.trendPct ?? 0) >= 0;
+            return horizontalGradient(
+              context.chart.ctx,
+              context.chart.chartArea,
+              up ? "#86efac" : "#fda4af",
+              up ? "#15803d" : "#be123c",
+            );
+          },
         },
       ],
     }),
     [filteredProductTrendRows],
   );
 
-  const trendPctOpts = useMemo<ChartOptions<"bar">>(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      indexAxis: "y",
-      plugins: {
-        legend: { labels: { color: "#475569", font: { size: 12 } } },
-      },
-      scales: {
-        x: {
-          ticks: { color: "#64748b", font: { size: 12 } },
-          grid: { color: "rgba(148,163,184,0.2)" },
-          beginAtZero: true,
+  const agenceComparatifBarData = useMemo(() => {
+    const rows = summary?.agenceComparatif ?? [];
+    return {
+      labels: rows.map((r) => r.agenceCode),
+      datasets: [
+        {
+          label: "Dossiers",
+          data: rows.map((r) => r.dossiersTotal),
+          borderSkipped: false as const,
+          borderRadius: 8,
+          maxBarThickness: 16,
+          backgroundColor: barHorizontalGradientScriptable("#fdba74", "#c2410c"),
         },
-        y: {
-          ticks: { color: "#64748b", font: { size: 12 } },
-          grid: { display: false },
+        {
+          label: "Créés période",
+          data: rows.map((r) => r.dossiersCreatedInWindow),
+          borderSkipped: false as const,
+          borderRadius: 8,
+          maxBarThickness: 16,
+          backgroundColor: barHorizontalGradientScriptable("#5eead4", "#0f766e"),
         },
-      },
-    }),
+      ],
+    };
+  }, [summary]);
+
+  const trendPctOpts = useMemo(
+    () =>
+      premiumHorizontalBarOptions({
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const n = typeof ctx.parsed.x === "number" ? ctx.parsed.x : 0;
+                const sign = n > 0 ? "+" : "";
+                return ` ${sign}${n} %`;
+              },
+            },
+          },
+        },
+      }),
     [],
   );
 
-  const barOpts = useMemo<ChartOptions<"bar">>(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: "#475569", font: { size: 12 } } },
-      },
-      scales: {
-        x: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { display: false } },
-        y: { ticks: { color: "#64748b", font: { size: 12 } }, grid: { color: "rgba(148,163,184,0.2)" }, beginAtZero: true },
-      },
-    }),
+  const barOpts = useMemo(
+    () => withExecutiveOverlays(premiumBarOptions({ plugins: { legend: { display: false } } })),
     [],
   );
 
-  const doughnutOpts = useMemo<ChartOptions<"doughnut">>(
-    () => ({
-      responsive: true,
-      maintainAspectRatio: false,
-      cutout: "65%",
+  const barGroupedOpts = useMemo(() => withExecutiveOverlays(premiumBarOptions()), []);
+
+  const doughnutOpts = useMemo(
+    () =>
+      premiumDoughnutOptions({
+        plugins: {
+          lonaciDoughnutCenter: {
+            value: String(moduleTotal),
+            label: "volumes",
+          },
+        },
+      }),
+    [moduleTotal],
+  );
+
+  const productsDoughnutOpts = useMemo(() => {
+    const total = productActiveRows.reduce((s, r) => s + r.count, 0);
+    return premiumDoughnutOptions({
       plugins: {
-        legend: { position: "bottom", labels: { color: "#475569", font: { size: 12 } } },
+        lonaciDoughnutCenter: {
+          value: String(total),
+          label: "actifs",
+        },
       },
-    }),
+    });
+  }, [productActiveRows]);
+
+  const polarOpts = useMemo(() => premiumPolarOptions(), []);
+
+  const radarOpts = useMemo(() => premiumRadarOptions(), []);
+
+  const agenceBarOpts = useMemo(
+    () =>
+      withExecutiveOverlays(
+        premiumHorizontalBarOptions({
+          plugins: {
+            legend: {
+              display: true,
+              position: "bottom",
+              labels: {
+                color: "#475569",
+                font: { size: 11, weight: 600 },
+                usePointStyle: true,
+                pointStyle: "rectRounded",
+                padding: 14,
+              },
+            },
+          },
+        }),
+      ),
     [],
   );
 
@@ -432,39 +620,51 @@ export default function ReportsPanel() {
     const mContrats = monthlySummary?.contrats?.createdInWindow ?? 0;
     const wCautions = weeklySummary?.cautions?.enAttente ?? 0;
     const mCautions = monthlySummary?.cautions?.enAttente ?? 0;
+    const series = [
+      { label: "Dossiers créés", color: "#6366f1", data: [wDossiers, mDossiers] },
+      { label: "Contrats créés", color: "#f97316", data: [wContrats, mContrats] },
+      { label: "Cautions en attente", color: "#ef4444", data: [wCautions, mCautions] },
+    ] as const;
     return {
       labels: ["Semaine (7j)", "Mois (30j)"],
-      datasets: [
-        {
-          label: "Dossiers créés",
-          data: [wDossiers, mDossiers],
-          borderColor: "#6366f1",
-          backgroundColor: "rgba(99,102,241,0.18)",
-          tension: 0.3,
-          fill: true,
-          pointRadius: 3,
+      datasets: series.map((s) => ({
+        label: s.label,
+        data: s.data,
+        borderColor: s.color,
+        borderWidth: 2.5,
+        tension: 0.4,
+        fill: true,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        backgroundColor: (context: {
+          chart: { ctx: CanvasRenderingContext2D; chartArea?: ChartArea };
+        }) => {
+          const { ctx, chartArea } = context.chart;
+          return areaFillGradient(ctx, chartArea, s.color, 0.28, 0.02);
         },
-        {
-          label: "Contrats créés",
-          data: [wContrats, mContrats],
-          borderColor: "#f59e0b",
-          backgroundColor: "rgba(245,158,11,0.14)",
-          tension: 0.3,
-          fill: true,
-          pointRadius: 3,
-        },
-        {
-          label: "Cautions en attente",
-          data: [wCautions, mCautions],
-          borderColor: "#ef4444",
-          backgroundColor: "rgba(239,68,68,0.12)",
-          tension: 0.3,
-          fill: true,
-          pointRadius: 3,
-        },
-      ],
+      })),
     };
   }, [weeklySummary, monthlySummary]);
+
+  const riskBarOpts = useMemo(
+    () =>
+      withExecutiveOverlays(
+        premiumBarOptions({
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                label: (ctx) => {
+                  const n = typeof ctx.parsed.y === "number" ? ctx.parsed.y : 0;
+                  return ` ${n} dossier${n > 1 ? "s" : ""}`;
+                },
+              },
+            },
+          },
+        }),
+      ),
+    [],
+  );
 
   function pctDelta(weekValue: number, monthValue: number): { label: string; tone: string } {
     if (weekValue === 0 && monthValue === 0) {
@@ -641,7 +841,7 @@ export default function ReportsPanel() {
   return (
     <section
       ref={reportRef}
-      className="space-y-5 rounded-3xl bg-slate-50/70 p-4 md:p-6"
+      className="lonaci-reports-shell space-y-5 rounded-3xl p-4 md:p-6"
     >
       <PageHeader
         eyebrow="Analyse institutionnelle"
@@ -705,75 +905,189 @@ export default function ReportsPanel() {
         </Link>
       </div>
 
+      <div className="lonaci-reports-charts-hero">
+        <p className="lonaci-reports-charts-hero__label">Intelligence visuelle · LONACI</p>
+        <h2 className="lonaci-reports-charts-hero__title">Cockpit analytique exécutif</h2>
+        <p className="lonaci-reports-charts-hero__sub">
+          Courbes multi-séries, radar de risque, polar modules, crosshair et compteurs animés — lecture
+          institutionnelle ultra-premium.
+        </p>
+        <div className="lonaci-reports-charts-hero__metrics">
+          <div className="lonaci-reports-hero-metric">
+            <p className="lonaci-reports-hero-metric__label">Volumes modules</p>
+            <p className="lonaci-reports-hero-metric__value">
+              <AnimatedMetric value={moduleTotal} />
+            </p>
+            <p className="lonaci-reports-hero-metric__hint">Portefeuille agrégé</p>
+          </div>
+          <div className="lonaci-reports-hero-metric">
+            <p className="lonaci-reports-hero-metric__label">Signaux risque</p>
+            <p className="lonaci-reports-hero-metric__value">
+              <AnimatedMetric value={riskValues.reduce((s, n) => s + n, 0)} />
+            </p>
+            <p className="lonaci-reports-hero-metric__hint">Alertes &amp; retards</p>
+          </div>
+          <div className="lonaci-reports-hero-metric">
+            <p className="lonaci-reports-hero-metric__label">Activité 7j</p>
+            <p className="lonaci-reports-hero-metric__value">
+              <AnimatedMetric
+                value={
+                  (kpi?.activity7d ?? []).reduce(
+                    (s, r) => s + r.contracts + r.cautions + r.integrations,
+                    0,
+                  )
+                }
+              />
+            </p>
+            <p className="lonaci-reports-hero-metric__hint">Contrats · cautions · intégr.</p>
+          </div>
+        </div>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-3">
-        <ChartCard title="Tendance activité" description="7 derniers jours">
-          <div className="h-[220px]">
+        <ChartCard
+          ultra
+          badge="Live"
+          enterDelayMs={40}
+          title="Tendance activité"
+          description="Multi-séries · 7 derniers jours"
+        >
+          <div className="h-[260px]">
             {kpi ? <Line data={lineData} options={lineOpts} /> : <Skeleton lines={4} />}
           </div>
         </ChartCard>
-        <ChartCard title="Répartition modules" description="Volumes par domaine métier">
-          <div className="h-[220px]">
-            <Doughnut data={moduleDoughnutData} options={doughnutOpts} />
+        <ChartCard
+          ultra
+          badge={moduleViz === "polar" ? "Polar" : "Donut"}
+          enterDelayMs={120}
+          title="Répartition modules"
+          description="Volumes par domaine métier"
+          action={
+            <div className="inline-flex rounded-lg border border-slate-200/80 bg-white/80 p-0.5 text-[10px] font-semibold shadow-sm">
+              <button
+                type="button"
+                onClick={() => setModuleViz("donut")}
+                className={`rounded-md px-2 py-1 transition ${moduleViz === "donut" ? "bg-orange-100 text-orange-900" : "text-slate-500"}`}
+              >
+                Donut
+              </button>
+              <button
+                type="button"
+                onClick={() => setModuleViz("polar")}
+                className={`rounded-md px-2 py-1 transition ${moduleViz === "polar" ? "bg-teal-100 text-teal-900" : "text-slate-500"}`}
+              >
+                Polar
+              </button>
+            </div>
+          }
+        >
+          <div className="h-[260px]">
+            {moduleViz === "donut" ? (
+              <Doughnut data={moduleDoughnutData} options={doughnutOpts} />
+            ) : (
+              <PolarArea data={modulePolarData} options={polarOpts} />
+            )}
           </div>
         </ChartCard>
-        <ChartCard title="Indicateurs de risque" description="Retards et dossiers sensibles">
-          <div className="h-[220px]">
-            <Bar data={riskBarData} options={barOpts} />
+        <ChartCard
+          ultra
+          badge={riskViz === "radar" ? "Radar" : "Barres"}
+          enterDelayMs={200}
+          title="Indicateurs de risque"
+          description="Exposition dossiers sensibles"
+          action={
+            <div className="inline-flex rounded-lg border border-slate-200/80 bg-white/80 p-0.5 text-[10px] font-semibold shadow-sm">
+              <button
+                type="button"
+                onClick={() => setRiskViz("radar")}
+                className={`rounded-md px-2 py-1 transition ${riskViz === "radar" ? "bg-orange-100 text-orange-900" : "text-slate-500"}`}
+              >
+                Radar
+              </button>
+              <button
+                type="button"
+                onClick={() => setRiskViz("bar")}
+                className={`rounded-md px-2 py-1 transition ${riskViz === "bar" ? "bg-slate-200 text-slate-900" : "text-slate-500"}`}
+              >
+                Barres
+              </button>
+            </div>
+          }
+        >
+          <div className="h-[260px]">
+            {riskViz === "radar" ? (
+              <Radar data={riskRadarData} options={radarOpts} />
+            ) : (
+              <Bar data={riskBarData} options={riskBarOpts} />
+            )}
           </div>
         </ChartCard>
       </div>
 
       <div className="mb-5 grid gap-4 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Produits - répartition contrats actifs</div>
-          <div className="h-[240px]">
+        <ChartCard
+          ultra
+          enterDelayMs={80}
+          title="Produits · contrats actifs"
+          description="Répartition du portefeuille"
+        >
+          <div className="h-[280px]">
             {productActiveRows.length > 0 ? (
-              <Doughnut data={productsActiveDoughnutData} options={doughnutOpts} />
+              <Doughnut data={productsActiveDoughnutData} options={productsDoughnutOpts} />
             ) : (
               <p className="text-xs text-slate-500">Aucune donnée produit active sur ce périmètre.</p>
             )}
           </div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Produits - tendance période</div>
-          <div className="h-[240px]">
+        </ChartCard>
+        <ChartCard
+          ultra
+          enterDelayMs={160}
+          title="Produits · tendance période"
+          description="Courante vs précédente · crosshair"
+        >
+          <div className="h-[280px]">
             {productWindowRows.length > 0 ? (
-              <Bar data={productsTrendBarData} options={barOpts} />
+              <Bar data={productsTrendBarData} options={barGroupedOpts} />
             ) : (
               <p className="text-xs text-slate-500">Aucune donnée de tendance produit disponible.</p>
             )}
           </div>
-        </div>
+        </ChartCard>
       </div>
 
-      <div className="mb-5 rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-slate-800">Produits - progression (%)</div>
-          <div className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-1 text-xs">
+      <ChartCard
+        ultra
+        enterDelayMs={100}
+        className="mb-5"
+        title="Produits · progression (%)"
+        description="Variations filtrables · hausses / baisses"
+        action={
+          <div className="inline-flex rounded-lg border border-slate-200/80 bg-slate-50/90 p-1 text-xs shadow-sm backdrop-blur">
             <button
               type="button"
               onClick={() => setProductTrendFilter("all")}
-              className={`rounded px-2 py-1 ${productTrendFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"}`}
+              className={`rounded px-2.5 py-1 transition ${productTrendFilter === "all" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
             >
               Tous
             </button>
             <button
               type="button"
               onClick={() => setProductTrendFilter("up")}
-              className={`rounded px-2 py-1 ${productTrendFilter === "up" ? "bg-emerald-100 text-emerald-800 shadow-sm" : "text-slate-600"}`}
+              className={`rounded px-2.5 py-1 transition ${productTrendFilter === "up" ? "bg-emerald-100 text-emerald-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
             >
               Top hausses
             </button>
             <button
               type="button"
               onClick={() => setProductTrendFilter("down")}
-              className={`rounded px-2 py-1 ${productTrendFilter === "down" ? "bg-rose-100 text-rose-800 shadow-sm" : "text-slate-600"}`}
+              className={`rounded px-2.5 py-1 transition ${productTrendFilter === "down" ? "bg-rose-100 text-rose-800 shadow-sm" : "text-slate-600 hover:text-slate-900"}`}
             >
               Top baisses
             </button>
           </div>
-        </div>
-        <div className="h-[260px]">
+        }
+      >
+        <div className="h-[280px]">
           {filteredProductTrendRows.length > 0 ? (
             <Bar data={productsTrendPctBarData} options={trendPctOpts} />
           ) : (
@@ -781,17 +1095,26 @@ export default function ReportsPanel() {
           )}
         </div>
         <div className="mt-4">
-          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">Top 3 produits à surveiller</div>
+          <div className="mb-2 text-xs font-semibold uppercase tracking-[0.12em] text-slate-600">
+            Top 3 produits à surveiller
+          </div>
           {productsToWatch.length > 0 ? (
             <div className="grid gap-2 md:grid-cols-3">
               {productsToWatch.map((row) => (
-                <article key={`watch-${row.produitCode}`} className="rounded-xl border border-slate-200 bg-slate-50/70 p-3">
-                  <p className="truncate text-xs font-semibold text-slate-900">{produitLabel(row.produitCode, row.produitLibelle)}</p>
+                <article
+                  key={`watch-${row.produitCode}`}
+                  className="rounded-xl border border-slate-200/80 bg-linear-to-br from-white to-slate-50/80 p-3 shadow-sm"
+                >
+                  <p className="truncate text-xs font-semibold text-slate-900">
+                    {produitLabel(row.produitCode, row.produitLibelle)}
+                  </p>
                   <p className="mt-1 text-xs text-slate-600">
                     Courant: <span className="font-semibold text-slate-800">{row.currentWindow}</span> · Préc.:{" "}
                     <span className="font-semibold text-slate-800">{row.previousWindow}</span>
                   </p>
-                  <p className={`mt-1 text-xs font-semibold ${row.trendPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                  <p
+                    className={`mt-1 text-xs font-semibold ${row.trendPct >= 0 ? "text-emerald-700" : "text-rose-700"}`}
+                  >
                     {row.trendPct >= 0 ? "Hausse" : "Baisse"}: {row.trendPct >= 0 ? "+" : ""}
                     {row.trendPct}%
                   </p>
@@ -802,7 +1125,7 @@ export default function ReportsPanel() {
             <p className="text-xs text-slate-500">Aucun produit notable pour ce filtre.</p>
           )}
         </div>
-      </div>
+      </ChartCard>
 
       <div className="mb-5 grid gap-4 lg:grid-cols-3">
         <article className="rounded-2xl border border-slate-300 bg-slate-100/80 p-4">
@@ -832,12 +1155,11 @@ export default function ReportsPanel() {
             <span className={`text-xs font-semibold ${deltaCautions.tone}`}>({deltaCautions.label} vs semaine)</span>
           </p>
         </article>
-        <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-          <div className="mb-3 text-sm font-semibold text-slate-800">Comparatif semaine / mois</div>
-          <div className="h-[180px]">
-            <Line data={trendWeekMonthData} options={lineOpts} />
+        <ChartCard ultra enterDelayMs={180} title="Comparatif semaine / mois" description="Courbes multi-séries · glow">
+          <div className="h-[200px]">
+            <Line data={trendWeekMonthData} options={multiLineOpts} />
           </div>
-        </div>
+        </ChartCard>
       </div>
 
       <Surface>
@@ -914,14 +1236,39 @@ export default function ReportsPanel() {
       {!loading && !error && summary ? (
         <div className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <KpiCard label="Période analysée" value={summary.windowLabel ?? "—"} icon={BarChart3} />
-            <KpiCard label="Dossiers" value={summary.dossiers?.total ?? 0} icon={FileSpreadsheet} />
-            <KpiCard label="Contrats en cours" value={summary.contrats?.actifs ?? 0} icon={ShieldAlert} />
-            <KpiCard label="Concessionnaires actifs" value={summary.concessionnaires?.total ?? 0} icon={Building2} />
+            <KpiCard
+              className="lonaci-ui-kpi-card--animated"
+              label="Période analysée"
+              value={summary.windowLabel ?? "—"}
+              icon={BarChart3}
+            />
+            <KpiCard
+              className="lonaci-ui-kpi-card--animated"
+              label="Dossiers"
+              value={<AnimatedMetric value={summary.dossiers?.total ?? 0} />}
+              icon={FileSpreadsheet}
+            />
+            <KpiCard
+              className="lonaci-ui-kpi-card--animated"
+              label="Contrats en cours"
+              value={<AnimatedMetric value={summary.contrats?.actifs ?? 0} />}
+              icon={ShieldAlert}
+            />
+            <KpiCard
+              className="lonaci-ui-kpi-card--animated"
+              label="Concessionnaires actifs"
+              value={<AnimatedMetric value={summary.concessionnaires?.total ?? 0} />}
+              icon={Building2}
+            />
           </div>
 
-          <ChartCard title="Statuts des dossiers" description="Répartition sur la période sélectionnée">
-            <div className="h-[220px]">
+          <ChartCard
+            ultra
+            enterDelayMs={60}
+            title="Statuts des dossiers"
+            description="Répartition sur la période sélectionnée"
+          >
+            <div className="h-[240px]">
               <Bar data={dossiersStatusData} options={barOpts} />
             </div>
           </ChartCard>
@@ -964,13 +1311,18 @@ export default function ReportsPanel() {
           </div>
 
           {summary.agenceComparatif && summary.agenceComparatif.length > 0 ? (
-            <div className="rounded-2xl border border-slate-200 bg-white/95 p-4 shadow-sm backdrop-blur">
-              <h4 className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-700">
-                Comparatif multi-agences
-              </h4>
-              <div className="mt-3 overflow-x-auto rounded-xl border border-slate-200">
+            <ChartCard
+              ultra
+              enterDelayMs={140}
+              title="Comparatif multi-agences"
+              description="Volumes dossiers · top agences du filtre"
+            >
+              <div className="h-[320px]">
+                <Bar data={agenceComparatifBarData} options={agenceBarOpts} />
+              </div>
+              <div className="mt-4 overflow-x-auto rounded-xl border border-slate-200/80">
                 <table className="min-w-full text-left text-xs">
-                  <thead className="bg-slate-50 text-slate-600">
+                  <thead className="bg-slate-50/90 text-slate-600">
                     <tr>
                       <th className="px-3 py-2">Agence</th>
                       <th className="px-3 py-2 text-right">Dossiers</th>
@@ -996,7 +1348,7 @@ export default function ReportsPanel() {
                   </tbody>
                 </table>
               </div>
-            </div>
+            </ChartCard>
           ) : null}
         </div>
       ) : null}

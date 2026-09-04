@@ -3,8 +3,16 @@
 import ClientSearchPicker, {
   type ClientPickerRow,
 } from "@/components/lonaci/client-search-picker";
+import DocumentsAFournirChecklist from "@/components/lonaci/documents-a-fournir-checklist";
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
 import SuccessionChecklistBlock from "@/components/lonaci/succession-checklist-block";
+import ModuleCourrierPdfActions, {
+  ModuleCourrierPdfActionsByModule,
+} from "@/components/lonaci/module-courrier-pdf-actions";
+import {
+  fairePartDownloadFilename,
+  fairePartPdfUrl,
+} from "@/lib/lonaci/module-faire-part-url";
 import SuccessionWorkflowStepper from "@/components/lonaci/succession-workflow-stepper";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button, IconButton } from "@/components/lonaci/ui/button";
@@ -14,10 +22,8 @@ import { FilterBar } from "@/components/lonaci/ui/filter-bar";
 import { PageHeader } from "@/components/lonaci/ui/headers";
 import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Surface } from "@/components/lonaci/ui/surface";
-import {
-  SUCCESSION_CHECKLIST_SPEC_101,
-  successionChecklistProgress,
-} from "@/lib/lonaci/succession-document-checklist";
+import { SUCCESSION_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/succession-checklist-defaults";
+import { successionChecklistProgress } from "@/lib/lonaci/succession-document-checklist";
 import { getLonaciRoleLabel, SUCCESSION_STEP_LABELS } from "@/lib/lonaci/constants";
 import {
   deriveSuccessionVisibilityState,
@@ -165,6 +171,7 @@ export default function SuccessionPanel() {
   const [declComment, setDeclComment] = useState("");
   const [acteDecesFile, setActeDecesFile] = useState<File | null>(null);
   const [creating, setCreating] = useState(false);
+  const [createDocumentsFournis, setCreateDocumentsFournis] = useState<Set<string>>(() => new Set());
 
   const [advComment, setAdvComment] = useState("");
   const [ayantNom, setAyantNom] = useState("");
@@ -193,6 +200,48 @@ export default function SuccessionPanel() {
   const [meRole, setMeRole] = useState<string | null>(null);
   const [validationBusy, setValidationBusy] = useState<"N1" | "N2" | null>(null);
   const [advanceConfirmation, setAdvanceConfirmation] = useState<{ caseId: string; nextStep: string | null } | null>(null);
+  const [checklistTemplateItems, setChecklistTemplateItems] = useState(
+    SUCCESSION_CHECKLIST_DEFAULT_ITEMS.map((item) => ({
+      itemId: item.id,
+      libelle: item.libelle,
+      obligatoire: item.obligatoire !== false,
+    })),
+  );
+
+  async function loadChecklistTemplate() {
+    try {
+      const res = await fetch("/api/succession-cases/checklist-template", {
+        credentials: "include",
+        cache: "no-store",
+      });
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        items?: Array<{ id: string; libelle: string; obligatoire?: boolean }>;
+      };
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        setChecklistTemplateItems(
+          data.items.map((item) => ({
+            itemId: item.id,
+            libelle: item.libelle,
+            obligatoire: item.obligatoire !== false,
+          })),
+        );
+      }
+    } catch {
+      // conserve le modèle local par défaut
+    }
+  }
+
+  useEffect(() => {
+    void loadChecklistTemplate();
+    const onTemplateUpdated = () => {
+      void loadChecklistTemplate();
+    };
+    window.addEventListener("lonaci:succession-checklist-updated", onTemplateUpdated);
+    return () => {
+      window.removeEventListener("lonaci:succession-checklist-updated", onTemplateUpdated);
+    };
+  }, []);
 
   const handleAuthFailure = useCallback(
     (status: number, rawMessage?: string): boolean => {
@@ -444,6 +493,7 @@ export default function SuccessionPanel() {
     setDateDeces("");
     setDeclComment("");
     setActeDecesFile(null);
+    setCreateDocumentsFournis(new Set());
   }
 
   async function onCreate(e: FormEvent) {
@@ -466,6 +516,7 @@ export default function SuccessionPanel() {
       form.set("comment", declComment.trim() || "");
       form.set("dateDeces", dateDeces ? new Date(dateDeces).toISOString() : "");
       form.set("acteDeces", acteDecesFile);
+      for (const id of createDocumentsFournis) form.append("documentsFournis", id);
       const res = await fetch("/api/succession-cases", {
         method: "POST",
         credentials: "include",
@@ -620,21 +671,6 @@ export default function SuccessionPanel() {
         description="Workflow des étapes 17 à 21, contrôle documentaire et conformité OHADA."
         actions={<><Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Ouvrir un dossier</Button><Button variant="secondary" leadingIcon={RefreshCw} onClick={() => void load()}>Actualiser</Button></>}
       />
-      <div className={`${cardClass} mb-5`}>
-        <h3 className="text-sm font-semibold text-violet-900">Documents à fournir</h3>
-        <ul className="mt-2 grid gap-1 text-xs text-slate-700 sm:grid-cols-2">
-          {SUCCESSION_CHECKLIST_SPEC_101.map((row) => (
-            <li key={row.itemId} className="rounded-lg border border-violet-100 bg-violet-50/50 px-2 py-1">
-              {row.libelle}
-              {row.obligatoire ? <span className="text-rose-600"> *</span> : null}
-            </li>
-          ))}
-        </ul>
-        <p className="mt-2 text-[11px] text-slate-600">
-          Indicateur <span className="font-semibold">DOSSIER COMPLET / INCOMPLET</span> mis à jour en temps réel
-          à l&apos;étape 19 (vérification documentaire).
-        </p>
-      </div>
 
       <div className={`${cardClass} mb-5`}>
         <h3 className="text-sm font-semibold text-slate-900">Circuit en 5 étapes</h3>
@@ -919,6 +955,18 @@ export default function SuccessionPanel() {
                     />
                   </label>
                 </section>
+
+                <DocumentsAFournirChecklist
+                  className="rounded-xl border border-violet-200 bg-violet-50/40 p-3"
+                  items={checklistTemplateItems.map((row) => ({
+                    id: row.itemId,
+                    libelle: row.libelle,
+                    obligatoire: row.obligatoire,
+                  }))}
+                  value={createDocumentsFournis}
+                  onChange={setCreateDocumentsFournis}
+                  hint="Cochez les pièces déjà remises. L’acte de décès joint ci-dessus est pris en compte automatiquement."
+                />
               </div>
             </form>
             <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2">
@@ -1138,6 +1186,37 @@ export default function SuccessionPanel() {
                 {detail.ayantDroit.nom ?? "—"} · {detail.ayantDroit.lienParente ?? "—"} · {detail.ayantDroit.telephone ?? "—"} ·{" "}
                 {detail.ayantDroit.email ?? "—"}
               </p>
+              <ModuleCourrierPdfActionsByModule
+                moduleId="succession"
+                dossierId={detail.id}
+                reference={detail.reference}
+                layout="inline"
+                tone="orange"
+              />
+              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Demande de faire-part (ayant droit)
+              </p>
+              {detail.ayantDroit.nom ? (
+                <ModuleCourrierPdfActions
+                  pdfUrl={fairePartPdfUrl(detail.id, "demande")}
+                  filename={fairePartDownloadFilename(detail.reference, "demande")}
+                  layout="inline"
+                  tone="rose"
+                />
+              ) : (
+                <p className="mt-1 text-[11px] text-amber-700">
+                  Identifiez l&apos;ayant droit (étape 18) pour générer la demande de faire-part.
+                </p>
+              )}
+              <p className="mt-3 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                Faire-part adressé au DR
+              </p>
+              <ModuleCourrierPdfActions
+                pdfUrl={fairePartPdfUrl(detail.id, "dr")}
+                filename={fairePartDownloadFilename(detail.reference, "dr")}
+                layout="inline"
+                tone="violet"
+              />
             </div>
             {detail.documentChecklist ? (
               <>

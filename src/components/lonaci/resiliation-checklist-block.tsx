@@ -98,7 +98,7 @@ export default function ResiliationChecklistBlock({
   return (
     <ChecklistEditor
       title="Documents à fournir"
-      description="Dossier complet requis avant traitement de la résiliation."
+      description="Cochez chaque pièce remise. Dossier complet requis avant traitement de la résiliation."
       entries={checklist.entries}
       statuses={DOSSIER_CHECKLIST_STATUTS}
       statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}

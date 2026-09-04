@@ -746,8 +746,8 @@ export default function ClientsPanel() {
       setPendingImport(null);
 
       setLoading(true);
-      setError(null);
-      try {
+    setError(null);
+    try {
         const listParams = new URLSearchParams({
           page: "1",
           pageSize: String(pageSize),
@@ -817,9 +817,9 @@ export default function ClientsPanel() {
   }
 
   async function fetchClientDetail(id: string): Promise<ClientDetail> {
-    const res = await fetch(`/api/clients/${id}`, { credentials: "include", cache: "no-store" });
+      const res = await fetch(`/api/clients/${id}`, { credentials: "include", cache: "no-store" });
     if (!res.ok) throw new Error("CLIENT_LOAD_FAILED");
-    const data = (await res.json()) as { client: ClientDetail };
+      const data = (await res.json()) as { client: ClientDetail };
     return data.client;
   }
 
@@ -1070,7 +1070,7 @@ export default function ClientsPanel() {
       do {
         params.set("page", String(pageCursor));
         const res = await fetch(`/api/clients?${params}`, {
-          credentials: "include",
+        credentials: "include",
           cache: "no-store",
         });
         if (!res.ok) throw new Error("Export impossible");
@@ -1558,15 +1558,15 @@ export default function ClientsPanel() {
             ))}
           </select>
           {showCategorieFilter ? (
-            <select
+          <select
               value={filterCategorie}
               aria-label="Catégorie"
-              onChange={(e) => {
-                setPage(1);
+            onChange={(e) => {
+              setPage(1);
                 setFilterCategorie(e.target.value);
-              }}
-              className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
-            >
+            }}
+            className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
+          >
               <option value="">
                 {isEntreprisesList ? "Entreprises & canaux" : "Toutes les catégories"}
               </option>
@@ -1577,7 +1577,7 @@ export default function ClientsPanel() {
                   </option>
                 ),
               )}
-            </select>
+          </select>
           ) : null}
             </>
           }
@@ -1585,7 +1585,7 @@ export default function ClientsPanel() {
             <Button
               variant="secondary"
               leadingIcon={RotateCcw}
-              onClick={() => {
+            onClick={() => {
               setPage(1);
               setQ("");
               setFilterStatut("");
@@ -1607,7 +1607,7 @@ export default function ClientsPanel() {
             ) : selectedAgenceLabel || selectedProduitLabel ? (
               <span className="ml-2 font-normal text-slate-500">
                 · {[selectedAgenceLabel, selectedProduitLabel].filter(Boolean).join(" · ")}
-              </span>
+            </span>
             ) : null}
           </p>
           <Pagination
@@ -1688,14 +1688,14 @@ export default function ClientsPanel() {
                       title={displayNomPrincipal(row)}
                     >
                       {displayNomPrincipal(row)}
-                    </td>
+                  </td>
                     {showCategorieColumn ? (
                       <td className="whitespace-nowrap px-2 py-2">
                         <StatusBadge tone={categorieTone(row)} title={displayCategorie(row)}>
                           {displayCategorie(row)}
                         </StatusBadge>
-                      </td>
-                    ) : null}
+                  </td>
+                      ) : null}
                     <td className="truncate px-2 py-2 text-slate-700" title={contactTitle || undefined}>
                       {contactLine}
                     </td>
@@ -2005,13 +2005,13 @@ export default function ClientsPanel() {
                     <label className="block text-sm">
                       <span className="text-slate-600">Nom du contact / représentant (optionnel)</span>
                       <input
-                        value={form.nomComplet}
-                        onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                      value={form.nomComplet}
+                      onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
                         placeholder="Personne à joindre au sein de l’organisation"
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                        autoComplete="name"
-                      />
-                    </label>
+                      className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
+                      autoComplete="name"
+                    />
+                  </label>
                   ) : null}
                   <label className="block text-sm">
                     <span className="text-slate-600">Code machine</span>
@@ -2188,10 +2188,10 @@ export default function ClientsPanel() {
                     <label className="block text-sm">
                       <span className="text-slate-600">Nom du contact / représentant</span>
                       <input
-                        value={form.nomComplet}
-                        onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
-                        className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                        autoComplete="name"
+                      value={form.nomComplet}
+                      onChange={(e) => setForm((f) => ({ ...f, nomComplet: e.target.value }))}
+                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
+                      autoComplete="name"
                       />
                     </label>
                   ) : null}
@@ -2455,8 +2455,8 @@ export default function ClientsPanel() {
               >
                 Modifier
               </Button>
-            </div>
           </div>
+        </div>
         ) : null}
       </Dialog>
 
@@ -2514,7 +2514,7 @@ export default function ClientsPanel() {
                       : ""}
                     .
                   </p>
-                ) : null}
+      ) : null}
               </div>
             ) : (
               <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">

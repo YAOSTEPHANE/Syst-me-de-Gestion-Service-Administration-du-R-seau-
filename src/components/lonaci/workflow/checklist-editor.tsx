@@ -41,6 +41,15 @@ export interface ChecklistEditorProps<TStatus extends string> {
   className?: string;
   embedded?: boolean;
   showRequiredLabel?: boolean;
+  /**
+   * `checkbox` (défaut) : liste à cocher Fourni / En attente.
+   * `select` : menu déroulant multi-statuts (rétrocompat).
+   */
+  mode?: "checkbox" | "select";
+  /** Statut appliqué quand la case est cochée (défaut : FOURNI si présent). */
+  checkedStatus?: TStatus;
+  /** Statut appliqué quand la case est décochée (défaut : EN_ATTENTE si présent). */
+  uncheckedStatus?: TStatus;
 }
 
 function StatusIcon({ tone }: { tone: Extract<Tone, "success" | "warning" | "danger"> }) {
@@ -48,9 +57,29 @@ function StatusIcon({ tone }: { tone: Extract<Tone, "success" | "warning" | "dan
   return <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />;
 }
 
-function progressLabel(progress: ChecklistProgress): string {
+function progressLabel(progress: ChecklistProgress, mode: "checkbox" | "select"): string {
   const plural = progress.obligatoiresTotal > 1 ? "s" : "";
+  if (mode === "checkbox") {
+    return `${progress.obligatoiresFournis} sur ${progress.obligatoiresTotal} pièce${plural} obligatoire${plural} cochée${plural}`;
+  }
   return `${progress.obligatoiresFournis} sur ${progress.obligatoiresTotal} pièce${plural} obligatoire${plural} fournie${plural}`;
+}
+
+function resolveBinaryStatuses<TStatus extends string>(
+  statuses: readonly TStatus[],
+  checkedStatus: TStatus | undefined,
+  uncheckedStatus: TStatus | undefined,
+): { checked: TStatus; unchecked: TStatus } {
+  const checked =
+    checkedStatus ??
+    (statuses.find((s) => s === ("FOURNI" as TStatus)) as TStatus | undefined) ??
+    statuses[0]!;
+  const unchecked =
+    uncheckedStatus ??
+    (statuses.find((s) => s === ("EN_ATTENTE" as TStatus)) as TStatus | undefined) ??
+    (statuses.find((s) => s !== checked) as TStatus | undefined) ??
+    checked;
+  return { checked, unchecked };
 }
 
 export function ChecklistEditor<TStatus extends string>({
@@ -73,13 +102,17 @@ export function ChecklistEditor<TStatus extends string>({
   className,
   embedded = false,
   showRequiredLabel = true,
+  mode = "checkbox",
+  checkedStatus,
+  uncheckedStatus,
 }: ChecklistEditorProps<TStatus>) {
   const idPrefix = useId();
   const percent =
     progress.obligatoiresTotal === 0
       ? 100
       : Math.round((progress.obligatoiresFournis / progress.obligatoiresTotal) * 100);
-  const label = progressLabel(progress);
+  const label = progressLabel(progress, mode);
+  const binary = resolveBinaryStatuses(statuses, checkedStatus, uncheckedStatus);
 
   const content = (
     <>
@@ -130,70 +163,143 @@ export function ChecklistEditor<TStatus extends string>({
         </p>
       ) : null}
 
-      <ul className="mt-3 space-y-2 md:space-y-0 md:overflow-hidden md:rounded-xl md:border md:border-slate-200">
-        {entries.map((entry, index) => {
-          const status = localStatuses[entry.itemId] ?? entry.statut;
-          const canEdit = editable && (isItemEditable?.(entry) ?? true);
-          const selectId = `${idPrefix}-status-${index}`;
-          return (
-            <li
-              key={entry.itemId}
-              className={cn(
-                "rounded-xl border border-slate-200 bg-white p-3 shadow-sm",
-                "md:grid md:min-h-14 md:grid-cols-[minmax(0,1fr)_12rem] md:items-center md:gap-4",
-                "md:rounded-none md:border-0 md:border-b md:border-slate-200 md:px-4 md:py-2.5 md:shadow-none",
-                "md:last:border-b-0",
-              )}
-            >
-              <div className="min-w-0">
-                <p className="text-xs font-medium text-slate-900">{entry.libelle}</p>
-                {showRequiredLabel ? (
-                  <p className={cn("mt-0.5 text-[10px]", entry.obligatoire ? "text-rose-700" : "text-slate-500")}>
-                    {entry.obligatoire ? "Pièce obligatoire" : "Pièce facultative"}
-                  </p>
-                ) : null}
-              </div>
-              <div className="mt-3 min-w-0 md:mt-0">
-                {canEdit ? (
-                  <div className="grid gap-1">
-                    <label htmlFor={selectId} className="text-[10px] font-semibold text-slate-600">
-                      Statut
-                      <span className="lonaci-ui-sr-only"> de {entry.libelle}</span>
-                    </label>
-                    <select
-                      id={selectId}
-                      value={status}
+      {mode === "checkbox" ? (
+        <ul className="mt-3 space-y-2">
+          {entries.map((entry, index) => {
+            const status = localStatuses[entry.itemId] ?? entry.statut;
+            const checked = status === binary.checked;
+            const canEdit = editable && (isItemEditable?.(entry) ?? true);
+            const inputId = `${idPrefix}-check-${index}`;
+
+            if (canEdit) {
+              return (
+                <li key={entry.itemId}>
+                  <label
+                    htmlFor={inputId}
+                    className="flex cursor-pointer items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:border-cyan-300 hover:bg-cyan-50/40"
+                  >
+                    <input
+                      id={inputId}
+                      type="checkbox"
+                      checked={checked}
                       disabled={saving}
-                      onChange={(event) => {
-                        const nextStatus = statuses.find(
-                          (candidate) => candidate === event.currentTarget.value,
-                        );
-                        if (nextStatus !== undefined) onStatusChange(entry.itemId, nextStatus);
-                      }}
-                      className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 shadow-sm focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20 disabled:cursor-wait disabled:bg-slate-100"
-                    >
-                      {statuses.map((candidate) => (
-                        <option key={candidate} value={candidate}>
-                          {statusLabels[candidate]}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                ) : (
-                  <div>
-                    <p className="mb-1 text-[10px] font-semibold text-slate-600">Statut</p>
-                    <StatusBadge tone={statusTone(status)}>
-                      <StatusIcon tone={statusTone(status)} />
-                      {statusLabels[status]}
+                      onChange={(event) =>
+                        onStatusChange(
+                          entry.itemId,
+                          event.target.checked ? binary.checked : binary.unchecked,
+                        )
+                      }
+                      className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-300 text-cyan-600 focus:ring-cyan-500"
+                    />
+                    <span className="min-w-0 flex-1 text-xs font-medium text-slate-900">
+                      {entry.libelle}
+                      {showRequiredLabel ? (
+                        entry.obligatoire ? (
+                          <span className="ml-1 text-[10px] font-semibold text-rose-700">*</span>
+                        ) : (
+                          <span className="ml-1 text-[10px] text-slate-500">(facultatif)</span>
+                        )
+                      ) : null}
                       {readOnlySuffix?.(entry)}
-                    </StatusBadge>
-                  </div>
+                    </span>
+                  </label>
+                </li>
+              );
+            }
+
+            return (
+              <li
+                key={entry.itemId}
+                className="flex items-start gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm"
+              >
+                {checked ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" aria-hidden="true" />
+                ) : (
+                  <StatusIcon tone={statusTone(status)} />
                 )}
-              </div>
-            </li>
-          );
-        })}
-      </ul>
+                <span className="min-w-0 flex-1 text-xs font-medium text-slate-900">
+                  {entry.libelle}
+                  <span className="mt-1 block text-[10px] font-normal text-slate-500">
+                    {statusLabels[status]}
+                    {readOnlySuffix?.(entry)}
+                  </span>
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <ul className="mt-3 space-y-2 md:space-y-0 md:overflow-hidden md:rounded-xl md:border md:border-slate-200">
+          {entries.map((entry, index) => {
+            const status = localStatuses[entry.itemId] ?? entry.statut;
+            const canEdit = editable && (isItemEditable?.(entry) ?? true);
+            const selectId = `${idPrefix}-status-${index}`;
+            return (
+              <li
+                key={entry.itemId}
+                className={cn(
+                  "rounded-xl border border-slate-200 bg-white p-3 shadow-sm",
+                  "md:grid md:min-h-14 md:grid-cols-[minmax(0,1fr)_12rem] md:items-center md:gap-4",
+                  "md:rounded-none md:border-0 md:border-b md:border-slate-200 md:px-4 md:py-2.5 md:shadow-none",
+                  "md:last:border-b-0",
+                )}
+              >
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-slate-900">{entry.libelle}</p>
+                  {showRequiredLabel ? (
+                    <p className={cn("mt-0.5 text-[10px]", entry.obligatoire ? "text-rose-700" : "text-slate-500")}>
+                      {entry.obligatoire ? "Pièce obligatoire" : "Pièce facultative"}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="mt-3 min-w-0 md:mt-0">
+                  {canEdit ? (
+                    <div className="grid gap-1">
+                      <label htmlFor={selectId} className="text-[10px] font-semibold text-slate-600">
+                        Statut
+                        <span className="lonaci-ui-sr-only"> de {entry.libelle}</span>
+                      </label>
+                      <select
+                        id={selectId}
+                        value={status}
+                        disabled={saving}
+                        onChange={(event) => {
+                          const nextStatus = statuses.find(
+                            (candidate) => candidate === event.currentTarget.value,
+                          );
+                          if (nextStatus !== undefined) onStatusChange(entry.itemId, nextStatus);
+                        }}
+                        className="w-full rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-900 shadow-sm focus:border-cyan-600 focus:outline-none focus:ring-2 focus:ring-cyan-600/20 disabled:cursor-wait disabled:bg-slate-100"
+                      >
+                        {statuses.map((candidate) => (
+                          <option key={candidate} value={candidate}>
+                            {statusLabels[candidate]}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="mb-1 text-[10px] font-semibold text-slate-600">Statut</p>
+                      <StatusBadge tone={statusTone(status)}>
+                        <StatusIcon tone={statusTone(status)} />
+                        {statusLabels[status]}
+                        {readOnlySuffix?.(entry)}
+                      </StatusBadge>
+                    </div>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      {mode === "checkbox" && editable && showRequiredLabel && entries.some((e) => e.obligatoire) ? (
+        <p className="mt-3 text-[10px] text-slate-500">
+          <span className="font-semibold text-rose-700">*</span> Pièce obligatoire
+        </p>
+      ) : null}
     </>
   );
 

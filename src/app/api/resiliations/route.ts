@@ -113,6 +113,10 @@ export async function POST(request: NextRequest) {
   }
 
   await ensureResiliationIndexes();
+  const documentsFournis = form
+    .getAll("documentsFournis")
+    .map((v) => String(v).trim())
+    .filter(Boolean);
   try {
     const created = await createResiliation({
       concessionnaireId,
@@ -120,6 +124,7 @@ export async function POST(request: NextRequest) {
       dateReception,
       motif,
       commentaire: commentaire || null,
+      documentsFournis,
       actor: auth.user,
     });
 

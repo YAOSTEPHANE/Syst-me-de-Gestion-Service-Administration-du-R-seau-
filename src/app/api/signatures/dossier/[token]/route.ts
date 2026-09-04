@@ -9,6 +9,7 @@ import {
 } from "@/lib/lonaci/dossier-signatures";
 import { findDossierById } from "@/lib/lonaci/dossiers";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { parseDocumentChecklistPayload } from "@/lib/lonaci/produit-document-checklist";
 import { getClientIp } from "@/lib/security/client-ip";
 
 interface RouteContext {
@@ -44,6 +45,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return notFound("Dossier introuvable.", "DOSSIER_NOT_FOUND");
   }
   const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
+  const checklist = parseDocumentChecklistPayload(dossier.payload ?? {});
+  const documentsAFournir = (checklist?.entries ?? []).map((entry) => ({
+    id: entry.itemId,
+    libelle: entry.libelle,
+    obligatoire: entry.obligatoire !== false,
+    fourni: entry.statut === "FOURNI",
+  }));
 
   return NextResponse.json(
     {
@@ -60,6 +68,7 @@ export async function GET(request: NextRequest, context: RouteContext) {
         produitCode: String(dossier.payload.produitCode ?? ""),
         dateOperation: String(dossier.payload.dateOperation ?? ""),
       },
+      documentsAFournir,
       concessionnaire: concessionnaire
         ? {
             codePdv: concessionnaire.codePdv,

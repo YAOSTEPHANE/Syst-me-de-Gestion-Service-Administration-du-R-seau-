@@ -55,3 +55,55 @@ export async function openLonaciPdfInTab(url: string): Promise<void> {
     throw error;
   }
 }
+
+/** Lance l'impression d'un PDF authentifié via une iframe cachée. */
+export async function printLonaciPdf(url: string): Promise<void> {
+  const res = await lonaciFetch(url);
+  if (!res.ok) {
+    throw new Error(await readPdfErrorMessage(res));
+  }
+  const blob = await res.blob();
+  const objectUrl = URL.createObjectURL(blob);
+
+  await new Promise<void>((resolve, reject) => {
+    const iframe = document.createElement("iframe");
+    iframe.setAttribute("title", "Impression courrier LONACI");
+    iframe.style.position = "fixed";
+    iframe.style.width = "0";
+    iframe.style.height = "0";
+    iframe.style.border = "0";
+    iframe.style.opacity = "0";
+    iframe.style.pointerEvents = "none";
+
+    const cleanup = () => {
+      window.setTimeout(() => {
+        iframe.remove();
+        URL.revokeObjectURL(objectUrl);
+      }, 120_000);
+    };
+
+    iframe.onload = () => {
+      window.setTimeout(() => {
+        const win = iframe.contentWindow;
+        if (!win) {
+          cleanup();
+          reject(new Error("Impression impossible."));
+          return;
+        }
+        win.focus();
+        win.print();
+        cleanup();
+        resolve();
+      }, 300);
+    };
+
+    iframe.onerror = () => {
+      iframe.remove();
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error("Impression impossible."));
+    };
+
+    document.body.appendChild(iframe);
+    iframe.src = objectUrl;
+  });
+}

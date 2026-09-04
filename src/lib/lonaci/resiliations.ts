@@ -20,6 +20,7 @@ import {
   parseResiliationDocumentChecklist,
   patchResiliationDocumentChecklistStatuts,
 } from "@/lib/lonaci/resiliation-document-checklist";
+import { applyDocumentsFournisToChecklist } from "@/lib/lonaci/produit-document-checklist";
 import { resiliationDisplayStatutFields } from "@/lib/lonaci/resiliation-statut-metier";
 import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import {
@@ -197,6 +198,7 @@ export async function createResiliation(input: {
   dateReception: Date;
   motif: string;
   commentaire?: string | null;
+  documentsFournis?: string[];
   actor: UserDocument;
 }) {
   if (!input.actor._id) throw new Error("ACTOR_REQUIRED");
@@ -217,7 +219,10 @@ export async function createResiliation(input: {
   if (!activeContract) throw new Error("ACTIVE_CONTRAT_REQUIRED");
 
   const produits = await listProduits();
-  const documentChecklist = buildResiliationDocumentChecklist(input.produitCode, produits);
+  const documentChecklist = applyDocumentsFournisToChecklist(
+    buildResiliationDocumentChecklist(input.produitCode, produits),
+    input.documentsFournis,
+  );
 
   const db = await getDatabase();
   const now = new Date();

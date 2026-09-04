@@ -19,6 +19,10 @@ import { notify } from "@/lib/toast";
 import { Download, FilePlus2, FileText, Upload } from "lucide-react";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button } from "@/components/lonaci/ui/button";
+import ModuleCourrierPdfActions, {
+  moduleCourrierDownloadFilename,
+} from "@/components/lonaci/module-courrier-pdf-actions";
+import { moduleCourrierPdfUrl } from "@/lib/lonaci/module-courrier-url";
 import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
 import { Dialog } from "@/components/lonaci/ui/dialog";
 import { FeedbackState, Skeleton } from "@/components/lonaci/ui/feedback-state";
@@ -585,7 +589,24 @@ export default function AgrementsPanel() {
     {
       id: "document",
       header: "Document",
-      cell: (row) => row.hasDocument ? <a href={`/api/agrements/${row.id}/document`} target="_blank" rel="noopener noreferrer">Ouvrir le PDF</a> : "—",
+      cell: (row) => (
+        <div className="flex flex-col gap-1">
+          {row.hasDocument ? (
+            <a href={`/api/agrements/${row.id}/document`} target="_blank" rel="noopener noreferrer">
+              Ouvrir le PDF
+            </a>
+          ) : (
+            "—"
+          )}
+          <ModuleCourrierPdfActions
+            pdfUrl={moduleCourrierPdfUrl("agrement", row.id)}
+            filename={moduleCourrierDownloadFilename("agrement", row.reference)}
+            layout="inline"
+            tone="violet"
+            className="!mt-0"
+          />
+        </div>
+      ),
     },
     { id: "action", header: "Action", align: "right", cell: workflowAction },
   ];
@@ -664,6 +685,13 @@ export default function AgrementsPanel() {
                 <dl className="mt-4 text-sm"><div><dt className="text-slate-500">Date de réception</dt><dd className="mt-1 font-medium">{new Date(row.dateReception).toLocaleString("fr-FR")}</dd></div></dl>
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                   {row.hasDocument ? <Button variant="secondary" size="sm" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/${row.id}/document`, "_blank")}>PDF</Button> : null}
+                  <ModuleCourrierPdfActions
+                    pdfUrl={moduleCourrierPdfUrl("agrement", row.id)}
+                    filename={moduleCourrierDownloadFilename("agrement", row.reference)}
+                    layout="inline"
+                    tone="slate"
+                    className="!mt-0 items-center"
+                  />
                   {workflowAction(row)}
                 </div>
               </article>

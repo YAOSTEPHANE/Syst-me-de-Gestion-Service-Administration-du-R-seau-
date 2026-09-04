@@ -27,6 +27,7 @@ describe("LONACI_NAV", () => {
     expect(LONACI_NAV.map((item) => item.href)).toEqual([
       "/dashboard",
       "/clients",
+      "/soumissions",
       "/dossiers",
       "/cautions",
       "/concessionnaires",

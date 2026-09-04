@@ -1,6 +1,9 @@
 "use client";
 
 import DossierCompletIndicator from "@/components/lonaci/dossier-complet-indicator";
+import ModuleCourrierPdfActions, {
+  moduleCourrierDownloadFilename,
+} from "@/components/lonaci/module-courrier-pdf-actions";
 import { ChecklistEditor } from "@/components/lonaci/workflow/checklist-editor";
 import { downloadLonaciPdf, openLonaciPdfInTab } from "@/lib/lonaci/download-pdf";
 import { lonaciFetch } from "@/lib/lonaci-client-fetch";
@@ -23,6 +26,7 @@ import {
   DECHARGE_PROVISOIRE_DISCLAIMER,
 } from "@/lib/lonaci/dossier-decharge-constants";
 import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
+import { moduleCourrierPdfUrl } from "@/lib/lonaci/module-courrier-url";
 import {
   CONTRAT_GENERATION_STEPS,
   CONTRAT_GENERATION_SUMMARY,
@@ -400,6 +404,13 @@ export default function DossierDocumentChecklistBlock({
           >
             PDF checklist
           </button>
+          <ModuleCourrierPdfActions
+            pdfUrl={moduleCourrierPdfUrl("dossier", dossierId)}
+            filename={moduleCourrierDownloadFilename("dossier", dossierId)}
+            layout="inline"
+            tone="violet"
+            className="!mt-0"
+          />
           {!progress.complet ? (
             <button
               type="button"
@@ -603,7 +614,7 @@ export default function DossierDocumentChecklistBlock({
       )}
       <ChecklistEditor
         title="Pièces du dossier"
-        description="Mettez à jour le statut de chaque document attendu."
+        description="Cochez chaque document remis pour mettre à jour le dossier."
         entries={checklist.entries}
         statuses={DOSSIER_CHECKLIST_STATUTS}
         statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}

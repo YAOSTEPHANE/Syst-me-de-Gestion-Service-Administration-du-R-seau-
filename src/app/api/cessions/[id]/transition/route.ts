@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureCessionIndexes, transitionCession, type CessionStatus } from "@/lib/lonaci/cessions";
 import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
+import { logWorkflowDenied } from "@/lib/observability/workflow-events";
 
 const schema = z.object({
   target: z.enum(["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "VALIDEE_CHEF_SERVICE", "REJETEE"]),
@@ -45,9 +46,25 @@ export async function POST(request: NextRequest, context: RouteContext) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Transition impossible";
     if (msg === "CESSION_NOT_FOUND") return NextResponse.json({ message: "Cession introuvable" }, { status: 404 });
-    if (msg === "FORBIDDEN_TRANSITION") return NextResponse.json({ message: "Transition interdite pour votre rôle" }, { status: 403 });
+    if (msg === "FORBIDDEN_TRANSITION") {
+      logWorkflowDenied({
+        module: "CESSIONS",
+        code: msg,
+        role: auth.user.role,
+        entityId: id,
+        target: parsed.data.target,
+      });
+      return NextResponse.json({ message: "Transition interdite pour votre rôle" }, { status: 403 });
+    }
     if (msg === "INVALID_TRANSITION") return NextResponse.json({ message: "Transition invalide" }, { status: 400 });
     if (msg === "CHECKLIST_INCOMPLETE") {
+      logWorkflowDenied({
+        module: "CESSIONS",
+        code: msg,
+        role: auth.user.role,
+        entityId: id,
+        target: parsed.data.target,
+      });
       return NextResponse.json(
         { message: "Checklist documents incomplète — toutes les pièces obligatoires doivent être marquées « Fourni »." },
         { status: 409 },

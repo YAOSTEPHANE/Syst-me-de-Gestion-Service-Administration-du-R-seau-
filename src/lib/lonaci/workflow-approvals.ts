@@ -1,11 +1,19 @@
 import type { LonaciRole } from "@/lib/lonaci/constants";
 
 /**
- * Désactive les validations hiérarchiques N1 / N2 / finalisation.
- * Les étapes restent en base pour l’historique, mais aucun rôle spécifique
- * n’est plus exigé et l’UI n’expose plus ces validations dédiées.
+ * Validations hiérarchiques N1 / N2 / finalisation.
+ *
+ * - `LONACI_WORKFLOW_APPROVALS_ENABLED=true` → séparation stricte des rôles.
+ * - absent / `false` → mode simplifié (défaut actuel) : tout rôle opérationnel
+ *   peut avancer une étape ; l’historique des statuts reste en base.
  */
-export const WORKFLOW_APPROVALS_ENABLED = false;
+function readWorkflowApprovalsEnabled(): boolean {
+  const raw = process.env.LONACI_WORKFLOW_APPROVALS_ENABLED?.trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes") return true;
+  return false;
+}
+
+export const WORKFLOW_APPROVALS_ENABLED = readWorkflowApprovalsEnabled();
 
 export function areWorkflowApprovalsEnabled(): boolean {
   return WORKFLOW_APPROVALS_ENABLED;
@@ -32,7 +40,19 @@ export function roleMayAdvanceWorkflow(
   return Boolean(role && expected.includes(role));
 }
 
-/** Libellé unique de progression (plus de « Valider N1 / N2 / Finaliser »). */
+/** Libellé unique de progression (plus de « Valider N1 / N2 / Finaliser » en mode simplifié). */
 export function workflowAdvanceLabel(): string {
-  return "Avancer";
+  return areWorkflowApprovalsEnabled() ? "Valider l’étape" : "Avancer";
+}
+
+/** Description du mode pour l’UI (Paramètres, bandeaux). */
+export function workflowApprovalsModeDescription(): string {
+  if (areWorkflowApprovalsEnabled()) {
+    return "Validations hiérarchiques actives : N1 (chef de section) → N2 (assistant CDS) → finalisation (chef de service).";
+  }
+  return "Mode simplifié : tout rôle opérationnel peut avancer une étape. Les statuts N1/N2 restent en historique.";
+}
+
+export function workflowApprovalsModeLabel(): string {
+  return areWorkflowApprovalsEnabled() ? "Hiérarchique" : "Simplifié";
 }

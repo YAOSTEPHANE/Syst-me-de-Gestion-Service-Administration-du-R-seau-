@@ -6,48 +6,21 @@ import {
   mergeChecklistStatutPatch,
   normalizeChecklistTemplate,
 } from "@/lib/lonaci/produit-document-checklist";
+import {
+  SUCCESSION_ACTE_DECES_ITEM_ID,
+  SUCCESSION_CHECKLIST_DEFAULT_ITEMS,
+} from "@/lib/lonaci/succession-checklist-defaults";
 import type {
   DossierDocumentChecklistPayload,
   DossierDocumentChecklistStatut,
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** Circuit documentaire décès et ayants droit. */
-export const SUCCESSION_CHECKLIST_ITEMS_SPEC_101: ProduitDocumentChecklistItem[] = [
-  {
-    id: "succession_acte_deces_officiel",
-    libelle: "Acte de décès officiel",
-    obligatoire: true,
-  },
-  {
-    id: "succession_identite_ayant_droit",
-    libelle: "Pièce d'identité de l'ayant droit",
-    obligatoire: true,
-  },
-  {
-    id: "succession_lien_parente",
-    libelle: "Justificatif du lien de parenté (acte de naissance, certificat de mariage, etc.)",
-    obligatoire: true,
-  },
-  {
-    id: "succession_demande_transfert_resiliation",
-    libelle: "Demande de transfert ou de résiliation signée par l'ayant droit",
-    obligatoire: true,
-  },
-  {
-    id: "succession_contrat_defunt",
-    libelle: "Copie du contrat du défunt",
-    obligatoire: true,
-  },
-  {
-    id: "succession_ohada_complement",
-    libelle: "Tout document supplémentaire requis selon la réglementation OHADA",
-    obligatoire: false,
-  },
-];
+/** @deprecated Utiliser SUCCESSION_CHECKLIST_DEFAULT_ITEMS */
+export const SUCCESSION_CHECKLIST_ITEMS_SPEC_101 = SUCCESSION_CHECKLIST_DEFAULT_ITEMS;
 
 export const SUCCESSION_CHECKLIST_SPEC_101 = normalizeChecklistTemplate(
-  SUCCESSION_CHECKLIST_ITEMS_SPEC_101,
+  SUCCESSION_CHECKLIST_DEFAULT_ITEMS,
 ).map((item) => ({
   itemId: item.id,
   libelle: item.libelle,
@@ -56,13 +29,14 @@ export const SUCCESSION_CHECKLIST_SPEC_101 = normalizeChecklistTemplate(
 
 export function buildSuccessionDocumentChecklist(
   options?: { acteDecesUploaded?: boolean },
+  template?: ProduitDocumentChecklistItem[],
   previous?: DossierDocumentChecklistPayload | null,
 ): DossierDocumentChecklistPayload {
-  const template = normalizeChecklistTemplate(SUCCESSION_CHECKLIST_ITEMS_SPEC_101);
-  const checklist = buildChecklistFromTemplate(template, previous?.entries ?? null);
+  const normalized = normalizeChecklistTemplate(template ?? SUCCESSION_CHECKLIST_DEFAULT_ITEMS);
+  const checklist = buildChecklistFromTemplate(normalized, previous?.entries ?? null);
   if (!options?.acteDecesUploaded) return checklist;
   const entries = checklist.entries.map((e) =>
-    e.itemId === "succession_acte_deces_officiel" ? { ...e, statut: "FOURNI" as const } : e,
+    e.itemId === SUCCESSION_ACTE_DECES_ITEM_ID ? { ...e, statut: "FOURNI" as const } : e,
   );
   return { entries, complet: computeChecklistComplet(entries) };
 }
@@ -119,8 +93,7 @@ export function successionChecklistWithActeDeces(
   acteDecesPresent: boolean,
 ): DossierDocumentChecklistPayload {
   if (!acteDecesPresent) return checklist;
-  return patchSuccessionDocumentChecklistStatuts(
-    checklist,
-    [{ itemId: "succession_acte_deces_officiel", statut: "FOURNI" }],
-  );
+  return patchSuccessionDocumentChecklistStatuts(checklist, [
+    { itemId: SUCCESSION_ACTE_DECES_ITEM_ID, statut: "FOURNI" },
+  ]);
 }

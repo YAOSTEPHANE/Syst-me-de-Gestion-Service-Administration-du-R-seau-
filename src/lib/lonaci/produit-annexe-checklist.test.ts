@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   filterChecklistItemsByClientCategorie,
+  mergeContratChecklistTemplate,
   mergeProductAnnexeTemplates,
   mergeProductChecklistTemplates,
   mergeProductDossierAndAnnexeTemplates,
@@ -96,5 +97,17 @@ describe("mergeProductDossierAndAnnexeTemplates", () => {
   it("fusionne filtrée pour un particulier", () => {
     const items = mergeProductDossierAndAnnexeTemplates(["LOTO"], produits, "PARTICULIER");
     expect(items.map((i) => i.id)).toEqual(["cni", "reg_loto"]);
+  });
+});
+
+describe("mergeContratChecklistTemplate", () => {
+  it("place les pièces communes avant les pièces produit", () => {
+    const items = mergeContratChecklistTemplate(
+      ["LOTO"],
+      produits,
+      "PARTICULIER",
+      [{ id: "contrat_base", libelle: "Base contrat", obligatoire: true }],
+    );
+    expect(items.map((i) => i.id)).toEqual(["contrat_base", "cni", "reg_loto"]);
   });
 });

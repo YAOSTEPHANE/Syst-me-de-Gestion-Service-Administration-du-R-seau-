@@ -6,6 +6,14 @@ import type { UserDocument } from "@/lib/lonaci/types";
 
 const validObjectId = "507f1f77bcf86cd799439011";
 
+/** Séparation N1 : ces tests exigent le mode hiérarchique (indépendant du flag produit). */
+vi.mock("@/lib/lonaci/workflow-approvals", async (importOriginal) => {
+  const { mockWorkflowApprovalsHierarchical } = await import(
+    "@/test/mock-workflow-approvals-hierarchical"
+  );
+  return mockWorkflowApprovalsHierarchical(importOriginal);
+});
+
 // Mock du module MongoDB pour les transitions qui sinon iraient en base.
 vi.mock("@/lib/mongodb", () => ({
   getDatabase: vi.fn(),

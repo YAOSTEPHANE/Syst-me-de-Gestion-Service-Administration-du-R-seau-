@@ -6,6 +6,7 @@ import {
   mergeChecklistStatutPatch,
   normalizeChecklistTemplate,
 } from "@/lib/lonaci/produit-document-checklist";
+import { CESSION_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/cession-checklist-defaults";
 import type {
   DossierDocumentChecklistPayload,
   DossierDocumentChecklistStatut,
@@ -13,35 +14,15 @@ import type {
   ProduitDocumentChecklistItem,
 } from "@/lib/lonaci/types";
 
-/** Pièces obligatoires communes à toute demande de cession. */
-export const CESSION_CHECKLIST_ITEMS_SPEC_52: ProduitDocumentChecklistItem[] = [
-  {
-    id: "cession_identite_parties",
-    libelle: "Pièces d'identité des deux parties (cédant et cessionnaire)",
-    obligatoire: true,
-  },
-  {
-    id: "cession_contrat_cedant",
-    libelle: "Copie du contrat en cours du cédant",
-    obligatoire: true,
-  },
-  {
-    id: "cession_quitus_cautions",
-    libelle: "Quitus de paiement des cautions",
-    obligatoire: true,
-  },
-  {
-    id: "cession_formulaire_signe",
-    libelle: "Formulaire de demande de cession signé",
-    obligatoire: true,
-  },
-];
+/** @deprecated Utiliser CESSION_CHECKLIST_DEFAULT_ITEMS */
+export const CESSION_CHECKLIST_ITEMS_SPEC_52 = CESSION_CHECKLIST_DEFAULT_ITEMS;
 
 export function mergeCessionChecklistTemplate(
   produitCode: string | null | undefined,
   produits: ProduitDocument[],
+  baseItems: ProduitDocumentChecklistItem[] = CESSION_CHECKLIST_DEFAULT_ITEMS,
 ): ProduitDocumentChecklistItem[] {
-  const base = normalizeChecklistTemplate(CESSION_CHECKLIST_ITEMS_SPEC_52);
+  const base = normalizeChecklistTemplate(baseItems);
   const code = produitCode?.trim().toUpperCase();
   if (!code) return base;
   const fromProduit = mergeProductChecklistTemplates([code], produits).map((item) => ({
@@ -63,8 +44,9 @@ export function buildCessionDocumentChecklist(
   produitCode: string | null | undefined,
   produits: ProduitDocument[],
   previous?: DossierDocumentChecklistPayload | null,
+  baseItems?: ProduitDocumentChecklistItem[],
 ): DossierDocumentChecklistPayload {
-  const template = mergeCessionChecklistTemplate(produitCode, produits);
+  const template = mergeCessionChecklistTemplate(produitCode, produits, baseItems);
   if (!template.length) return { entries: [], complet: true };
   return buildChecklistFromTemplate(template, previous?.entries ?? null);
 }

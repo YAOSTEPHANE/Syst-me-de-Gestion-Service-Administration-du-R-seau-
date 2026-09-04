@@ -1,5 +1,13 @@
 import AdminAgencesPanel from "@/components/lonaci/admin-agences-panel";
 import AdminProduitsPanel from "@/components/lonaci/admin-produits-panel";
+import AdminAttestationsDomiciliationChecklistPanel from "@/components/lonaci/admin-attestations-domiciliation-checklist-panel";
+import AdminSuccessionChecklistPanel from "@/components/lonaci/admin-succession-checklist-panel";
+import AdminCessionChecklistPanel from "@/components/lonaci/admin-cession-checklist-panel";
+import AdminContratChecklistPanel from "@/components/lonaci/admin-contrat-checklist-panel";
+import AdminModuleCourrierPanel from "@/components/lonaci/admin-module-courrier-panel";
+import AdminDemandeFairePartPanel from "@/components/lonaci/admin-demande-faire-part-panel";
+import AdminFairePartPanel from "@/components/lonaci/admin-faire-part-panel";
+import { MODULE_COURRIER_ADMIN_ENTRIES } from "@/lib/lonaci/module-courrier-admin-config";
 import AdminAuditLogPanel from "@/components/lonaci/admin-audit-log-panel";
 import AdminEmailSettings from "@/components/lonaci/admin-email-settings";
 import AdminLocalBackupSettings from "@/components/lonaci/admin-local-backup-settings";
@@ -11,6 +19,7 @@ import MonitoringEventsPanel from "@/components/lonaci/monitoring-events-panel";
 import ParametresComptePanel from "@/components/lonaci/parametres-compte-panel";
 import ParametresPanelsControls from "@/components/lonaci/parametres-panels-controls";
 import ParametresTabs from "@/components/lonaci/parametres-tabs";
+import WorkflowModeBanner from "@/components/lonaci/workflow-mode-banner";
 import { Badge } from "@/components/lonaci/ui/badge";
 import { PageHeader } from "@/components/lonaci/ui/headers";
 import { Surface } from "@/components/lonaci/ui/surface";
@@ -198,7 +207,7 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
               <ParamSection
                 id="referentiels"
                 title="Référentiels"
-                description="Agences et produits (codes, libellés, prix de caution) utilisés dans les modules métier."
+                description="Agences, produits et référentiels des pièces à fournir par module."
               >
                 <div className="space-y-4">
                   <CollapsiblePanel
@@ -212,11 +221,83 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
                   <CollapsiblePanel
                     panelId="referentiels-produits"
                     title="Produits"
-                    subtitle="Créer et gérer les produits : code, libellé et prix de caution."
+                    subtitle="Créer et gérer les produits : code, libellé, prix de caution et pièces spécifiques."
                     defaultOpen={initialTabId === "referentiels"}
                   >
                     <AdminProduitsPanel />
                   </CollapsiblePanel>
+                  <ParamSubgroup
+                    title="Documents à fournir"
+                    hint="Listes à cocher communes par module. Les pièces liées à un produit se gèrent aussi dans Produits."
+                  >
+                    <CollapsiblePanel
+                      panelId="referentiels-contrats-signature"
+                      title="Signature de contrat"
+                      subtitle="Pièces communes pour chaque dossier de contrat."
+                      defaultOpen
+                    >
+                      <AdminContratChecklistPanel />
+                    </CollapsiblePanel>
+                    <CollapsiblePanel
+                      panelId="referentiels-cessions"
+                      title="Cessions"
+                      subtitle="Pièces communes pour chaque demande de cession."
+                    >
+                      <AdminCessionChecklistPanel />
+                    </CollapsiblePanel>
+                    <CollapsiblePanel
+                      panelId="referentiels-succession-ayants-droits"
+                      title="Décès & ayants droit"
+                      subtitle="Pièces pour chaque dossier de succession."
+                    >
+                      <AdminSuccessionChecklistPanel />
+                    </CollapsiblePanel>
+                    <CollapsiblePanel
+                      panelId="referentiels-attestations-domiciliation"
+                      title="Attestations & domiciliation"
+                      subtitle="Pièces pour chaque demande d'attestation ou de domiciliation."
+                    >
+                      <AdminAttestationsDomiciliationChecklistPanel />
+                    </CollapsiblePanel>
+                  </ParamSubgroup>
+                  <ParamSubgroup
+                    title="Courriers officiels"
+                    hint="Rédaction des modèles de courrier pour chaque module (destinataire, objet, corps, signature)."
+                  >
+                    {MODULE_COURRIER_ADMIN_ENTRIES.map((entry) => (
+                      <CollapsiblePanel
+                        key={entry.moduleId}
+                        panelId={entry.panelId}
+                        title={entry.title}
+                        subtitle={entry.subtitle}
+                      >
+                        <AdminModuleCourrierPanel
+                          moduleId={entry.moduleId}
+                          title={entry.panelTitle}
+                          description={entry.description}
+                        />
+                      </CollapsiblePanel>
+                    ))}
+                  </ParamSubgroup>
+                  <ParamSubgroup
+                    title="Faire-part (Décès & ayants droit)"
+                    hint="Modèles PDF : demande de l'ayant droit, et faire-part adressé au Directeur Régional."
+                  >
+                    <CollapsiblePanel
+                      panelId="referentiels-demande-faire-part"
+                      title="Demande de faire-part (ayants droit)"
+                      subtitle="Rédaction du modèle pour l'ayant droit : destinataire, objet, corps, signature."
+                    >
+                      <AdminDemandeFairePartPanel />
+                    </CollapsiblePanel>
+                    <CollapsiblePanel
+                      panelId="referentiels-faire-part-dr"
+                      title="Faire-part adressé au DR"
+                      subtitle="Notification du Directeur Régional suite au décès d'un concessionnaire."
+                    >
+                      <AdminFairePartPanel kind="dr" />
+                    </CollapsiblePanel>
+                  </ParamSubgroup>
                 </div>
               </ParamSection>
             ) : undefined
@@ -229,6 +310,7 @@ export default async function ParametresPage({ searchParams }: ParametresPagePro
                 description="Seuils d’alerte et configuration des notifications email."
               >
                 <div className="space-y-4">
+                  <WorkflowModeBanner />
                   <ParamSubgroup
                     title="Pilotage quotidien"
                     hint="Paramètres prioritaires pour suivre et ajuster l’exploitation."

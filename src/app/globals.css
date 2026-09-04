@@ -555,6 +555,436 @@ textarea {
   color: var(--lonaci-text-muted);
 }
 
+/* —— Rapports : graphiques ultra-premium —— */
+@keyframes lonaci-chart-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.97);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@keyframes lonaci-chart-glow-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes lonaci-chart-shimmer {
+  0% {
+    background-position: 120% 0;
+  }
+  100% {
+    background-position: -40% 0;
+  }
+}
+
+@keyframes lonaci-orb-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  40% {
+    transform: translate(12%, -8%) scale(1.08);
+  }
+  70% {
+    transform: translate(-6%, 10%) scale(0.94);
+  }
+}
+
+@keyframes lonaci-beam-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes lonaci-live-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(249, 115, 22, 0.45);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(249, 115, 22, 0);
+  }
+}
+
+@keyframes lonaci-mesh-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.lonaci-reports-shell {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(249, 115, 22, 0.1), transparent 50%),
+    radial-gradient(ellipse 60% 40% at 95% 5%, rgba(15, 118, 110, 0.08), transparent 45%),
+    linear-gradient(180deg, rgba(248, 250, 252, 0.95), rgba(241, 245, 249, 0.75));
+}
+
+.lonaci-reports-shell::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(30, 58, 95, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30, 58, 95, 0.04) 1px, transparent 1px);
+  background-size: 28px 28px;
+  mask-image: radial-gradient(ellipse 70% 60% at 50% 20%, #000 20%, transparent 75%);
+}
+
+.lonaci-reports-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.lonaci-ui-chart-card--premium {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(249, 115, 22, 0.18);
+  background:
+    linear-gradient(165deg, rgba(255, 255, 255, 0.97) 0%, rgba(255, 247, 237, 0.55) 48%, rgba(248, 250, 252, 0.98) 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85) inset,
+    0 18px 40px -24px rgba(30, 58, 95, 0.28),
+    0 8px 20px -12px rgba(249, 115, 22, 0.18);
+  animation: lonaci-chart-enter 0.85s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--chart-enter-delay, 0ms);
+  transition:
+    transform 0.4s cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 0.4s ease,
+    border-color 0.35s ease;
+}
+
+.lonaci-ui-chart-card--premium:hover {
+  transform: translateY(-3px);
+  border-color: rgba(249, 115, 22, 0.36);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.9) inset,
+    0 28px 56px -22px rgba(30, 58, 95, 0.36),
+    0 14px 32px -10px rgba(249, 115, 22, 0.26);
+}
+
+.lonaci-ui-chart-card--ultra {
+  border-color: rgba(249, 115, 22, 0.28);
+  background:
+    linear-gradient(160deg, rgba(255, 255, 255, 0.88) 0%, rgba(255, 247, 237, 0.72) 40%, rgba(240, 253, 250, 0.55) 100%);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+}
+
+.lonaci-ui-chart-card--ultra::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(249, 115, 22, 0.55),
+    rgba(255, 255, 255, 0.15) 35%,
+    rgba(15, 118, 110, 0.45) 70%,
+    rgba(30, 58, 95, 0.35)
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0.75;
+}
+
+.lonaci-ui-chart-card__glow {
+  pointer-events: none;
+  position: absolute;
+  inset: -40% -20% auto;
+  height: 55%;
+  background:
+    radial-gradient(ellipse 70% 80% at 20% 0%, rgba(249, 115, 22, 0.18), transparent 55%),
+    radial-gradient(ellipse 50% 60% at 85% 10%, rgba(15, 118, 110, 0.12), transparent 50%);
+  animation: lonaci-chart-glow-pulse 5.5s ease-in-out infinite;
+}
+
+.lonaci-ui-chart-card__orb {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(28px);
+  opacity: 0.45;
+  animation: lonaci-orb-drift 12s ease-in-out infinite;
+}
+
+.lonaci-ui-chart-card__orb--a {
+  width: 140px;
+  height: 140px;
+  top: -40px;
+  right: -20px;
+  background: rgba(249, 115, 22, 0.35);
+}
+
+.lonaci-ui-chart-card__orb--b {
+  width: 120px;
+  height: 120px;
+  bottom: -30px;
+  left: -10px;
+  background: rgba(15, 118, 110, 0.28);
+  animation-delay: -4s;
+}
+
+.lonaci-ui-chart-card__beam {
+  pointer-events: none;
+  position: absolute;
+  width: 180%;
+  height: 180%;
+  left: -40%;
+  top: -40%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 0deg,
+    rgba(249, 115, 22, 0.12) 40deg,
+    transparent 80deg,
+    transparent 200deg,
+    rgba(15, 118, 110, 0.1) 240deg,
+    transparent 280deg
+  );
+  animation: lonaci-beam-spin 18s linear infinite;
+  opacity: 0.55;
+  mix-blend-mode: soft-light;
+}
+
+.lonaci-ui-chart-card__title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.lonaci-ui-chart-card__live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9a3412;
+  background: rgba(255, 237, 213, 0.95);
+  border: 1px solid rgba(251, 146, 60, 0.45);
+  animation: lonaci-live-pulse 2.4s ease-out infinite;
+}
+
+.lonaci-ui-chart-card__live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: #f97316;
+  box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.25);
+}
+
+.lonaci-ui-chart-card--premium .lonaci-ui-chart-card__header {
+  position: relative;
+  z-index: 1;
+}
+
+.lonaci-ui-chart-card--premium .lonaci-ui-chart-card__header h3 {
+  letter-spacing: -0.02em;
+  background: linear-gradient(105deg, #0f172a 0%, #1e3a5f 55%, #9a3412 120%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.lonaci-ui-chart-card--premium .lonaci-ui-chart-card__plot {
+  position: relative;
+  z-index: 1;
+  border-radius: 16px;
+  padding: 8px 4px 4px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(248, 250, 252, 0.28));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.75);
+}
+
+.lonaci-reports-charts-hero {
+  position: relative;
+  overflow: hidden;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    radial-gradient(ellipse 60% 80% at 85% 20%, rgba(249, 115, 22, 0.28), transparent 55%),
+    radial-gradient(ellipse 50% 60% at 5% 90%, rgba(15, 118, 110, 0.35), transparent 50%),
+    linear-gradient(135deg, #0b1220 0%, #1e3a5f 48%, #0f766e 100%);
+  padding: 22px 22px 20px;
+  color: #f8fafc;
+  box-shadow:
+    0 24px 48px -28px rgba(15, 23, 42, 0.75),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.lonaci-reports-charts-hero::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(180deg, #000 30%, transparent 95%);
+  animation: lonaci-mesh-breathe 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.lonaci-reports-charts-hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    110deg,
+    transparent 28%,
+    rgba(255, 255, 255, 0.1) 46%,
+    transparent 62%
+  );
+  background-size: 220% 100%;
+  animation: lonaci-chart-shimmer 4.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.lonaci-reports-charts-hero__label {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(253, 186, 116, 0.95);
+}
+
+.lonaci-reports-charts-hero__title {
+  position: relative;
+  z-index: 1;
+  margin: 6px 0 0;
+  font-size: clamp(20px, 2.6vw, 26px);
+  font-weight: 850;
+  letter-spacing: -0.03em;
+}
+
+.lonaci-reports-charts-hero__sub {
+  position: relative;
+  z-index: 1;
+  margin: 8px 0 0;
+  max-width: 54ch;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgba(226, 232, 240, 0.88);
+}
+
+.lonaci-reports-charts-hero__metrics {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.lonaci-reports-hero-metric {
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: rgba(15, 23, 42, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  transition: transform 0.3s ease, border-color 0.3s ease, background 0.3s ease;
+}
+
+.lonaci-reports-hero-metric:hover {
+  transform: translateY(-2px);
+  border-color: rgba(253, 186, 116, 0.35);
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.lonaci-reports-hero-metric__label {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: rgba(226, 232, 240, 0.65);
+}
+
+.lonaci-reports-hero-metric__value {
+  margin: 6px 0 0;
+  font-size: clamp(22px, 3vw, 28px);
+  font-weight: 850;
+  letter-spacing: -0.03em;
+  color: #fff7ed;
+  font-variant-numeric: tabular-nums;
+}
+
+.lonaci-reports-hero-metric__hint {
+  margin: 4px 0 0;
+  font-size: 11px;
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.lonaci-ui-kpi-card--animated .lonaci-ui-kpi-card__value {
+  font-variant-numeric: tabular-nums;
+  background: linear-gradient(105deg, #0f172a, #9a3412);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@media (max-width: 640px) {
+  .lonaci-reports-charts-hero__metrics {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lonaci-ui-chart-card--premium,
+  .lonaci-ui-chart-card__glow,
+  .lonaci-ui-chart-card__orb,
+  .lonaci-ui-chart-card__beam,
+  .lonaci-ui-chart-card__live,
+  .lonaci-reports-charts-hero::before,
+  .lonaci-reports-charts-hero::after {
+    animation: none !important;
+  }
+
+  .lonaci-ui-chart-card--premium:hover,
+  .lonaci-reports-hero-metric:hover {
+    transform: none;
+  }
+}
+
 .lonaci-ui-brand { display: inline-flex; align-items: center; gap: 11px; color: var(--lonaci-navy-950); }
 .lonaci-ui-brand__monogram {
   width: 42px;

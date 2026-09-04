@@ -157,6 +157,10 @@ export async function POST(request: NextRequest) {
   const storedRelativePath = await saveSuccessionActeDeces(storageCaseId, rawFilename, bytes);
 
   await ensureSuccessionIndexes();
+  const documentsFournis = form
+    .getAll("documentsFournis")
+    .map((v) => String(v).trim())
+    .filter(Boolean);
   try {
     const doc = await createSuccessionCase({
       concessionnaireId,
@@ -168,6 +172,7 @@ export async function POST(request: NextRequest) {
         size: bytes.length,
         storedRelativePath,
       },
+      documentsFournis,
       actor: auth.user,
     });
     return NextResponse.json(

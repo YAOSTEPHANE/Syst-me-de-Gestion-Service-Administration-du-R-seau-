@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  CESSION_CHECKLIST_ITEMS_SPEC_52,
   buildCessionDocumentChecklist,
   mergeCessionChecklistTemplate,
+  patchCessionDocumentChecklistStatuts,
 } from "@/lib/lonaci/cession-document-checklist";
+import { CESSION_CHECKLIST_DEFAULT_ITEMS } from "@/lib/lonaci/cession-checklist-defaults";
 import { computeChecklistProgress } from "@/lib/lonaci/produit-document-checklist";
 
 describe("liste des pièces de cession", () => {
-  it("inclut les 4 pièces communes", () => {
-    expect(CESSION_CHECKLIST_ITEMS_SPEC_52).toHaveLength(4);
-    expect(CESSION_CHECKLIST_ITEMS_SPEC_52.map((i) => i.id)).toContain("cession_identite_parties");
-    expect(CESSION_CHECKLIST_ITEMS_SPEC_52.map((i) => i.id)).toContain("cession_formulaire_signe");
+  it("inclut les 4 pièces communes par défaut", () => {
+    expect(CESSION_CHECKLIST_DEFAULT_ITEMS).toHaveLength(4);
+    expect(CESSION_CHECKLIST_DEFAULT_ITEMS.map((i) => i.id)).toContain("cession_identite_parties");
+    expect(CESSION_CHECKLIST_DEFAULT_ITEMS.map((i) => i.id)).toContain("cession_formulaire_signe");
   });
 
   it("ajoute les documents du référentiel produit", () => {
@@ -28,6 +29,20 @@ describe("liste des pièces de cession", () => {
     ]);
     expect(template.length).toBeGreaterThan(4);
     expect(template.some((t) => t.id === "produit_rib")).toBe(true);
+  });
+
+  it("resynchronise avec un template admin personnalisé", () => {
+    const customBase = [
+      ...CESSION_CHECKLIST_DEFAULT_ITEMS,
+      { id: "cession_extra", libelle: "Attestation fiscale", obligatoire: false },
+    ];
+    const initial = buildCessionDocumentChecklist("LOTO", [], null, customBase);
+    const patched = patchCessionDocumentChecklistStatuts(initial, [
+      { itemId: "cession_identite_parties", statut: "FOURNI" },
+    ]);
+    const rebuilt = buildCessionDocumentChecklist("LOTO", [], patched, customBase);
+    expect(rebuilt.entries.find((e) => e.itemId === "cession_identite_parties")?.statut).toBe("FOURNI");
+    expect(rebuilt.entries.some((e) => e.itemId === "cession_extra")).toBe(true);
   });
 
   it("calcule la progression en temps réel", () => {

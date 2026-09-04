@@ -5,6 +5,7 @@ import { conflict, forbidden, notFound, serverError } from "@/lib/api/error-resp
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAgrementsIndexes, transitionAgrement } from "@/lib/lonaci/agrements";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { logWorkflowDenied } from "@/lib/observability/workflow-events";
 
 const schema = z.object({
   target: z.enum(["CONTROLE", "TRANSMIS", "FINALISE"]),
@@ -46,6 +47,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
       return notFound("Agrement introuvable.", "AGREMENT_NOT_FOUND");
     }
     if (code === "FORBIDDEN_TRANSITION") {
+      logWorkflowDenied({
+        module: "AGREMENTS",
+        code,
+        role: auth.user.role,
+        entityId: id,
+        target: parsed.data.target,
+      });
       return forbidden("Transition interdite pour votre role.", "FORBIDDEN_TRANSITION");
     }
     if (code === "INVALID_TRANSITION") {

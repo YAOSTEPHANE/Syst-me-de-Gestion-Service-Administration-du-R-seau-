@@ -103,7 +103,7 @@ export default function ConcessionnaireInscriptionChecklistBlock({
   return (
     <ChecklistEditor
       title="Pièces justificatives (inscription)"
-      description="Suivi des pièces issues du référentiel des produits sélectionnés."
+      description="Cochez les pièces issues du référentiel des produits sélectionnés."
       entries={checklist.entries}
       statuses={DOSSIER_CHECKLIST_STATUTS}
       statusLabels={DOSSIER_CHECKLIST_STATUT_LABELS}

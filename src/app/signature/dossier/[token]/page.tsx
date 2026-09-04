@@ -2,6 +2,13 @@
 
 import { FormEvent, use, useEffect, useMemo, useState } from "react";
 
+type DocumentAFournir = {
+  id: string;
+  libelle: string;
+  obligatoire: boolean;
+  fourni: boolean;
+};
+
 type SignatureResponse = {
   signature: {
     status: "PENDING" | "SIGNED" | "EXPIRED";
@@ -16,6 +23,7 @@ type SignatureResponse = {
     produitCode: string;
     dateOperation: string;
   };
+  documentsAFournir?: DocumentAFournir[];
   concessionnaire: {
     codePdv: string;
     nomComplet: string;
@@ -31,6 +39,7 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
   const [error, setError] = useState<string | null>(null);
   const [signerName, setSignerName] = useState("");
   const [accepted, setAccepted] = useState(false);
+  const [docsAck, setDocsAck] = useState(false);
   const [success, setSuccess] = useState<string | null>(null);
 
   useEffect(() => {
@@ -58,6 +67,8 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
   const isPending = data?.signature.status === "PENDING";
   const isSigned = data?.signature.status === "SIGNED";
   const isExpired = data?.signature.status === "EXPIRED";
+  const documents = data?.documentsAFournir ?? [];
+  const hasDocuments = documents.length > 0;
 
   const title = useMemo(() => {
     if (isSigned) return "Contrat déjà signé";
@@ -72,6 +83,10 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
     if (!isPending) return;
     if (!signerName.trim()) {
       setError("Veuillez saisir votre nom et prénom.");
+      return;
+    }
+    if (hasDocuments && !docsAck) {
+      setError("Veuillez confirmer avoir pris connaissance des documents à fournir.");
       return;
     }
     if (!accepted) {
@@ -121,17 +136,61 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
                 <strong>Produit:</strong> {data.dossier.produitCode || "—"}
               </p>
               <p>
-                <strong>Point de vente:</strong> {data.concessionnaire?.nomComplet || data.concessionnaire?.raisonSociale || "—"}
+                <strong>Point de vente:</strong>{" "}
+                {data.concessionnaire?.nomComplet || data.concessionnaire?.raisonSociale || "—"}
               </p>
               <p>
                 <strong>Code PDV:</strong> {data.concessionnaire?.codePdv || "—"}
               </p>
             </div>
 
+            {hasDocuments ? (
+              <div className="rounded-lg border border-cyan-200 bg-cyan-50/40 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-cyan-950">
+                  Documents à fournir
+                </p>
+                <p className="mt-1 text-[11px] text-slate-600">
+                  Pièces du dossier de contrat — cochez pour confirmer en avoir pris connaissance.
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {documents.map((doc) => (
+                    <li
+                      key={doc.id}
+                      className="flex items-start gap-2 rounded-md border border-slate-200 bg-white px-2.5 py-2 text-xs text-slate-800"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={doc.fourni}
+                        readOnly
+                        disabled
+                        className="mt-0.5 h-4 w-4 rounded border-slate-300 text-cyan-600"
+                        aria-label={`${doc.libelle}${doc.fourni ? " (fourni)" : " (en attente)"}`}
+                      />
+                      <span>
+                        {doc.libelle}
+                        {doc.obligatoire ? (
+                          <span className="ml-1 text-[10px] font-semibold text-rose-700">*</span>
+                        ) : (
+                          <span className="ml-1 text-[10px] text-slate-500">(facultatif)</span>
+                        )}
+                        <span
+                          className={`mt-0.5 block text-[10px] ${
+                            doc.fourni ? "text-emerald-700" : "text-amber-700"
+                          }`}
+                        >
+                          {doc.fourni ? "Fourni dans le dossier" : "En attente côté LONACI"}
+                        </span>
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
             {isSigned ? (
               <p className="rounded-md bg-emerald-50 px-3 py-2 text-emerald-700">
-                Signé le {data.signature.signedAt ? new Date(data.signature.signedAt).toLocaleString("fr-FR") : "—"} par{" "}
-                {data.signature.signerName ?? "—"}.
+                Signé le {data.signature.signedAt ? new Date(data.signature.signedAt).toLocaleString("fr-FR") : "—"}{" "}
+                par {data.signature.signerName ?? "—"}.
               </p>
             ) : null}
 
@@ -144,7 +203,9 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
             {isPending ? (
               <form onSubmit={onSubmit} className="space-y-3">
                 <label className="block">
-                  <span className="mb-1 block text-xs font-medium text-slate-700">Nom et prénom du signataire</span>
+                  <span className="mb-1 block text-xs font-medium text-slate-700">
+                    Nom et prénom du signataire
+                  </span>
                   <input
                     value={signerName}
                     onChange={(e) => setSignerName(e.target.value)}
@@ -153,6 +214,21 @@ export default function DossierSignaturePage({ params }: { params: Promise<{ tok
                     required
                   />
                 </label>
+
+                {hasDocuments ? (
+                  <label className="flex items-start gap-2 text-xs text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={docsAck}
+                      onChange={(e) => setDocsAck(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      J&apos;ai pris connaissance de la liste des documents à fournir pour la signature de ce
+                      contrat.
+                    </span>
+                  </label>
+                ) : null}
 
                 <label className="flex items-start gap-2 text-xs text-slate-700">
                   <input

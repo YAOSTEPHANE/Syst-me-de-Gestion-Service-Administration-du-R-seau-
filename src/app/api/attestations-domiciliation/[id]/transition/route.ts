@@ -53,6 +53,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "FORBIDDEN_TRANSITION") {
       return NextResponse.json({ message: "Transition interdite pour votre role." }, { status: 403 });
     }
+    if (code === "CHECKLIST_INCOMPLETE") {
+      return NextResponse.json(
+        { message: "Dossier incomplet : toutes les pièces obligatoires doivent être fournies avant transmission au DFC." },
+        { status: 400 },
+      );
+    }
     if (code === "INVALID_TRANSITION" || code === "USE_ENVOYER_CLIENT_ENDPOINT") {
       return NextResponse.json({ message: "Transition invalide." }, { status: 409 });
     }

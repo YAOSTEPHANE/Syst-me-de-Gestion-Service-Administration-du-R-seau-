@@ -22,4 +22,6 @@ export const PUBLIC_OR_DELEGATED_API_ROUTE_SUFFIXES = [
   "admr/alert-thresholds/route.ts",
   "admr-registries/route.ts",
   "admr-registries/[id]/route.ts",
+  /** Compat : redirect 307 → faire-part/[kind]/pdf (auth sur la cible). */
+  "succession-cases/[id]/faire-part/pdf/route.ts",
 ] as const;
