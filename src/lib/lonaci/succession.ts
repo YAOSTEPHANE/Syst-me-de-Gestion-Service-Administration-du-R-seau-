@@ -356,7 +356,7 @@ async function applyDecisionEffects(input: {
 
 export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Promise<SuccessionCaseDocument> {
   if (!ObjectId.isValid(input.caseId)) throw new Error("CASE_NOT_FOUND");
-  if (input.actor.role === "AGENT") throw new Error("ROLE_FORBIDDEN");
+  if (input.actor.role === "AGENT" && areWorkflowApprovalsEnabled()) throw new Error("ROLE_FORBIDDEN");
 
   const db = await getDatabase();
   const row = await db.collection<StoredSuccession>(COLLECTION).findOne({
@@ -390,7 +390,7 @@ export async function advanceSuccessionCase(input: AdvanceSuccessionInput): Prom
     if (!isSuccessionChecklistComplete(checklist)) {
       throw new Error("SUCCESSION_CHECKLIST_INCOMPLETE");
     }
-    if (!row.validationN1At || !row.validationN2At) {
+    if (areWorkflowApprovalsEnabled() && (!row.validationN1At || !row.validationN2At)) {
       throw new Error("SUCCESSION_VALIDATION_N1_N2_REQUIRED");
     }
     if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SERVICE")) {

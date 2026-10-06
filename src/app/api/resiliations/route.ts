@@ -10,8 +10,10 @@ import {
   createResiliation,
   ensureResiliationIndexes,
   listResiliations,
+  transitionResiliation,
   type ResiliationStatus,
 } from "@/lib/lonaci/resiliations";
+import { autoFinalizeQuietly } from "@/lib/lonaci/workflow-approvals";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
   MAX_RESILIATION_FILE_BYTES,
@@ -148,7 +150,16 @@ export async function POST(request: NextRequest) {
         actorId: auth.user._id ?? "",
       });
     }
-    return NextResponse.json({ item: created }, { status: 201 });
+    const confirmIrreversible = String(form.get("confirmIrreversible") ?? "") === "true";
+    const autoFinalize = await autoFinalizeQuietly(() =>
+      transitionResiliation({
+        id: created.id,
+        target: "RESILIE",
+        ...(confirmIrreversible ? { confirmIrreversible: true as const } : {}),
+        actor: auth.user,
+      }),
+    );
+    return NextResponse.json({ item: created, autoFinalize }, { status: 201 });
   } catch (error) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "CONCESSIONNAIRE_NOT_FOUND") {

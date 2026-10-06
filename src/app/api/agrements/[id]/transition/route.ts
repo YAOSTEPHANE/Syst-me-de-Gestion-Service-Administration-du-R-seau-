@@ -5,6 +5,7 @@ import { conflict, forbidden, notFound, serverError } from "@/lib/api/error-resp
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAgrementsIndexes, transitionAgrement } from "@/lib/lonaci/agrements";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 import { logWorkflowDenied } from "@/lib/observability/workflow-events";
 
 const schema = z.object({
@@ -27,7 +28,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
         ? "VALIDATE_N2"
         : "FINALIZE";
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled()
+      ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"]
+      : workflowStepRoles("CHEF_SERVICE"),
     rbac: { resource: "AGREMENTS", action: rbacAction },
   });
   if ("error" in auth) return auth.error;

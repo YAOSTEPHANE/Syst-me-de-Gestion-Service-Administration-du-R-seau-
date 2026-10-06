@@ -43,9 +43,10 @@ import {
   serializeDossierProduitPayload,
 } from "@/lib/lonaci/dossier-produits";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { findLonaciClientById, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { canReadClient } from "@/lib/lonaci/access";
 import { isClientStatutEligibleForContrat } from "@/lib/lonaci/client-constants";
+import { clientTerminauxSummary } from "@/lib/lonaci/client-terminaux";
 import { BANCARISATION_STATUTS } from "@/lib/lonaci/constants";
 import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
@@ -186,7 +187,7 @@ export async function GET(request: NextRequest) {
         select: { id: true },
       }),
       prisma.lonaciClient.findMany({
-        where: { deletedAt: null, ...agenceWhere },
+        where: { AND: [lonaciClientNotDeletedWhere, agenceWhere] },
         select: { id: true },
       }),
     ]);
@@ -252,7 +253,7 @@ export async function GET(request: NextRequest) {
     clientIds.length === 0
       ? Promise.resolve([])
       : prisma.lonaciClient.findMany({
-          where: { id: { in: clientIds }, deletedAt: null },
+          where: { AND: [{ id: { in: clientIds } }, lonaciClientNotDeletedWhere] },
           select: {
             id: true,
             code: true,
@@ -260,6 +261,7 @@ export async function GET(request: NextRequest) {
             nomComplet: true,
             raisonSociale: true,
             codeMachine: true,
+            terminaux: true,
             cniNumero: true,
             nomContact: true,
             email: true,
@@ -299,7 +301,7 @@ export async function GET(request: NextRequest) {
           categorie: client.categorie,
           nomComplet: client.nomComplet,
           raisonSociale: client.raisonSociale,
-          codeMachine: client.codeMachine,
+          ...clientTerminauxSummary(client),
           cniNumero: client.cniNumero,
           nomContact: client.nomContact,
           email: client.email,
@@ -308,9 +310,7 @@ export async function GET(request: NextRequest) {
           ville: client.ville,
           codePostal: client.codePostal,
           typeDistributeur: client.typeDistributeur,
-          nombreTpm: client.nombreTpm,
           numeroDistributeur: client.numeroDistributeur,
-          numeroTpm: client.numeroTpm,
           notes: client.notes,
           produitsAutorises: client.produitsAutorises ?? [],
           agenceId: client.agenceId,
@@ -653,7 +653,7 @@ export async function GET(request: NextRequest) {
         extraClientIds.length === 0
           ? Promise.resolve([])
           : prisma.lonaciClient.findMany({
-              where: { id: { in: extraClientIds }, deletedAt: null },
+              where: { AND: [{ id: { in: extraClientIds } }, lonaciClientNotDeletedWhere] },
               select: {
                 id: true,
                 code: true,
@@ -661,6 +661,7 @@ export async function GET(request: NextRequest) {
                 nomComplet: true,
                 raisonSociale: true,
                 codeMachine: true,
+                terminaux: true,
                 cniNumero: true,
                 nomContact: true,
                 email: true,
@@ -746,7 +747,7 @@ export async function GET(request: NextRequest) {
                   categorie: client.categorie,
                   nomComplet: client.nomComplet,
                   raisonSociale: client.raisonSociale,
-                  codeMachine: client.codeMachine,
+                  ...clientTerminauxSummary(client),
                   cniNumero: client.cniNumero,
                   nomContact: client.nomContact,
                   email: client.email,
@@ -755,9 +756,7 @@ export async function GET(request: NextRequest) {
                   ville: client.ville,
                   codePostal: client.codePostal,
                   typeDistributeur: client.typeDistributeur,
-                  nombreTpm: client.nombreTpm,
                   numeroDistributeur: client.numeroDistributeur,
-                  numeroTpm: client.numeroTpm,
                   notes: client.notes,
                   produitsAutorises: client.produitsAutorises ?? [],
                   agenceId: client.agenceId,

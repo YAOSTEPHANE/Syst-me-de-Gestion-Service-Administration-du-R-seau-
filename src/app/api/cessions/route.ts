@@ -12,7 +12,9 @@ import {
   type CessionKind,
   type CessionStatus,
   addCessionAttachment,
+  transitionCession,
 } from "@/lib/lonaci/cessions";
+import { autoFinalizeQuietly } from "@/lib/lonaci/workflow-approvals";
 import { requireApiAuth } from "@/lib/auth/guards";
 import {
   CESSION_ALLOWED_MIME,
@@ -250,7 +252,10 @@ export async function POST(request: NextRequest) {
         actorId: auth.user._id ?? "",
       });
     }
-    return NextResponse.json({ item: created }, { status: 201 });
+    const autoFinalize = await autoFinalizeQuietly(() =>
+      transitionCession({ id: created.id, target: "VALIDEE_CHEF_SERVICE", actor: auth.user }),
+    );
+    return NextResponse.json({ item: created, autoFinalize }, { status: 201 });
   } catch (e) {
     const raw = e instanceof Error ? e.message : "Création impossible";
     const message =

@@ -426,7 +426,13 @@ export interface SuccessionCaseDocument {
   staleAlertSentAt?: Date | null;
 }
 
-export type AuditEntityType = "CLIENT" | "CONCESSIONNAIRE" | "DOSSIER" | "CONTRAT" | "SUCCESSION";
+export type AuditEntityType =
+  | "CLIENT"
+  | "CONCESSIONNAIRE"
+  | "DOSSIER"
+  | "CONTRAT"
+  | "SUCCESSION"
+  | "SOUMISSION";
 
 export interface AuditLogDocument {
   entityType: AuditEntityType;

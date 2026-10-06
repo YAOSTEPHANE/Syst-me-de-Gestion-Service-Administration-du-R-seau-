@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { badRequest } from "@/lib/api/error-responses";
+import { badRequest, conflict } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { CLIENT_TYPE_DISTRIBUTEUR } from "@/lib/lonaci/client-constants";
 import { SOUMISSION_STATUTS } from "@/lib/lonaci/soumission-constants";
@@ -71,6 +71,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const code = error instanceof Error ? error.message : "UNKNOWN";
     if (code === "SOUMISSION_NOT_FOUND") {
       return NextResponse.json({ message: "Non trouve" }, { status: 404 });
+    }
+    if (code === "SOUMISSION_IMMUTABLE") {
+      return conflict("Soumission close (payée, annulée ou exonérée) : modification impossible.", code);
     }
     if (code === "AGENCE_FORBIDDEN") {
       return badRequest("Acces refuse pour cette agence.", "AGENCE_FORBIDDEN");

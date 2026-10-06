@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureSuccessionIndexes, recordSuccessionValidationN2 } from "@/lib/lonaci/succession";
+import { workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({}).strict();
 
@@ -16,7 +17,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) return zodBadRequest(parsed.error);
 
   const auth = await requireApiAuth(request, {
-    roles: ["ASSIST_CDS"],
+    roles: workflowStepRoles("ASSIST_CDS"),
     rbac: { resource: "DOSSIERS", action: "VALIDATE_N2" },
   });
   if ("error" in auth) return auth.error;

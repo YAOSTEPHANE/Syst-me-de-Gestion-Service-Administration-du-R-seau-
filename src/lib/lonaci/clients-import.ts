@@ -22,7 +22,22 @@ import {
   resolveImportCniNumero,
   resolveImportNomComplet,
 } from "@/lib/lonaci/clients-import-map";
-import { createClient, findClientByAgenceAndCode, updateClient } from "@/lib/lonaci/clients";
+import {
+  clientTerminauxEqual,
+  mergeClientTerminaux,
+  normalizeClientTerminaux,
+  resolveClientTerminaux,
+  type ClientTerminal,
+} from "@/lib/lonaci/client-terminaux";
+import {
+  ClientTerminalConflictError,
+  clientTerminalConflictMessage,
+  createClient,
+  findClientByAgenceAndCode,
+  findClientTerminalConflict,
+  lonaciClientNotDeletedWhere,
+  updateClient,
+} from "@/lib/lonaci/clients";
 import { normalizeProduitsAutorises } from "@/lib/lonaci/produit-autorises-validation";
 import { findInvalidProduitAutorisesCodes } from "@/lib/lonaci/produit-autorises-validation.server";
 import { listAgences } from "@/lib/lonaci/referentials";
@@ -33,6 +48,8 @@ export type ClientImportRowInput = Record<string, unknown>;
 
 export type NormalizedClientImportRow = {
   code: string;
+  /** Colonne Code renseignée (sinon le code est déduit du code machine, du N° distributeur…). */
+  codeExplicit: boolean;
   categorie: ClientCategorie;
   nomComplet: string;
   raisonSociale: string;
@@ -155,6 +172,7 @@ export function normalizeClientImportRow(
     ok: true,
     value: {
       code,
+      codeExplicit: mapped.code.trim().length > 0,
       categorie,
       nomComplet: resolvedNomComplet,
       raisonSociale: resolvedRaisonSociale,
@@ -194,6 +212,16 @@ export function inferAgenceFromClientCode(
   return resolveAgenceFromImportToken(agenceToken, agences);
 }
 
+/** TPE décrit par une ligne d'import (une ligne = au plus un terminal). */
+export function importRowTerminaux(value: Pick<NormalizedClientImportRow, "codeMachine" | "numeroTpm">): ClientTerminal[] {
+  return normalizeClientTerminaux([{ codeMachine: value.codeMachine, numeroTpm: value.numeroTpm }]);
+}
+
+function importErrorMessage(error: unknown): string {
+  if (error instanceof ClientTerminalConflictError) return clientTerminalConflictMessage(error);
+  return mapCreateError(error instanceof Error ? error.message : "UNKNOWN");
+}
+
 function mapCreateError(code: string): string {
   switch (code) {
     case "CLIENT_IDENTIFIANT_REQUIS":
@@ -212,35 +240,18 @@ function mapCreateError(code: string): string {
 }
 
 async function upsertExistingClientFromImport(
-  existing: {
-    id: string;
-    code: string;
-    categorie: string;
-    nomComplet: string | null;
-    raisonSociale: string;
-    codeMachine: string | null;
-    cniNumero: string | null;
-    nomContact: string | null;
-    email: string | null;
-    telephone: string | null;
-    adresse: string | null;
-    ville: string | null;
-    codePostal: string | null;
-    typeDistributeur: string | null;
-    nombreTpm: number | null;
-    numeroDistributeur: string | null;
-    numeroTpm: string | null;
-    agenceId: string | null;
-    produitsAutorises: string[];
-    notes: string | null;
-  },
+  existing: ExistingClientRow,
   value: NormalizedClientImportRow,
   actor: UserDocument,
   opts: {
     forcedProduit: string | null;
     forcedAgenceId: string | null;
-    /** Code normalisé pour l’agence cible (ex. CLI-ABOBO-0001). */
+    /**
+     * Code normalisé pour l’agence cible (ex. CLI-ABOBO-0001). Ne renomme que les codes
+     * venant de la colonne Code : un code déduit d'un autre TPE ne doit pas écraser l'identifiant.
+     */
     targetCode: string | null;
+    targetAgenceCode: string;
   },
 ): Promise<"updated" | "unchanged"> {
   const sameText = (a: string | null | undefined, b: string | null | undefined) =>
@@ -261,8 +272,13 @@ async function upsertExistingClientFromImport(
   if (!sameText(value.raisonSociale, existing.raisonSociale)) {
     patch.raisonSociale = value.raisonSociale;
   }
-  if (value.codeMachine !== null && !sameText(value.codeMachine, existing.codeMachine)) {
-    patch.codeMachine = value.codeMachine;
+  const rowTerminaux = importRowTerminaux(value);
+  const mergedTerminaux = mergeClientTerminaux(resolveClientTerminaux(existing), rowTerminaux);
+  if (
+    rowTerminaux.length > 0 &&
+    !clientTerminauxEqual(mergedTerminaux, normalizeClientTerminaux(existing.terminaux))
+  ) {
+    patch.terminaux = mergedTerminaux;
   }
   if (!sameText(value.cniNumero, existing.cniNumero)) patch.cniNumero = value.cniNumero;
   if (value.nomContact !== null && !sameText(value.nomContact, existing.nomContact)) {
@@ -290,17 +306,18 @@ async function upsertExistingClientFromImport(
       patch.typeDistributeur = value.typeDistributeur;
     }
   }
-  if (value.nombreTpm !== null && value.nombreTpm !== existing.nombreTpm) {
+  const withoutTerminaux = mergedTerminaux.length === 0;
+  if (withoutTerminaux && value.nombreTpm !== null && value.nombreTpm !== existing.nombreTpm) {
     patch.nombreTpm = value.nombreTpm;
+  }
+  if (withoutTerminaux && value.numeroTpm !== null && !sameText(value.numeroTpm, existing.numeroTpm)) {
+    patch.numeroTpm = value.numeroTpm;
   }
   if (
     value.numeroDistributeur !== null &&
     !sameText(value.numeroDistributeur, existing.numeroDistributeur)
   ) {
     patch.numeroDistributeur = value.numeroDistributeur;
-  }
-  if (value.numeroTpm !== null && !sameText(value.numeroTpm, existing.numeroTpm)) {
-    patch.numeroTpm = value.numeroTpm;
   }
   if (value.notes !== null && !sameText(value.notes, existing.notes)) {
     patch.notes = value.notes;
@@ -311,8 +328,13 @@ async function upsertExistingClientFromImport(
   if (targetAgenceId && existing.agenceId !== targetAgenceId) {
     patch.agenceId = targetAgenceId;
   }
-  if (opts.targetCode && existing.code.trim().toUpperCase() !== opts.targetCode) {
-    patch.code = opts.targetCode;
+  const currentCode = existing.code.trim().toUpperCase();
+  if (opts.targetCode && currentCode !== opts.targetCode) {
+    if (value.codeExplicit) {
+      patch.code = opts.targetCode;
+    } else if (patch.agenceId) {
+      patch.code = remapClientCodeToAgence(currentCode, opts.targetAgenceCode);
+    }
   }
 
   if (Object.keys(patch).length === 0) return "unchanged";
@@ -339,6 +361,7 @@ const existingClientSelect = {
   nomComplet: true,
   raisonSociale: true,
   codeMachine: true,
+  terminaux: true,
   cniNumero: true,
   nomContact: true,
   email: true,
@@ -362,6 +385,7 @@ type ExistingClientRow = {
   nomComplet: string | null;
   raisonSociale: string;
   codeMachine: string | null;
+  terminaux: ClientTerminal[];
   cniNumero: string | null;
   nomContact: string | null;
   email: string | null;
@@ -387,9 +411,10 @@ async function findExistingClientForImport(params: {
   agenceId: string;
   fullCode: string;
   cniNumero: string;
+  terminaux: readonly ClientTerminal[];
   allowCrossAgence: boolean;
 }): Promise<ExistingClientRow | null> {
-  const { agenceId, fullCode, cniNumero, allowCrossAgence } = params;
+  const { agenceId, fullCode, cniNumero, terminaux, allowCrossAgence } = params;
 
   const byAgenceCode = await findClientByAgenceAndCode(agenceId, fullCode);
   if (byAgenceCode && !byAgenceCode.deletedAt) {
@@ -397,20 +422,24 @@ async function findExistingClientForImport(params: {
   }
 
   const byCniSame = await prisma.lonaciClient.findFirst({
-    where: {
-      agenceId,
-      cniNumero,
-      deletedAt: null,
-    },
+    where: { AND: [{ agenceId, cniNumero }, lonaciClientNotDeletedWhere] },
     select: existingClientSelect,
   });
   if (byCniSame) return byCniSame;
 
+  // Un code machine n'appartient qu'à un client : réimport du même TPE sans CNI fiable.
+  const terminalHolder = await findClientTerminalConflict(terminaux);
+  if (terminalHolder) {
+    const holder = await prisma.lonaciClient.findFirst({
+      where: { id: terminalHolder.conflictClientId },
+      select: existingClientSelect,
+    });
+    if (holder) return holder;
+  }
+
   const orphanByCode = await prisma.lonaciClient.findFirst({
     where: {
-      deletedAt: null,
-      code: fullCode,
-      OR: [{ agenceId: null }, { agenceId: "" }],
+      AND: [{ code: fullCode }, lonaciClientNotDeletedWhere, { OR: [{ agenceId: null }, { agenceId: "" }] }],
     },
     select: existingClientSelect,
   });
@@ -418,9 +447,7 @@ async function findExistingClientForImport(params: {
     orphanByCode ??
     (await prisma.lonaciClient.findFirst({
       where: {
-        deletedAt: null,
-        cniNumero,
-        OR: [{ agenceId: null }, { agenceId: "" }],
+        AND: [{ cniNumero }, lonaciClientNotDeletedWhere, { OR: [{ agenceId: null }, { agenceId: "" }] }],
       },
       select: existingClientSelect,
     }));
@@ -429,13 +456,13 @@ async function findExistingClientForImport(params: {
   if (!allowCrossAgence) return null;
 
   const byCniAny = await prisma.lonaciClient.findFirst({
-    where: { deletedAt: null, cniNumero },
+    where: { AND: [{ cniNumero }, lonaciClientNotDeletedWhere] },
     select: existingClientSelect,
   });
   if (byCniAny) return byCniAny;
 
   const byExactCodeAny = await prisma.lonaciClient.findFirst({
-    where: { deletedAt: null, code: fullCode },
+    where: { AND: [{ code: fullCode }, lonaciClientNotDeletedWhere] },
     select: existingClientSelect,
   });
   if (byExactCodeAny) return byExactCodeAny;
@@ -444,10 +471,7 @@ async function findExistingClientForImport(params: {
   if (!suffix) return null;
 
   const candidates = await prisma.lonaciClient.findMany({
-    where: {
-      deletedAt: null,
-      code: { endsWith: `-${suffix}` },
-    },
+    where: { AND: [{ code: { endsWith: `-${suffix}` } }, lonaciClientNotDeletedWhere] },
     select: existingClientSelect,
     take: 40,
   });
@@ -559,10 +583,12 @@ export async function importClientsFromRows(
       continue;
     }
 
+    const rowTerminaux = importRowTerminaux(value);
     const existing = await findExistingClientForImport({
       agenceId: agence._id,
       fullCode,
       cniNumero: value.cniNumero,
+      terminaux: rowTerminaux,
       // Réaffecte les fiches déjà créées sous une autre agence vers celle du fichier.
       allowCrossAgence: true,
     });
@@ -573,13 +599,14 @@ export async function importClientsFromRows(
           forcedProduit,
           forcedAgenceId: agence._id,
           targetCode: fullCode,
+          targetAgenceCode: agence.code,
         });
         if (outcome === "updated") updated += 1;
         else unchanged += 1;
         results.push({
           row: rowNumber,
           ok: true,
-          code: fullCode,
+          code: value.codeExplicit ? fullCode : existing.code,
           clientId: existing.id,
         });
       } catch (error) {
@@ -587,7 +614,7 @@ export async function importClientsFromRows(
         results.push({
           row: rowNumber,
           ok: false,
-          error: mapCreateError(error instanceof Error ? error.message : "UNKNOWN"),
+          error: importErrorMessage(error),
         });
       }
       continue;
@@ -622,7 +649,7 @@ export async function importClientsFromRows(
           categorie: value.categorie,
           nomComplet: value.nomComplet,
           raisonSociale: value.raisonSociale,
-          codeMachine: value.codeMachine,
+          terminaux: rowTerminaux,
           cniNumero: value.cniNumero,
           nomContact: value.nomContact,
           email: value.email,
@@ -654,6 +681,7 @@ export async function importClientsFromRows(
           agenceId: agence._id,
           fullCode,
           cniNumero: value.cniNumero,
+          terminaux: rowTerminaux,
           allowCrossAgence: true,
         });
         if (raced) {
@@ -662,13 +690,14 @@ export async function importClientsFromRows(
               forcedProduit,
               forcedAgenceId: agence._id,
               targetCode: fullCode,
+              targetAgenceCode: agence.code,
             });
             if (outcome === "updated") updated += 1;
             else unchanged += 1;
             results.push({
               row: rowNumber,
               ok: true,
-              code: fullCode,
+              code: value.codeExplicit ? fullCode : raced.code,
               clientId: raced.id,
             });
             continue;
@@ -677,9 +706,7 @@ export async function importClientsFromRows(
             results.push({
               row: rowNumber,
               ok: false,
-              error: mapCreateError(
-                upsertError instanceof Error ? upsertError.message : "UNKNOWN",
-              ),
+              error: importErrorMessage(upsertError),
             });
             continue;
           }
@@ -696,7 +723,7 @@ export async function importClientsFromRows(
       results.push({
         row: rowNumber,
         ok: false,
-        error: mapCreateError(message),
+        error: importErrorMessage(error),
       });
     }
   }

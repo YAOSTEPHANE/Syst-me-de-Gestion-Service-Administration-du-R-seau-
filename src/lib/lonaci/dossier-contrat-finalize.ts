@@ -18,8 +18,9 @@ import {
   referenceAnnexeFromContrat,
 } from "@/lib/lonaci/contrat-document";
 import { findDossierById, transitionDossier } from "@/lib/lonaci/dossiers";
-import { getDossierProduitCodes } from "@/lib/lonaci/dossier-produits";
+import { getDossierProduitCodes, resolveDossierCautionsStatus } from "@/lib/lonaci/dossier-produits";
 import type { ContratDocument, DossierDocument, UserDocument } from "@/lib/lonaci/types";
+import { logger } from "@/lib/observability/logger";
 
 export type FinalizeDossierContratErrorCode =
   | "DOSSIER_NOT_FOUND"
@@ -46,6 +47,23 @@ export type FinalizeDossierContratResult =
       message: string;
       httpStatus: number;
     };
+
+async function finalizationBlockedMessage(dossier: DossierDocument, prefix: string): Promise<string> {
+  let unpaid: Awaited<ReturnType<typeof resolveDossierCautionsStatus>>["links"] = [];
+  try {
+    const cautions = await resolveDossierCautionsStatus(dossier);
+    unpaid = cautions.links.filter((l) => l.status !== "PAYEE" || !l.paymentReference);
+  } catch {
+    unpaid = [];
+  }
+  if (unpaid.length > 0) {
+    const details = unpaid
+      .map((l) => (l.status === "ABSENTE" ? `${l.produitCode} : aucune caution` : `${l.referenceLabel} (${l.produitCode})`))
+      .join(", ");
+    return `${prefix} : caution non payée — ${details}. Enregistrez le paiement de la caution puis réessayez.`;
+  }
+  return `${prefix} : la checklist documents doit être complète (tous les documents obligatoires « Fourni »).`;
+}
 
 /**
  * Finalise un dossier CONTRAT_ACTUALISATION : un contrat par produit du dossier.
@@ -105,8 +123,7 @@ export async function finalizeDossierContratActualisation(input: {
       return {
         ok: false,
         code: "CONTRAT_NOT_PREPARED",
-        message:
-          "Contrat non généré : décharge définitive requise (checklist complète et caution payée).",
+        message: await finalizationBlockedMessage(before, "Contrat non généré"),
         httpStatus: 409,
       };
     }
@@ -118,7 +135,7 @@ export async function finalizeDossierContratActualisation(input: {
     return {
       ok: false,
       code: "NOT_READY",
-      message: "Finalisation impossible : checklist incomplète ou caution non payée.",
+      message: await finalizationBlockedMessage(before, "Finalisation impossible"),
       httpStatus: 409,
     };
   }
@@ -189,7 +206,14 @@ export async function finalizeDossierContratActualisation(input: {
           input.actor,
           produitCode,
         );
-      } catch {
+      } catch (archiveError) {
+        logger.error("Contrat archive failed", {
+          event: "CONTRAT_ARCHIVE_FAILED",
+          dossierId: input.dossierId,
+          produitCode,
+          error: archiveError instanceof Error ? archiveError.message : String(archiveError),
+          stack: archiveError instanceof Error ? archiveError.stack : undefined,
+        });
         return {
           ok: false,
           code: "ARCHIVE_FAILED",
@@ -216,6 +240,12 @@ export async function finalizeDossierContratActualisation(input: {
         httpStatus: 409,
       };
     }
+    logger.error("Contrat finalization failed", {
+      event: "CONTRAT_FINALIZE_FAILED",
+      dossierId: input.dossierId,
+      error: code,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return {
       ok: false,
       code: "FINALIZE_FAILED",

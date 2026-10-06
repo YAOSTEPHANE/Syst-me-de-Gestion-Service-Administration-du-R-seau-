@@ -7,6 +7,8 @@ import {
   normalizeClientCategorie,
   normalizeClientTypeDistributeur,
 } from "@/lib/lonaci/client-constants";
+import { clientTerminauxSummary } from "@/lib/lonaci/client-terminaux";
+import { findConcessionnaireBySourceClientId } from "@/lib/lonaci/client-to-concessionnaire";
 import { findLonaciClientById } from "@/lib/lonaci/clients";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { contratPartyFromDossier } from "@/lib/lonaci/dossier-contrat-party";
@@ -42,6 +44,18 @@ export interface ContratPartySnapshot {
   numeroTpm: string | null;
   notes: string | null;
   produitsAutorises: string[];
+  /** RIB de la fiche concessionnaire (pour un client : celle du PDV rattaché, s'il existe). */
+  compteBancaire: string | null;
+  banqueEtablissement: string | null;
+}
+
+type PartyRib = Pick<ContratPartySnapshot, "compteBancaire" | "banqueEtablissement">;
+
+function ribFromConcessionnaire(conc: Pick<ConcessionnaireDocument, "compteBancaire" | "banqueEtablissement"> | null): PartyRib {
+  return {
+    compteBancaire: conc?.compteBancaire?.trim() || null,
+    banqueEtablissement: conc?.banqueEtablissement?.trim() || null,
+  };
 }
 
 function emptyClientExtras(): Pick<
@@ -104,6 +118,7 @@ export function snapshotFromConcessionnaire(
     codePostal: conc.codePostal,
     agenceLabel,
     ...emptyClientExtras(),
+    ...ribFromConcessionnaire(conc),
   };
 }
 
@@ -114,6 +129,7 @@ export function snapshotFromLonaciClient(
     nomComplet: string | null;
     raisonSociale: string;
     codeMachine?: string | null;
+    terminaux?: ReadonlyArray<{ codeMachine: string; numeroTpm: string | null }> | null;
     cniNumero: string | null;
     nomContact?: string | null;
     email: string | null;
@@ -129,10 +145,12 @@ export function snapshotFromLonaciClient(
     produitsAutorises?: string[] | null;
   },
   agenceLabel: string,
+  rib: PartyRib = ribFromConcessionnaire(null),
 ): ContratPartySnapshot {
   const categorie = normalizeClientCategorie(client.categorie);
   const typeDistributeur = normalizeClientTypeDistributeur(client.typeDistributeur);
-  const codeMachine = client.codeMachine?.trim() || null;
+  const tpe = clientTerminauxSummary(client);
+  const codeMachine = tpe.codeMachine;
   return {
     partyKind: "client",
     nomComplet: clientDisplayName({
@@ -159,13 +177,14 @@ export function snapshotFromLonaciClient(
     typeDistributeurLabel: typeDistributeur
       ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[typeDistributeur]
       : null,
-    nombreTpm: typeof client.nombreTpm === "number" ? client.nombreTpm : null,
+    nombreTpm: tpe.nombreTpm,
     numeroDistributeur: client.numeroDistributeur?.trim() || null,
-    numeroTpm: client.numeroTpm?.trim() || null,
+    numeroTpm: tpe.numeroTpm,
     notes: client.notes?.trim() || null,
     produitsAutorises: Array.isArray(client.produitsAutorises)
       ? client.produitsAutorises.map((p) => String(p).trim()).filter(Boolean)
       : [],
+    ...rib,
   };
 }
 
@@ -184,8 +203,11 @@ export async function loadPartySnapshotForDossier(
 
   const client = await findLonaciClientById(party.lonaciClientId);
   if (!client) return null;
-  const agenceLabel = await resolveAgenceLabel(client.agenceId ?? dossier.agenceId);
-  return snapshotFromLonaciClient(client, agenceLabel);
+  const [agenceLabel, pdvRattache] = await Promise.all([
+    resolveAgenceLabel(client.agenceId ?? dossier.agenceId),
+    findConcessionnaireBySourceClientId(party.lonaciClientId),
+  ]);
+  return snapshotFromLonaciClient(client, agenceLabel, ribFromConcessionnaire(pdvRattache));
 }
 
 /** Parse un snapshot stocké (rétrocompatible avec les payloads sans nouveaux champs). */
@@ -229,5 +251,7 @@ export function parseContratPartySnapshot(raw: unknown): ContratPartySnapshot | 
     numeroTpm: c.numeroTpm != null ? String(c.numeroTpm) : null,
     notes: c.notes != null ? String(c.notes) : null,
     produitsAutorises,
+    compteBancaire: c.compteBancaire != null ? String(c.compteBancaire) : null,
+    banqueEtablissement: c.banqueEtablissement != null ? String(c.banqueEtablissement) : null,
   };
 }

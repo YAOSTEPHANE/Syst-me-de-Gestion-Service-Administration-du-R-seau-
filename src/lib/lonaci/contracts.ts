@@ -4,7 +4,7 @@ import type { ContratDocument, ContratOperationType, UserDocument } from "@/lib/
 import { appendAuditLog } from "@/lib/lonaci/audit";
 import { prisma } from "@/lib/prisma";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
-import { findLonaciClientById } from "@/lib/lonaci/clients";
+import { findLonaciClientById, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import type { ContratPartyRef } from "@/lib/lonaci/dossier-contrat-party";
 import { referenceAnnexeFromContrat } from "@/lib/lonaci/contrat-document";
 import { assertConcessionnaireOperationnel, canReadConcessionnaire, isStatutFicheGelee, resolveListAgenceFilter } from "@/lib/lonaci/access";
@@ -320,22 +320,33 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
 
   const reference = await nextContratReference(produitCodeNormalized, input.dateEffet);
   const annexeReference = referenceAnnexeFromContrat(reference) || null;
-  const created = await prisma.contrat.create({
-    data: {
-      reference,
-      annexeReference,
-      concessionnaireId,
-      lonaciClientId,
-      produitCode: produitCodeNormalized,
-      operationType: input.operationType,
-      status: "ACTIF",
-      dateEffet: input.dateEffet,
-      dossierId: input.dossierId,
-      createdByUserId: input.actor._id ?? "",
-      updatedByUserId: input.actor._id ?? "",
-      deletedAt: null,
-    },
+  const contratData = {
+    reference,
+    annexeReference,
+    concessionnaireId,
+    lonaciClientId,
+    produitCode: produitCodeNormalized,
+    operationType: input.operationType,
+    status: "ACTIF",
+    dateEffet: input.dateEffet,
+    dossierId: input.dossierId,
+    updatedByUserId: input.actor._id ?? "",
+    deletedAt: null,
+  };
+  // L'index unique (dossierId, produitCode) couvre aussi les contrats supprimés logiquement :
+  // un dossier revalidé après réinitialisation réutilise sa ligne supprimée.
+  const deletedForDossier = await prisma.contrat.findFirst({
+    where: { dossierId: input.dossierId, produitCode: produitCodeNormalized, deletedAt: { not: null } },
+    select: { id: true, reference: true },
   });
+  const created = deletedForDossier
+    ? await prisma.contrat.update({
+        where: { id: deletedForDossier.id },
+        data: { ...contratData, createdByUserId: input.actor._id ?? "", createdAt: new Date() },
+      })
+    : await prisma.contrat.create({
+        data: { ...contratData, createdByUserId: input.actor._id ?? "" },
+      });
 
   await appendAuditLog({
     entityType: "CONTRAT",
@@ -348,6 +359,7 @@ export async function finalizeContratFromDossier(input: FinalizeContratInput): P
       lonaciClientId: lonaciClientId ?? undefined,
       produitCode: created.produitCode,
       operationType: created.operationType,
+      ...(deletedForDossier ? { previousDeletedReference: deletedForDossier.reference } : {}),
     },
   });
 
@@ -665,7 +677,7 @@ export async function listContrats(params: ListContratsParams) {
         select: { id: true },
       }),
       prisma.lonaciClient.findMany({
-        where: { deletedAt: null, agenceId },
+        where: { AND: [lonaciClientNotDeletedWhere, { agenceId }] },
         select: { id: true },
       }),
     ]);

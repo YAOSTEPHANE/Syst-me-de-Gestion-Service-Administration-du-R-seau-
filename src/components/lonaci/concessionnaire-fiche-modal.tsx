@@ -551,7 +551,7 @@ export default function ConcessionnaireFicheModal({
     inscriptionStatut === "DOSSIER_EN_COURS" &&
     Boolean(detail?.codePdv?.trim()) &&
     Boolean(detail?.inscriptionValideN1At);
-  const canSubmitInscription = inscriptionEditable;
+  const canSubmitInscription = inscriptionEditable && !awaitingCautionPayment;
   const canValidateN1 =
     inscriptionStatut === "SOUMIS" &&
     (areWorkflowApprovalsEnabled()
@@ -845,7 +845,7 @@ export default function ConcessionnaireFicheModal({
       title="Fiche concessionnaire"
       description={
         detail
-          ? `${detail.codePdv ?? "Code PDV après validation N1"} — ${detail.nomComplet}`
+          ? `${detail.codePdv ?? (areWorkflowApprovalsEnabled() ? "Code PDV après validation N1" : "Code PDV à la soumission")} — ${detail.nomComplet}`
           : "Chargement de la fiche…"
       }
       size="lg"
@@ -858,7 +858,9 @@ export default function ConcessionnaireFicheModal({
             </h3>
             {detail ? (
               <p className="mt-0.5 text-sm text-slate-600">
-                <span className="font-mono">{detail.codePdv ?? "Code PDV après validation N1"}</span>
+                <span className="font-mono">
+                  {detail.codePdv ?? (areWorkflowApprovalsEnabled() ? "Code PDV après validation N1" : "Code PDV à la soumission")}
+                </span>
                 <StatusBadge className="ml-2" tone={INSCRIPTION_TONES[detail.inscriptionStatut] ?? "neutral"}>
                   {CONCESSIONNAIRE_INSCRIPTION_STATUT_LABELS[detail.inscriptionStatut]}
                 </StatusBadge>
@@ -935,14 +937,21 @@ export default function ConcessionnaireFicheModal({
                   <p className="font-semibold">Parcours d&apos;inscription</p>
                   {awaitingCautionPayment ? (
                     <p className="mt-1 text-xs text-indigo-900/90">
-                      Code PDV <strong>{detail.codePdv}</strong> attribué après validation N1. Enregistrez et finalisez
-                      le paiement de la caution pour activer le point de vente.
+                      Code PDV <strong>{detail.codePdv}</strong> attribué
+                      {areWorkflowApprovalsEnabled() ? " après validation N1" : ""}. Enregistrez le paiement de la
+                      caution pour activer le point de vente.
                     </p>
-                  ) : (
+                  ) : areWorkflowApprovalsEnabled() ? (
                     <p className="mt-1 text-xs text-indigo-900/90">
                       Dossier en cours (avant paiement caution) : complétez la fiche, les pièces (onglet Pièces) et la
                       checklist, puis soumettez pour validation N1. Le code PDV sera attribué à la validation N1 ; le
                       PDV devient actif après paiement de la caution.
+                    </p>
+                  ) : (
+                    <p className="mt-1 text-xs text-indigo-900/90">
+                      Dossier en cours (avant paiement caution) : complétez la fiche, les pièces (onglet Pièces) et la
+                      checklist, puis soumettez. Le code PDV est attribué dès la soumission ; le PDV devient actif après
+                      paiement de la caution.
                     </p>
                   )}
                   {detail.inscriptionRejetMotif ? (
@@ -956,7 +965,7 @@ export default function ConcessionnaireFicheModal({
                         onClick={() => void runInscriptionTransition("SUBMIT")}
                         className="rounded-lg border border-cyan-600 bg-cyan-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-cyan-700 disabled:opacity-50"
                       >
-                        Soumettre (N1)
+                        {areWorkflowApprovalsEnabled() ? "Soumettre (N1)" : "Soumettre"}
                       </button>
                     ) : null}
                     {inscriptionStatut === "REJETE" && saisieReferentiel ? (

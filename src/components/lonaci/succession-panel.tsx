@@ -32,7 +32,7 @@ import {
 import { parseLonaciRole, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
 import {
   areWorkflowApprovalsEnabled,
-  isOperationalWorkflowRole,
+  roleMayAdvanceWorkflow,
 } from "@/lib/lonaci/workflow-approvals";
 import {
   SUCCESSION_STATUTS_SPEC_103,
@@ -438,8 +438,9 @@ export default function SuccessionPanel() {
   function advanceBlockReason(row: CaseRow): string | undefined {
     const progress = rowChecklistProgress(row);
     const step = row.currentStepLabel;
+    const approvals = areWorkflowApprovalsEnabled();
     if (step === "DECISION") {
-      if (meRole !== "CHEF_SERVICE") {
+      if (!roleMayAdvanceWorkflow(meRole, "CHEF_SERVICE")) {
         return "Seul le chef de service peut enregistrer la décision finale (étape 21).";
       }
       if (!decisionType) {
@@ -451,10 +452,10 @@ export default function SuccessionPanel() {
       if (!progress.complet) {
         return "Checklist incomplète : toutes les pièces obligatoires doivent être « Fourni ».";
       }
-      if (!row.validationN1At || !row.validationN2At) {
+      if (approvals && (!row.validationN1At || !row.validationN2At)) {
         return "Validations N1 et N2 requises avant la vérification juridique OHADA (étape 20).";
       }
-      if (meRole !== "CHEF_SERVICE") {
+      if (!roleMayAdvanceWorkflow(meRole, "CHEF_SERVICE")) {
         return "Seul le chef de service peut valider la vérification juridique OHADA (étape 20).";
       }
       return undefined;
@@ -463,7 +464,7 @@ export default function SuccessionPanel() {
       if (!progress.complet) {
         return "Complétez la checklist de l’étape 19 avant la vérification juridique OHADA.";
       }
-      if (!row.validationN1At || !row.validationN2At) {
+      if (approvals && (!row.validationN1At || !row.validationN2At)) {
         return "Enregistrez les validations N1 (chef de section) et N2 (assistant CDS).";
       }
     }
@@ -997,8 +998,9 @@ export default function SuccessionPanel() {
       <div className={`${cardClass} mb-5`}>
         <h3 className="text-sm font-semibold text-slate-900">Avancer une étape</h3>
         <p className="mt-1 text-xs text-slate-600">
-          Étape 18 : renseignez l&apos;ayant droit. Étape 19 : checklist + validations N1/N2. Étape 20 :
-          chef de service (OHADA). Étape 21 : décision transfert ou résiliation (chef de service).
+          {areWorkflowApprovalsEnabled()
+            ? "Étape 18 : renseignez l’ayant droit. Étape 19 : checklist + validations N1/N2. Étape 20 : chef de service (OHADA). Étape 21 : décision transfert ou résiliation (chef de service)."
+            : "Étape 18 : renseignez l’ayant droit. Étape 19 : checklist complète. Étape 20 : vérification juridique OHADA. Étape 21 : décision transfert ou résiliation."}
         </p>
         {selectedRow && selectedRow.status === "OUVERT" && selectedRowProgress ? (
           <div className="mt-3">
@@ -1014,7 +1016,8 @@ export default function SuccessionPanel() {
                 Complétez la checklist de l’étape 19 avant la vérification juridique OHADA.
               </p>
             ) : null}
-            {selectedRow.currentStepLabel === "PIECES_JUSTIFICATIVES" &&
+            {areWorkflowApprovalsEnabled() &&
+            selectedRow.currentStepLabel === "PIECES_JUSTIFICATIVES" &&
             selectedRowProgress.complet &&
             (!selectedRow.validationN1At || !selectedRow.validationN2At) ? (
               <p className="mt-2 text-[11px] font-medium text-amber-800">
@@ -1286,6 +1289,7 @@ export default function SuccessionPanel() {
                 {!detail.documents.length && !detail.acteDeces ? <li>Aucun document</li> : null}
               </ul>
             </div>
+            {areWorkflowApprovalsEnabled() ? (
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold">Étape 19 — Validations N1 / N2 (vérification documentaire)</p>
               <ul className="mt-1 list-inside list-disc space-y-1 text-slate-700">
@@ -1312,10 +1316,7 @@ export default function SuccessionPanel() {
               </ul>
               {detail.status === "OUVERT" ? (
                 <div className="mt-2 flex flex-wrap gap-2">
-                  {!detail.validationN1At &&
-                  (areWorkflowApprovalsEnabled()
-                    ? meRole === "CHEF_SECTION"
-                    : isOperationalWorkflowRole(meRole)) ? (
+                  {!detail.validationN1At && meRole === "CHEF_SECTION" ? (
                     <button
                       type="button"
                       disabled={validationBusy !== null}
@@ -1325,11 +1326,7 @@ export default function SuccessionPanel() {
                       {validationBusy === "N1" ? "…" : workflowAdvanceLabel()}
                     </button>
                   ) : null}
-                  {detail.validationN1At &&
-                  !detail.validationN2At &&
-                  (areWorkflowApprovalsEnabled()
-                    ? meRole === "ASSIST_CDS"
-                    : isOperationalWorkflowRole(meRole)) ? (
+                  {detail.validationN1At && !detail.validationN2At && meRole === "ASSIST_CDS" ? (
                     <button
                       type="button"
                       disabled={validationBusy !== null}
@@ -1352,6 +1349,7 @@ export default function SuccessionPanel() {
                 </div>
               ) : null}
             </div>
+            ) : null}
             <div className="rounded-xl border border-slate-200 bg-white p-3">
               <p className="font-semibold">Décision</p>
               <p className="text-slate-700">

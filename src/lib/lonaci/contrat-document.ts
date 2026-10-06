@@ -92,6 +92,14 @@ export function partyIdentityPdfFields(party: ContratPartySnapshot): PdfField[] 
     label: "N° TPM",
     value: fieldOrDash(party.numeroTpm),
   });
+  fields.push({
+    label: "RIB — N° de compte",
+    value: fieldOrDash(party.compteBancaire),
+  });
+  fields.push({
+    label: "Banque",
+    value: fieldOrDash(party.banqueEtablissement),
+  });
   if ((party.produitsAutorises ?? []).length > 0) {
     fields.push({ label: "Produits autorisés", value: (party.produitsAutorises ?? []).join(", ") });
   }
@@ -226,6 +234,8 @@ function parseContratGenereRecord(raw: unknown): ContratGenerePayload | null {
           numeroTpm: null,
           notes: null,
           produitsAutorises: [],
+          compteBancaire: null,
+          banqueEtablissement: null,
         };
       }
       return parsed;

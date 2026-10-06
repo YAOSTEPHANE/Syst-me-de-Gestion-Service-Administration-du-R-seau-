@@ -189,12 +189,12 @@ describe("documents métier migrés vers le socle PDF", () => {
     {
       name: "décharge définitive",
       render: () => renderDossierDechargeDefinitivePdf(definitiveView),
-      expected: ["DÉCHARGE DÉFINITIVE", "PAY-2026-001", "FPD-002"],
+      expected: ["DÉCHARGE DÉFINITIVE", "PAY-2026-001", "FPD-002", "Le Chef de Service LONACI", "Signature et cachet"],
     },
     {
       name: "remise de contrat",
       render: () => renderDossierDechargeContratPdf(contratView),
-      expected: ["REMISE DU CONTRAT", "CTR-2026-001", "Signature du client"],
+      expected: ["DECHARGE CONTRAT", "CTR-2026-001", "Signature du client", "Le Chef de Service LONACI"],
     },
     {
       name: "acte de cession",
@@ -238,7 +238,31 @@ describe("documents métier migrés vers le socle PDF", () => {
     }
   });
 
-  it("pagine une remise multiproduit et conserve toutes les références", async () => {
+  it("garde la décharge contrat sur une seule page, signature du Chef de Service puis agent en bas", async () => {
+    const parsed = await readPdf(await renderDossierDechargeContratPdf(contratView));
+    const text = parsed.pages.join(" ");
+    expect(parsed.pageCount).toBe(1);
+    expect(text).not.toContain("Cachet et signature LONACI");
+    expect(text.lastIndexOf("Générée par")).toBeGreaterThan(text.indexOf("Le Chef de Service LONACI"));
+  });
+
+  it("affiche les montants avec une espace simple comme séparateur de milliers", async () => {
+    const text = (await readPdf(await renderDossierDechargeDefinitivePdf(definitiveView))).pages.join(" ");
+    expect(text).toContain("500 000");
+    expect(text).not.toMatch(/500\s*\/\s*000/);
+  });
+
+  it("garde la décharge définitive sur une seule page avec la signature du Chef de Service", async () => {
+    const documentsFournis = Array.from({ length: 300 }, (_, index) => `Pièce validée numéro ${index + 1}`);
+    const parsed = await readPdf(await renderDossierDechargeDefinitivePdf({ ...definitiveView, documentsFournis }));
+    const text = parsed.pages.join(" ");
+    expect(parsed.pageCount).toBe(1);
+    expect(text).toContain("Pièce validée numéro 1");
+    expect(text).toMatch(/et \d+ autre\(s\)/);
+    expect(text.lastIndexOf("Générée par")).toBeGreaterThan(text.indexOf("Le Chef de Service LONACI"));
+  });
+
+  it("résume une remise multiproduit trop longue pour rester sur une seule page", async () => {
     const produits = Array.from({ length: 80 }, (_, index) => ({
       produitCode: `PRD-${index + 1}`,
       produitLibelle: `Produit institutionnel ${index + 1}`,
@@ -251,13 +275,12 @@ describe("documents métier migrés vers le socle PDF", () => {
         produits,
       }),
     );
-    expect(parsed.pageCount).toBeGreaterThan(1);
+    expect(parsed.pageCount).toBe(1);
     const text = parsed.pages.join(" ");
-    expect(text).toContain("CTR-2026-080");
-    expect(text).toContain("ANN-2026-080");
-    for (const [index, page] of parsed.pages.entries()) {
-      expect(page).toContain(`Page ${index + 1}/${parsed.pageCount}`);
-      expect(page).toContain("LONACI");
-    }
+    expect(text).toContain("CTR-2026-001");
+    expect(text).toContain("ANN-2026-001");
+    expect(text).toMatch(/et \d+ autre\(s\)/);
+    expect(text).toContain("Le Chef de Service LONACI");
+    expect(text).toContain("Page 1/1");
   });
 });

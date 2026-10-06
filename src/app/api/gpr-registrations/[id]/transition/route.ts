@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { ensureGprGrattageIndexes, GPR_REGISTRATION_STATUSES, transitionGprRegistration } from "@/lib/lonaci/gpr-grattage";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   targetStatus: z.enum(GPR_REGISTRATION_STATUSES),
@@ -30,7 +31,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
             ? "REJECT"
             : "UPDATE";
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled() ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] : workflowStepRoles("CHEF_SERVICE"),
     rbac: { resource: "DOSSIERS", action: rbacAction },
   });
   if ("error" in auth) return auth.error;

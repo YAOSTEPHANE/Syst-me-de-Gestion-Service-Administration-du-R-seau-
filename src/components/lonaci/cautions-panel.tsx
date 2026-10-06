@@ -24,7 +24,13 @@ import {
 import { captureByAliases, extractPdfText, normalizeDateToIso, normalizeNumericString } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { getAssignedWorkflowTarget, workflowActionLabelForTarget } from "@/lib/lonaci/workflow-ui-policy";
-import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
+import {
+  areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
+  isOperationalWorkflowRole,
+  workflowAdvanceLabel,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { CautionEtatMensuelParProduitBlock } from "@/components/lonaci/caution-etat-mensuel-par-produit-block";
 import ProduitSelectedPiecesChecklist from "@/components/lonaci/produit-selected-pieces-checklist";
@@ -37,6 +43,12 @@ import {
 } from "@/components/lonaci/caution-fiche-definitive-modal";
 import { CAUTION_FICHE_AGENCE_INSCRIPTION_LABEL } from "@/lib/lonaci/caution-fiche-provisoire-constants";
 import { COURRIER_COMPTABILITE_TITLE } from "@/lib/lonaci/courrier-comptabilite-constants";
+import {
+  CAUTION_PAID_PRESET_LABELS,
+  CAUTION_PAID_PRESETS,
+  cautionPaidPresetRange,
+  type CautionPaidPreset,
+} from "@/lib/lonaci/caution-paid-period";
 import { aggregateEtatMensuelLatestMonth } from "@/lib/lonaci/caution-etat-mensuel-display";
 import type { CautionEtatMensuelProduitRow } from "@/lib/lonaci/sprint4";
 import type { ProduitDocumentChecklistItem } from "@/lib/lonaci/types";
@@ -146,7 +158,7 @@ function labelTab(tab: CautionListTab): string {
     case "EN_ATTENTE":
       return "Attendu caution";
     case "VALIDATED_THIS_MONTH":
-      return "Terminées";
+      return "Payées";
     default:
       return "Cautions";
   }
@@ -575,6 +587,8 @@ async function fetchCautionsList(input: {
   tab: CautionListTab;
   pageSize: number;
   q?: string;
+  paidFrom?: string;
+  paidTo?: string;
 }): Promise<{ items: CautionListItem[]; total: number }> {
   const params = new URLSearchParams({
     page: "1",
@@ -583,6 +597,10 @@ async function fetchCautionsList(input: {
   });
   const q = input.q?.trim();
   if (q) params.set("q", q);
+  if (input.tab === "VALIDATED_THIS_MONTH") {
+    if (input.paidFrom) params.set("paidFrom", input.paidFrom);
+    if (input.paidTo) params.set("paidTo", input.paidTo);
+  }
   const response = await fetch(`/api/cautions?${params.toString()}`, {
     credentials: "include",
     cache: "no-store",
@@ -622,8 +640,8 @@ export default function CautionsPanel() {
   const [listTotal, setListTotal] = useState(0);
   const [q, setQ] = useState("");
   const [qDebounced, setQDebounced] = useState("");
-
-  const pageSize = 50;
+  const [paidPreset, setPaidPreset] = useState<CautionPaidPreset | "PERSO">("MOIS");
+  const [paidRange, setPaidRange] = useState(() => cautionPaidPresetRange("MOIS"));
 
   useEffect(() => {
     const timer = window.setTimeout(() => setQDebounced(q.trim()), 300);
@@ -694,11 +712,14 @@ export default function CautionsPanel() {
 
   const renderCautionListActionCell = (row: CautionListItem) => {
       const pipelineStatus = ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"].includes(row.status);
-      const assignedTarget = getAssignedWorkflowTarget({
-        workflow: "CAUTIONS",
-        role: meRbacRole,
-        status: row.status,
-      });
+      const assignedTarget =
+        !areWorkflowApprovalsEnabled() && row.status === "A_CORRIGER" && isOperationalWorkflowRole(meRbacRole)
+          ? "PAYEE"
+          : getAssignedWorkflowTarget({
+              workflow: "CAUTIONS",
+              role: meRbacRole,
+              status: row.status,
+            });
       const mayFinalize = meRbacRole
         ? canRole({ role: meRbacRole, resource: "CAUTIONS", action: "FINALIZE" }).allowed
         : false;
@@ -1053,7 +1074,13 @@ export default function CautionsPanel() {
     try {
       const tabEff = nextTab ?? tab;
       const [list, a, meRes, etatRes] = await Promise.all([
-        fetchCautionsList({ tab: tabEff, pageSize, q: qDebounced }),
+        fetchCautionsList({
+          tab: tabEff,
+          pageSize: tabEff === "VALIDATED_THIS_MONTH" ? 100 : 50,
+          q: qDebounced,
+          paidFrom: paidRange.paidFrom,
+          paidTo: paidRange.paidTo,
+        }),
         fetchAlerts().catch(() => []),
         fetch("/api/auth/me", { credentials: "include", cache: "no-store" }).catch(() => null),
         fetch(`/api/cautions/etat-mensuel-produits?months=12&_=${Date.now()}`, {
@@ -1100,7 +1127,7 @@ export default function CautionsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [pageSize, tab, qDebounced]);
+  }, [tab, qDebounced, paidRange]);
 
   useEffect(() => {
     reloadCautionsListRef.current = load;
@@ -1278,11 +1305,13 @@ export default function CautionsPanel() {
           paymentReference: string;
           modeReglement: CautionEncaissementMode;
           agentNom?: string;
+          autoFinalize?: AutoFinalizeOutcome | null;
         };
       } | null;
       if (!res.ok) {
         throw new Error(raw?.message ?? "Enregistrement du paiement impossible");
       }
+      const autoFinalize = raw?.fiche?.autoFinalize ?? null;
       const targetRow = regularizeTarget;
       setRegularizeTarget(null);
       setRegularizeRef("");
@@ -1292,9 +1321,10 @@ export default function CautionsPanel() {
       }
       notify.success(
         raw?.fiche?.numeroFicheDefinitive
-          ? `Paiement validé — fiche définitive ${raw.fiche.numeroFicheDefinitive} générée.`
+          ? `Paiement validé — fiche définitive ${raw.fiche.numeroFicheDefinitive} générée${autoFinalize?.finalized ? " — caution payée." : autoFinalizeSuffix(autoFinalize)}`
           : "Paiement enregistré — finalisation possible.",
       );
+      await reloadCautionsListRef.current?.();
     } catch (err) {
       notify.error(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
     } finally {
@@ -2419,10 +2449,11 @@ export default function CautionsPanel() {
             tab === "VALIDATED_THIS_MONTH" ? "ring-2 ring-emerald-200" : "hover:bg-white"
           }`}
         >
-          <div className="text-xs font-medium text-emerald-700">Terminées</div>
+          <div className="text-xs font-medium text-emerald-700">Payées</div>
           <div className="mt-1 flex items-center justify-center text-3xl font-semibold text-emerald-900">
             {counters?.validatedThisMonth ?? "—"}
           </div>
+          <div className="mt-0.5 text-[10px] text-emerald-700/80">ce mois — cliquer pour choisir une période</div>
         </button>
       </div>
 
@@ -2431,9 +2462,65 @@ export default function CautionsPanel() {
         description={
           qDebounced
             ? `${listTotal} résultat${listTotal !== 1 ? "s" : ""} pour « ${qDebounced} » (${items.length} affiché${items.length !== 1 ? "s" : ""}).`
-            : `${listTotal} caution${listTotal !== 1 ? "s" : ""} dans la vue active.`
+            : `${listTotal} caution${listTotal !== 1 ? "s" : ""} dans la vue active${
+                listTotal > items.length ? ` (${items.length} affichées — affinez la période ou la recherche)` : ""
+              }.`
         }
       />
+      {tab === "VALIDATED_THIS_MONTH" ? (
+        <div
+          role="group"
+          aria-label="Période de paiement"
+          className="mb-3 flex flex-wrap items-end gap-2 rounded-xl border border-emerald-100 bg-emerald-50/40 p-3"
+        >
+          <div className="flex flex-wrap gap-1">
+            {CAUTION_PAID_PRESETS.map((preset) => (
+              <button
+                key={preset}
+                type="button"
+                aria-pressed={paidPreset === preset}
+                onClick={() => {
+                  setPaidPreset(preset);
+                  setPaidRange(cautionPaidPresetRange(preset));
+                }}
+                className={`rounded-lg border px-2.5 py-1 text-xs font-semibold transition ${
+                  paidPreset === preset
+                    ? "border-emerald-600 bg-emerald-600 text-white"
+                    : "border-emerald-200 bg-white text-emerald-800 hover:bg-emerald-50"
+                }`}
+              >
+                {CAUTION_PAID_PRESET_LABELS[preset]}
+              </button>
+            ))}
+          </div>
+          <label className="flex flex-col text-[11px] font-medium text-slate-600">
+            Payées du
+            <input
+              type="date"
+              value={paidRange.paidFrom}
+              max={paidRange.paidTo || undefined}
+              onChange={(e) => {
+                setPaidPreset("PERSO");
+                setPaidRange((prev) => ({ ...prev, paidFrom: e.target.value }));
+              }}
+              className="mt-0.5 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+            />
+          </label>
+          <label className="flex flex-col text-[11px] font-medium text-slate-600">
+            au
+            <input
+              type="date"
+              value={paidRange.paidTo}
+              min={paidRange.paidFrom || undefined}
+              onChange={(e) => {
+                setPaidPreset("PERSO");
+                setPaidRange((prev) => ({ ...prev, paidTo: e.target.value }));
+              }}
+              className="mt-0.5 rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs text-slate-900"
+            />
+          </label>
+        </div>
+      ) : null}
       <FilterBar
         aria-label="Recherche des cautions"
         search={{

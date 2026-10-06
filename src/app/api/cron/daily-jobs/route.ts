@@ -14,6 +14,8 @@ import {
   listSuccessionStaleAlerts,
 } from "@/lib/lonaci/succession";
 import { dispatchAutomaticCautionJ10Alerts } from "@/lib/lonaci/caution-j10-alerts";
+import { dispatchAutomaticSoumissionJ10Alerts } from "@/lib/lonaci/soumission-j10-alerts";
+import { ensureSoumissionsIndexes } from "@/lib/lonaci/soumissions";
 import { ensureSprint4Indexes, listCautionAlertsJ10 } from "@/lib/lonaci/sprint4";
 import { getDatabase } from "@/lib/mongodb";
 import { renderDailySupervisionPdf } from "@/lib/pdf";
@@ -167,6 +169,7 @@ export async function POST(request: NextRequest) {
 
   await ensureSprint4Indexes();
   await ensureSuccessionIndexes();
+  await ensureSoumissionsIndexes();
 
   const supervisionOnly = request.headers.get("x-supervision-only") === "1";
 
@@ -174,6 +177,7 @@ export async function POST(request: NextRequest) {
   const staleSuccession = await listSuccessionStaleAlerts();
   const successionStaleDispatch = await dispatchAutomaticSuccessionStaleAlerts();
   const j10Dispatch = await dispatchAutomaticCautionJ10Alerts();
+  const soumissionsJ10Dispatch = await dispatchAutomaticSoumissionJ10Alerts();
   const cautionsJ10 = await listCautionAlertsJ10();
 
   const db = await getDatabase();
@@ -186,6 +190,7 @@ export async function POST(request: NextRequest) {
         dossiersTotal: daily.dossiers.total,
         cautionsJ10: cautionsJ10.length,
         cautionsJ10Alerted: j10Dispatch.alerted,
+        soumissionsJ10Alerted: soumissionsJ10Dispatch.alerted,
         successionStale: staleSuccession.length,
         successionStaleAlerted: successionStaleDispatch.alerted,
       },

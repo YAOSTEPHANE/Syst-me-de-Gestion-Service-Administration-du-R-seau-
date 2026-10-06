@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
-import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
+import { loadPartySnapshotForDossier } from "@/lib/lonaci/contrat-party-snapshot";
 import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
+import { ensureChecklistForDossierProduits, getDossierProduitCodes } from "@/lib/lonaci/dossier-produits";
 import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
-import {
-  ensureDossierDocumentChecklist,
-} from "@/lib/lonaci/produit-document-checklist";
 import { renderDossierChecklistPdf } from "@/lib/lonaci/produit-document-checklist-pdf";
 import { resolveProduitForContratWorkflow } from "@/lib/lonaci/contrat-produits";
 
@@ -31,24 +29,28 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Checklist reservee aux dossiers contrat." }, { status: 400 });
   }
 
-  const concessionnaire = await findConcessionnaireById(dossier.concessionnaireId);
-  if (!concessionnaire || concessionnaire.deletedAt) {
-    return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
+  const party = await loadPartySnapshotForDossier(dossier);
+  if (!party) {
+    return NextResponse.json(
+      { message: "Client ou concessionnaire du dossier introuvable." },
+      { status: 404 },
+    );
   }
 
-  const produitCode = String(dossier.payload?.produitCode ?? "").trim().toUpperCase();
-  const produit = produitCode ? await resolveProduitForContratWorkflow(produitCode) : null;
-  const checklist = ensureDossierDocumentChecklist(
-    dossier.payload ?? {},
-    produit?.documentsChecklist ?? [],
-  );
-  const agentNom = await resolveDocumentAgentName({ actor: auth.user });
+  const produitCodes = getDossierProduitCodes(dossier.payload ?? {});
+  const [checklist, produits, agentNom] = await Promise.all([
+    ensureChecklistForDossierProduits(dossier.payload ?? {}, produitCodes),
+    Promise.all(produitCodes.map((code) => resolveProduitForContratWorkflow(code))),
+    resolveDocumentAgentName({ actor: auth.user }),
+  ]);
+  const produitLibelles = produitCodes.map((code, i) => produits[i]?.libelle ?? code);
 
   const pdf = await renderDossierChecklistPdf({
     dossierReference: dossier.reference,
-    produitCode: produitCode || "—",
-    produitLibelle: produit?.libelle ?? (produitCode || "—"),
-    concessionnaireLabel: concessionnaire.nomComplet || concessionnaire.codePdv || "—",
+    produitCode: produitCodes.join(" + ") || "—",
+    produitLibelle: produitLibelles.join(" + ") || "—",
+    concessionnaireLabel: party.nomComplet || party.raisonSociale || party.codePdv || "—",
+    partyKindLabel: party.partyKind === "client" ? "Client" : "Concessionnaire",
     checklist,
     generatedAt: new Date(),
     agentNom,

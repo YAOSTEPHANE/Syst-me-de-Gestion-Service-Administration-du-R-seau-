@@ -478,6 +478,9 @@ function LonaciShellChrome({ children }: { children: ReactNode }) {
       if (role === "DISPATCHER") {
         return item.href === "/dispatcher" || item.href === "/parametres";
       }
+      if (role === "ASSIST_DGVR") {
+        return item.href === "/agrements" || item.href === "/parametres";
+      }
       if (item.href === "/dispatcher") return false;
       const rule = NAV_RBAC_RULES[item.href];
       if (!rule || !role) return true;

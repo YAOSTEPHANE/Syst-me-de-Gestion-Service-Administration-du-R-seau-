@@ -4,6 +4,7 @@ import { z } from "zod";
 import { listAgenceScopeFields, requireListAgenceScope } from "@/lib/api/list-agence-scope";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { LONACI_ROLES } from "@/lib/lonaci/constants";
+import { lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { listVisibleDossierIds } from "@/lib/lonaci/dossiers";
 import { prisma } from "@/lib/prisma";
 
@@ -44,16 +45,15 @@ export async function GET(request: NextRequest) {
   });
   const consMap = new Map(concessionnaires.map((c) => [c.id, c]));
 
-  const clients =
+  const scopedClients =
     scopedAgenceIds != null
       ? await prisma.lonaciClient.findMany({
-          where: { deletedAt: null, agenceId: { in: scopedAgenceIds } },
+          where: { AND: [lonaciClientNotDeletedWhere, { agenceId: { in: scopedAgenceIds } }] },
           select: { id: true, code: true, nomComplet: true, raisonSociale: true },
         })
-      : [];
-  const clientMap = new Map(clients.map((c) => [c.id, c]));
+      : null;
   const allowedPdvIds = scopedAgenceIds ? new Set(concessionnaires.map((c) => c.id)) : null;
-  const allowedClientIds = scopedAgenceIds ? new Set(clients.map((c) => c.id)) : null;
+  const allowedClientIds = scopedClients ? new Set(scopedClients.map((c) => c.id)) : null;
   const visibleDossierIds = await listVisibleDossierIds(
     auth.user,
     { agenceId: scopeFields.agenceId, agenceIds: scopeFields.agenceIds },
@@ -75,6 +75,19 @@ export async function GET(request: NextRequest) {
     if (c.concessionnaireId?.trim() && allowedPdvIds?.has(c.concessionnaireId)) return true;
     return false;
   });
+
+  const clients =
+    scopedClients ??
+    (await prisma.lonaciClient.findMany({
+      where: {
+        AND: [
+          { id: { in: [...new Set(rows.map((r) => r.lonaciClientId).filter((id): id is string => Boolean(id?.trim())))] } },
+          lonaciClientNotDeletedWhere,
+        ],
+      },
+      select: { id: true, code: true, nomComplet: true, raisonSociale: true },
+    }));
+  const clientMap = new Map(clients.map((c) => [c.id, c]));
 
   const header = [
     "Reference",

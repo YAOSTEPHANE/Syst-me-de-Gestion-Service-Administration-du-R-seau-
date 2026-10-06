@@ -11,8 +11,10 @@ import {
   ensureGprGrattageIndexes,
   GPR_REGISTRATION_STATUSES,
   listGprRegistrations,
+  transitionGprRegistration,
 } from "@/lib/lonaci/gpr-grattage";
 import { GPR_ADMIN_ROLES } from "@/lib/lonaci/grattage-access";
+import { autoFinalizeQuietly } from "@/lib/lonaci/workflow-approvals";
 
 const listSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -92,5 +94,13 @@ export async function POST(request: NextRequest) {
     dateEnregistrement: new Date(parsed.data.dateEnregistrement),
     actor: auth.user,
   });
-  return NextResponse.json({ registration: created }, { status: 201 });
+  const autoFinalize = await autoFinalizeQuietly(() =>
+    transitionGprRegistration({
+      registrationId: created.id,
+      targetStatus: "SUIVI_CHEF_SERVICE",
+      comment: null,
+      actor: auth.user,
+    }),
+  );
+  return NextResponse.json({ registration: created, autoFinalize }, { status: 201 });
 }

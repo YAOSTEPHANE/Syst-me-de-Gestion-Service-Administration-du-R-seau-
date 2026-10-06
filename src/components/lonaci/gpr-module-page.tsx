@@ -35,6 +35,11 @@ import {
   type ScratchCodeStatut,
 } from "@/lib/lonaci/constants";
 import {
+  areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
+import {
   canShowScratchLotTransition,
   getAssignedWorkflowTarget,
   parseLonaciRole,
@@ -81,6 +86,13 @@ function gprStatusTone(status: GprStatus): Tone {
   if (status === "VALIDE_N1" || status === "VALIDE_N2") return "info";
   if (status === "SUIVI_CHEF_SERVICE") return "success";
   return "danger";
+}
+
+function gprStatusLabel(status: GprStatus): string {
+  if (areWorkflowApprovalsEnabled()) return status;
+  if (status === "SUIVI_CHEF_SERVICE") return "Finalisé";
+  if (status === "REJETE") return "Rejeté";
+  return "À finaliser";
 }
 
 function scratchStatusTone(status: ScratchStatus): Tone {
@@ -250,10 +262,11 @@ export default function GprModulePage() {
         }),
       });
       if (!response.ok) throw new Error("Création GPR impossible");
+      const body = (await response.json().catch(() => null)) as { autoFinalize?: AutoFinalizeOutcome | null } | null;
       setGprProducts([]);
       setGprClient(null);
       await loadData();
-      notify.success("Enregistrement GPR créé.");
+      notify.success(`Enregistrement GPR créé${autoFinalizeSuffix(body?.autoFinalize)}`);
     } catch (e) {
       notify.error(e, "Création GPR impossible.");
     } finally {
@@ -351,7 +364,11 @@ export default function GprModulePage() {
         body: JSON.stringify({ targetStatus }),
       });
       if (!response.ok) {
-        throw new Error("Transition lot refusée (validation Chef(fe) de section requise pour ACTIF).");
+        throw new Error(
+          areWorkflowApprovalsEnabled()
+            ? "Transition lot refusée (validation Chef(fe) de section requise pour ACTIF)."
+            : "Transition lot refusée (vérifiez votre rôle et l’étape).",
+        );
       }
       await loadData();
       notify.success("Statut du lot mis à jour.");
@@ -384,7 +401,7 @@ export default function GprModulePage() {
     <div>
       <div className="flex flex-wrap items-center gap-2">
         <StatusBadge tone={syncStateTone(row.sync.state)}>{row.sync.state}</StatusBadge>
-        {meRole === "CHEF_SERVICE" && ["VALIDE_N2", "SUIVI_CHEF_SERVICE"].includes(row.status) ? (
+        {(meRole === "CHEF_SERVICE" || meRole === "ASSIST_CDS") && ["VALIDE_N2", "SUIVI_CHEF_SERVICE"].includes(row.status) ? (
           <Button size="sm" variant="secondary" leadingIcon={RefreshCw} loading={syncingId === row.id} onClick={() => void onSyncGpr(row.id)}>Synchroniser</Button>
         ) : null}
       </div>
@@ -396,7 +413,7 @@ export default function GprModulePage() {
     { id: "concessionnaire", header: "Concessionnaire", cell: (row) => concessionnaireLabelById.get(row.concessionnaireId) ?? row.concessionnaireId },
     { id: "produits", header: "Produits", cell: (row) => row.produitsActifs.join(", ") },
     { id: "date", header: "Date", cell: (row) => new Date(row.dateEnregistrement).toLocaleString("fr-FR") },
-    { id: "statut", header: "Statut", cell: (row) => <StatusBadge tone={gprStatusTone(row.status)}>{row.status}</StatusBadge> },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge tone={gprStatusTone(row.status)}>{gprStatusLabel(row.status)}</StatusBadge> },
     { id: "sync", header: "Synchronisation API", cell: syncActions },
     { id: "actions", header: "Actions", cell: gprActions },
   ];
@@ -406,7 +423,12 @@ export default function GprModulePage() {
       row.status === "ATTRIBUE" && canShowScratchLotTransition(meRole, row.status, "ACTIF") ? "ACTIF" :
       row.status === "ACTIF" && canShowScratchLotTransition(meRole, row.status, "EPUISE") ? "EPUISE" : null;
     if (!target) return <span className="text-slate-400">Aucune action</span>;
-    const label = target === "ATTRIBUE" ? "Attribuer" : target === "ACTIF" ? "Activer (N1)" : "Marquer épuisé";
+    const label =
+      target === "ATTRIBUE"
+        ? "Attribuer"
+        : target === "ACTIF"
+          ? areWorkflowApprovalsEnabled() ? "Activer (N1)" : "Activer"
+          : "Marquer épuisé";
     return <Button size="sm" leadingIcon={Send} loading={transitioningLotId === row.lotId} onClick={() => void onTransitionLot(row.lotId, target)}>{label}</Button>;
   };
   const lotColumns: readonly DataTableColumn<ScratchItem>[] = [

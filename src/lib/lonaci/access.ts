@@ -275,6 +275,14 @@ export function canCreateConcessionnaireForAgence(
   return false;
 }
 
+/** Import de la liste des agréments : l'assistant(e) DGVR travaille sur toutes les agences de son périmètre. */
+export function canImportAgrementsForAgence(user: UserDocument, agenceId: string | null): boolean {
+  if (user.role === "ASSIST_DGVR") {
+    return userMatchesAgence(user, agenceId);
+  }
+  return canCreateConcessionnaireForAgence(user, agenceId);
+}
+
 export type ListAgenceFilterResult =
   | { ok: true; agenceId?: string; agenceIds?: string[] }
   | { ok: false; code: "AGENCE_FORBIDDEN" };

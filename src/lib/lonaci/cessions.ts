@@ -25,7 +25,11 @@ import {
 import { getCessionChecklistTemplate } from "@/lib/lonaci/cession-checklist-settings";
 import { listProduits } from "@/lib/lonaci/referentials";
 import { applyDocumentsFournisToChecklist } from "@/lib/lonaci/produit-document-checklist";
-import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
+import {
+  areWorkflowApprovalsEnabled,
+  intermediateWorkflowSteps,
+  roleMayAdvanceWorkflow,
+} from "@/lib/lonaci/workflow-approvals";
 import { hasActiveContractForProduct, markActiveContratAsCedeForProduct } from "@/lib/lonaci/contracts";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
 import { type DossierDocumentChecklistPayload, type DossierDocumentChecklistStatut, type UserDocument, userDisplayName } from "@/lib/lonaci/types";
@@ -431,7 +435,7 @@ export async function createCession(input: CreateCessionInput): Promise<CessionL
   await notifyRoleTargets(
     "CHEF_SECTION",
     notifyTitle,
-    `Opération ${input.kind.toLowerCase()} | référence ${reference} | action contrôle N1 attendu | acteur ${actionBy}.`,
+    `Opération ${input.kind.toLowerCase()} | référence ${reference} | action ${areWorkflowApprovalsEnabled() ? "contrôle N1 attendu" : "dossier enregistré"} | acteur ${actionBy}.`,
     { cessionId: r.insertedId.toHexString(), reference },
     doc.oldAgenceId,
   );
@@ -685,6 +689,12 @@ export function assertCessionTransitionAllowed(
   throw new Error("INVALID_TRANSITION");
 }
 
+export function cessionStatusChain(kind: CessionKind): readonly CessionStatus[] {
+  return usesSimplifiedDelocalisationCircuit(kind)
+    ? ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDEE_CHEF_SERVICE"]
+    : ["SAISIE_AGENT", "CONTROLE_CHEF_SECTION", "VALIDATION_N2", "VALIDEE_CHEF_SERVICE"];
+}
+
 export async function transitionCession(input: {
   id: string;
   target: CessionStatus;
@@ -696,8 +706,19 @@ export async function transitionCession(input: {
   if (!ObjectId.isValid(input.id)) throw new Error("CESSION_NOT_FOUND");
 
   const db = await getDatabase();
-  const row = await db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  const loadRow = () =>
+    db.collection<CessionStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  let row = await loadRow();
   if (!row || !(await canAccessCession(row, input.actor))) throw new Error("CESSION_NOT_FOUND");
+
+  const skipped = intermediateWorkflowSteps(cessionStatusChain(row.kind), row.statut, input.target);
+  if (skipped.length > 0) {
+    for (const step of skipped) {
+      await transitionCession({ id: input.id, target: step, actor: input.actor });
+    }
+    row = await loadRow();
+    if (!row) throw new Error("CESSION_NOT_FOUND");
+  }
 
   assertCessionTransitionAllowed(input.actor.role, row.statut, input.target, row.kind);
 
@@ -719,25 +740,27 @@ export async function transitionCession(input: {
   if (input.target === "CONTROLE_CHEF_SECTION") {
     $set.controlledAt = now;
     $set.controlledByUserId = input.actor._id;
-    if (!usesSimplifiedDelocalisationCircuit(row.kind)) {
-      await notifyRoleTargets(
-        "ASSIST_CDS",
-        "Cession / délocalisation : validation N2 attendue",
-        `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
-        { cessionId: input.id, reference: row.reference },
-        row.oldAgenceId,
-      );
-    } else {
-      await notifyRoleTargets(
-        "CHEF_SERVICE",
-        "Délocalisation : validation finale attendue",
-        `Opération délocalisation | référence ${row.reference} | validation Chef de Service attendue | acteur ${actionBy}.`,
-        { cessionId: input.id, reference: row.reference },
-        row.oldAgenceId,
-      );
+    if (areWorkflowApprovalsEnabled()) {
+      if (!usesSimplifiedDelocalisationCircuit(row.kind)) {
+        await notifyRoleTargets(
+          "ASSIST_CDS",
+          "Cession / délocalisation : validation N2 attendue",
+          `Opération ${row.kind.toLowerCase()} | référence ${row.reference} | action validation N2 attendue | acteur ${actionBy}.`,
+          { cessionId: input.id, reference: row.reference },
+          row.oldAgenceId,
+        );
+      } else {
+        await notifyRoleTargets(
+          "CHEF_SERVICE",
+          "Délocalisation : validation finale attendue",
+          `Opération délocalisation | référence ${row.reference} | validation Chef de Service attendue | acteur ${actionBy}.`,
+          { cessionId: input.id, reference: row.reference },
+          row.oldAgenceId,
+        );
+      }
     }
   }
-  if (input.target === "VALIDATION_N2") {
+  if (input.target === "VALIDATION_N2" && areWorkflowApprovalsEnabled()) {
     await notifyRoleTargets(
       "CHEF_SERVICE",
       "Cession / délocalisation : validation finale attendue",

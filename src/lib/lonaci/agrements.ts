@@ -7,7 +7,11 @@ import {
 import { userMatchesAgence } from "@/lib/lonaci/access";
 import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import type { UserDocument } from "@/lib/lonaci/types";
-import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
+import {
+  areWorkflowApprovalsEnabled,
+  intermediateWorkflowSteps,
+  roleMayAdvanceWorkflow,
+} from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
 
 const COLLECTION = "agrements";
@@ -15,6 +19,8 @@ const COUNTERS_COLLECTION = "counters";
 const REF_COUNTER_ID = "agrement_ref";
 
 type AgrementStatus = "RECU" | "CONTROLE" | "TRANSMIS" | "FINALISE";
+
+const AGREMENT_STATUS_CHAIN: readonly AgrementStatus[] = ["RECU", "CONTROLE", "TRANSMIS", "FINALISE"];
 
 interface AgrementStored {
   _id: ObjectId;
@@ -78,6 +84,9 @@ export async function createAgrement(input: {
   const db = await getDatabase();
   const now = new Date();
   const reference = await nextReference();
+  const autoFinal = !areWorkflowApprovalsEnabled();
+  const stepActor = autoFinal ? input.actorId : null;
+  const stepAt = autoFinal ? now : null;
   const doc: Omit<AgrementStored, "_id" | "documentStoredRelativePath"> = {
     reference,
     produitCode: input.produitCode.trim().toUpperCase(),
@@ -85,25 +94,25 @@ export async function createAgrement(input: {
     referenceOfficielle: input.referenceOfficielle.trim(),
     agenceId: input.agenceId,
     concessionnaireId: input.concessionnaireId,
-    statut: "RECU",
+    statut: autoFinal ? "FINALISE" : "RECU",
     observations: input.observations,
     documentFilename: input.documentFilename,
     documentMimeType: input.documentMimeType,
     documentSize: input.documentSize,
     createdByUserId: input.actorId,
     updatedByUserId: input.actorId,
-    controlledByUserId: null,
-    transmittedByUserId: null,
-    finalizedByUserId: null,
-    controlledAt: null,
-    transmittedAt: null,
-    finalizedAt: null,
+    controlledByUserId: stepActor,
+    transmittedByUserId: stepActor,
+    finalizedByUserId: stepActor,
+    controlledAt: stepAt,
+    transmittedAt: stepAt,
+    finalizedAt: stepAt,
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
   };
   const result = await db.collection(COLLECTION).insertOne({ ...doc, documentStoredRelativePath: "" });
-  return { id: result.insertedId.toHexString(), reference };
+  return { id: result.insertedId.toHexString(), reference, statut: doc.statut };
 }
 
 /**
@@ -243,8 +252,16 @@ export async function transitionAgrement(input: {
     if (!roleMayAdvanceWorkflow(input.actor.role, "ASSIST_CDS")) throw new Error("FORBIDDEN_TRANSITION");
     $set.transmittedAt = now;
     $set.transmittedByUserId = actorId;
-  } else if (row.statut === "TRANSMIS" && input.target === "FINALISE") {
+  } else if (
+    input.target === "FINALISE" &&
+    (row.statut === "TRANSMIS" ||
+      intermediateWorkflowSteps(AGREMENT_STATUS_CHAIN, row.statut, input.target).length > 0)
+  ) {
     if (!roleMayAdvanceWorkflow(input.actor.role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
+    $set.controlledAt = row.controlledAt ?? now;
+    $set.controlledByUserId = row.controlledByUserId ?? actorId;
+    $set.transmittedAt = row.transmittedAt ?? now;
+    $set.transmittedByUserId = row.transmittedByUserId ?? actorId;
     $set.finalizedAt = now;
     $set.finalizedByUserId = actorId;
   } else {

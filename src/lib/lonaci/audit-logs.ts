@@ -1,4 +1,5 @@
 import { getDatabase } from "@/lib/mongodb";
+import { escapeRegexLiteral } from "@/lib/security/escape-regex";
 
 type AuditSource = "AUTH" | "MONITORING";
 type AuditStatus = "SUCCESS" | "FAILED" | "OPEN" | "ACK";
@@ -50,7 +51,7 @@ function buildAuthMatch(params: ListUnifiedAuditLogsParams): Record<string, unkn
   }
 
   if (params.query?.trim()) {
-    const regex = new RegExp(params.query.trim(), "i");
+    const regex = new RegExp(escapeRegexLiteral(params.query.trim()), "i");
     match.$or = [{ email: regex }, { reason: regex }, { ipAddress: regex }, { userAgent: regex }];
   }
 
@@ -72,7 +73,7 @@ function buildMonitoringMatch(params: ListUnifiedAuditLogsParams): Record<string
   }
 
   if (params.query?.trim()) {
-    const regex = new RegExp(params.query.trim(), "i");
+    const regex = new RegExp(escapeRegexLiteral(params.query.trim()), "i");
     match.$or = [{ code: regex }, { title: regex }, { message: regex }];
   }
 

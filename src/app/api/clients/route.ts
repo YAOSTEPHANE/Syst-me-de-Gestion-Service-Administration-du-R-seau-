@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { badRequest, forbidden } from "@/lib/api/error-responses";
+import { badRequest, conflict, forbidden } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import {
   buildClientAgenceReadScopeWhere,
@@ -10,7 +10,10 @@ import {
   resolveListAgenceFilter,
 } from "@/lib/lonaci/access";
 import { CLIENT_STATUTS, CLIENT_CATEGORIES, isClientCategorieEntreprise, parseClientCategorie, type ClientCategorie } from "@/lib/lonaci/client-constants";
+import { clientTerminauxInputSchema, normalizeClientTerminaux } from "@/lib/lonaci/client-terminaux";
 import {
+  ClientTerminalConflictError,
+  clientTerminalConflictMessage,
   createClient,
   sanitizeClientPublic,
   searchClients,
@@ -53,6 +56,7 @@ const createSchema = z.object({
     z.union([z.string().min(2).max(300), z.null()]).optional(),
   ),
   cniNumero: z.string().trim().min(4).max(64),
+  terminaux: clientTerminauxInputSchema.optional(),
   codeMachine: z.preprocess(emptyStringToNull, z.union([z.string().min(1).max(64), z.null()]).optional()),
   nomContact: z.preprocess(emptyStringToNull, z.union([z.string().min(2).max(200), z.null()]).optional()),
   email: z.preprocess(emptyStringToNull, z.union([z.string().email(), z.null()]).optional()),
@@ -249,6 +253,7 @@ export async function POST(request: NextRequest) {
         categorie,
         nomComplet,
         raisonSociale,
+        terminaux: parsed.data.terminaux ? normalizeClientTerminaux(parsed.data.terminaux) : undefined,
         codeMachine: parsed.data.codeMachine ?? null,
         cniNumero: parsed.data.cniNumero.trim(),
         nomContact: parsed.data.nomContact ?? null,
@@ -271,7 +276,13 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ client: sanitizeClientPublic(row) }, { status: 201 });
   } catch (err) {
+    if (err instanceof ClientTerminalConflictError) {
+      return conflict(clientTerminalConflictMessage(err), err.message);
+    }
     const message = err instanceof Error ? err.message : "";
+    if (message === "CLIENT_TERMINAUX_TROP_NOMBREUX") {
+      return badRequest("Trop de TPE pour un même client (50 maximum).", message);
+    }
     if (message === "CLIENT_IDENTIFIANT_REQUIS") {
       return badRequest("Le numéro CNI (identifiant client) est obligatoire à la création.", "CLIENT_IDENTIFIANT_REQUIS");
     }

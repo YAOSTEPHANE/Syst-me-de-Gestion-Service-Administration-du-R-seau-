@@ -56,6 +56,7 @@ describe("GET /api/cautions", () => {
       { _id: "agent-1", role: "AGENT", agenceId: "agence-a", agencesAutorisees: [] },
       { agenceId: "agence-a", agenceIds: undefined },
       undefined,
+      expect.objectContaining({ from: expect.any(Date), toExclusive: expect.any(Date) }),
     );
   });
 
@@ -73,6 +74,39 @@ describe("GET /api/cautions", () => {
       expect.anything(),
       expect.anything(),
       "FPC-2026",
+      expect.anything(),
     );
+  });
+
+  it("transmet la période de paiement de l'onglet Payées (fin incluse)", async () => {
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/cautions?tab=VALIDATED_THIS_MONTH&paidFrom=2026-01-01&paidTo=2026-03-31",
+      ),
+    );
+
+    expectResponse(response);
+    expect(response.status).toBe(200);
+    expect(listCautionsForTabMock).toHaveBeenCalledWith(
+      "VALIDATED_THIS_MONTH",
+      1,
+      50,
+      expect.anything(),
+      expect.anything(),
+      undefined,
+      { from: new Date(2026, 0, 1), toExclusive: new Date(2026, 3, 1) },
+    );
+  });
+
+  it("refuse une période inversée", async () => {
+    const response = await GET(
+      new NextRequest(
+        "http://localhost/api/cautions?tab=VALIDATED_THIS_MONTH&paidFrom=2026-04-01&paidTo=2026-03-31",
+      ),
+    );
+
+    expectResponse(response);
+    expect(response.status).toBe(400);
+    expect(listCautionsForTabMock).not.toHaveBeenCalled();
   });
 });

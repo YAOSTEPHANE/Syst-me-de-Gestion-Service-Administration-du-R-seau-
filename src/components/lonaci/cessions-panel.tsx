@@ -30,6 +30,11 @@ import { DELOCALISATION_STATUTS_SPEC_63 } from "@/lib/lonaci/delocalisation-stat
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { getAssignedWorkflowTarget, workflowActionLabelForTarget, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
+import {
+  areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { notify } from "@/lib/toast";
 import { FilePlus2, RefreshCw, X } from "lucide-react";
@@ -204,13 +209,15 @@ async function normalizeImportFileForApi(file: File): Promise<File> {
 function workflowStatutFilterLabel(status: CessionStatus) {
   switch (status) {
     case "SAISIE_AGENT":
-      return "Saisie agent (constitution / dossier complet)";
+      return areWorkflowApprovalsEnabled()
+        ? "Saisie agent (constitution / dossier complet)"
+        : "À finaliser (constitution / dossier complet)";
     case "CONTROLE_CHEF_SECTION":
-      return "Contrôle chef section (en validation)";
+      return areWorkflowApprovalsEnabled() ? "Contrôle chef section (en validation)" : "À finaliser (ancien contrôle N1)";
     case "VALIDATION_N2":
-      return "Validation N2 (en validation / acte)";
+      return areWorkflowApprovalsEnabled() ? "Validation N2 (en validation / acte)" : "À finaliser (ancienne validation N2)";
     case "VALIDEE_CHEF_SERVICE":
-      return "Validée chef service (cession finalisée)";
+      return areWorkflowApprovalsEnabled() ? "Validée chef service (cession finalisée)" : "Finalisée";
     case "REJETEE":
       return "Rejetée";
   }
@@ -522,12 +529,16 @@ export default function CessionsPanel() {
       for (const f of documents) form.append("documents", f);
       for (const id of createDocumentsFournis) form.append("documentsFournis", id);
       const res = await fetch("/api/cessions", { method: "POST", credentials: "include", body: form });
+      const b = (await res.json().catch(() => null)) as
+        | { message?: string; autoFinalize?: AutoFinalizeOutcome | null }
+        | null;
       if (!res.ok) {
-        const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Création impossible");
       }
       closeCreate();
-      notify.success(`Demande de ${kindLabel(kind).toLowerCase()} créée.`);
+      notify.success(
+        `Demande de ${kindLabel(kind).toLowerCase()} créée${autoFinalizeSuffix(b?.autoFinalize)}`,
+      );
       await load(1);
     } catch (e) {
       setCreateError(friendlyErrorMessage(e instanceof Error ? e.message : "Erreur"));
@@ -604,7 +615,9 @@ export default function CessionsPanel() {
       setItems((current) => current.filter((item) => item.id !== id));
       setTotal((current) => Math.max(0, current - 1));
       if (detailId === id) closeDetail();
-      notify.success("Transition appliquée.");
+      notify.success(
+        target === "VALIDEE_CHEF_SERVICE" ? "Dossier finalisé." : target === "REJETEE" ? "Dossier rejeté." : "Transition appliquée.",
+      );
       await load(page);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");

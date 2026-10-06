@@ -34,6 +34,6 @@ describe("dossierEligibleDechargeContratRemise", () => {
   });
 
   it("expose le titre de la fiche remise client", () => {
-    expect(DECHARGE_CONTRAT_TITLE).toBe("FICHE DE DÉCHARGE — REMISE DU CONTRAT AU CLIENT");
+    expect(DECHARGE_CONTRAT_TITLE).toBe("DECHARGE CONTRAT — LONACI");
   });
 });

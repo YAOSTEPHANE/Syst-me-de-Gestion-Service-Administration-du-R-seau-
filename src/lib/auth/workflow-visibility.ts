@@ -173,6 +173,7 @@ export function getVisibleWorkflowStatuses(
 
   const policy = POLICIES[workflow];
   if (role === "AUDITEUR") return unique([...policy.finalized, ...policy.rejected]);
+  if (role === "ASSIST_DGVR") return workflow === "AGREMENTS" ? policy.known : [];
   if (!areWorkflowApprovalsEnabled()) {
     if (!isOperationalWorkflowRole(role)) return [];
     return unique([

@@ -4,6 +4,7 @@ import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 import { finalizeDossierContratActualisation } from "@/lib/lonaci/dossier-contrat-finalize";
 import { transitionDossier } from "@/lib/lonaci/dossiers";
 import type { DossierDocument, UserDocument } from "@/lib/lonaci/types";
+import { getDatabase } from "@/lib/mongodb";
 
 export type AutoValidateContratResult = {
   dossier: DossierDocument;
@@ -71,4 +72,42 @@ export async function submitAndAutoValidateContratDossier(input: {
   }
 
   return { dossier, submitted, autoValidated, finalized };
+}
+
+/** Relance la finalisation des dossiers contrat restés « à finaliser » faute de caution payée. */
+export async function autoFinalizeContratDossiersAfterCautionPaid(input: {
+  lonaciClientId: string | null;
+  concessionnaireId: string | null;
+  actor: UserDocument;
+}): Promise<void> {
+  if (areWorkflowApprovalsEnabled()) return;
+  const parties: Array<Record<string, string>> = [];
+  if (input.lonaciClientId?.trim()) parties.push({ lonaciClientId: input.lonaciClientId.trim() });
+  if (input.concessionnaireId?.trim()) parties.push({ concessionnaireId: input.concessionnaireId.trim() });
+  if (!parties.length) return;
+  const db = await getDatabase();
+  const pending = await db
+    .collection("dossiers")
+    .find(
+      {
+        type: "CONTRAT_ACTUALISATION",
+        status: { $in: ["SOUMIS", "VALIDE_N1", "VALIDE_N2"] },
+        deletedAt: null,
+        $or: parties,
+      },
+      { projection: { _id: 1 } },
+    )
+    .limit(20)
+    .toArray();
+  for (const row of pending) {
+    try {
+      await finalizeDossierContratActualisation({
+        dossierId: String(row._id),
+        actor: input.actor,
+        comment: "Finalisation automatique après paiement de la caution.",
+      });
+    } catch {
+      // Prérequis encore manquants : le dossier reste à finaliser.
+    }
+  }
 }

@@ -17,21 +17,16 @@ export function useAnimatedNumber(target: number, durationMs = 1100): number {
   const frameRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (prefersReducedMotion()) {
-      setValue(target);
-      fromRef.current = target;
-      return;
-    }
+    const reduced = prefersReducedMotion();
     const from = fromRef.current;
     const start = performance.now();
     const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / durationMs);
+      const t = reduced ? 1 : Math.min(1, (now - start) / durationMs);
       const next = from + (target - from) * easeOutExpo(t);
+      fromRef.current = next;
       setValue(next);
       if (t < 1) {
         frameRef.current = requestAnimationFrame(tick);
-      } else {
-        fromRef.current = target;
       }
     };
     frameRef.current = requestAnimationFrame(tick);

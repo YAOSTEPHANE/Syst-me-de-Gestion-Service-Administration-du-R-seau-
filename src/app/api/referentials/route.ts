@@ -6,7 +6,7 @@ import { ensureReferentialsIndexes, listAgences, listProduits } from "@/lib/lona
 
 export async function GET(request: NextRequest) {
   const auth = await requireApiAuth(request, {
-    roles: [...GRATTAGE_API_ROLES, "SUPERVISEUR_REGIONAL", "AUDITEUR", "LECTURE_SEULE"],
+    roles: [...GRATTAGE_API_ROLES, "SUPERVISEUR_REGIONAL", "AUDITEUR", "LECTURE_SEULE", "ASSIST_DGVR"],
   });
   if ("error" in auth) {
     return auth.error;

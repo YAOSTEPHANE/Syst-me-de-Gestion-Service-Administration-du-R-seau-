@@ -3,6 +3,7 @@ export const LONACI_ROLES = [
   "CHEF_SECTION",
   "ASSIST_CDS",
   "CHEF_SERVICE",
+  "ASSIST_DGVR",
   "DISPATCHER",
   "SUPERVISEUR_REGIONAL",
   "AUDITEUR",
@@ -16,6 +17,7 @@ export const LONACI_ROLE_LABELS: Record<LonaciRole, string> = {
   CHEF_SECTION: "Chef(fe) de section",
   ASSIST_CDS: "Assistant(e) chef(fe) de service",
   CHEF_SERVICE: "Chef(fe) de service",
+  ASSIST_DGVR: "Assistant(e) du DGVR",
   DISPATCHER: "Dispatcher codes grattage",
   SUPERVISEUR_REGIONAL: "Superviseur régional",
   AUDITEUR: "Auditeur",
@@ -47,6 +49,11 @@ export const LONACI_ROLE_PROFILES: Record<LonaciRole, LonaciRoleProfile> = {
     designation: "Chef(fe) de service",
     responsabilite:
       "Validation finale. Accès complet à tous les modules. Finalise tous les dossiers. Paramètre le système.",
+  },
+  ASSIST_DGVR: {
+    designation: "Assistant(e) du DGVR",
+    responsabilite:
+      "Importe la liste des agréments (toutes agences). Consulte et exporte les agréments, sans droit de saisie manuelle ni de validation. Laisser le compte sans agence de rattachement pour une portée nationale.",
   },
   DISPATCHER: {
     designation: "Dispatcher codes grattage",

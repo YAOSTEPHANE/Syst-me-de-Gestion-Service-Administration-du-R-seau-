@@ -7,6 +7,7 @@ import {
   validateBancarisationRequest,
 } from "@/lib/lonaci/bancarisation";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   decision: z.enum(["VALIDER", "REJETER"]),
@@ -23,7 +24,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return zodBadRequest(parsed.error);
   }
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled()
+      ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"]
+      : workflowStepRoles("CHEF_SERVICE"),
   });
   if ("error" in auth) return auth.error;
   const { id } = await context.params;

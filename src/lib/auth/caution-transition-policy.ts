@@ -18,8 +18,13 @@ export function canValidateCautionN2(role: LonaciRole, status: CautionStatus): b
   return role === "ASSIST_CDS";
 }
 
+/** Statuts depuis lesquels la caution peut être finalisée (payée / exonérée / rejetée) en un clic. */
+export function cautionFinalizableStatuses(): readonly CautionStatus[] {
+  return areWorkflowApprovalsEnabled() ? ["VALIDE_N2"] : ["EN_ATTENTE", "A_CORRIGER", "VALIDE_N1", "VALIDE_N2"];
+}
+
 export function canFinalizeCaution(role: LonaciRole, status: CautionStatus): boolean {
-  if (status !== "VALIDE_N2") return false;
+  if (!cautionFinalizableStatuses().includes(status)) return false;
   if (!areWorkflowApprovalsEnabled()) return isOperationalWorkflowRole(role);
   return role === "CHEF_SERVICE";
 }

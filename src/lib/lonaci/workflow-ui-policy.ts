@@ -7,6 +7,7 @@ import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import {
   areWorkflowApprovalsEnabled,
   isOperationalWorkflowRole,
+  roleMayAdvanceWorkflow,
   workflowAdvanceLabel,
 } from "@/lib/lonaci/workflow-approvals";
 
@@ -62,6 +63,18 @@ export function parseLonaciRole(value: string | null | undefined): LonaciRole | 
   return LONACI_ROLES.includes(value as LonaciRole) ? (value as LonaciRole) : null;
 }
 
+/** Statuts initiaux dont l’action reste la soumission (la finalisation suit automatiquement). */
+const SUBMIT_FIRST_STATUSES: Readonly<Partial<Record<HierarchicalWorkflow, readonly string[]>>> = {
+  DOSSIERS: ["BROUILLON"],
+};
+
+function finalStatusFrom(chain: Readonly<Record<string, string>>, status: string): string | null {
+  let current = chain[status];
+  if (!current) return null;
+  while (chain[current]) current = chain[current];
+  return current;
+}
+
 export function getAssignedWorkflowTarget(input: {
   workflow: Exclude<HierarchicalWorkflow, "SUCCESSIONS">;
   role: LonaciRole | null;
@@ -72,7 +85,10 @@ export function getAssignedWorkflowTarget(input: {
     !areWorkflowApprovalsEnabled() &&
     isOperationalWorkflowRole(input.role)
   ) {
-    return NEXT_STATUS[input.workflow]?.[input.status] ?? null;
+    const chain = NEXT_STATUS[input.workflow];
+    if (!chain) return null;
+    if (SUBMIT_FIRST_STATUSES[input.workflow]?.includes(input.status)) return chain[input.status] ?? null;
+    return finalStatusFrom(chain, input.status);
   }
   if (
     !isWorkflowStageAssignedToRole({
@@ -87,7 +103,7 @@ export function getAssignedWorkflowTarget(input: {
 }
 
 export function workflowActionLabelForTarget(target: string | null | undefined): string {
-  if (!areWorkflowApprovalsEnabled()) return workflowAdvanceLabel();
+  if (!areWorkflowApprovalsEnabled()) return target === "SOUMIS" ? "Soumettre" : workflowAdvanceLabel();
   if (!target) return workflowAdvanceLabel();
   if (target.includes("N1") || target === "CONTROLE_CHEF_SECTION" || target === "CONTROLE") {
     return "Valider N1";
@@ -135,7 +151,7 @@ export function canShowScratchLotTransition(
   if (from === "GENERE" && to === "ATTRIBUE") {
     return ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "DISPATCHER"].includes(role);
   }
-  if (from === "ATTRIBUE" && to === "ACTIF") return role === "CHEF_SECTION";
+  if (from === "ATTRIBUE" && to === "ACTIF") return roleMayAdvanceWorkflow(role, "CHEF_SECTION");
   if (from === "ACTIF" && to === "EPUISE") {
     return ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role);
   }

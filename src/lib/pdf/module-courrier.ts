@@ -284,7 +284,7 @@ function measureBodyHeight(
       if (!line.trim()) continue;
       const isSalutation = /^madame|monsieur|cher|chère/i.test(line.trim());
       doc.font(isSalutation ? "Helvetica-Bold" : "Helvetica").fontSize(fontSize);
-      height += doc.heightOfString(line, { width, align: "justify" }) + lineGap;
+      height += doc.heightOfString(line, { width, align: "justify", lineGap }) + PDF_SPACING.xs;
     }
     height += PDF_SPACING.sm;
   }
@@ -314,12 +314,14 @@ function drawBodyWithin(doc: PdfDocument, text: string, maxY: number): void {
     const lines = block.split("\n");
     for (const line of lines) {
       if (!line.trim()) continue;
-      if (doc.y >= maxY - fontSize) break;
 
       const isSalutation = /^madame|monsieur|cher|chère/i.test(line.trim());
       doc.font(isSalutation ? "Helvetica-Bold" : "Helvetica").fontSize(fontSize);
-      const lineHeight = doc.heightOfString(line, { width, align: "justify" });
-      if (doc.y + lineHeight > maxY) break;
+      const lineHeight = doc.heightOfString(line, { width, align: "justify", lineGap: BODY_LINE_GAP });
+      if (doc.y + lineHeight > maxY) {
+        doc.addPage();
+        doc.y = doc.page.margins.top;
+      }
 
       doc.fillColor(isSalutation ? PREMIUM.navySoft : PREMIUM.inkSoft).text(line, x, doc.y, {
         width,

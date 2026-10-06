@@ -227,6 +227,9 @@ function labelOperationType(t: string) {
 }
 
 function labelDossierEtape(status: string) {
+  if (!areWorkflowApprovalsEnabled() && (status === "SOUMIS" || status === "VALIDE_N1" || status === "VALIDE_N2")) {
+    return "À finaliser";
+  }
   switch (status) {
     case "BROUILLON":
       return "Brouillon";
@@ -334,7 +337,8 @@ function workflowPrimaryAction(etape: string): {
 } | null {
   const advance = workflowAdvanceLabel();
   const hierarchical = areWorkflowApprovalsEnabled();
-  switch (etape) {
+  const step = !hierarchical && (etape === "SOUMIS" || etape === "VALIDE_N1") ? "VALIDE_N2" : etape;
+  switch (step) {
     case "BROUILLON":
       return {
         action: "SUBMIT",
@@ -342,10 +346,10 @@ function workflowPrimaryAction(etape: string): {
         labelBusy: "Soumission…",
         confirmMessage: hierarchical
           ? "Confirmer la soumission du dossier ? Il passera à l’étape « Soumis » et pourra être pris en charge pour la validation de niveau 1."
-          : "Confirmer la soumission ? Le dossier sera validé automatiquement.",
+          : "Confirmer la soumission ? Le dossier sera finalisé automatiquement si les prérequis sont réunis.",
         successMessage: hierarchical
           ? "Dossier soumis. Prochaine étape : validation de niveau 1."
-          : "Dossier soumis et validé automatiquement.",
+          : "Dossier soumis.",
         ariaLabel: "Soumettre le dossier",
         buttonClass:
           "border border-slate-700 bg-slate-800 text-white hover:border-slate-900 hover:bg-slate-900",
@@ -1438,6 +1442,7 @@ export default function ContratsPanel() {
 
   /** Un valideur ne voit que sa file ; l’agent conserve le suivi complet. */
   const pipelineLevels = useMemo(() => {
+    if (!areWorkflowApprovalsEnabled()) return { showN1: false, showN2: false, showFinal: true };
     switch (meRole) {
       case "CHEF_SECTION":
         return { showN1: true, showN2: false, showFinal: false };
@@ -1472,7 +1477,9 @@ export default function ContratsPanel() {
     const p = chartsData.pendingByLevel ?? { n1: 0, n2: 0, final: 0 };
     const pendingN1 = p.n1 ?? 0;
     const pendingN2 = p.n2 ?? 0;
-    const pendingFinal = p.final ?? 0;
+    const pendingFinal = areWorkflowApprovalsEnabled()
+      ? p.final ?? 0
+      : pendingN1 + pendingN2 + (p.final ?? 0);
     const showN1 = pipelineLevels.showN1;
     const showN2 = pipelineLevels.showN2;
     const showFinal = pipelineLevels.showFinal;
@@ -1497,14 +1504,23 @@ export default function ContratsPanel() {
   }, [chartsData, pipelineLevels]);
 
   const dossierEtapeFilterOptions = useMemo(() => {
-    const labels: Record<string, string> = {
-      BROUILLON: "Brouillon",
-      SOUMIS: "Soumis (att. N1)",
-      VALIDE_N1: "Validé N1 (att. N2)",
-      VALIDE_N2: "Validé N2 (à finaliser)",
-      FINALISE: "Finalisé",
-      REJETE: "Rejeté",
-    };
+    const labels: Record<string, string> = areWorkflowApprovalsEnabled()
+      ? {
+          BROUILLON: "Brouillon",
+          SOUMIS: "Soumis (att. N1)",
+          VALIDE_N1: "Validé N1 (att. N2)",
+          VALIDE_N2: "Validé N2 (à finaliser)",
+          FINALISE: "Finalisé",
+          REJETE: "Rejeté",
+        }
+      : {
+          BROUILLON: "Brouillon",
+          SOUMIS: "À finaliser (soumis)",
+          VALIDE_N1: "À finaliser (ancien N1)",
+          VALIDE_N2: "À finaliser (ancien N2)",
+          FINALISE: "Finalisé",
+          REJETE: "Rejeté",
+        };
     const role = (meRole ?? "AGENT") as LonaciRole;
     const statuses = getRoleWorkflowFilterStatuses("DOSSIERS", role);
     return statuses.map((value) => ({
@@ -1632,7 +1648,7 @@ export default function ContratsPanel() {
               {contractsKpis.showFinal ? (
                 <div>
                   <div className="mb-1 flex items-center justify-between text-[11px] text-slate-600">
-                    <span>Validé N2 (à finaliser)</span>
+                    <span>{areWorkflowApprovalsEnabled() ? "Validé N2 (à finaliser)" : "À finaliser"}</span>
                     <span className="font-semibold text-slate-900">{contractsKpis.pendingFinal}</span>
                   </div>
                   <div className="h-2 rounded-full bg-slate-100">
@@ -1684,7 +1700,9 @@ export default function ContratsPanel() {
           <div className="border-b border-violet-200/90 px-4 py-3 sm:px-5">
             <h3 className="text-sm font-semibold text-violet-950">Dossiers à finaliser (signature / création contrat)</h3>
             <p className="mt-0.5 text-xs text-violet-900/85">
-              Liste des dossiers au statut « Validé N2 » — étape avant finalisation. Export PDF du récapitulatif par ligne.
+              {areWorkflowApprovalsEnabled()
+                ? "Liste des dossiers au statut « Validé N2 » — étape avant finalisation. Export PDF du récapitulatif par ligne."
+                : "Dossiers soumis en attente de finalisation (pièces, caution, signature). Export PDF du récapitulatif par ligne."}
             </p>
           </div>
           <div className="overflow-x-auto p-2 sm:p-4">
@@ -2114,7 +2132,7 @@ export default function ContratsPanel() {
                             <button
                               type="button"
                               onClick={() => void openDossierRecapPdf(c.dossierId)}
-                              title="Récapitulatif dossier (historique validations)"
+                              title="Récapitulatif dossier (titulaire, pièces, caution, contrats, historique)"
                               className="inline-flex items-center justify-center rounded-lg border border-indigo-300 bg-indigo-50 px-2.5 py-1.5 text-[11px] font-semibold leading-tight text-indigo-800 shadow-sm transition hover:bg-indigo-100"
                             >
                               Récap.
@@ -2454,7 +2472,7 @@ export default function ContratsPanel() {
                       ],
                       ["Nom complet", viewContrat.clientFiche.nomComplet],
                       ["Raison sociale", viewContrat.clientFiche.raisonSociale],
-                      ["Code machine", viewContrat.clientFiche.codeMachine],
+                      ["TPE (codes machine)", viewContrat.clientFiche.codeMachine],
                       ["N° CNI", viewContrat.clientFiche.cniNumero],
                       ["Contact", viewContrat.clientFiche.nomContact],
                       ["E-mail", viewContrat.clientFiche.email],
@@ -2975,7 +2993,7 @@ export default function ContratsPanel() {
                           {createChecklistObligatoires.complet
                             ? areWorkflowApprovalsEnabled()
                               ? "Checklist complète — le dossier sera soumis automatiquement à la validation N1."
-                              : "Checklist complète — le dossier sera soumis et validé automatiquement."
+                              : "Checklist complète — le dossier sera soumis et finalisé dès que la caution est payée."
                             : `${createChecklistObligatoires.fournis}/${createChecklistObligatoires.total} pièce(s) obligatoire(s) cochée(s).`}
                         </p>
                       ) : (

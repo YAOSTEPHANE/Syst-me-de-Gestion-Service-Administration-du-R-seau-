@@ -68,6 +68,8 @@ function createContratView(): ContratDocumentView {
       numeroTpm: "TPM-200",
       notes: null,
       produitsAutorises: ["LOTO"],
+      compteBancaire: "CI008 01234 000123456789 42",
+      banqueEtablissement: "SGBCI",
     },
     documentsFournis: Array.from(
       { length: 58 },
@@ -190,6 +192,9 @@ describe("rendus PDF contrat et annexe", () => {
     expect(text).toContain("DIST-100");
     expect(text).toContain("N° TPM");
     expect(text).toContain("TPM-200");
+    expect(text).toContain("RIB — N° de compte");
+    expect(text).toContain("CI008 01234 000123456789 42");
+    expect(text).toContain("SGBCI");
     expect(text).toContain("DOCUMENT OFFICIEL — CONTRAT");
     expect(text).toContain("Générée par");
     expect(text).toContain("Agent Test LONACI");
@@ -217,6 +222,8 @@ describe("rendus PDF contrat et annexe", () => {
     expect(text).toContain("ANNEXE-LOTO-2026-07-0001");
     expect(text).toContain("CONTRAT-LOTO-2026-07-0001");
     expect(text).toContain("Cette annexe accompagne le contrat");
+    expect(text).toContain("CI008 01234 000123456789 42");
+    expect(text).toContain("SGBCI");
     expect(text).toContain("Générée par");
     expect(text).toContain("Agent Test LONACI");
     for (const [index, page] of parsed.pages.entries()) {

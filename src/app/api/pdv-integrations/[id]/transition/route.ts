@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureSprint4Indexes, transitionPdvIntegration } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   targetStatus: z.enum(["EN_TRAITEMENT", "INTEGRE_GPR", "FINALISE"]),
@@ -19,7 +20,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return zodBadRequest(parsed.error);
   }
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled() ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] : workflowStepRoles("CHEF_SERVICE"),
     rbac: {
       resource: "PDV_INTEGRATIONS",
       action: parsed.data.targetStatus === "FINALISE" ? "FINALIZE" : "UPDATE",

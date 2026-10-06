@@ -26,6 +26,7 @@ import {
   findConcessionnaireById,
   nextCodePdvForAgence,
 } from "@/lib/lonaci/concessionnaires";
+import { getDatabase } from "@/lib/mongodb";
 import { prisma } from "@/lib/prisma";
 
 function normalizeStoredInscriptionStatut(
@@ -319,7 +320,36 @@ export async function transitionConcessionnaireInscription(input: {
     },
   });
 
+  if (!areWorkflowApprovalsEnabled()) {
+    if (input.action === "SUBMIT" && isOperationalWorkflowRole(input.actor.role)) {
+      try {
+        return await transitionConcessionnaireInscription({
+          concessionnaireId: input.concessionnaireId,
+          action: "VALIDATE_N1",
+          comment: "Code PDV attribué automatiquement à la soumission.",
+          actor: input.actor,
+        });
+      } catch {
+        // Prérequis manquants (agence…) : l'inscription reste soumise, à finaliser.
+        return updated;
+      }
+    }
+    if (input.action === "VALIDATE_N1" && (await hasSettledInscriptionCaution(input.concessionnaireId))) {
+      await completeInscriptionAfterCautionPaid({ concessionnaireId: input.concessionnaireId, actor: input.actor });
+      return (await findConcessionnaireById(input.concessionnaireId)) ?? updated;
+    }
+  }
+
   return updated;
+}
+
+async function hasSettledInscriptionCaution(concessionnaireId: string): Promise<boolean> {
+  const db = await getDatabase();
+  const caution = await db.collection("cautions").findOne(
+    { concessionnaireId, status: { $in: ["PAYEE", "EXONEREE"] }, deletedAt: null },
+    { projection: { _id: 1 } },
+  );
+  return Boolean(caution);
 }
 
 export function parseConcessionnaireDocumentChecklist(

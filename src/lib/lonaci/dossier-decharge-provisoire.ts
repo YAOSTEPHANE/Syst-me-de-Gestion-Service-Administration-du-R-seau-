@@ -40,6 +40,7 @@ import {
   PDF_TYPOGRAPHY,
   type PdfField,
 } from "@/lib/pdf";
+import { lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { prisma } from "@/lib/prisma";
 
 const CAUTIONS_COLLECTION = "cautions";
@@ -189,7 +190,7 @@ export async function findAssociatedCautionForDossier(
   }
 
   const client = await prisma.lonaciClient.findFirst({
-    where: { code: concessionnaire.codePdv, deletedAt: null },
+    where: { AND: [{ code: concessionnaire.codePdv }, lonaciClientNotDeletedWhere] },
     select: { id: true },
   });
   if (!client) {

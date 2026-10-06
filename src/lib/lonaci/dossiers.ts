@@ -61,6 +61,7 @@ import { getDatabase } from "@/lib/mongodb";
 import { dossierTransitionRoleError } from "@/lib/lonaci/workflow-separation";
 import {
   areWorkflowApprovalsEnabled,
+  intermediateWorkflowSteps,
   isOperationalWorkflowRole,
 } from "@/lib/lonaci/workflow-approvals";
 
@@ -343,6 +344,8 @@ async function notifyAfterTransition(
       `Opération ${operationLabel} | référence ${dossier.reference} | ${nextAction} | acteur ${actionBy}. Connectez-vous à la console.`,
       dossier.agenceId,
     );
+  } else if ((target === "VALIDE_N1" || target === "VALIDE_N2") && !hierarchical) {
+    // Étapes franchies automatiquement : seule la finalisation est notifiée.
   } else if (target === "VALIDE_N1") {
     const nextAction = hierarchical
       ? "action validation N2 attendue"
@@ -495,6 +498,8 @@ export async function assertDossierContratSubmitAllowed(dossier: DossierDocument
   }
 }
 
+const DOSSIER_STATUS_CHAIN: readonly DossierStatus[] = ["SOUMIS", "VALIDE_N1", "VALIDE_N2", "FINALISE"];
+
 export async function transitionDossier(
   dossierId: string,
   targetStatus: DossierStatus,
@@ -515,6 +520,13 @@ export async function transitionDossier(
     })
   ) {
     throw new Error("DOSSIER_NOT_FOUND");
+  }
+  const skipped = intermediateWorkflowSteps(DOSSIER_STATUS_CHAIN, dossier.status, targetStatus);
+  if (skipped.length > 0) {
+    for (const step of skipped) {
+      await transitionDossier(dossierId, step, actor, "Étape franchie automatiquement.");
+    }
+    return transitionDossier(dossierId, targetStatus, actor, comment);
   }
   if (!roleCanDoTransition(actor.role, targetStatus, dossier.status)) {
     throw new Error(dossierTransitionRoleError(actor.role, targetStatus) ?? "ROLE_FORBIDDEN");

@@ -15,21 +15,28 @@ import { userDisplayName } from "@/lib/lonaci/types";
 import { findUserById } from "@/lib/lonaci/users";
 import {
   collectPdfBuffer,
+  contentBottom,
   contentWidth,
   createPremiumPdfDocument,
-  drawBulletList,
-  drawInformationCard,
-  drawSection,
-  drawSignatureBlock,
   drawStatusBadge,
-  drawTitle,
-  ensureSpace,
   finalizePremiumPages,
-  PDF_COLORS,
   PDF_SPACING,
-  PDF_TYPOGRAPHY,
-  type PdfField,
 } from "@/lib/pdf";
+import {
+  CHEF_SERVICE_PDF_SIGNATURE,
+  COMPACT_LINE_HEIGHT,
+  COMPACT_SIGNATURE_BOX_HEIGHT,
+  COMPACT_TITLE_HEIGHT,
+  COMPACT_VALUE_SIZE,
+  drawCompactBlockTitle,
+  drawCompactFieldGrid,
+  drawCompactFootnote,
+  drawCompactHeader,
+  drawCompactSignatureBoxes,
+  fitCompactList,
+} from "@/lib/pdf/compact-layout";
+import { FICHE_MARGINS } from "@/lib/pdf/soumission-fiche-paiement";
+import { PDF_PREMIUM } from "@/lib/pdf/tokens";
 
 export {
   DECHARGE_CONTRAT_DESCRIPTION,
@@ -140,6 +147,7 @@ export async function buildDossierDechargeContratView(
 
 export async function renderDossierDechargeContratPdf(view: DossierDechargeContratView): Promise<Buffer> {
   const doc = createPremiumPdfDocument({
+    margins: FICHE_MARGINS,
     metadata: {
       title: DECHARGE_CONTRAT_TITLE,
       subject: `Remise des contrats du dossier ${view.dossierReference}`,
@@ -148,14 +156,16 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
     },
   });
   return collectPdfBuffer(doc, () => {
-    drawTitle(
+    const left = doc.page.margins.left;
+    const width = contentWidth(doc);
+    drawCompactHeader(
       doc,
       DECHARGE_CONTRAT_TITLE,
-      `Réf. dossier : ${view.dossierReference} · Date : ${view.dateRemise.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} · Générée par ${view.agentNom}`,
+      `Réf. dossier : ${view.dossierReference} · Date de remise : ${view.dateRemise.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
     );
     drawStatusBadge(doc, view.mention, "info");
 
-    const identityFields: PdfField[] = [
+    drawCompactFieldGrid(doc, "Identification du bénéficiaire", [
       { label: "Nom", value: view.nomComplet },
       ...(view.raisonSociale && view.raisonSociale !== view.nomComplet
         ? [{ label: "Raison sociale", value: view.raisonSociale }]
@@ -167,52 +177,64 @@ export async function renderDossierDechargeContratPdf(view: DossierDechargeContr
         value:
           view.produits.length === 1
             ? `${view.produits[0]!.produitCode} — ${view.produits[0]!.produitLibelle}`
-            : `${view.produits.length.toLocaleString("fr-FR")} produits — voir la liste détaillée ci-dessous`,
+            : `${view.produits.length.toLocaleString("fr-FR")} produits — voir la liste ci-dessous`,
       },
-      { label: "Générée par", value: view.agentNom },
-    ];
-    drawSection(doc, "Identification du bénéficiaire");
-    drawInformationCard(doc, identityFields);
+    ]);
 
-    drawSection(doc, "Contrat(s) remis au client");
-    drawBulletList(
+    const attestation = `Je soussigné(e) reconnais avoir reçu le(s) contrat(s) et annexe(s) mentionné(s) ci-dessus, relatifs au point de vente ${view.codePdv || "—"} (${view.agenceLabel}), en date du ${view.dateRemise.toLocaleDateString("fr-FR", { dateStyle: "long" })}.`;
+    doc.font("Helvetica").fontSize(COMPACT_VALUE_SIZE);
+    const attestationHeight = doc.heightOfString(attestation, { width });
+    const reservedBelowList =
+      COMPACT_TITLE_HEIGHT +
+      attestationHeight +
+      PDF_SPACING.sm +
+      COMPACT_LINE_HEIGHT +
+      COMPACT_SIGNATURE_BOX_HEIGHT +
+      COMPACT_LINE_HEIGHT +
+      PDF_SPACING.md;
+    const listBudget = Math.max(
+      COMPACT_LINE_HEIGHT,
+      contentBottom(doc) - doc.y - COMPACT_TITLE_HEIGHT - reservedBelowList,
+    );
+
+    drawCompactBlockTitle(doc, "Contrat(s) remis au client");
+    doc.fillColor(PDF_PREMIUM.inkSoft).font("Helvetica").fontSize(COMPACT_VALUE_SIZE);
+    const produitsText = fitCompactList(
       doc,
       view.produits.map(
         (produit) =>
-          `${produit.produitCode} — ${produit.produitLibelle}\nContrat : ${produit.referenceContrat} | Annexe : ${produit.referenceAnnexe}`,
+          `• ${produit.produitCode} — ${produit.produitLibelle} · Contrat : ${produit.referenceContrat} · Annexe : ${produit.referenceAnnexe}`,
       ),
+      {
+        separator: "\n",
+        width,
+        maxHeight: listBudget,
+        emptySummary: `${view.produits.length} contrat(s) remis — voir le dossier`,
+      },
     );
+    doc.text(produitsText, left, doc.y, { width });
+    doc.y += PDF_SPACING.sm;
 
-    drawSection(doc, "Attestation de remise");
-    const attestation = `Je soussigné(e) reconnais avoir reçu le(s) contrat(s) et annexe(s) mentionné(s) ci-dessus, relatifs au point de vente ${view.codePdv || "—"} (${view.agenceLabel}), en date du ${view.dateRemise.toLocaleDateString("fr-FR", { dateStyle: "long" })}.`;
-    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.body);
-    const attestationHeight =
-      doc.heightOfString(attestation, { width: contentWidth(doc) }) + PDF_SPACING.lg;
-    ensureSpace(doc, attestationHeight);
+    drawCompactBlockTitle(doc, "Attestation de remise");
     doc
-      .fillColor(PDF_COLORS.ink)
-      .text(attestation, { width: contentWidth(doc), align: "justify" });
-    doc.y += PDF_SPACING.lg;
-    drawSignatureBlock(doc, [
-      { label: "Signature du client" },
-      { label: "Cachet et signature LONACI" },
+      .fillColor(PDF_PREMIUM.ink)
+      .font("Helvetica")
+      .fontSize(COMPACT_VALUE_SIZE)
+      .text(attestation, left, doc.y, { width, align: "justify" });
+    doc.y += PDF_SPACING.xs;
+    drawCompactFootnote(doc, "Document établi après finalisation du contrat. À conserver par le client et par l’agence.");
+    doc.y += PDF_SPACING.sm;
+
+    drawCompactSignatureBoxes(doc, [
+      { label: "Signature du client", footerLabel: "Lu et approuvé" },
+      CHEF_SERVICE_PDF_SIGNATURE,
     ]);
-
-    const retentionNotice =
-      "Document établi après finalisation du contrat. À conserver par le client et par l’agence.";
-    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.label);
-    ensureSpace(
-      doc,
-      doc.heightOfString(retentionNotice, { width: contentWidth(doc) }) + PDF_SPACING.md,
-    );
-    doc
-      .fillColor(PDF_COLORS.muted)
-      .text(retentionNotice, { width: contentWidth(doc), align: "justify" });
+    drawCompactFootnote(doc, `Générée par : ${view.agentNom}`);
 
     finalizePremiumPages(doc, {
       reference: view.dossierReference,
       issuedAt: view.generatedAt,
-      documentLabel: "REMISE DE CONTRAT",
+      documentLabel: "DECHARGE CONTRAT",
       generatedBy: view.agentNom,
     });
   });

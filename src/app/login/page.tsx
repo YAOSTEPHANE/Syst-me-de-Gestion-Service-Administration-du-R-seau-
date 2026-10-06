@@ -113,7 +113,7 @@ function LoginPageContent() {
         body: JSON.stringify({ identifier: identifier.trim(), password }),
       });
       const data = (await res.json().catch(() => null)) as
-        | { message?: string; user?: { needsPasswordChange?: boolean } }
+        | { message?: string; user?: { needsPasswordChange?: boolean; role?: string } }
         | null;
       if (!res.ok) {
         throw new Error(data?.message ?? "Connexion impossible");
@@ -121,6 +121,8 @@ function LoginPageContent() {
       notify.success("Connexion réussie.");
       if (data?.user?.needsPasswordChange) {
         router.replace("/parametres?motDePasse=obligatoire");
+      } else if (data?.user?.role === "ASSIST_DGVR") {
+        router.replace("/agrements");
       } else {
         router.replace("/dashboard");
       }

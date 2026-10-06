@@ -19,7 +19,7 @@ import {
   drawWatermark,
   ensureSpace,
 } from "@/lib/pdf/primitives";
-import { PDF_COLORS, PDF_PREMIUM, PDF_SPACING, PDF_TYPOGRAPHY } from "@/lib/pdf/tokens";
+import { PDF_COLORS, PDF_PAGE, PDF_PREMIUM, PDF_SPACING, PDF_TYPOGRAPHY } from "@/lib/pdf/tokens";
 
 export type SoumissionFichePaiementView = {
   reference: string;
@@ -34,9 +34,10 @@ export type SoumissionFichePaiementView = {
   observations: string | null;
 };
 
-/** Mise en page compacte : la fiche caisse doit tenir sur 1 feuille A4. */
-const FICHE_MARGINS = {
-  top: 72,
+/** Mise en page compacte : les fiches soumission doivent tenir sur 1 feuille A4. */
+export const FICHE_MARGINS = {
+  /** Doit rester sous le bandeau orange de l'en-tête premium (y=24, hauteur 58). */
+  top: PDF_PAGE.topMargin + 8,
   right: 40,
   bottom: 48,
   left: 40,
@@ -66,11 +67,12 @@ function drawCompactHeader(doc: PdfDocument, reference: string, issuedAt: Date):
   doc.moveDown(0.35);
 }
 
-function drawAmountAndQr(
+export function drawAmountAndQr(
   doc: PdfDocument,
   montant: number,
   reference: string,
   qrImage: Buffer,
+  options: { label?: string; caption?: string } = {},
 ): void {
   const left = doc.page.margins.left;
   const width = contentWidth(doc);
@@ -95,7 +97,7 @@ function drawAmountAndQr(
     .fillColor(PDF_PREMIUM.accentDark)
     .font("Helvetica-Bold")
     .fontSize(7)
-    .text("MONTANT À ENCAISSER", left + 10, y + 7, {
+    .text(options.label ?? "MONTANT À ENCAISSER", left + 10, y + 7, {
       width: cardWidth - 20,
       lineBreak: false,
     });
@@ -131,7 +133,7 @@ function drawAmountAndQr(
     .fillColor(PDF_COLORS.muted)
     .font("Helvetica")
     .fontSize(6.5)
-    .text(`QR contrôle · ${reference}`, { width, align: "right", lineBreak: false });
+    .text(options.caption ?? `QR contrôle · ${reference}`, { width, align: "right", lineBreak: false });
   doc.moveDown(0.4);
 }
 
@@ -161,18 +163,23 @@ function drawCashierInstructions(doc: PdfDocument, reference: string): void {
   doc.y = y + height + 8;
 }
 
-function drawCompactSignatures(doc: PdfDocument, agentNom: string, dateLabel: string): void {
+export type CompactSignatureBox = { title: string; detail: string; footer: string };
+
+const FICHE_CAISSE_SIGNATURES: readonly CompactSignatureBox[] = [
+  { title: "Visa responsable administratif", detail: "Nom et date", footer: "Signature et cachet" },
+  { title: "Visa caisse", detail: "Caissier(ère)", footer: "N° reçu · Signature et cachet" },
+];
+
+export function drawCompactSignatures(
+  doc: PdfDocument,
+  boxes: readonly CompactSignatureBox[] = FICHE_CAISSE_SIGNATURES,
+): void {
   const left = doc.page.margins.left;
   const gap = 16;
   const width = (contentWidth(doc) - gap) / 2;
   const height = 72;
   ensureSpace(doc, height);
   const y = doc.y;
-
-  const boxes = [
-    { title: "Visa agent", detail: `${agentNom} · ${dateLabel}`, footer: "Signature et cachet" },
-    { title: "Visa caisse", detail: "Caissier(ère)", footer: "N° reçu · Signature et cachet" },
-  ] as const;
 
   boxes.forEach((box, index) => {
     const x = left + index * (width + gap);
@@ -261,15 +268,14 @@ export async function renderSoumissionFichePaiementPdf(
       { label: "Contact", value: view.contact },
       { label: "Type distributeur", value: view.typeDistributeurLabel },
       { label: "TPE", value: String(view.nombreTpe) },
-      { label: "Agence", value: view.agenceLabel },
-      { label: "Lieu", value: "Caisse LONACI" },
+      { label: "Zone", value: view.agenceLabel },
       ...(view.observations?.trim()
         ? [{ label: "Observation", value: view.observations.trim() }]
         : []),
     ]);
 
     drawCashierInstructions(doc, view.reference);
-    drawCompactSignatures(doc, view.agentNom, issuedAt.toLocaleDateString("fr-FR"));
+    drawCompactSignatures(doc);
 
     doc
       .fillColor(PDF_COLORS.muted)

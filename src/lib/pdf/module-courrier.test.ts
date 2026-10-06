@@ -69,4 +69,14 @@ describe("renderModuleCourrierPdf", () => {
       expect(countPdfPages(buffer)).toBe(1);
     }
   });
+
+  it("poursuit un corps trop long sur une page suivante au lieu de le tronquer", async () => {
+    const paragraph =
+      "Ce paragraphe volontairement long sert à vérifier que le texte du courrier n'est jamais perdu lorsque le modèle saisi par l'administrateur dépasse la place disponible sur la première page.";
+    const corps = Array.from({ length: 40 }, (_, index) => `${index + 1}. ${paragraph}`).join("\n\n");
+
+    const buffer = await renderModuleCourrierPdf({ ...sampleView, corps });
+
+    expect(countPdfPages(buffer)).toBeGreaterThan(1);
+  });
 });

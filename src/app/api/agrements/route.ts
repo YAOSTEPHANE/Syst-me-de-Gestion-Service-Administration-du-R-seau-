@@ -10,6 +10,7 @@ import {
   ensureAgrementsIndexes,
   listAgrements,
 } from "@/lib/lonaci/agrements";
+import { AGREMENTS_READ_ROLES } from "@/lib/lonaci/agrements-roles";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { AGREMENT_ALLOWED_MIME, MAX_AGREMENT_FILE_BYTES, saveAgrementPdf } from "@/lib/storage/agrements-files";
 
@@ -24,9 +25,7 @@ const listSchema = z.object({
 });
 
 export async function GET(request: NextRequest) {
-  const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
-  });
+  const auth = await requireApiAuth(request, { roles: [...AGREMENTS_READ_ROLES] });
   if ("error" in auth) return auth.error;
   const parsed = listSchema.safeParse(Object.fromEntries(request.nextUrl.searchParams.entries()));
   if (!parsed.success) {
@@ -114,6 +113,9 @@ export async function POST(request: NextRequest) {
     storedRelativePath,
     actorId: auth.user._id ?? "",
   });
-  return NextResponse.json({ item: { id: created.id, reference: created.reference, statut: "RECU" } }, { status: 201 });
+  return NextResponse.json(
+    { item: { id: created.id, reference: created.reference, statut: created.statut } },
+    { status: 201 },
+  );
 }
 

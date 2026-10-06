@@ -4,6 +4,7 @@ import { z } from "zod";
 import { apiError, conflict, notFound } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { resolveListAgenceFilter } from "@/lib/lonaci/access";
+import { ISO_DAY_PATTERN, resolveCautionPaidPeriod } from "@/lib/lonaci/caution-paid-period";
 import { CAUTION_ENCAISSEMENT_MODES, CAUTION_PAYMENT_MODES } from "@/lib/lonaci/constants";
 import {
   CAUTION_LIST_TABS,
@@ -18,6 +19,11 @@ const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).default(50),
   tab: z.enum(CAUTION_LIST_TABS),
   q: z.string().max(200).optional(),
+  paidFrom: z.string().regex(ISO_DAY_PATTERN).optional(),
+  paidTo: z.string().regex(ISO_DAY_PATTERN).optional(),
+}).refine((data) => !data.paidFrom || !data.paidTo || data.paidFrom <= data.paidTo, {
+  message: "La date de début doit précéder la date de fin.",
+  path: ["paidFrom"],
 });
 
 const createBodySchema = z
@@ -103,6 +109,7 @@ export async function GET(request: NextRequest) {
     auth.user,
     agenceRestriction,
     parsed.data.q,
+    resolveCautionPaidPeriod({ paidFrom: parsed.data.paidFrom, paidTo: parsed.data.paidTo }),
   );
 
   return NextResponse.json({ items, total, page: parsed.data.page, pageSize: parsed.data.pageSize }, { status: 200 });

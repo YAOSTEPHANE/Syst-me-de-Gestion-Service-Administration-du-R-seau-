@@ -13,7 +13,9 @@ import {
   createBancarisationRequest,
   listBancarisationRequests,
   sanitizeBancarisationRequestPublic,
+  validateBancarisationRequest,
 } from "@/lib/lonaci/bancarisation";
+import { autoFinalizeQuietly } from "@/lib/lonaci/workflow-approvals";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { addPieceJointe } from "@/lib/lonaci/concessionnaires";
 import { listAgences } from "@/lib/lonaci/referentials";
@@ -193,5 +195,18 @@ export async function POST(request: NextRequest) {
     createdByUserId: auth.user._id ?? "",
   });
 
-  return NextResponse.json({ request: sanitizeBancarisationRequestPublic(created) }, { status: 201 });
+  let finalRequest = created;
+  const autoFinalize = await autoFinalizeQuietly(async () => {
+    finalRequest = await validateBancarisationRequest({
+      requestId: created._id ?? "",
+      decision: "VALIDER",
+      comment: null,
+      actor: auth.user,
+    });
+  });
+
+  return NextResponse.json(
+    { request: sanitizeBancarisationRequestPublic(finalRequest), autoFinalize },
+    { status: 201 },
+  );
 }

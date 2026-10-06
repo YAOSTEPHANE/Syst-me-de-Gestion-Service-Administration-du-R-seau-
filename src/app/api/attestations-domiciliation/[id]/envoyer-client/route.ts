@@ -5,6 +5,7 @@ import {
   envoyerAttestationAuClient,
 } from "@/lib/lonaci/attestations-domiciliation";
 import { checkPermission } from "@/lib/auth/checkPermission";
+import { workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -12,7 +13,7 @@ interface RouteContext {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await checkPermission(request, {
-    roles: ["CHEF_SERVICE"],
+    roles: workflowStepRoles("CHEF_SERVICE"),
     resource: "DOSSIERS",
     action: "UPDATE",
   });

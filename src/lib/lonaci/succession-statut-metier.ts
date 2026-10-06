@@ -4,6 +4,7 @@ import {
   SUCCESSION_STATUT_METIER_DISPLAY_LABELS,
   type SuccessionStatutMetier,
 } from "@/lib/lonaci/succession-statut-metier-constants";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 
 export {
   SUCCESSION_STATUTS_METIER,
@@ -28,6 +29,7 @@ function stepCompleted(history: ResolveSuccessionStatutMetierInput["stepHistory"
 }
 
 function isDossierCompletReady(input: ResolveSuccessionStatutMetierInput): boolean {
+  if (!areWorkflowApprovalsEnabled()) return Boolean(input.checklistComplet);
   return Boolean(
     input.checklistComplet && input.validationN1At && input.validationN2At,
   );

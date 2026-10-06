@@ -7,17 +7,49 @@ import {
   normalizeClientTypeDistributeur,
   type ClientTypeDistributeur,
 } from "@/lib/lonaci/client-constants";
+import type { CautionEncaissementMode } from "@/lib/lonaci/constants";
 import { restrictionToMongoAgenceFilter } from "@/lib/lonaci/list-agence-restriction";
 import {
+  isSoumissionCircuitClos,
+  isSoumissionCircuitStatut,
+  resolveSoumissionCircuitActions,
+  SOUMISSION_CIRCUIT_OUVERTS,
+  SOUMISSION_CIRCUIT_VALIDES,
+  soumissionCurrentMonthStart,
+  soumissionOverdueThreshold,
+  type SoumissionCircuitActions,
+  type SoumissionCircuitCounters,
+  type SoumissionCircuitStatut,
+  type SoumissionCircuitTab,
+} from "@/lib/lonaci/soumission-circuit";
+import {
+  harmonizeSoumissionAppel,
+  soumissionStatutImpliqueAppel,
   SOUMISSION_STATUT_DEFAULT,
   type SoumissionStatut,
 } from "@/lib/lonaci/soumission-constants";
+import {
+  buildSoumissionStats,
+  soumissionStatsWindowEnd,
+  soumissionStatsWindowStart,
+  type SoumissionStatsPayload,
+} from "@/lib/lonaci/soumission-stats";
 import type { UserDocument } from "@/lib/lonaci/types";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 import { getDatabase } from "@/lib/mongodb";
 
-const COLLECTION = "soumissions";
+export const SOUMISSIONS_COLLECTION = "soumissions";
+const COLLECTION = SOUMISSIONS_COLLECTION;
 
-interface SoumissionStored {
+export type SoumissionCircuitHistoryEntry = {
+  action: string;
+  comment: string | null;
+  actedAt: Date;
+  actedByUserId: string;
+  actedByName: string;
+};
+
+export interface SoumissionStored {
   _id: ObjectId;
   nomComplet: string;
   contact: string;
@@ -34,6 +66,19 @@ interface SoumissionStored {
   fichePaiementGeneratedAt: Date | null;
   fichePaiementGeneratedByUserId: string | null;
   fichePaiementGeneratedByName: string | null;
+  /** Absent / null : circuit non démarré (aucune fiche caisse émise). */
+  circuitStatut?: SoumissionCircuitStatut | null;
+  circuitStartedAt?: Date | null;
+  circuitFinalizedAt?: Date | null;
+  circuitFinalizedByName?: string | null;
+  /** Dernier motif de correction, d'annulation ou d'exonération. */
+  circuitMotif?: string | null;
+  circuitHistory?: SoumissionCircuitHistoryEntry[];
+  paymentMode?: CautionEncaissementMode | null;
+  paymentReference?: string | null;
+  numeroFicheDefinitive?: string | null;
+  ficheDefinitiveEmiseLe?: Date | null;
+  j10AlertSentAt?: Date | null;
   date: Date;
   observations: string | null;
   createdByUserId: string;
@@ -55,6 +100,17 @@ export type SoumissionPublic = {
   appele: boolean;
   fichePaiementGeneratedAt: string | null;
   fichePaiementGeneratedByName: string | null;
+  circuitStatut: SoumissionCircuitStatut | null;
+  circuitStartedAt: string | null;
+  circuitFinalizedAt: string | null;
+  circuitFinalizedByName: string | null;
+  circuitMotif: string | null;
+  paymentMode: CautionEncaissementMode | null;
+  paymentReference: string | null;
+  numeroFicheDefinitive: string | null;
+  ficheDefinitiveEmiseLe: string | null;
+  /** Présent dans les listes : actions autorisées pour l'utilisateur courant. */
+  circuitActions?: SoumissionCircuitActions;
   date: string;
   observations: string | null;
   createdByUserId: string;
@@ -67,9 +123,26 @@ function normalizeProduitCode(value: string | null | undefined): string {
   return (value ?? "").trim().toUpperCase();
 }
 
-function isAppele(doc: Pick<SoumissionStored, "appele" | "paye">): boolean {
+function isAppele(doc: Pick<SoumissionStored, "appele" | "paye" | "statut">): boolean {
+  if (soumissionStatutImpliqueAppel(doc.statut)) return true;
   if (typeof doc.appele === "boolean") return doc.appele;
   return Boolean(doc.paye);
+}
+
+function isoOrNull(value: Date | null | undefined): string | null {
+  return value ? value.toISOString() : null;
+}
+
+function circuitStatutOf(doc: Pick<SoumissionStored, "circuitStatut">): SoumissionCircuitStatut | null {
+  return isSoumissionCircuitStatut(doc.circuitStatut) ? doc.circuitStatut : null;
+}
+
+export function soumissionToPublic(doc: SoumissionStored): SoumissionPublic {
+  return toPublic(doc);
+}
+
+export function canAccessSoumissionRow(row: SoumissionStored, actor: UserDocument): boolean {
+  return canAccessSoumission(row, actor);
 }
 
 function toPublic(doc: SoumissionStored): SoumissionPublic {
@@ -87,6 +160,15 @@ function toPublic(doc: SoumissionStored): SoumissionPublic {
       ? doc.fichePaiementGeneratedAt.toISOString()
       : null,
     fichePaiementGeneratedByName: doc.fichePaiementGeneratedByName ?? null,
+    circuitStatut: circuitStatutOf(doc),
+    circuitStartedAt: isoOrNull(doc.circuitStartedAt),
+    circuitFinalizedAt: isoOrNull(doc.circuitFinalizedAt),
+    circuitFinalizedByName: doc.circuitFinalizedByName ?? null,
+    circuitMotif: doc.circuitMotif ?? null,
+    paymentMode: doc.paymentMode ?? null,
+    paymentReference: doc.paymentReference ?? null,
+    numeroFicheDefinitive: doc.numeroFicheDefinitive ?? null,
+    ficheDefinitiveEmiseLe: isoOrNull(doc.ficheDefinitiveEmiseLe),
     date: doc.date.toISOString(),
     observations: doc.observations,
     createdByUserId: doc.createdByUserId,
@@ -113,6 +195,8 @@ export async function ensureSoumissionsIndexes() {
     { key: { contact: 1, agenceId: 1, produitCode: 1 }, name: "idx_contact_agence_produit" },
     { key: { contact: 1, agenceId: 1 }, name: "idx_contact_agence" },
     { key: { nomComplet: 1, contact: 1 }, name: "idx_nom_contact" },
+    { key: { circuitStatut: 1, circuitStartedAt: 1 }, name: "idx_circuit_started" },
+    { key: { circuitStatut: 1, circuitFinalizedAt: -1 }, name: "idx_circuit_finalized" },
   ]);
 }
 
@@ -138,6 +222,10 @@ export async function createSoumission(input: {
 
   const db = await getDatabase();
   const now = new Date();
+  const appel = harmonizeSoumissionAppel(null, {
+    statut: input.statut ?? SOUMISSION_STATUT_DEFAULT,
+    appele: Boolean(input.appele),
+  });
   const doc: Omit<SoumissionStored, "_id"> = {
     nomComplet: input.nomComplet.trim(),
     contact: input.contact.trim(),
@@ -145,8 +233,8 @@ export async function createSoumission(input: {
     nombreTpe: Math.max(0, Math.floor(input.nombreTpe)),
     agenceId: input.agenceId,
     produitCode,
-    statut: input.statut ?? SOUMISSION_STATUT_DEFAULT,
-    appele: Boolean(input.appele),
+    statut: appel.statut,
+    appele: appel.appele,
     fichePaiementGeneratedAt: null,
     fichePaiementGeneratedByUserId: null,
     fichePaiementGeneratedByName: null,
@@ -184,7 +272,10 @@ export async function upsertSoumissionFromImport(input: {
   const produitCode = normalizeProduitCode(input.produitCode);
   if (!produitCode) throw new Error("PRODUIT_REQUIRED");
   const col = db.collection<SoumissionStored>(COLLECTION);
-  const appele = Boolean(input.appele);
+  const { statut, appele } = harmonizeSoumissionAppel(null, {
+    statut: input.statut,
+    appele: Boolean(input.appele),
+  });
 
   let existing =
     contact && input.agenceId
@@ -211,6 +302,7 @@ export async function upsertSoumissionFromImport(input: {
       nomComplet,
       contact,
       produitCode,
+      statut,
       appele,
     });
     return { item: created, outcome: "inserted" };
@@ -224,12 +316,12 @@ export async function upsertSoumissionFromImport(input: {
     existing.nombreTpe === input.nombreTpe &&
     existing.agenceId === input.agenceId &&
     normalizeProduitCode(existing.produitCode) === produitCode &&
-    existing.statut === input.statut &&
+    existing.statut === statut &&
     isAppele(existing) === appele &&
     existing.date.getTime() === input.date.getTime() &&
     (existing.observations ?? "") === (nextObservations ?? "");
 
-  if (same) {
+  if (same || isSoumissionCircuitClos(circuitStatutOf(existing))) {
     return { item: toPublic(existing), outcome: "unchanged" };
   }
 
@@ -244,7 +336,7 @@ export async function upsertSoumissionFromImport(input: {
         nombreTpe: Math.max(0, Math.floor(input.nombreTpe)),
         agenceId: input.agenceId,
         produitCode,
-        statut: input.statut,
+        statut,
         appele,
         date: input.date,
         observations: nextObservations,
@@ -264,7 +356,7 @@ export async function upsertSoumissionFromImport(input: {
       nombreTpe: Math.max(0, Math.floor(input.nombreTpe)),
       agenceId: input.agenceId,
       produitCode,
-      statut: input.statut,
+      statut,
       appele,
       date: input.date,
       observations: nextObservations,
@@ -308,6 +400,13 @@ export async function updateSoumission(input: {
   const row = await col.findOne({ _id: new ObjectId(input.id), deletedAt: null });
   if (!row || !canAccessSoumission(row, input.actor)) throw new Error("SOUMISSION_NOT_FOUND");
 
+  const touchesMoreThanAppele = (
+    ["nomComplet", "contact", "typeDistributeur", "nombreTpe", "agenceId", "produitCode", "statut", "date", "observations"] as const
+  ).some((key) => input[key] !== undefined);
+  if (touchesMoreThanAppele && isSoumissionCircuitClos(circuitStatutOf(row))) {
+    throw new Error("SOUMISSION_IMMUTABLE");
+  }
+
   const nextAgenceId = input.agenceId ?? row.agenceId;
   if (!canCreateConcessionnaireForAgence(input.actor, nextAgenceId)) {
     throw new Error("AGENCE_FORBIDDEN");
@@ -331,8 +430,15 @@ export async function updateSoumission(input: {
     if (!produitCode) throw new Error("PRODUIT_REQUIRED");
     $set.produitCode = produitCode;
   }
-  if (input.statut !== undefined) $set.statut = input.statut;
-  if (input.appele !== undefined) $set.appele = Boolean(input.appele);
+  const touchesAppel = input.statut !== undefined || input.appele !== undefined;
+  if (touchesAppel) {
+    const appel = harmonizeSoumissionAppel(
+      { statut: row.statut, appele: isAppele(row) },
+      { statut: input.statut, appele: input.appele },
+    );
+    $set.statut = appel.statut;
+    $set.appele = appel.appele;
+  }
   if (input.date !== undefined) $set.date = input.date;
   if (input.observations !== undefined) {
     $set.observations = input.observations?.trim() || null;
@@ -340,17 +446,14 @@ export async function updateSoumission(input: {
 
   await col.updateOne(
     { _id: row._id },
-    input.appele !== undefined ? { $set, $unset: { paye: "" } } : { $set },
+    touchesAppel ? { $set, $unset: { paye: "" } } : { $set },
   );
   const updated = await col.findOne({ _id: row._id });
   if (!updated) throw new Error("SOUMISSION_NOT_FOUND");
   return toPublic(updated);
 }
 
-export async function listSoumissions(input: {
-  page: number;
-  pageSize: number;
-  actor: UserDocument;
+type SoumissionsFilterInput = {
   agenceId?: string;
   agenceIds?: string[];
   produitCode?: string;
@@ -358,13 +461,9 @@ export async function listSoumissions(input: {
   /** true = appelés, false = non appelés (champ absent inclus). */
   appele?: boolean;
   q?: string;
-}): Promise<{
-  items: SoumissionPublic[];
-  total: number;
-  page: number;
-  pageSize: number;
-}> {
-  const db = await getDatabase();
+};
+
+function buildSoumissionsFilter(input: SoumissionsFilterInput): Record<string, unknown> {
   const filter: Record<string, unknown> = { deletedAt: null };
   const agenceMongo = restrictionToMongoAgenceFilter({
     agenceId: input.agenceId,
@@ -375,9 +474,9 @@ export async function listSoumissions(input: {
   if (produitCode) filter.produitCode = produitCode;
   if (input.statut) filter.statut = input.statut;
   if (input.appele === true) {
-    filter.$or = [{ appele: true }, { paye: true }];
+    filter.$or = [{ appele: true }, { paye: true }, { statut: { $ne: "A_APPELER" } }];
   } else if (input.appele === false) {
-    filter.$nor = [{ appele: true }, { paye: true }];
+    filter.$nor = [{ appele: true }, { paye: true }, { statut: { $ne: "A_APPELER" } }];
   }
 
   const q = input.q?.trim();
@@ -404,20 +503,111 @@ export async function listSoumissions(input: {
       filter.$or = textOr;
     }
   }
+  return filter;
+}
 
+function circuitTabFilter(tab: SoumissionCircuitTab, now: Date): Record<string, unknown> {
+  switch (tab) {
+    case "TOUTES":
+      return {};
+    case "J10_OVERDUE":
+      return {
+        circuitStatut: { $in: [...SOUMISSION_CIRCUIT_OUVERTS] },
+        circuitStartedAt: { $lte: soumissionOverdueThreshold(now) },
+      };
+    case "EN_ATTENTE":
+      return {
+        circuitStatut: { $in: [...SOUMISSION_CIRCUIT_OUVERTS] },
+        circuitStartedAt: { $gt: soumissionOverdueThreshold(now) },
+      };
+    case "VALIDATED_THIS_MONTH":
+      return {
+        circuitStatut: { $in: [...SOUMISSION_CIRCUIT_VALIDES] },
+        circuitFinalizedAt: { $gte: soumissionCurrentMonthStart(now) },
+      };
+    default: {
+      const exhaustive: never = tab;
+      return exhaustive;
+    }
+  }
+}
+
+export async function listSoumissions(
+  input: SoumissionsFilterInput & {
+    page: number;
+    pageSize: number;
+    actor: UserDocument;
+    circuitTab?: SoumissionCircuitTab;
+  },
+): Promise<{
+  items: SoumissionPublic[];
+  total: number;
+  page: number;
+  pageSize: number;
+  circuitCounters: SoumissionCircuitCounters;
+}> {
+  const db = await getDatabase();
+  const now = new Date();
+  const baseFilter = buildSoumissionsFilter(input);
+  const filter = { ...baseFilter, ...circuitTabFilter(input.circuitTab ?? "TOUTES", now) };
   const col = db.collection<SoumissionStored>(COLLECTION);
   const skip = (input.page - 1) * input.pageSize;
-  const [total, rows] = await Promise.all([
+  const countTab = (tab: Exclude<SoumissionCircuitTab, "TOUTES">) =>
+    col.countDocuments({ ...baseFilter, ...circuitTabFilter(tab, now) });
+  const [total, rows, overdue, enAttente, validees] = await Promise.all([
     col.countDocuments(filter),
     col.find(filter).sort({ date: -1, createdAt: -1 }).skip(skip).limit(input.pageSize).toArray(),
+    countTab("J10_OVERDUE"),
+    countTab("EN_ATTENTE"),
+    countTab("VALIDATED_THIS_MONTH"),
   ]);
 
+  const approvalsEnabled = areWorkflowApprovalsEnabled();
   return {
-    items: rows.map(toPublic),
+    items: rows.map((row) => ({
+      ...toPublic(row),
+      circuitActions: resolveSoumissionCircuitActions({
+        role: input.actor.role,
+        circuitStatut: circuitStatutOf(row),
+        approvalsEnabled,
+      }),
+    })),
     total,
     page: input.page,
     pageSize: input.pageSize,
+    circuitCounters: {
+      J10_OVERDUE: overdue,
+      EN_ATTENTE: enAttente,
+      VALIDATED_THIS_MONTH: validees,
+    },
   };
+}
+
+/** Volumes de soumissions par jour / semaine / mois (sur le champ `date`), mêmes filtres que la liste. */
+export async function getSoumissionStats(
+  input: SoumissionsFilterInput & { now?: Date },
+): Promise<SoumissionStatsPayload> {
+  const now = input.now ?? new Date();
+  const db = await getDatabase();
+  const filter = buildSoumissionsFilter(input);
+  filter.date = { $gte: soumissionStatsWindowStart(now), $lt: soumissionStatsWindowEnd(now) };
+
+  const rows = await db
+    .collection<SoumissionStored>(COLLECTION)
+    .aggregate<{ _id: string; count: number }>([
+      { $match: filter },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$date", timezone: "UTC" } },
+          count: { $sum: 1 },
+        },
+      },
+    ])
+    .toArray();
+
+  const dailyCounts: Record<string, number> = {};
+  for (const row of rows) dailyCounts[row._id] = row.count;
+  return buildSoumissionStats(dailyCounts, now);
 }
 
 /** Enregistre l’émission de la fiche paiement caisse (agent générateur). */
@@ -431,6 +621,7 @@ export async function markSoumissionFichePaiementGenerated(input: {
   const col = db.collection<SoumissionStored>(COLLECTION);
   const row = await col.findOne({ _id: new ObjectId(input.id), deletedAt: null });
   if (!row || !canAccessSoumission(row, input.actor)) throw new Error("SOUMISSION_NOT_FOUND");
+  if (isSoumissionCircuitClos(circuitStatutOf(row))) throw new Error("SOUMISSION_CIRCUIT_CLOS");
 
   const now = new Date();
   const agentName = input.agentName.trim() || "Agent LONACI";

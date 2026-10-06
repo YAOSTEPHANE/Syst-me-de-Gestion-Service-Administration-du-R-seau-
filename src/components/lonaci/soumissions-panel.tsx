@@ -3,6 +3,15 @@
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Download, FilePlus2, FileText, Pencil, Upload } from "lucide-react";
 
+import {
+  SoumissionCircuitBadge,
+  SoumissionCircuitButtons,
+  SoumissionCircuitDialog,
+  SoumissionCircuitTabs,
+  type SoumissionCircuitDialogMode,
+  type SoumissionCircuitItem,
+} from "@/components/lonaci/soumission-circuit-ui";
+import { SoumissionsStats } from "@/components/lonaci/soumissions-stats";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
 import { Button } from "@/components/lonaci/ui/button";
 import { DataTable, type DataTableColumn } from "@/components/lonaci/ui/data-table";
@@ -22,11 +31,18 @@ import { matchAgenceFromImportToken } from "@/lib/lonaci/clients-import-map";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import {
+  canMarkSoumissionNonAppele,
+  harmonizeSoumissionAppel,
   SOUMISSION_STATUT_DEFAULT,
   SOUMISSION_STATUT_LABELS,
   SOUMISSION_STATUTS,
   type SoumissionStatut,
 } from "@/lib/lonaci/soumission-constants";
+import {
+  isSoumissionCircuitClos,
+  type SoumissionCircuitCounters,
+  type SoumissionCircuitTab,
+} from "@/lib/lonaci/soumission-circuit";
 import {
   SOUMISSION_IMPORT_COLUMN_ORDER,
   SOUMISSION_IMPORT_HEADER_LABELS,
@@ -36,9 +52,7 @@ import { parseLonaciRole } from "@/lib/lonaci/workflow-ui-policy";
 import { assertExcelImportAllowed, getImportAcceptAttribute } from "@/lib/spreadsheet/import-format-policy";
 import { notify } from "@/lib/toast";
 
-type SoumissionItem = {
-  id: string;
-  nomComplet: string;
+type SoumissionItem = SoumissionCircuitItem & {
   contact: string;
   typeDistributeur: ClientTypeDistributeur;
   nombreTpe: number;
@@ -269,6 +283,13 @@ export default function SoumissionsPanel() {
   const [exporting, setExporting] = useState(false);
   const [pendingImport, setPendingImport] = useState<PendingImport | null>(null);
   const [importProduitCode, setImportProduitCode] = useState("");
+  const [statsRefreshKey, setStatsRefreshKey] = useState(0);
+  const [circuitTab, setCircuitTab] = useState<SoumissionCircuitTab>("TOUTES");
+  const [circuitCounters, setCircuitCounters] = useState<SoumissionCircuitCounters | null>(null);
+  const [circuitTarget, setCircuitTarget] = useState<{
+    item: SoumissionCircuitItem;
+    mode: SoumissionCircuitDialogMode;
+  } | null>(null);
 
   const canWrite =
     meRole !== "AUDITEUR" && meRole !== "LECTURE_SEULE" && meRole !== "SUPERVISEUR_REGIONAL";
@@ -291,10 +312,17 @@ export default function SoumissionsPanel() {
       if (filterStatut) params.set("statut", filterStatut);
       if (filterAppele) params.set("appele", filterAppele);
       if (filterQ.trim()) params.set("q", filterQ.trim());
+      if (circuitTab !== "TOUTES") params.set("circuit", circuitTab);
       const res = await fetch(`/api/soumissions?${params}`, { credentials: "include", cache: "no-store" });
       if (!res.ok) throw new Error("Chargement impossible");
-      const data = (await res.json()) as { items: SoumissionItem[]; total: number; page: number };
+      const data = (await res.json()) as {
+        items: SoumissionItem[];
+        total: number;
+        page: number;
+        circuitCounters?: SoumissionCircuitCounters;
+      };
       setItems(data.items);
+      setCircuitCounters(data.circuitCounters ?? null);
       setTotal(data.total);
       setPage(data.page);
     } catch (e) {
@@ -307,7 +335,7 @@ export default function SoumissionsPanel() {
   useEffect(() => {
     void load(1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filterAgence, filterProduit, filterStatut, filterAppele, filterQ]);
+  }, [filterAgence, filterProduit, filterStatut, filterAppele, filterQ, circuitTab]);
 
   useEffect(() => {
     void (async () => {
@@ -535,6 +563,7 @@ export default function SoumissionsPanel() {
       setDialogOpen(false);
       setEditingId(null);
       setForm(emptyForm());
+      setStatsRefreshKey((k) => k + 1);
       await load(editingId ? page : 1);
     } catch (err) {
       setFormError(friendlyErrorMessage(err instanceof Error ? err.message : "Erreur"));
@@ -611,6 +640,7 @@ export default function SoumissionsPanel() {
       setPendingImport(null);
       setImportProduitCode("");
       setFilterProduit(produitCode);
+      setStatsRefreshKey((k) => k + 1);
       await load(1);
 
       if (inserted === 0 && updated === 0 && failed > 0 && unchanged === 0) {
@@ -655,13 +685,82 @@ export default function SoumissionsPanel() {
           prev.map((item) => (item.id === row.id ? { ...item, ...body.item! } : item)),
         );
       }
-      notify.success(nextAppele ? "Marqué comme appelé." : "Marqué comme non appelé.");
-      if (filterAppele) await load(page);
+      const nextStatut = body?.item?.statut;
+      const statutNote =
+        nextStatut && nextStatut !== row.statut ? ` Statut : ${SOUMISSION_STATUT_LABELS[nextStatut]}.` : "";
+      notify.success(`${nextAppele ? "Marqué comme appelé." : "Marqué comme non appelé."}${statutNote}`);
+      setStatsRefreshKey((k) => k + 1);
+      if (filterAppele || filterStatut) await load(page);
     } catch (err) {
       notify.error(err instanceof Error ? err.message : "Mise à jour impossible");
     } finally {
       setBusyAppeleId(null);
     }
+  }
+
+  function refreshAfterCircuitChange() {
+    setStatsRefreshKey((k) => k + 1);
+    void load(page);
+  }
+
+  function openFicheCaisse(row: SoumissionItem) {
+    window.open(
+      `/api/soumissions/${encodeURIComponent(row.id)}/fiche-paiement/pdf`,
+      "_blank",
+      "noopener,noreferrer",
+    );
+    if (!row.circuitStatut) window.setTimeout(refreshAfterCircuitChange, 2500);
+  }
+
+  function renderRowActions(row: SoumissionItem) {
+    const clos = isSoumissionCircuitClos(row.circuitStatut);
+    return (
+      <>
+        {row.circuitActions?.ficheCaisse ? (
+          <Button
+            size="sm"
+            variant="secondary"
+            leadingIcon={FileText}
+            title={
+              row.fichePaiementGeneratedByName
+                ? `Dernière fiche : ${row.fichePaiementGeneratedByName}`
+                : "Tirer la fiche de paiement caisse (100 000 FCFA)"
+            }
+            onClick={() => openFicheCaisse(row)}
+          >
+            Fiche caisse
+          </Button>
+        ) : null}
+        <SoumissionCircuitButtons item={row} onOpen={(item, mode) => setCircuitTarget({ item, mode })} />
+        {canWrite && (!row.appele || canMarkSoumissionNonAppele(row.statut)) ? (
+          <Button
+            size="sm"
+            variant={row.appele ? "secondary" : "primary"}
+            title={
+              row.appele
+                ? row.statut === "EN_COURS"
+                  ? "Repasser en « Non appelé » (statut « À appeler »)"
+                  : "Repasser en « Non appelé »"
+                : row.statut === "A_APPELER"
+                  ? "Marquer appelé (statut « En cours »)"
+                  : "Marquer appelé"
+            }
+            className={
+              row.appele ? "!border-emerald-600 !bg-emerald-600 !text-white hover:!bg-emerald-700" : undefined
+            }
+            loading={busyAppeleId === row.id}
+            onClick={() => void toggleAppele(row)}
+          >
+            {row.appele ? "Non appelé" : "Appelé"}
+          </Button>
+        ) : null}
+        {canWrite && !clos ? (
+          <Button size="sm" variant="secondary" leadingIcon={Pencil} onClick={() => openEdit(row)}>
+            Modifier
+          </Button>
+        ) : null}
+      </>
+    );
   }
 
   const columns: DataTableColumn<SoumissionItem>[] = [
@@ -703,6 +802,11 @@ export default function SoumissionsPanel() {
         ),
     },
     {
+      id: "circuit",
+      header: "Circuit",
+      cell: (row) => <SoumissionCircuitBadge item={row} />,
+    },
+    {
       id: "date",
       header: "Date",
       cell: (row) => new Date(row.date).toLocaleDateString("fr-FR"),
@@ -718,55 +822,12 @@ export default function SoumissionsPanel() {
       id: "action",
       header: "Action",
       align: "right",
-      cell: (row) =>
-        canWrite ? (
-          <div className="flex flex-wrap justify-end gap-2">
-            <Button
-              size="sm"
-              variant="secondary"
-              leadingIcon={FileText}
-              title={
-                row.fichePaiementGeneratedByName
-                  ? `Dernière fiche : ${row.fichePaiementGeneratedByName}`
-                  : "Tirer la fiche de paiement caisse (100 000 FCFA)"
-              }
-              onClick={() => {
-                window.open(
-                  `/api/soumissions/${encodeURIComponent(row.id)}/fiche-paiement/pdf`,
-                  "_blank",
-                  "noopener,noreferrer",
-                );
-              }}
-            >
-              Fiche caisse
-            </Button>
-            <Button
-              size="sm"
-              variant={row.appele ? "secondary" : "primary"}
-              className={
-                row.appele
-                  ? "!border-emerald-600 !bg-emerald-600 !text-white hover:!bg-emerald-700"
-                  : undefined
-              }
-              loading={busyAppeleId === row.id}
-              onClick={() => void toggleAppele(row)}
-            >
-              {row.appele ? "Non appelé" : "Appelé"}
-            </Button>
-            <Button size="sm" variant="secondary" leadingIcon={Pencil} onClick={() => openEdit(row)}>
-              Modifier
-            </Button>
-          </div>
-        ) : row.appele ? (
-          <StatusBadge className="bg-emerald-50 text-emerald-900">Appelé</StatusBadge>
-        ) : (
-          <StatusBadge className="bg-amber-50 text-amber-900">Non appelé</StatusBadge>
-        ),
+      cell: (row) => <div className="flex flex-wrap justify-end gap-2">{renderRowActions(row)}</div>,
     },
   ];
 
   return (
-    <section className="space-y-5">
+    <section className="lonaci-soumissions space-y-5">
       <PageHeader
         eyebrow="Parcours"
         title="Soumission"
@@ -887,6 +948,17 @@ export default function SoumissionsPanel() {
         }
       />
 
+      <SoumissionsStats
+        agenceId={filterAgence}
+        produitCode={filterProduit}
+        statut={filterStatut}
+        appele={filterAppele}
+        q={filterQ}
+        refreshKey={statsRefreshKey}
+      />
+
+      <SoumissionCircuitTabs value={circuitTab} counters={circuitCounters} onChange={setCircuitTab} />
+
       {listError ? (
         <FeedbackState tone="danger" title="Chargement impossible" description={listError} />
       ) : null}
@@ -936,46 +1008,16 @@ export default function SoumissionsPanel() {
                     <dt className="text-slate-500">TPE</dt>
                     <dd className="mt-1 font-medium">{row.nombreTpe}</dd>
                   </div>
-                </dl>
-                {canWrite ? (
-                  <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      leadingIcon={FileText}
-                      onClick={() => {
-                        window.open(
-                          `/api/soumissions/${encodeURIComponent(row.id)}/fiche-paiement/pdf`,
-                          "_blank",
-                          "noopener,noreferrer",
-                        );
-                      }}
-                    >
-                      Fiche caisse
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant={row.appele ? "secondary" : "primary"}
-                      className={
-                        row.appele
-                          ? "!border-emerald-600 !bg-emerald-600 !text-white hover:!bg-emerald-700"
-                          : undefined
-                      }
-                      loading={busyAppeleId === row.id}
-                      onClick={() => void toggleAppele(row)}
-                    >
-                      {row.appele ? "Non appelé" : "Appelé"}
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      leadingIcon={Pencil}
-                      onClick={() => openEdit(row)}
-                    >
-                      Modifier
-                    </Button>
+                  <div>
+                    <dt className="text-slate-500">Circuit</dt>
+                    <dd className="mt-1">
+                      <SoumissionCircuitBadge item={row} />
+                    </dd>
                   </div>
-                ) : null}
+                </dl>
+                <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3 empty:hidden">
+                  {renderRowActions(row)}
+                </div>
               </article>
             )}
           />
@@ -991,6 +1033,15 @@ export default function SoumissionsPanel() {
           label="Pagination des soumissions"
         />
       </div>
+
+      <SoumissionCircuitDialog
+        target={circuitTarget}
+        onClose={() => setCircuitTarget(null)}
+        onDone={() => {
+          setCircuitTarget(null);
+          refreshAfterCircuitChange();
+        }}
+      />
 
       <Dialog
         open={dialogOpen}
@@ -1091,7 +1142,10 @@ export default function SoumissionsPanel() {
             <select
               value={form.statut}
               onChange={(e) =>
-                setForm((f) => ({ ...f, statut: e.target.value as SoumissionStatut }))
+                setForm((f) => ({
+                  ...f,
+                  ...harmonizeSoumissionAppel(f, { statut: e.target.value as SoumissionStatut }),
+                }))
               }
             >
               {SOUMISSION_STATUTS.map((s) => (
@@ -1101,12 +1155,26 @@ export default function SoumissionsPanel() {
               ))}
             </select>
           </FormField>
-          <FormField label="Appel">
+          <FormField
+            label="Appel"
+            hint={
+              canMarkSoumissionNonAppele(form.statut)
+                ? "« Appelé » fait passer « À appeler » en « En cours »."
+                : `Le statut « ${SOUMISSION_STATUT_LABELS[form.statut]} » implique un appel.`
+            }
+          >
             <select
               value={form.appele ? "true" : "false"}
-              onChange={(e) => setForm((f) => ({ ...f, appele: e.target.value === "true" }))}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  ...harmonizeSoumissionAppel(f, { appele: e.target.value === "true" }),
+                }))
+              }
             >
-              <option value="false">Non appelé</option>
+              <option value="false" disabled={!canMarkSoumissionNonAppele(form.statut)}>
+                Non appelé
+              </option>
               <option value="true">Appelé</option>
             </select>
           </FormField>

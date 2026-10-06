@@ -19,7 +19,7 @@ import { appendAuditLog } from "@/lib/lonaci/audit";
 import { findConcessionnaireById } from "@/lib/lonaci/concessionnaires";
 import { ensureGrattageContratIndexes, ensureGrattageContratsFromGpr } from "@/lib/lonaci/grattage-contrats";
 import { restrictionToPrismaAgenceWhere } from "@/lib/lonaci/list-agence-restriction";
-import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
+import { intermediateWorkflowSteps, roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
 import { prisma } from "@/lib/prisma";
 import { getDatabase } from "@/lib/mongodb";
 
@@ -239,6 +239,13 @@ export async function createGprRegistration(input: {
   return { id: result.insertedId.toHexString(), reference };
 }
 
+const GPR_STATUS_CHAIN: readonly GprRegistrationStatus[] = [
+  "SOUMIS_AGENT",
+  "VALIDE_N1",
+  "VALIDE_N2",
+  "SUIVI_CHEF_SERVICE",
+];
+
 function canTransitionGpr(role: LonaciRole, from: GprRegistrationStatus, to: GprRegistrationStatus) {
   if (from === "SOUMIS_AGENT" && to === "VALIDE_N1") return roleMayAdvanceWorkflow(role, "CHEF_SECTION");
   if (from === "VALIDE_N1" && to === "VALIDE_N2") return roleMayAdvanceWorkflow(role, "ASSIST_CDS");
@@ -261,13 +268,23 @@ export async function transitionGprRegistration(input: {
 }) {
   if (!ObjectId.isValid(input.registrationId)) throw new Error("GPR_REGISTRATION_NOT_FOUND");
   const db = await getDatabase();
-  const row = await db.collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION).findOne({
-    _id: new ObjectId(input.registrationId),
-    deletedAt: null,
-  });
+  const loadRow = () =>
+    db.collection<StoredGprRegistration>(GPR_REGISTRATIONS_COLLECTION).findOne({
+      _id: new ObjectId(input.registrationId),
+      deletedAt: null,
+    });
+  let row = await loadRow();
   if (!row) throw new Error("GPR_REGISTRATION_NOT_FOUND");
   if (!(await canAccessGprRegistration(row, input.actor))) {
     throw new Error("GPR_REGISTRATION_NOT_FOUND");
+  }
+  const skipped = intermediateWorkflowSteps(GPR_STATUS_CHAIN, row.status, input.targetStatus);
+  if (skipped.length > 0) {
+    for (const step of skipped) {
+      await transitionGprRegistration({ ...input, targetStatus: step, comment: null });
+    }
+    row = await loadRow();
+    if (!row) throw new Error("GPR_REGISTRATION_NOT_FOUND");
   }
   if (!canTransitionGpr(input.actor.role, row.status, input.targetStatus)) throw new Error("FORBIDDEN_TRANSITION");
   const now = new Date();
@@ -597,7 +614,7 @@ export function canTransitionScratchLot(
   if (from === "GENERE" && to === "ATTRIBUE") {
     return ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "DISPATCHER"].includes(role);
   }
-  if (from === "ATTRIBUE" && to === "ACTIF") return role === "CHEF_SECTION";
+  if (from === "ATTRIBUE" && to === "ACTIF") return roleMayAdvanceWorkflow(role, "CHEF_SECTION");
   if (from === "ACTIF" && to === "EPUISE") {
     return ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role);
   }

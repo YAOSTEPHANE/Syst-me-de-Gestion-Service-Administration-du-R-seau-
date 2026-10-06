@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireApiAuth } from "@/lib/auth/guards";
+import { buildContratRecapitulatifData } from "@/lib/lonaci/contrat-recapitulatif-data";
 import { resolveDocumentAgentName } from "@/lib/lonaci/document-agent";
 import { findVisibleDossierById } from "@/lib/lonaci/dossiers";
 import { renderContratRecapitulatifPdf } from "@/lib/pdf/contrat-recapitulatif";
@@ -24,10 +25,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
   }
 
-  const agentNom = await resolveDocumentAgentName({ actor: auth.user });
-  const pdf = await renderContratRecapitulatifPdf(dossier, new Date(), agentNom);
+  const [agentNom, data] = await Promise.all([
+    resolveDocumentAgentName({ actor: auth.user }),
+    buildContratRecapitulatifData(dossier),
+  ]);
+  const pdf = await renderContratRecapitulatifPdf(data, new Date(), agentNom);
   return createPdfResponse(pdf, {
-    filename: `dossier-${dossier.reference}.pdf`,
+    filename: `recapitulatif-contrat-${dossier.reference}.pdf`,
     disposition: request.nextUrl.searchParams.get("view") === "1" ? "inline" : "attachment",
   });
 }

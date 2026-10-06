@@ -231,6 +231,9 @@ function isSensitiveReplayAction(action: string): boolean {
 }
 
 function statusLabel(status: DossierStatus): string {
+  if (!areWorkflowApprovalsEnabled() && (status === "SOUMIS" || status === "VALIDE_N1" || status === "VALIDE_N2")) {
+    return "À finaliser";
+  }
   switch (status) {
     case "BROUILLON":
       return "Brouillon";
@@ -1044,6 +1047,10 @@ export default function DossiersPanel() {
             <option value="ALL">Toutes les actions</option>
             {(["SUBMIT", "VALIDATE_N1", "VALIDATE_N2", "FINALIZE", "REJECT", "RETURN_PREVIOUS"] as const)
               .filter((action) => !hideN1N2ForAdmin(meRole, action))
+              .filter(
+                (action) =>
+                  areWorkflowApprovalsEnabled() || (action !== "VALIDATE_N1" && action !== "VALIDATE_N2"),
+              )
               .map((action) => (
                 <option key={action} value={action}>
                   {actionLabel(action)}

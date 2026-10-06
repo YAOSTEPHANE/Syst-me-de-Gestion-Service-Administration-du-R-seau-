@@ -10,10 +10,10 @@ export const DECHARGE_DEFINITIVE_DESCRIPTION =
   "Lorsque la checklist est entièrement validée et la caution payée, une décharge définitive est générée (PDF officiel LONACI avec référence de paiement).";
 
 /** Fiche remise au client après finalisation du contrat. */
-export const DECHARGE_CONTRAT_TITLE = "FICHE DE DÉCHARGE — REMISE DU CONTRAT AU CLIENT";
+export const DECHARGE_CONTRAT_TITLE = "DECHARGE CONTRAT — LONACI";
 export const DECHARGE_CONTRAT_MENTION = "CONTRAT REMIS AU CLIENT";
 export const DECHARGE_CONTRAT_DESCRIPTION =
-  "Document établi après finalisation du contrat, à remettre au client (nom, produit, PDV, agence, date et signataire LONACI).";
+  "Document établi après finalisation du contrat, à remettre au client (nom, produit, PDV, agence, date et signature du Chef de Service).";
 
 type ChecklistEligibility = {
   entries: unknown[];

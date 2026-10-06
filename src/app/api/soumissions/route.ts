@@ -6,6 +6,7 @@ import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
 import { canCreateConcessionnaireForAgence } from "@/lib/lonaci/access";
 import { CLIENT_TYPE_DISTRIBUTEUR, normalizeClientTypeDistributeur } from "@/lib/lonaci/client-constants";
+import { SOUMISSION_CIRCUIT_TABS } from "@/lib/lonaci/soumission-circuit";
 import {
   SOUMISSION_STATUTS,
   SOUMISSION_STATUT_DEFAULT,
@@ -29,6 +30,7 @@ const listSchema = z.object({
     .optional()
     .transform((v) => (v === undefined ? undefined : v === "true")),
   q: z.string().optional(),
+  circuit: z.enum(SOUMISSION_CIRCUIT_TABS).optional(),
 });
 
 const createSchema = z
@@ -78,6 +80,7 @@ export async function GET(request: NextRequest) {
     statut: parsed.data.statut,
     appele: parsed.data.appele,
     q: parsed.data.q?.trim() || undefined,
+    circuitTab: parsed.data.circuit,
   });
 
   return NextResponse.json(result, { status: 200 });

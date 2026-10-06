@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
-import { badRequest } from "@/lib/api/error-responses";
+import { badRequest, conflict } from "@/lib/api/error-responses";
 import { canMutateClientCore, canReadClientDirectory } from "@/lib/lonaci/access";
 import { CLIENT_STATUTS, CLIENT_CATEGORIES, isClientCategorieEntreprise, normalizeClientCategorie } from "@/lib/lonaci/client-constants";
+import { clientTerminauxInputSchema, normalizeClientTerminaux } from "@/lib/lonaci/client-terminaux";
 import {
+  ClientTerminalConflictError,
+  clientTerminalConflictMessage,
   findClientById,
   sanitizeClientPublic,
   softDeleteClient,
@@ -39,7 +42,7 @@ const patchSchema = z
       },
       z.union([z.string().min(4).max(64), z.null()]).optional(),
     ),
-    codeMachine: z.union([z.string().min(1).max(64), z.null()]).optional(),
+    terminaux: clientTerminauxInputSchema.optional(),
     nomContact: z.union([z.string().min(2).max(200), z.null()]).optional(),
     email: z.union([z.string().email(), z.null()]).optional(),
     telephone: z.union([z.string().min(6).max(32), z.null()]).optional(),
@@ -49,7 +52,6 @@ const patchSchema = z
     typeDistributeur: z.union([z.enum(["NOUVEAU", "ANCIEN"]), z.null()]).optional(),
     nombreTpm: z.union([z.number().int().min(0).max(9999), z.null()]).optional(),
     numeroDistributeur: z.union([z.string().min(1).max(64), z.null()]).optional(),
-    numeroTpm: z.union([z.string().min(1).max(64), z.null()]).optional(),
     agenceId: z.union([z.string().min(1), z.null()]).optional(),
     produitsAutorises: z.array(z.string().min(1)).optional(),
     documentChecklist: documentChecklistPatchSchema.optional(),
@@ -132,6 +134,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     ...(parsed.data.produitsAutorises !== undefined
       ? { produitsAutorises: normalizeProduitsAutorises(parsed.data.produitsAutorises) }
       : {}),
+    terminaux: parsed.data.terminaux ? normalizeClientTerminaux(parsed.data.terminaux) : undefined,
   };
 
   const nextCategorie = normalizeClientCategorie(patch.categorie ?? existing.categorie);
@@ -164,7 +167,13 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
 
     return NextResponse.json({ client: sanitizeClientPublic(updated) });
   } catch (error) {
+    if (error instanceof ClientTerminalConflictError) {
+      return conflict(clientTerminalConflictMessage(error), error.message);
+    }
     const code = error instanceof Error ? error.message : "UNKNOWN";
+    if (code === "CLIENT_TERMINAUX_TROP_NOMBREUX") {
+      return badRequest("Trop de TPE pour un même client (50 maximum).", code);
+    }
     if (code === "CLIENT_STATUT_CHANGE_FORBIDDEN") {
       return NextResponse.json(
         { message: "Changement de statut réservé au Chef(fe) de service ou aux workflows de validation.", code },

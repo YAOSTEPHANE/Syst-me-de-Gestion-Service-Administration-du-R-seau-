@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { ensureAttestationsDomiciliationIndexes, transitionDemandeAttestationDomiciliation } from "@/lib/lonaci/attestations-domiciliation";
 import { checkPermission, resolveRbacAction } from "@/lib/auth/checkPermission";
+import { workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   target: z.enum(["TRANSMIS", "FINALISE", "VALIDE"]),
@@ -18,14 +19,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (!parsed.success) {
     return zodBadRequest(parsed.error);
   }
-  const rolesByTarget = {
-    TRANSMIS: ["CHEF_SERVICE"] as const,
-    FINALISE: ["ASSIST_CDS"] as const,
-    VALIDE: ["CHEF_SERVICE"] as const,
-  };
+  const roleByTarget = {
+    TRANSMIS: "CHEF_SERVICE",
+    FINALISE: "ASSIST_CDS",
+    VALIDE: "CHEF_SERVICE",
+  } as const;
 
   const auth = await checkPermission(request, {
-    roles: [...rolesByTarget[parsed.data.target]],
+    roles: workflowStepRoles(roleByTarget[parsed.data.target]),
     resource: "DOSSIERS",
     action: resolveRbacAction(parsed.data.target, {
       TRANSMIS: "VALIDATE_N2",

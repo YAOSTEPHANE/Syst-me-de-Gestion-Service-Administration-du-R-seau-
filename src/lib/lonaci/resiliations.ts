@@ -22,7 +22,11 @@ import {
 } from "@/lib/lonaci/resiliation-document-checklist";
 import { applyDocumentsFournisToChecklist } from "@/lib/lonaci/produit-document-checklist";
 import { resiliationDisplayStatutFields } from "@/lib/lonaci/resiliation-statut-metier";
-import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
+import {
+  areWorkflowApprovalsEnabled,
+  intermediateWorkflowSteps,
+  roleMayAdvanceWorkflow,
+} from "@/lib/lonaci/workflow-approvals";
 import {
   type DossierDocumentChecklistPayload,
   type DossierDocumentChecklistStatut,
@@ -48,6 +52,13 @@ export const RESILIATION_WORKFLOW_STATUTS: ResiliationStatus[] = [
   "VALIDATION_N2",
   "RESILIE",
   "REJETEE",
+];
+
+const RESILIATION_STATUS_CHAIN: readonly ResiliationStatus[] = [
+  "DOSSIER_RECU",
+  "CONTROLE_CHEF_SECTION",
+  "VALIDATION_N2",
+  "RESILIE",
 ];
 
 interface ResiliationAttachment {
@@ -468,13 +479,27 @@ export async function transitionResiliation(input: {
   if (!ObjectId.isValid(input.id)) throw new Error("RESILIATION_NOT_FOUND");
 
   const db = await getDatabase();
-  const row = await db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  const loadRow = () =>
+    db.collection<ResiliationStored>(COLLECTION).findOne({ _id: new ObjectId(input.id), deletedAt: null });
+  let row = await loadRow();
   if (!row || !(await canAccessResiliation(row, input.actor))) {
     throw new Error("RESILIATION_NOT_FOUND");
   }
   if (row.statut === "RESILIE" || row.statut === "REJETEE") {
     if (input.target === row.statut) return;
     throw new Error("INVALID_TRANSITION");
+  }
+  if (input.target === "RESILIE" && input.confirmIrreversible !== true) {
+    throw new Error("RESILIATION_CONFIRMATION_REQUIRED");
+  }
+
+  const skipped = intermediateWorkflowSteps(RESILIATION_STATUS_CHAIN, row.statut, input.target);
+  if (skipped.length > 0) {
+    for (const step of skipped) {
+      await transitionResiliation({ id: input.id, target: step, actor: input.actor });
+    }
+    row = await loadRow();
+    if (!row) throw new Error("RESILIATION_NOT_FOUND");
   }
 
   assertResiliationTransitionAllowed(input.actor.role, row.statut, input.target);
@@ -506,7 +531,7 @@ export async function transitionResiliation(input: {
     updatedByUserId: input.actor._id,
   };
 
-  if (input.target === "CONTROLE_CHEF_SECTION") {
+  if (input.target === "CONTROLE_CHEF_SECTION" && areWorkflowApprovalsEnabled()) {
     await notifyRoleTargets(
       "ASSIST_CDS",
       "Résiliation : validation N2 attendue",
@@ -515,7 +540,7 @@ export async function transitionResiliation(input: {
       (await findConcessionnaireById(row.concessionnaireId))?.agenceId ?? null,
     );
   }
-  if (input.target === "VALIDATION_N2") {
+  if (input.target === "VALIDATION_N2" && areWorkflowApprovalsEnabled()) {
     await notifyRoleTargets(
       "CHEF_SERVICE",
       "Résiliation : validation finale attendue",

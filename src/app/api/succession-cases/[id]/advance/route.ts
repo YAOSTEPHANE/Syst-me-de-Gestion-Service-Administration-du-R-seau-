@@ -4,6 +4,7 @@ import { z } from "zod";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { advanceSuccessionCase, ensureSuccessionIndexes } from "@/lib/lonaci/succession";
 import { checkPermission } from "@/lib/auth/checkPermission";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   comment: z.string().max(5000).nullable().optional(),
@@ -24,7 +25,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     return zodBadRequest(parsed.error);
   }
   const auth = await checkPermission(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled() ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] : workflowStepRoles("CHEF_SERVICE"),
     resource: "DOSSIERS",
     action: parsed.data.decisionType ? "FINALIZE" : "UPDATE",
   });

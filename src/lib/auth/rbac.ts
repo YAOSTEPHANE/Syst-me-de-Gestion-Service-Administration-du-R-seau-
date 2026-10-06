@@ -283,6 +283,24 @@ export const RBAC_MATRIX: RoleMatrix = {
     { resource: "PARAMETRES", action: "CONFIGURE", allowed: false },
   ],
 
+  ASSIST_DGVR: [
+    {
+      resource: "AGREMENTS",
+      action: "CREATE",
+      allowed: true,
+      scope: "AGENCE_OR_ASSIGNED",
+      notes: "Import de la liste uniquement (pas de saisie manuelle).",
+    },
+    { resource: "AGREMENTS", action: "READ", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "EXPORT", allowed: true, scope: "AGENCE_OR_ASSIGNED" },
+    { resource: "AGREMENTS", action: "VALIDATE_N1", allowed: false },
+    { resource: "AGREMENTS", action: "VALIDATE_N2", allowed: false },
+    { resource: "AGREMENTS", action: "FINALIZE", allowed: false },
+    { resource: "NOTIFICATIONS", action: "READ", allowed: true, scope: "OWN_OR_ASSIGNED" },
+    { resource: "NOTIFICATIONS", action: "UPDATE", allowed: true, scope: "OWN_OR_ASSIGNED" },
+    { resource: "PARAMETRES", action: "CONFIGURE", allowed: false },
+  ],
+
   DISPATCHER: [
     { resource: "CONCESSIONNAIRES", action: "READ", allowed: true, scope: "GLOBAL" },
     { resource: "CONTRATS", action: "READ", allowed: true, scope: "GLOBAL" },

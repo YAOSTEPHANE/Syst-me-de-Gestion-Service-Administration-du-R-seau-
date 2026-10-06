@@ -175,11 +175,49 @@ describe("exports PDF premium", () => {
       updatedAt: issuedAt,
       deletedAt: null,
     };
-    const parsed = await readPdf(await renderContratRecapitulatifPdf(dossier, issuedAt, "Agent Test LONACI"));
+    const parsed = await readPdf(
+      await renderContratRecapitulatifPdf(
+        {
+          dossier,
+          titulaire: {
+            kind: "client",
+            nom: "Kouassi Aya",
+            code: "CL-0042",
+            cniNumero: "CI0123456",
+            telephone: "0700000000",
+            adresse: "Cocody",
+          },
+          agenceLabel: "Agence Plateau",
+          produits: [{ code: "PMU", libelle: "PMU Alr", caution: { referenceLabel: "FD-2026-0007", status: "PAYEE" } }],
+          checklist: {
+            complet: false,
+            entries: [
+              { itemId: "cni", libelle: "Copie CNI", obligatoire: true, statut: "FOURNI" },
+              { itemId: "photo", libelle: "Photo d'identité", obligatoire: true, statut: "MANQUANT" },
+            ],
+          },
+          contrats: [],
+          userNames: new Map([["agent-1", "Konan Serge"]]),
+        },
+        issuedAt,
+        "Agent Test LONACI",
+      ),
+    );
     expect(parsed.pageCount).toBeGreaterThan(1);
     const text = parsed.pages.join(" ");
-    expect(text).toContain("Identification");
-    expect(text).toContain("Opération contractuelle");
+    expect(text).toContain("Titulaire");
+    expect(text).toContain("Kouassi Aya");
+    expect(text).toContain("CL-0042");
+    expect(text).toContain("Agence Plateau");
+    expect(text).not.toContain("client-1");
+    expect(text).toContain("Nouveau contrat");
+    expect(text).toContain("PMU — PMU Alr");
+    expect(text).toContain("Photo d'identité");
+    expect(text).toContain("FD-2026-0007");
+    expect(text).toContain("Payée");
+    expect(text).toContain("Aucun contrat généré");
+    expect(text).toContain("Konan Serge");
+    expect(text).toContain("À finaliser");
     expect(text).toContain("Validation historique 70");
     expect(text).toContain("Générée par");
     expect(text).toContain("Agent Test LONACI");

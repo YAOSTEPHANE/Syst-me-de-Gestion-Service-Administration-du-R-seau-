@@ -4,9 +4,15 @@ import { z } from "zod";
 import { badRequest } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireListAgenceScope, listAgenceScopeFields } from "@/lib/api/list-agence-scope";
-import { createPdvIntegration, ensureSprint4Indexes, listPdvIntegrations } from "@/lib/lonaci/sprint4";
+import {
+  createPdvIntegration,
+  ensureSprint4Indexes,
+  listPdvIntegrations,
+  transitionPdvIntegration,
+} from "@/lib/lonaci/sprint4";
 import { PDV_INTEGRATION_STATUSES } from "@/lib/lonaci/constants";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { autoFinalizeQuietly } from "@/lib/lonaci/workflow-approvals";
 
 const createSchema = z.object({
   agenceId: z.string().nullable().optional(),
@@ -76,5 +82,14 @@ export async function POST(request: NextRequest) {
     observations: parsed.data.observations ?? null,
     actor: auth.user,
   });
-  return NextResponse.json({ integration }, { status: 201 });
+  const autoFinalize = await autoFinalizeQuietly(() =>
+    transitionPdvIntegration({ integrationId: integration._id, targetStatus: "FINALISE", actor: auth.user }),
+  );
+  return NextResponse.json(
+    {
+      integration: autoFinalize?.finalized ? { ...integration, status: "FINALISE" as const } : integration,
+      autoFinalize,
+    },
+    { status: 201 },
+  );
 }

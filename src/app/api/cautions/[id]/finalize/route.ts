@@ -5,6 +5,7 @@ import { conflict, notFound, serverError } from "@/lib/api/error-responses";
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { finalizeCaution, ensureSprint4Indexes } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   paid: z.literal(true),
@@ -16,7 +17,7 @@ interface RouteContext {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SERVICE"],
+    roles: workflowStepRoles("CHEF_SERVICE"),
     rbac: { resource: "CAUTIONS", action: "FINALIZE" },
   });
   if ("error" in auth) return auth.error;

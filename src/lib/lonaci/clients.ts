@@ -9,6 +9,14 @@ import {
   type ClientCategorie,
   type ClientStatut,
 } from "@/lib/lonaci/client-constants";
+import {
+  CLIENT_TERMINAUX_MAX,
+  clientTerminauxLegacyFields,
+  normalizeClientTerminalCode,
+  normalizeClientTerminaux,
+  resolveClientTerminaux,
+  type ClientTerminal,
+} from "@/lib/lonaci/client-terminaux";
 import { patchDocumentChecklistStatuts } from "@/lib/lonaci/concessionnaire-inscription";
 import { notifyRoleTargets } from "@/lib/lonaci/notifications";
 import {
@@ -192,6 +200,8 @@ export function buildClientListWhere(params: {
         { telephone: { contains: q, mode: "insensitive" } },
         { numeroDistributeur: { contains: q, mode: "insensitive" } },
         { numeroTpm: { contains: q, mode: "insensitive" } },
+        { terminaux: { some: { codeMachine: { contains: q, mode: "insensitive" } } } },
+        { terminaux: { some: { numeroTpm: { contains: q, mode: "insensitive" } } } },
       ],
     });
   }
@@ -199,6 +209,99 @@ export function buildClientListWhere(params: {
   if (parts.length === 0) return {};
   if (parts.length === 1) return parts[0]!;
   return { AND: parts };
+}
+
+/** Code machine déjà rattaché à une autre fiche client active. */
+export class ClientTerminalConflictError extends Error {
+  constructor(
+    readonly codeMachine: string,
+    readonly conflictClientId: string,
+    readonly conflictClientCode: string,
+    readonly conflictClientLabel: string,
+  ) {
+    super("CLIENT_TERMINAL_DEJA_UTILISE");
+    this.name = "ClientTerminalConflictError";
+  }
+}
+
+export function clientTerminalConflictMessage(error: ClientTerminalConflictError): string {
+  return `Le TPE ${error.codeMachine} est déjà rattaché au client ${error.conflictClientCode} (${error.conflictClientLabel}).`;
+}
+
+export async function findClientTerminalConflict(
+  terminaux: readonly ClientTerminal[],
+  excludeClientId?: string | null,
+): Promise<ClientTerminalConflictError | null> {
+  const codes = normalizeClientTerminaux(terminaux).map((terminal) => terminal.codeMachine);
+  if (codes.length === 0) return null;
+
+  const candidates = await prisma.lonaciClient.findMany({
+    where: {
+      AND: [
+        lonaciClientNotDeletedWhere,
+        ...(excludeClientId ? [{ id: { not: excludeClientId } }] : []),
+        {
+          OR: [
+            { terminaux: { some: { codeMachine: { in: codes } } } },
+            ...codes.map((code) => ({ codeMachine: { equals: code, mode: "insensitive" as const } })),
+          ],
+        },
+      ],
+    },
+    select: {
+      id: true,
+      code: true,
+      raisonSociale: true,
+      nomComplet: true,
+      codeMachine: true,
+      numeroTpm: true,
+      terminaux: true,
+    },
+    take: 5,
+  });
+
+  const wanted = new Set(codes);
+  for (const candidate of candidates) {
+    const taken = resolveClientTerminaux(candidate).find((terminal) => wanted.has(terminal.codeMachine));
+    const legacyCode = normalizeClientTerminalCode(candidate.codeMachine);
+    const codeMachine = taken?.codeMachine ?? (wanted.has(legacyCode) ? legacyCode : null);
+    if (!codeMachine) continue;
+    return new ClientTerminalConflictError(
+      codeMachine,
+      candidate.id,
+      candidate.code,
+      candidate.nomComplet?.trim() || candidate.raisonSociale,
+    );
+  }
+  return null;
+}
+
+async function assertClientTerminauxDisponibles(
+  terminaux: readonly ClientTerminal[],
+  excludeClientId?: string | null,
+): Promise<void> {
+  if (terminaux.length > CLIENT_TERMINAUX_MAX) throw new Error("CLIENT_TERMINAUX_TROP_NOMBREUX");
+  const conflict = await findClientTerminalConflict(terminaux, excludeClientId);
+  if (conflict) throw conflict;
+}
+
+function sanitizeNombreTpm(raw: number | null | undefined): number | null {
+  return typeof raw === "number" && Number.isFinite(raw) ? Math.max(0, Math.trunc(raw)) : null;
+}
+
+/** Données Prisma de la liste de TPE ; sans TPE, le nombre et le N° TPM saisis seuls sont conservés. */
+function clientTerminauxData(
+  terminaux: readonly ClientTerminal[],
+  fallback: { nombreTpm: number | null; numeroTpm: string | null },
+) {
+  const legacy = clientTerminauxLegacyFields(terminaux);
+  const empty = terminaux.length === 0;
+  return {
+    terminaux: terminaux.map((terminal) => ({ ...terminal })),
+    codeMachine: legacy.codeMachine,
+    numeroTpm: empty ? fallback.numeroTpm : legacy.numeroTpm,
+    nombreTpm: empty ? fallback.nombreTpm : legacy.nombreTpm,
+  };
 }
 
 export async function findLonaciClientById(id: string) {
@@ -314,6 +417,7 @@ export function sanitizeClientListItem(doc: {
   raisonSociale: string;
   nomComplet: string | null;
   codeMachine?: string | null;
+  terminaux?: ReadonlyArray<{ codeMachine: string; numeroTpm: string | null }> | null;
   cniNumero: string | null;
   nomContact: string | null;
   email: string | null;
@@ -332,6 +436,7 @@ export function sanitizeClientListItem(doc: {
   rejetAt: Date | null;
   updatedAt: Date;
 }) {
+  const terminaux = resolveClientTerminaux(doc);
   return {
     id: doc.id,
     code: doc.code,
@@ -339,12 +444,13 @@ export function sanitizeClientListItem(doc: {
     raisonSociale: doc.raisonSociale,
     nomComplet: doc.nomComplet,
     codeMachine: doc.codeMachine ?? null,
+    terminaux,
     cniNumero: doc.cniNumero,
     nomContact: doc.nomContact,
     email: doc.email,
     telephone: doc.telephone,
     typeDistributeur: doc.typeDistributeur ?? null,
-    nombreTpm: doc.nombreTpm ?? null,
+    nombreTpm: terminaux.length > 0 ? terminaux.length : (doc.nombreTpm ?? null),
     numeroDistributeur: doc.numeroDistributeur ?? null,
     numeroTpm: doc.numeroTpm ?? null,
     agenceId: doc.agenceId,
@@ -363,6 +469,7 @@ export function sanitizeClientPublic(doc: {
   raisonSociale: string;
   nomComplet: string | null;
   codeMachine?: string | null;
+  terminaux?: ReadonlyArray<{ codeMachine: string; numeroTpm: string | null }> | null;
   cniNumero: string | null;
   nomContact: string | null;
   email: string | null;
@@ -389,6 +496,7 @@ export function sanitizeClientPublic(doc: {
   updatedAt: Date;
   deletedAt: Date | null;
 }) {
+  const terminaux = resolveClientTerminaux(doc);
   return {
     id: doc.id,
     code: doc.code,
@@ -396,6 +504,7 @@ export function sanitizeClientPublic(doc: {
     raisonSociale: doc.raisonSociale,
     nomComplet: doc.nomComplet,
     codeMachine: doc.codeMachine ?? null,
+    terminaux,
     cniNumero: doc.cniNumero,
     nomContact: doc.nomContact,
     email: doc.email,
@@ -404,7 +513,7 @@ export function sanitizeClientPublic(doc: {
     ville: doc.ville,
     codePostal: doc.codePostal,
     typeDistributeur: doc.typeDistributeur ?? null,
-    nombreTpm: doc.nombreTpm ?? null,
+    nombreTpm: terminaux.length > 0 ? terminaux.length : (doc.nombreTpm ?? null),
     numeroDistributeur: doc.numeroDistributeur ?? null,
     numeroTpm: doc.numeroTpm ?? null,
     agenceId: doc.agenceId,
@@ -433,6 +542,8 @@ export async function createClient(
     categorie: ClientCategorie;
     nomComplet: string;
     raisonSociale: string;
+    /** Liste des TPE ; à défaut, `codeMachine` / `numeroTpm` décrivent un TPE unique. */
+    terminaux?: ClientTerminal[];
     codeMachine?: string | null;
     cniNumero: string | null;
     nomContact: string | null;
@@ -452,6 +563,11 @@ export async function createClient(
   },
   actor: UserDocument,
 ) {
+  const terminaux =
+    input.terminaux !== undefined
+      ? normalizeClientTerminaux(input.terminaux)
+      : resolveClientTerminaux({ codeMachine: input.codeMachine, numeroTpm: input.numeroTpm });
+
   const cniNumero = input.cniNumero?.trim() ?? "";
   if (cniNumero.length < 4) {
     throw new Error("CLIENT_IDENTIFIANT_REQUIS");
@@ -466,6 +582,7 @@ export async function createClient(
   if (duplicate) {
     throw new Error("CLIENT_CODE_DEJA_UTILISE");
   }
+  await assertClientTerminauxDisponibles(terminaux);
 
   const now = new Date();
   const statut = initialClientStatutOnCreate();
@@ -485,7 +602,10 @@ export async function createClient(
       categorie: input.categorie,
       raisonSociale: input.raisonSociale.trim(),
       nomComplet: input.nomComplet.trim(),
-      codeMachine: input.codeMachine?.trim() || null,
+      ...clientTerminauxData(terminaux, {
+        nombreTpm: sanitizeNombreTpm(input.nombreTpm),
+        numeroTpm: input.numeroTpm?.trim() || null,
+      }),
       cniNumero,
       nomContact: input.nomContact?.trim() || null,
       email: input.email?.trim() || null,
@@ -494,12 +614,7 @@ export async function createClient(
       ville: input.ville,
       codePostal: input.codePostal,
       typeDistributeur: normalizeClientTypeDistributeur(input.typeDistributeur),
-      nombreTpm:
-        typeof input.nombreTpm === "number" && Number.isFinite(input.nombreTpm)
-          ? Math.max(0, Math.trunc(input.nombreTpm))
-          : null,
       numeroDistributeur: input.numeroDistributeur?.trim() || null,
-      numeroTpm: input.numeroTpm?.trim() || null,
       agenceId: input.agenceId,
       produitsAutorises: input.produitsAutorises ?? [],
       documentChecklist: checklistToPrismaJson(documentChecklist),
@@ -521,7 +636,7 @@ export async function createClient(
     entityId: row.id,
     action: "CREATE",
     userId: actor._id ?? "",
-    details: { code: row.code, statut: row.statut },
+    details: { code: row.code, statut: row.statut, terminaux: terminaux.length },
   });
 
   return row;
@@ -557,7 +672,8 @@ export async function updateClient(
     categorie?: ClientCategorie;
     nomComplet?: string;
     raisonSociale?: string;
-    codeMachine?: string | null;
+    /** Remplace la liste des TPE (codeMachine / numeroTpm / nombreTpm en sont dérivés). */
+    terminaux?: ClientTerminal[];
     cniNumero?: string | null;
     nomContact?: string | null;
     email?: string | null;
@@ -566,9 +682,11 @@ export async function updateClient(
     ville?: string | null;
     codePostal?: string | null;
     typeDistributeur?: string | null;
+    /** Pris en compte seulement si le client n'a aucun TPE listé. */
     nombreTpm?: number | null;
-    numeroDistributeur?: string | null;
+    /** Pris en compte seulement si le client n'a aucun TPE listé. */
     numeroTpm?: string | null;
+    numeroDistributeur?: string | null;
     agenceId?: string | null;
     /** Réaffectation d’agence à l’import (recalc du code CLI-AGENCE-…). */
     code?: string;
@@ -615,8 +733,23 @@ export async function updateClient(
   if (patch.categorie !== undefined) data.categorie = patch.categorie;
   if (patch.nomComplet !== undefined) data.nomComplet = patch.nomComplet.trim();
   if (patch.raisonSociale !== undefined) data.raisonSociale = patch.raisonSociale.trim();
-  if (patch.codeMachine !== undefined) {
-    data.codeMachine = patch.codeMachine?.trim() || null;
+  const nombreTpmPatch = patch.nombreTpm !== undefined ? sanitizeNombreTpm(patch.nombreTpm) : undefined;
+  const numeroTpmPatch = patch.numeroTpm !== undefined ? patch.numeroTpm?.trim() || null : undefined;
+  const hadNoTerminaux = resolveClientTerminaux(existing).length === 0;
+  if (patch.terminaux !== undefined) {
+    const terminaux = normalizeClientTerminaux(patch.terminaux);
+    await assertClientTerminauxDisponibles(terminaux, id);
+    // Sans TPE avant ni après : conserver le nombre / N° TPM déclarés sans code machine.
+    Object.assign(
+      data,
+      clientTerminauxData(terminaux, {
+        nombreTpm: nombreTpmPatch ?? (hadNoTerminaux ? existing.nombreTpm : null),
+        numeroTpm: numeroTpmPatch ?? (hadNoTerminaux ? existing.numeroTpm : null),
+      }),
+    );
+  } else if (hadNoTerminaux) {
+    if (nombreTpmPatch !== undefined) data.nombreTpm = nombreTpmPatch;
+    if (numeroTpmPatch !== undefined) data.numeroTpm = numeroTpmPatch;
   }
   if (patch.cniNumero !== undefined) data.cniNumero = patch.cniNumero;
   if (patch.nomContact !== undefined) data.nomContact = patch.nomContact?.trim() || null;
@@ -628,17 +761,8 @@ export async function updateClient(
   if (patch.typeDistributeur !== undefined) {
     data.typeDistributeur = normalizeClientTypeDistributeur(patch.typeDistributeur);
   }
-  if (patch.nombreTpm !== undefined) {
-    data.nombreTpm =
-      typeof patch.nombreTpm === "number" && Number.isFinite(patch.nombreTpm)
-        ? Math.max(0, Math.trunc(patch.nombreTpm))
-        : null;
-  }
   if (patch.numeroDistributeur !== undefined) {
     data.numeroDistributeur = patch.numeroDistributeur?.trim() || null;
-  }
-  if (patch.numeroTpm !== undefined) {
-    data.numeroTpm = patch.numeroTpm?.trim() || null;
   }
   if (patch.agenceId !== undefined) data.agenceId = patch.agenceId;
   if (patch.code !== undefined) {

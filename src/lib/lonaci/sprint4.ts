@@ -6,6 +6,7 @@ import {
 } from "@/lib/auth/workflow-visibility";
 import {
   canFinalizeCaution,
+  cautionFinalizableStatuses,
   canValidateCautionN1,
   canValidateCautionN2,
   resolveCautionCorrectionReturnLevel,
@@ -28,7 +29,13 @@ import { canReadClient, canReadConcessionnaire, isStatutBloquant } from "@/lib/l
 import { notifyRoleTargets, sendNotification } from "@/lib/lonaci/notifications";
 import { findLonaciClientById, activateClientAfterCautionPaid, lonaciClientNotDeletedWhere } from "@/lib/lonaci/clients";
 import { isClientStatutEligibleForCaution } from "@/lib/lonaci/client-constants";
-import { roleMayAdvanceWorkflow } from "@/lib/lonaci/workflow-approvals";
+import { autoFinalizeContratDossiersAfterCautionPaid } from "@/lib/lonaci/dossier-contrat-auto-validate";
+import {
+  autoFinalizeQuietly,
+  intermediateWorkflowSteps,
+  roleMayAdvanceWorkflow,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
 import { produitAutorisePourConcessionnaire } from "@/lib/lonaci/contrat-produit-rules";
 import { produitMontantCautionReferentiel } from "@/lib/lonaci/produit-constants";
 import {
@@ -36,6 +43,11 @@ import {
   resolveCautionPaymentReference,
 } from "@/lib/lonaci/caution-fiche-definitive";
 import { resolvePaymentReferenceForPayee } from "@/lib/lonaci/caution-payment-reference";
+import {
+  cautionPaidPeriodMongoRange,
+  resolveCautionPaidPeriod,
+  type CautionPaidPeriod,
+} from "@/lib/lonaci/caution-paid-period";
 import {
   CAUTION_PENDING_PAYMENT_STATUSES,
   cautionStatutMetierDescription,
@@ -79,6 +91,7 @@ export interface CautionFicheDefinitiveDto {
   emailSent?: boolean;
   emailSkippedReason?: string;
   destinataireEmail?: string | null;
+  autoFinalize?: AutoFinalizeOutcome | null;
 }
 
 type StoredContrat = Omit<ContratDocument, "_id"> & { _id: ObjectId };
@@ -405,6 +418,14 @@ export async function createCaution(input: {
     },
   });
 
+  const createdId = result.insertedId.toHexString();
+  const autoFinalize = isProvisoire
+    ? null
+    : await autoFinalizeQuietly(() => finalizeCaution(createdId, true, input.actor));
+  if (autoFinalize?.finalized) {
+    return { ...doc, _id: createdId, status: "PAYEE" as CautionStatus, autoFinalize };
+  }
+
   const cible = contratId
     ? `contrat ${contratId}`
     : concessionnaireId
@@ -425,9 +446,9 @@ export async function createCaution(input: {
       ficheProvisoire: isProvisoire,
       numeroFicheProvisoire: numeroFicheProvisoire ?? undefined,
     },
-    await cautionAgenceIdForNotification({ ...doc, _id: result.insertedId.toHexString() }),
+    await cautionAgenceIdForNotification({ ...doc, _id: createdId }),
   );
-  return { ...doc, _id: result.insertedId.toHexString() };
+  return { ...doc, _id: createdId, autoFinalize };
 }
 
 export async function regulariserCautionPaiement(input: {
@@ -499,7 +520,9 @@ export async function regulariserCautionPaiement(input: {
     await cautionAgenceIdForNotification(caution),
   );
   const emailResult = await deliverCautionFicheDefinitive(input.cautionId);
+  const autoFinalize = await autoFinalizeQuietly(() => finalizeCaution(input.cautionId, true, input.actor));
   return {
+    autoFinalize,
     cautionId: input.cautionId,
     numeroFicheDefinitive,
     emiseLe: ficheDefinitiveEmiseLe.toISOString(),
@@ -607,7 +630,11 @@ export async function finalizeCaution(
   }
   const actionBy = userDisplayName(actor);
   const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: new ObjectId(cautionId), status: "VALIDE_N2", immutableAfterFinal: false },
+    {
+      _id: new ObjectId(cautionId),
+      status: { $in: [...cautionFinalizableStatuses()] },
+      immutableAfterFinal: false,
+    },
     {
       $set: {
         status,
@@ -672,6 +699,11 @@ export async function finalizeCaution(
     if (clientId) {
       await activateClientAfterCautionPaid(clientId, actor);
     }
+    await autoFinalizeContratDossiersAfterCautionPaid({
+      lonaciClientId: clientId || null,
+      concessionnaireId: concId ?? caution.concessionnaireId ?? null,
+      actor,
+    });
   }
 
   if (!paid || !numeroFicheDefinitive) return null;
@@ -790,7 +822,11 @@ export async function exonererCaution(input: {
     .join("\n");
 
   const result = await db.collection<StoredCaution>(CAUTIONS_COLLECTION).updateOne(
-    { _id: new ObjectId(input.cautionId), status: "VALIDE_N2", immutableAfterFinal: false },
+    {
+      _id: new ObjectId(input.cautionId),
+      status: { $in: [...cautionFinalizableStatuses()] },
+      immutableAfterFinal: false,
+    },
     {
       $set: {
         status: "EXONEREE",
@@ -997,11 +1033,18 @@ export async function finalizePdvIntegration(integrationId: string, actor: UserD
   return { concessionnaireId };
 }
 
+const PDV_INTEGRATION_STATUS_CHAIN: readonly PdvIntegrationDocument["status"][] = [
+  "DEMANDE_RECUE",
+  "EN_TRAITEMENT",
+  "INTEGRE_GPR",
+  "FINALISE",
+];
+
 export async function transitionPdvIntegration(input: {
   integrationId: string;
   targetStatus: "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
   actor: UserDocument;
-}) {
+}): Promise<{ ok: true } | { concessionnaireId: string }> {
   if (!ObjectId.isValid(input.integrationId)) throw new Error("PDV_INTEGRATION_NOT_FOUND");
   const db = await getDatabase();
   const row = await db.collection<StoredPdvIntegration>(PDV_INTEGRATIONS_COLLECTION).findOne({
@@ -1016,10 +1059,21 @@ export async function transitionPdvIntegration(input: {
   const next = input.targetStatus;
   const role = input.actor.role;
 
+  const skipped = intermediateWorkflowSteps(PDV_INTEGRATION_STATUS_CHAIN, current, next);
+  if (skipped.length > 0) {
+    for (const step of skipped) {
+      if (step === "DEMANDE_RECUE") continue;
+      await transitionPdvIntegration({ ...input, targetStatus: step });
+    }
+    return transitionPdvIntegration(input);
+  }
+
   if (current === "DEMANDE_RECUE" && next === "EN_TRAITEMENT") {
-    if (!["CHEF_SECTION", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, ["CHEF_SECTION", "CHEF_SERVICE"])) throw new Error("FORBIDDEN_TRANSITION");
   } else if (current === "EN_TRAITEMENT" && next === "INTEGRE_GPR") {
-    if (!["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"].includes(role)) throw new Error("FORBIDDEN_TRANSITION");
+    if (!roleMayAdvanceWorkflow(role, ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"])) {
+      throw new Error("FORBIDDEN_TRANSITION");
+    }
   } else if (current === "INTEGRE_GPR" && next === "FINALISE") {
     if (!roleMayAdvanceWorkflow(role, "CHEF_SERVICE")) throw new Error("FORBIDDEN_TRANSITION");
     return finalizePdvIntegration(input.integrationId, input.actor);
@@ -1576,12 +1630,10 @@ export async function listCautionsForTab(
   actor: UserDocument,
   agenceRestriction: ListAgenceRestriction,
   q?: string,
+  paidPeriod: CautionPaidPeriod = resolveCautionPaidPeriod({}),
 ): Promise<{ items: CautionListRowDto[]; total: number }> {
   const db = await getDatabase();
   const threshold = await cautionDueThresholdDate();
-  const today = new Date();
-  const startMonth = new Date(today.getFullYear(), today.getMonth(), 1);
-  const startNext = new Date(today.getFullYear(), today.getMonth() + 1, 1);
 
   const conditions: Record<string, unknown>[] = [{ deletedAt: null }];
 
@@ -1592,10 +1644,10 @@ export async function listCautionsForTab(
   } else if (tab === "EN_ATTENTE") {
     conditions.push({ status: { $in: [...pendingStatuses] }, dueDate: { $gt: threshold } });
   } else {
-    conditions.push({
-      status: "PAYEE",
-      paidAt: { $gte: startMonth, $lt: startNext },
-    });
+    const paidRange = cautionPaidPeriodMongoRange(paidPeriod);
+    conditions.push(
+      Object.keys(paidRange).length > 0 ? { status: "PAYEE", paidAt: paidRange } : { status: "PAYEE" },
+    );
   }
 
   const visibility = buildWorkflowVisibilityMongoFilter({
@@ -1610,7 +1662,7 @@ export async function listCautionsForTab(
     const agenceIds = typeof agenceMongo === "string" ? [agenceMongo] : agenceMongo.$in;
     const [clients, concessionnaires] = await Promise.all([
       prisma.lonaciClient.findMany({
-        where: { deletedAt: null, agenceId: { in: agenceIds } },
+        where: { AND: [lonaciClientNotDeletedWhere, { agenceId: { in: agenceIds } }] },
         select: { id: true },
       }),
       prisma.concessionnaire.findMany({

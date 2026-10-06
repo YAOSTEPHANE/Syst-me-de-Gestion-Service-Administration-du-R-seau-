@@ -10,6 +10,7 @@ import { ensureDossierIndexes, findVisibleDossierById, transitionDossier } from 
 import { userCanPerformDossierTransitionAtEtape } from "@/lib/auth/dossier-transition-rbac";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
+import { logger } from "@/lib/observability/logger";
 import { logWorkflowDenied } from "@/lib/observability/workflow-events";
 
 const transitionSchema = z.object({
@@ -237,6 +238,13 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (code === "DOSSIER_NOT_FOUND") {
       return NextResponse.json({ message: "Dossier introuvable." }, { status: 404 });
     }
+    logger.error("Dossier transition failed", {
+      event: "DOSSIER_TRANSITION_FAILED",
+      dossierId: id,
+      action: parsed.data.action,
+      error: code,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return NextResponse.json({ message: "Transition impossible." }, { status: 500 });
   }
 }

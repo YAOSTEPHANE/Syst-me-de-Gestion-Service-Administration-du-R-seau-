@@ -163,6 +163,13 @@ model Contrat {
   @@index([lonaciClientId, produitCode, status, deletedAt], map: "idx_client_active_check")
 }
 
+/** Terminal (TPE) rattaché à un client. */
+type ClientTerminal {
+  /** Code machine, normalisé en majuscules ; unique parmi les clients actifs. */
+  codeMachine String
+  numeroTpm   String?
+}
+
 /** Comptes clients / tiers (distinct des concessionnaires PDV). */
 model LonaciClient {
   id              String    @id @default(auto()) @map("_id") @db.ObjectId
@@ -172,8 +179,10 @@ model LonaciClient {
   raisonSociale   String
   /** Nom et prénom(s) du client (identité principale). */
   nomComplet      String?
-  /** Code machine / terminal métier (saisie libre). */
+  /** Premier code machine de `terminaux` (compatibilité recherche / contrats historiques). */
   codeMachine     String?
+  /** TPE du client ; `codeMachine`, `numeroTpm` et `nombreTpm` en sont dérivés. */
+  terminaux       ClientTerminal[]
   cniNumero       String?
   nomContact      String?
   email           String?

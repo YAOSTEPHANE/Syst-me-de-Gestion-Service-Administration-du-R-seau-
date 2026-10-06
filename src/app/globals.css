@@ -502,6 +502,19 @@ textarea {
 .lonaci-ui-table-mobile { display: none; }
 .lonaci-ui-table-empty { border-radius: var(--lonaci-radius-md); }
 
+.lonaci-soumissions { font-size: 12.5px; }
+.lonaci-soumissions .lonaci-ui-data-table th { padding: 7px 10px; font-size: 11px; }
+.lonaci-soumissions .lonaci-ui-data-table td { padding: 7px 10px; font-size: 11.5px; line-height: 1.35; }
+.lonaci-soumissions .lonaci-ui-data-table td .text-sm { font-size: 11.5px; }
+.lonaci-soumissions .lonaci-ui-data-table td .text-xs { font-size: 10.5px; }
+.lonaci-soumissions .lonaci-ui-badge { min-height: 22px; padding: 2px 8px; gap: 5px; font-size: 11.5px; }
+.lonaci-soumissions .lonaci-ui-data-table .lonaci-ui-badge { min-height: 20px; padding: 1px 7px; font-size: 10.5px; }
+.lonaci-soumissions .lonaci-ui-data-table .lonaci-ui-button { font-size: 11.5px; }
+.lonaci-soumissions .lonaci-ui-data-table .lonaci-ui-button--sm { min-height: 28px; padding: 0 8px; }
+.lonaci-soumissions .lonaci-ui-button { font-size: 12.5px; }
+.lonaci-soumissions .lonaci-ui-button--sm { min-height: 32px; padding: 0 10px; }
+.lonaci-soumissions .text-sm { font-size: 12.5px; }
+
 .lonaci-ui-pagination {
   display: flex;
   align-items: center;

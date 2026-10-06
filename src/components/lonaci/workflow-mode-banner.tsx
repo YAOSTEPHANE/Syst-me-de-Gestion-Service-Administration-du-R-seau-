@@ -31,11 +31,6 @@ export default function WorkflowModeBanner() {
             Circuit de validation — mode {workflowApprovalsModeLabel().toLowerCase()}
           </p>
           <p className="mt-1 text-xs leading-5 opacity-90">{workflowApprovalsModeDescription()}</p>
-          <p className="mt-1.5 text-[11px] leading-4 opacity-75">
-            Configurable via <code className="rounded bg-black/5 px-1">LONACI_WORKFLOW_APPROVALS_ENABLED</code>
-            {" "}
-            (<code className="rounded bg-black/5 px-1">true</code> = hiérarchique).
-          </p>
         </div>
       </div>
       <Badge tone={hierarchical ? "success" : "warning"} className="w-fit shrink-0">

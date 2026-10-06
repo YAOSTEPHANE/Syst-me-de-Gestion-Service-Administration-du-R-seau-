@@ -5,6 +5,7 @@ import { badRequest } from "@/lib/api/error-responses";
 import { enforceRateLimit, zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { importAgrementsFromRows } from "@/lib/lonaci/agrements-import";
+import { AGREMENTS_IMPORT_ROLES } from "@/lib/lonaci/agrements-roles";
 
 const MAX_ROWS = 2_000;
 
@@ -87,7 +88,7 @@ export async function POST(request: NextRequest) {
   if (rateLimitResponse) return rateLimitResponse;
 
   const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: [...AGREMENTS_IMPORT_ROLES],
     rbac: { resource: "AGREMENTS", action: "CREATE" },
   });
   if ("error" in auth) return auth.error;

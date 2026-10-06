@@ -89,10 +89,11 @@ describe("Chef de section - Validation N1", () => {
     }
   });
 
-  it("UI dossiers : chef de section peut VALIDATE_N1 à l'étape Soumis", () => {
+  it("UI dossiers : chef de section finalise directement à l'étape Soumis", () => {
     expect(userCanApproveDossierAtEtape("CHEF_SECTION", "SOUMIS")).toBe(true);
-    expect(userCanPerformDossierTransitionAtEtape("CHEF_SECTION", "SOUMIS", "VALIDATE_N1")).toBe(true);
-    expect(listDossierTransitionActionsForUi("CHEF_SECTION", "SOUMIS")).toContain("VALIDATE_N1");
+    expect(userCanPerformDossierTransitionAtEtape("CHEF_SECTION", "SOUMIS", "FINALIZE")).toBe(true);
+    expect(userCanPerformDossierTransitionAtEtape("CHEF_SECTION", "SOUMIS", "VALIDATE_N1")).toBe(false);
+    expect(listDossierTransitionActionsForUi("CHEF_SECTION", "SOUMIS")).toContain("FINALIZE");
   });
 
   it("séparation workflow : chef de section n'est pas bloqué sur N1 dossier ni inscription PDV", () => {

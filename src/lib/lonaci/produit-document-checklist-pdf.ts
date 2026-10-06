@@ -18,6 +18,8 @@ export interface DossierChecklistPdfView {
   produitCode: string;
   produitLibelle: string;
   concessionnaireLabel: string;
+  /** « Concessionnaire » par défaut, « Client » pour un dossier rattaché à un client. */
+  partyKindLabel?: string;
   checklist: DossierDocumentChecklistPayload;
   generatedAt: Date;
   agentNom: string;
@@ -48,7 +50,7 @@ export async function renderDossierChecklistPdf(view: DossierChecklistPdfView): 
     drawSection(doc, "Informations du dossier");
     drawInformationCard(doc, [
       { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
-      { label: "Concessionnaire", value: view.concessionnaireLabel },
+      { label: view.partyKindLabel ?? "Concessionnaire", value: view.concessionnaireLabel },
       { label: "Généré le", value: view.generatedAt.toLocaleString("fr-FR") },
       { label: "Générée par", value: view.agentNom },
     ]);

@@ -30,6 +30,11 @@ import { canRole } from "@/lib/auth/rbac";
 import { LONACI_ROLES, type LonaciRole } from "@/lib/lonaci/constants";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
 import { getAssignedWorkflowTarget, workflowActionLabelForTarget, workflowAdvanceLabel } from "@/lib/lonaci/workflow-ui-policy";
+import {
+  areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
 import type { DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { notify } from "@/lib/toast";
 import { FilePlus2, RefreshCw, X } from "lucide-react";
@@ -58,13 +63,21 @@ interface ResiliationItem {
   attachments: Array<{ id: string; filename: string; mimeType: string; size: number; uploadedAt: string }>;
 }
 
-const WORKFLOW_STATUT_FILTER_LABELS: Record<ResiliationStatus, string> = {
-  DOSSIER_RECU: "Réception — constitution",
-  CONTROLE_CHEF_SECTION: "Circuit — N1",
-  VALIDATION_N2: "Circuit — N2",
-  RESILIE: "RÉSILIÉ",
-  REJETEE: "Rejetée",
-};
+const WORKFLOW_STATUT_FILTER_LABELS: Record<ResiliationStatus, string> = areWorkflowApprovalsEnabled()
+  ? {
+      DOSSIER_RECU: "Réception — constitution",
+      CONTROLE_CHEF_SECTION: "Circuit — N1",
+      VALIDATION_N2: "Circuit — N2",
+      RESILIE: "RÉSILIÉ",
+      REJETEE: "Rejetée",
+    }
+  : {
+      DOSSIER_RECU: "À finaliser — constitution",
+      CONTROLE_CHEF_SECTION: "À finaliser (ancien N1)",
+      VALIDATION_N2: "À finaliser (ancien N2)",
+      RESILIE: "RÉSILIÉ",
+      REJETEE: "Rejetée",
+    };
 
 interface ConcessionnaireItem {
   id: string;
@@ -164,6 +177,7 @@ export default function ResiliationsPanel() {
   const [commentaire, setCommentaire] = useState("");
   const [documents, setDocuments] = useState<File[]>([]);
   const [createDocumentsFournis, setCreateDocumentsFournis] = useState<Set<string>>(() => new Set());
+  const [createConfirmIrreversible, setCreateConfirmIrreversible] = useState(false);
   const docsRef = useRef<HTMLInputElement | null>(null);
   const importFileInputRef = useRef<HTMLInputElement | null>(null);
   const [importingFile, setImportingFile] = useState(false);
@@ -251,9 +265,12 @@ export default function ResiliationsPanel() {
       form.set("commentaire", commentaire);
       for (const f of documents) form.append("documents", f);
       for (const id of createDocumentsFournis) form.append("documentsFournis", id);
+      if (createConfirmIrreversible) form.set("confirmIrreversible", "true");
       const res = await fetch("/api/resiliations", { method: "POST", credentials: "include", body: form });
+      const b = (await res.json().catch(() => null)) as
+        | { message?: string; autoFinalize?: AutoFinalizeOutcome | null }
+        | null;
       if (!res.ok) {
-        const b = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(b?.message ?? "Création impossible");
       }
       setCreateClient(null);
@@ -263,8 +280,9 @@ export default function ResiliationsPanel() {
       setCommentaire("");
       setDocuments([]);
       setCreateDocumentsFournis(new Set());
+      setCreateConfirmIrreversible(false);
       setCreateOpen(false);
-      notify.success("Dossier de résiliation créé (statut DOSSIER_REÇU).");
+      notify.success(`Dossier de résiliation créé${autoFinalizeSuffix(b?.autoFinalize)}`);
       await load(1);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
@@ -310,9 +328,8 @@ export default function ResiliationsPanel() {
   }
 
   async function transitionResiliationRow(id: string, target: ResiliationStatus) {
-    if (target === "CONTROLE_CHEF_SECTION") {
-      const row =
-        detailId === id && detailItem ? detailItem : items.find((r) => r.id === id);
+    const row = detailId === id && detailItem ? detailItem : items.find((r) => r.id === id);
+    if (target !== "REJETEE" && row?.statut === "DOSSIER_RECU") {
       const checklistComplet =
         detailId === id && detailChecklistLive
           ? detailChecklistLive.complet
@@ -441,6 +458,7 @@ export default function ResiliationsPanel() {
     setCommentaire("");
     setDocuments([]);
     setCreateDocumentsFournis(new Set());
+    setCreateConfirmIrreversible(false);
   }
   const exportBase = `/api/resiliations/export?${new URLSearchParams({
     ...(fStatus ? { statut: fStatus } : {}),
@@ -1014,6 +1032,18 @@ export default function ResiliationsPanel() {
                   <span className="text-xs font-medium text-slate-700">Commentaire</span>
                   <textarea rows={2} value={commentaire} onChange={(e) => setCommentaire(e.target.value)} className={inputClass} />
                 </label>
+                <label className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/60 p-2 text-xs text-rose-900">
+                  <input
+                    type="checkbox"
+                    checked={createConfirmIrreversible}
+                    onChange={(e) => setCreateConfirmIrreversible(e.target.checked)}
+                    className="mt-0.5"
+                  />
+                  <span>
+                    Finaliser la résiliation dès la création si la checklist est complète (irréversible : le contrat
+                    actif est archivé et le point de vente passe en RÉSILIÉ).
+                  </span>
+                </label>
                 </section>
               </div>
             </form>
@@ -1027,7 +1057,7 @@ export default function ResiliationsPanel() {
                 disabled={creating}
                 className="rounded-lg border border-cyan-600 bg-cyan-600 px-2.5 py-1 text-xs font-semibold text-white shadow-sm transition hover:border-cyan-700 hover:bg-cyan-700 disabled:opacity-60"
               >
-                {creating ? "Enregistrement…" : "Créer dossier (DOSSIER_REÇU)"}
+                {creating ? "Enregistrement…" : "Créer le dossier"}
               </button>
             </div>
           </div>

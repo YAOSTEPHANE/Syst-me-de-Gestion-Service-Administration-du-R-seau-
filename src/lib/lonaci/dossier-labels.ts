@@ -1,10 +1,42 @@
 import {
   CONTRAT_OPERATION_TYPE_LABELS,
   CONTRAT_OPERATION_TYPES,
+  DOSSIER_STATUSES,
   DOSSIER_TYPE_LABELS,
   type ContratOperationType,
+  type DossierStatus,
   type DossierType,
 } from "@/lib/lonaci/constants";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
+
+const DOSSIER_STATUS_LABELS: Record<DossierStatus, string> = {
+  BROUILLON: "Brouillon",
+  SOUMIS: "Soumis",
+  VALIDE_N1: "Validé N1",
+  VALIDE_N2: "Validé N2",
+  FINALISE: "Finalisé",
+  REJETE: "Rejeté",
+};
+
+export function isDossierStatus(status: string): status is DossierStatus {
+  return (DOSSIER_STATUSES as readonly string[]).includes(status);
+}
+
+/** Statut courant d'un dossier tel qu'affiché à l'utilisateur. */
+export function dossierStatusLabel(status: string): string {
+  if (!areWorkflowApprovalsEnabled() && (status === "SOUMIS" || status === "VALIDE_N1" || status === "VALIDE_N2")) {
+    return "À finaliser";
+  }
+  return isDossierStatus(status) ? DOSSIER_STATUS_LABELS[status] : status;
+}
+
+/** Étape d'historique : les anciens paliers N1 / N2 deviennent des étapes intermédiaires sans circuit de validation. */
+export function dossierHistoryStepLabel(status: string): string {
+  if (!areWorkflowApprovalsEnabled() && (status === "VALIDE_N1" || status === "VALIDE_N2")) {
+    return "Étape intermédiaire";
+  }
+  return isDossierStatus(status) ? DOSSIER_STATUS_LABELS[status] : status;
+}
 
 export function parseContratOperationType(
   payload: Record<string, unknown> | null | undefined,

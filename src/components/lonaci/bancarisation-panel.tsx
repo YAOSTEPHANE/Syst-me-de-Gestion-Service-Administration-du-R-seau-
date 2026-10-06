@@ -19,7 +19,9 @@ import {
 } from "@/lib/lonaci/workflow-ui-policy";
 import {
   areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
   isOperationalWorkflowRole,
+  type AutoFinalizeOutcome,
 } from "@/lib/lonaci/workflow-approvals";
 import {
   BANCARISATION_STATUT_LABELS,
@@ -56,20 +58,23 @@ type RequestStatus = "SOUMIS" | "VALIDE_N1" | "VALIDE_N2" | "VALIDE" | "REJETE";
 
 const REQUEST_TABS: RequestStatus[] = ["SOUMIS", "VALIDE_N1", "VALIDE_N2", "VALIDE", "REJETE"];
 
+const validateLabel = areWorkflowApprovalsEnabled() ? "Valider" : workflowAdvanceLabel();
+
 function emptyRequestStatusCounts(): Record<RequestStatus, number> {
   return { SOUMIS: 0, VALIDE_N1: 0, VALIDE_N2: 0, VALIDE: 0, REJETE: 0 };
 }
 
 function requestStatusLabel(s: RequestStatus): string {
+  const simplified = !areWorkflowApprovalsEnabled();
   switch (s) {
     case "SOUMIS":
-      return "Soumis";
+      return simplified ? "À finaliser" : "Soumis";
     case "VALIDE_N1":
-      return "Validé N1";
+      return simplified ? "À finaliser" : "Validé N1";
     case "VALIDE_N2":
-      return "Validé N2";
+      return simplified ? "À finaliser" : "Validé N2";
     case "VALIDE":
-      return "Validé (appliqué)";
+      return simplified ? "Finalisé (appliqué)" : "Validé (appliqué)";
     case "REJETE":
       return "Rejeté";
     default:
@@ -78,15 +83,16 @@ function requestStatusLabel(s: RequestStatus): string {
 }
 
 function tabShortLabel(s: RequestStatus): string {
+  const simplified = !areWorkflowApprovalsEnabled();
   switch (s) {
     case "SOUMIS":
-      return "Soumis";
+      return simplified ? "À finaliser" : "Soumis";
     case "VALIDE_N1":
-      return "N1";
+      return simplified ? "Ancien N1" : "N1";
     case "VALIDE_N2":
-      return "N2";
+      return simplified ? "Ancien N2" : "N2";
     case "VALIDE":
-      return "OK";
+      return simplified ? "Finalisées" : "OK";
     case "REJETE":
       return "Rejet";
     default:
@@ -448,12 +454,16 @@ export default function BancarisationPanel() {
         credentials: "include",
         body: form,
       });
+      const body = (await res.json().catch(() => null)) as
+        | { message?: string; autoFinalize?: AutoFinalizeOutcome | null }
+        | null;
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Creation impossible");
       }
       notify.success(
-        "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service.",
+        areWorkflowApprovalsEnabled()
+          ? "Demande soumise : validation N1 (chef de section) puis N2 (assistant CDS), puis chef de service."
+          : `Demande de bancarisation enregistrée${autoFinalizeSuffix(body?.autoFinalize)}`,
       );
       setCreateOpen(false);
       setCreateClient(null);
@@ -705,7 +715,7 @@ export default function BancarisationPanel() {
       header: "Action",
       align: "right",
       cell: (row) => canValidateBancarisationRequest(row, userRole) || canRejectBancarisationRequest(row, userRole) ? (
-        <div className="flex justify-end gap-2">{canValidateBancarisationRequest(row, userRole) ? <Button size="sm" onClick={() => openDecision(row, "VALIDER")}>Valider</Button> : null}{canRejectBancarisationRequest(row, userRole) ? <Button size="sm" variant="danger" onClick={() => openDecision(row, "REJETER")}>Rejeter</Button> : null}</div>
+        <div className="flex justify-end gap-2">{canValidateBancarisationRequest(row, userRole) ? <Button size="sm" onClick={() => openDecision(row, "VALIDER")}>{validateLabel}</Button> : null}{canRejectBancarisationRequest(row, userRole) ? <Button size="sm" variant="danger" onClick={() => openDecision(row, "REJETER")}>Rejeter</Button> : null}</div>
       ) : <StatusBadge className={requestStatusBadge(row.status)}>{requestStatusLabel(row.status)}</StatusBadge>,
     },
   ];
@@ -766,20 +776,20 @@ export default function BancarisationPanel() {
 
           <Surface>
             <SectionHeader
-              title="Circuit de validation"
+              title={areWorkflowApprovalsEnabled() ? "Circuit de validation" : "Demandes de bancarisation"}
               description={
                 areWorkflowApprovalsEnabled()
                   ? "Validation N1, N2 puis chef de service."
-                  : `Progression libre (${workflowAdvanceLabel()}).`
+                  : `Demandes finalisées dès leur soumission ; « ${workflowAdvanceLabel()} » pour celles restées en attente.`
               }
-              action={<div className="flex flex-wrap gap-2">{visibleRequestTabs.map((status) => <Button key={status} size="sm" variant={requestTab === status ? "primary" : "secondary"} onClick={() => setRequestTab(status)}>{tabShortLabel(status)} ({(allStatusCounts ?? requestCountersPage)[status]})</Button>)}</div>}
+              action={<div className="flex flex-wrap gap-2">{visibleRequestTabs.filter((status) => areWorkflowApprovalsEnabled() || (status !== "VALIDE_N1" && status !== "VALIDE_N2") || (allStatusCounts ?? requestCountersPage)[status] > 0).map((status) => <Button key={status} size="sm" variant={requestTab === status ? "primary" : "secondary"} onClick={() => setRequestTab(status)}>{tabShortLabel(status)} ({(allStatusCounts ?? requestCountersPage)[status]})</Button>)}</div>}
             />
             <DataTable
               rows={requests}
               columns={requestColumns}
               rowKey={(row) => row.id}
               caption="Demandes du circuit de validation"
-              mobileCard={(row) => <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm"><div className="flex items-start justify-between gap-3"><div><strong>{row.concessionnaireId}</strong><p className="mt-1 text-sm text-slate-600">{new Date(row.createdAt).toLocaleString("fr-FR")}</p></div><StatusBadge className={requestStatusBadge(row.status)}>{requestStatusLabel(row.status)}</StatusBadge></div><div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{canValidateBancarisationRequest(row, userRole) ? <Button size="sm" onClick={() => openDecision(row, "VALIDER")}>Valider</Button> : null}{canRejectBancarisationRequest(row, userRole) ? <Button size="sm" variant="danger" onClick={() => openDecision(row, "REJETER")}>Rejeter</Button> : null}</div></article>}
+              mobileCard={(row) => <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm"><div className="flex items-start justify-between gap-3"><div><strong>{row.concessionnaireId}</strong><p className="mt-1 text-sm text-slate-600">{new Date(row.createdAt).toLocaleString("fr-FR")}</p></div><StatusBadge className={requestStatusBadge(row.status)}>{requestStatusLabel(row.status)}</StatusBadge></div><div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">{canValidateBancarisationRequest(row, userRole) ? <Button size="sm" onClick={() => openDecision(row, "VALIDER")}>{validateLabel}</Button> : null}{canRejectBancarisationRequest(row, userRole) ? <Button size="sm" variant="danger" onClick={() => openDecision(row, "REJETER")}>Rejeter</Button> : null}</div></article>}
             />
           </Surface>
         </>
@@ -803,7 +813,7 @@ export default function BancarisationPanel() {
       </Dialog>
 
       <Dialog open={decisionTarget !== null} onOpenChange={(open) => { if (!open && !validating) setDecisionTarget(null); }} title="Décision de validation" description={decisionTarget ? `${bancarisationStatutLabel(decisionTarget.statutActuel)} → ${bancarisationStatutLabel(decisionTarget.nouveauStatut)}` : undefined} size="sm" footer={<><Button variant="secondary" disabled={validating} onClick={() => setDecisionTarget(null)}>Annuler</Button><Button variant={decision === "REJETER" ? "danger" : "primary"} disabled={!decisionAck} loading={validating} onClick={() => decisionTarget && void decideRequest(decisionTarget.id, decision)}>Confirmer</Button></>}>
-        {decisionTarget ? <div className="space-y-4"><div className="flex gap-2">{canValidateBancarisationRequest(decisionTarget, userRole) ? <Button size="sm" variant={decision === "VALIDER" ? "primary" : "secondary"} onClick={() => setDecision("VALIDER")}>Valider</Button> : null}<Button size="sm" variant={decision === "REJETER" ? "danger" : "secondary"} onClick={() => setDecision("REJETER")}>Rejeter</Button></div><FormField label="Commentaire"><textarea rows={3} value={decisionComment} onChange={(e) => setDecisionComment(e.target.value)} /></FormField><label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={decisionAck} onChange={(e) => setDecisionAck(e.target.checked)} /><span>Je confirme cette décision.</span></label></div> : null}
+        {decisionTarget ? <div className="space-y-4"><div className="flex gap-2">{canValidateBancarisationRequest(decisionTarget, userRole) ? <Button size="sm" variant={decision === "VALIDER" ? "primary" : "secondary"} onClick={() => setDecision("VALIDER")}>{validateLabel}</Button> : null}<Button size="sm" variant={decision === "REJETER" ? "danger" : "secondary"} onClick={() => setDecision("REJETER")}>Rejeter</Button></div><FormField label="Commentaire"><textarea rows={3} value={decisionComment} onChange={(e) => setDecisionComment(e.target.value)} /></FormField><label className="flex min-h-11 items-center gap-3"><input type="checkbox" checked={decisionAck} onChange={(e) => setDecisionAck(e.target.checked)} /><span>Je confirme cette décision.</span></label></div> : null}
       </Dialog>
 
       <Dialog open={ribDemandeOpen} onOpenChange={setRibDemandeOpen} title="Demande de RIB" description="Crée la demande et notifie le concessionnaire." size="sm" footer={<><Button variant="secondary" onClick={() => setRibDemandeOpen(false)}>Annuler</Button><Button disabled={!ribDemandePdv?.id || ribBusyId !== null} loading={ribBusyId !== null} onClick={() => ribDemandePdv?.id && void postRibDemande(ribDemandePdv.id)}>Créer la demande</Button></>}>

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  importRowTerminaux,
   normalizeClientImportRow,
   resolveAgenceFromImportToken,
 } from "@/lib/lonaci/clients-import";
@@ -148,6 +149,17 @@ describe("normalizeClientImportRow", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.value.nomComplet).toBe("Kouassi Yao");
+  });
+
+  it("distingue un code saisi d'un code déduit du code machine", () => {
+    const explicit = normalizeClientImportRow({ Code: "000050", "Nom complet": "Awa", "Code machine": "tpe-1" });
+    const derived = normalizeClientImportRow({ "Nom complet": "Awa", "Code machine": "tpe-2", "N° TPM": "77" });
+    expect(explicit.ok && explicit.value.codeExplicit).toBe(true);
+    expect(derived.ok).toBe(true);
+    if (!derived.ok) return;
+    expect(derived.value.codeExplicit).toBe(false);
+    expect(importRowTerminaux(derived.value)).toEqual([{ codeMachine: "TPE-2", numeroTpm: "77" }]);
+    expect(importRowTerminaux({ codeMachine: null, numeroTpm: "77" })).toEqual([]);
   });
 
   it("refuse une catégorie inconnue", () => {

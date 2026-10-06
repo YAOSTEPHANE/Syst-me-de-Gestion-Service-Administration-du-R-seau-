@@ -1,6 +1,6 @@
 import "server-only";
 
-import { canCreateConcessionnaireForAgence } from "@/lib/lonaci/access";
+import { canImportAgrementsForAgence } from "@/lib/lonaci/access";
 import {
   mapAgrementImportRowFromRecord,
   parseAgrementImportDate,
@@ -135,7 +135,7 @@ export async function importAgrementsFromRows(
       }
     }
 
-    if (agenceId && !canCreateConcessionnaireForAgence(actor, agenceId)) {
+    if (agenceId && !canImportAgrementsForAgence(actor, agenceId)) {
       failed += 1;
       results.push({
         row: rowNumber,

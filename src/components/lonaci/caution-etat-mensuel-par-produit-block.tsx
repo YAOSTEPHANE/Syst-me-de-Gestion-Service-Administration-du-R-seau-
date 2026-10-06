@@ -324,76 +324,21 @@ export function CautionEtatMensuelParProduitBlock({
       elevated
       className="overflow-hidden"
     >
-      <div className="border-b border-orange-100 bg-orange-50/60 px-4 py-3">
-        <p className="mt-1 text-xs text-slate-600">
-          {months <= 1
-            ? "Dernier mois calendaire."
-            : `Les ${months} derniers mois calendaires.`}{" "}
-          Encaissements : cautions <strong>payées</strong> dont la date d’encaissement (
-          <code className="rounded bg-white/80 px-1">paidAt</code>) tombe dans le mois. Encours fin de mois : saisie
-          avant la fin du mois, non payée avant cette date, non annulée à cette date (statut actuel pour le circuit —
-          sans historique détaillé des transitions). Les <strong className="text-slate-800">encaissements du mois</strong>{" "}
-          (colonnes « encaissées ») restent les <strong className="text-slate-800">montants réels</strong> issus des
-          cautions. Si un <strong className="text-slate-800">chef de service</strong> corrige l’attendu par rapport au
-          total dossiers, la colonne <strong className="text-slate-800">Cautions non encaissées (FCFA)</strong> reste{" "}
-          <strong className="text-slate-800">attendu (FCFA) − cautions encaissées (FCFA)</strong> sur la ligne. Le{" "}
-          <strong className="text-slate-800">nombre</strong> de cautions à encaisser affiché vaut l’arrondi de{" "}
-          <strong className="text-slate-800">attendu (FCFA) ÷ cautions encaissées (FCFA)</strong> du mois sur la ligne
-          (si encaissées = 0 : affichage du stock au prorata). La colonne <strong className="text-slate-800">Écart</strong>{" "}
-          vaut le <strong className="text-slate-800">nombre de cautions à encaisser affiché − nombre de cautions
-          encaissées</strong>. Les{" "}
-          <strong className="text-slate-800">totaux du mois</strong> suivent les valeurs affichées (sommes des colonnes).
-          La colonne <strong className="text-slate-800">% du total ref. dossiers</strong> (après « Écart ») est le{" "}
-          <strong className="text-slate-800">pourcentage de l’écart</strong> (en cautions) : valeur de la colonne{" "}
-          <strong className="text-slate-800">Écart</strong> pour la ligne, divisée par la somme des écarts du mois sur
-          toutes les lignes. Avec <strong className="text-slate-800">un seul produit</strong> et un écart non nul, la
-          ligne affiche <strong className="text-slate-800">100&nbsp;%</strong>. Si la somme des écarts du mois est nulle,
-          le % affiche <strong className="text-slate-800">—</strong>. La ligne <strong className="text-slate-800">Total mois</strong> ne montre pas de % (non pertinent).{" "}
-          <strong className="text-slate-800">Cliquez un mois</strong> pour ouvrir ou fermer son tableau par produit
-          (plusieurs mois peuvent rester ouverts).
-        </p>
-        {allowAdminAttendusMontants ? (
-          <p className="mt-2 text-xs text-slate-700">
-            <strong className="text-slate-800">Chef de service :</strong> vous pouvez corriger la colonne « Attendus
-            montants cautions » par produit et par mois (valeur conservée en base).{" "}
-            <strong className="text-slate-800">Consultation / édition :</strong> le montant enregistré s’affiche avec{" "}
-            <strong className="text-slate-800">Modifier</strong> pour rouvrir la saisie. En édition, le bouton{" "}
-            <strong className="text-slate-800">Enregistrer</strong> n’apparaît que si le champ diffère du montant en
-            base ; après enregistrement vous revenez en consultation. Vous pouvez aussi enregistrer en quittant le
-            champ ou avec{" "}
-            <kbd className="rounded border border-slate-300 bg-white px-1 font-mono text-[10px]">Entrée</kbd>. Tant que
-            la valeur n’est pas enregistrée, les pourcentages et totaux ne reflètent pas la saisie.
-            Après enregistrement, les totaux suivent la valeur en base ; les{" "}
-            <strong className="text-slate-800">%</strong> du total ref. dossiers (pourcentage de l’écart en cautions,
-            ligne ÷ somme du mois) se recalculent sur toutes les lignes du mois lorsque les colonnes « à encaisser » ou
-            « encaissées » varient.
-            Le montant <strong className="text-slate-800">« non enc. » (FCFA)</strong> affiché
-            vaut <strong className="text-slate-800">attendu − encaissées</strong> sur la ligne ;
-            le <strong className="text-slate-800">nombre</strong> à encaisser affiché suit{" "}
-            <strong className="text-slate-800">attendu ÷ encaissées (FCFA)</strong> (arrondi), ou le stock au prorata si
-            encaissées = 0. Le bouton « ↺ »
-            supprime la saisie admin.
-          </p>
-        ) : null}
-        {attendusEditError ? (
-          <FeedbackState
-            title="Modification impossible"
-            description={attendusEditError}
-            tone="danger"
-            className="mt-3"
-            aria-live="assertive"
-          />
-        ) : null}
-        {hint ? (
-          <FeedbackState
-            title="Données indisponibles"
-            description={hint}
-            tone="warning"
-            className="mt-3"
-            aria-live="polite"
-          />
-        ) : null}
-      </div>
+      {attendusEditError || hint ? (
+        <div className="space-y-3 border-b border-orange-100 bg-orange-50/60 px-4 py-3">
+          {attendusEditError ? (
+            <FeedbackState
+              title="Modification impossible"
+              description={attendusEditError}
+              tone="danger"
+              aria-live="assertive"
+            />
+          ) : null}
+          {hint ? (
+            <FeedbackState title="Données indisponibles" description={hint} tone="warning" aria-live="polite" />
+          ) : null}
+        </div>
+      ) : null}
       <div className="max-h-[min(40rem,60vh)] overflow-auto p-3 sm:p-4">
         {!showBody && !hint ? (
           <FeedbackState title="Aucune ligne à afficher" description="Aucune caution ne correspond à cette période." />

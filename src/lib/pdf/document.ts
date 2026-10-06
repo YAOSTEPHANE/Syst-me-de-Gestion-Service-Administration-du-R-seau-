@@ -29,6 +29,27 @@ export interface PremiumPageChrome {
   generatedBy?: string;
 }
 
+/**
+ * Espaces fines produites par `toLocaleString("fr-FR")` (séparateur de milliers) : absentes de
+ * l'encodage des polices standard PDF, elles s'affichent « / » (ex. « 500/000 »).
+ */
+const PDF_UNSUPPORTED_SPACES = /[\u2007\u2009\u202f]/g;
+
+export function normalizePdfText(value: string): string {
+  return value.replace(PDF_UNSUPPORTED_SPACES, " ");
+}
+
+function normalizeTextMeasurements(doc: PdfDocument): PdfDocument {
+  const methods = ["text", "heightOfString", "widthOfString"] as const;
+  const target = doc as unknown as Record<(typeof methods)[number], (...args: unknown[]) => unknown>;
+  for (const method of methods) {
+    const original = target[method].bind(doc);
+    target[method] = (value: unknown, ...rest: unknown[]) =>
+      original(typeof value === "string" ? normalizePdfText(value) : value, ...rest);
+  }
+  return doc;
+}
+
 function pageMargins(
   overrides: CreatePremiumPdfOptions["margins"],
 ): PDFKit.Mixins.ExpandedSides<number> {
@@ -56,14 +77,16 @@ export function createPremiumPdfDocument(options: CreatePremiumPdfOptions): PdfD
   if (options.metadata.keywords && options.metadata.keywords.length > 0) {
     info.Keywords = options.metadata.keywords.join(", ");
   }
-  return new PDFDocument({
-    size: "A4",
-    layout: options.orientation ?? "portrait",
-    margins: pageMargins(options.margins),
-    bufferPages: true,
-    compress: true,
-    info,
-  });
+  return normalizeTextMeasurements(
+    new PDFDocument({
+      size: "A4",
+      layout: options.orientation ?? "portrait",
+      margins: pageMargins(options.margins),
+      bufferPages: true,
+      compress: true,
+      info,
+    }),
+  );
 }
 
 export function collectPdfBuffer(

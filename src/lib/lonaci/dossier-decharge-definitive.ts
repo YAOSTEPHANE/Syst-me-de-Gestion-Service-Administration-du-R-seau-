@@ -24,20 +24,30 @@ import type {
 import { getDatabase } from "@/lib/mongodb";
 import {
   collectPdfBuffer,
+  contentBottom,
   contentWidth,
   createPremiumPdfDocument,
-  drawBulletList,
-  drawInformationCard,
-  drawSection,
   drawStatusBadge,
-  drawTitle,
-  ensureSpace,
   finalizePremiumPages,
-  PDF_COLORS,
   PDF_SPACING,
-  PDF_TYPOGRAPHY,
   type PdfField,
 } from "@/lib/pdf";
+import {
+  CHEF_SERVICE_PDF_SIGNATURE,
+  COMPACT_LABEL_SIZE,
+  COMPACT_LINE_HEIGHT,
+  COMPACT_SIGNATURE_BOX_HEIGHT,
+  COMPACT_TITLE_HEIGHT,
+  COMPACT_VALUE_SIZE,
+  drawCompactBlockTitle,
+  drawCompactFieldGrid,
+  drawCompactFootnote,
+  drawCompactHeader,
+  drawCompactSignatureBoxes,
+  fitCompactList,
+} from "@/lib/pdf/compact-layout";
+import { FICHE_MARGINS } from "@/lib/pdf/soumission-fiche-paiement";
+import { PDF_PREMIUM } from "@/lib/pdf/tokens";
 
 export {
   DECHARGE_DEFINITIVE_DESCRIPTION,
@@ -181,6 +191,7 @@ export async function buildDossierDechargeDefinitiveView(
 
 export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDefinitiveView): Promise<Buffer> {
   const doc = createPremiumPdfDocument({
+    margins: FICHE_MARGINS,
     metadata: {
       title: DECHARGE_DEFINITIVE_TITLE,
       subject: `Décharge définitive du dossier ${view.dossierReference}`,
@@ -189,10 +200,12 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
     },
   });
   return collectPdfBuffer(doc, () => {
-    drawTitle(
+    const left = doc.page.margins.left;
+    const width = contentWidth(doc);
+    drawCompactHeader(
       doc,
       DECHARGE_DEFINITIVE_TITLE,
-      `Réf. dossier : ${view.dossierReference} · Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })} · Générée par ${view.agentNom}`,
+      `Réf. dossier : ${view.dossierReference} · Date de validation : ${view.dateValidation.toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" })}`,
     );
     drawStatusBadge(doc, view.mention, "success");
 
@@ -211,10 +224,8 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
       ...(view.ville ? [{ label: "Ville", value: view.ville }] : []),
       { label: "Agence", value: view.agenceLabel },
       { label: "Produit", value: `${view.produitCode} — ${view.produitLibelle}` },
-      { label: "Générée par", value: view.agentNom },
     ];
-    drawSection(doc, "Identification");
-    drawInformationCard(doc, identityFields);
+    drawCompactFieldGrid(doc, "Identification", identityFields);
 
     const cautionFields: PdfField[] = [
       { label: "Réf. caution", value: view.cautionReferenceLabel },
@@ -234,21 +245,41 @@ export async function renderDossierDechargeDefinitivePdf(view: DossierDechargeDe
         : []),
       { label: "Référence de paiement", value: view.paymentReference },
     ];
-    drawSection(doc, "Caution réglée");
-    drawInformationCard(doc, cautionFields);
-
-    drawSection(doc, "Documents fournis et validés");
-    drawBulletList(doc, view.documentsFournis, "Aucun document listé.");
+    drawCompactFieldGrid(doc, "Caution réglée", cautionFields);
 
     const legalNotice =
       "Ce document atteste la complétude du dossier et le règlement de la caution. La référence de paiement est unique et obligatoire pour tout rapprochement comptable.";
-    doc.font("Helvetica").fontSize(PDF_TYPOGRAPHY.label);
-    const noticeHeight =
-      doc.heightOfString(legalNotice, { width: contentWidth(doc) }) + PDF_SPACING.md;
-    ensureSpace(doc, noticeHeight);
+    doc.font("Helvetica").fontSize(COMPACT_LABEL_SIZE);
+    const noticeHeight = doc.heightOfString(legalNotice, { width });
+    const reservedBelowList =
+      noticeHeight + PDF_SPACING.sm + COMPACT_SIGNATURE_BOX_HEIGHT + COMPACT_LINE_HEIGHT + PDF_SPACING.md;
+    const listBudget = Math.max(
+      COMPACT_LINE_HEIGHT,
+      contentBottom(doc) - doc.y - COMPACT_TITLE_HEIGHT - PDF_SPACING.sm - reservedBelowList,
+    );
+
+    drawCompactBlockTitle(doc, "Documents fournis et validés");
+    doc.fillColor(PDF_PREMIUM.inkSoft).font("Helvetica").fontSize(COMPACT_VALUE_SIZE);
+    const documentsText = view.documentsFournis.length
+      ? fitCompactList(doc, view.documentsFournis, {
+          separator: " · ",
+          width,
+          maxHeight: listBudget,
+          emptySummary: `${view.documentsFournis.length} document(s) — voir le dossier`,
+        })
+      : "Aucun document listé.";
+    doc.text(documentsText, left, doc.y, { width, align: "justify" });
+    doc.y += PDF_SPACING.sm;
+
     doc
-      .fillColor(PDF_COLORS.muted)
-      .text(legalNotice, { width: contentWidth(doc), align: "justify" });
+      .fillColor(PDF_PREMIUM.muted)
+      .font("Helvetica")
+      .fontSize(COMPACT_LABEL_SIZE)
+      .text(legalNotice, left, doc.y, { width, align: "justify" });
+    doc.y += PDF_SPACING.sm;
+
+    drawCompactSignatureBoxes(doc, [CHEF_SERVICE_PDF_SIGNATURE]);
+    drawCompactFootnote(doc, `Générée par : ${view.agentNom}`);
 
     finalizePremiumPages(doc, {
       reference: view.dossierReference,

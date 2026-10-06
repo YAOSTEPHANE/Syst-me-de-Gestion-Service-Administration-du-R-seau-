@@ -2,6 +2,8 @@ import "server-only";
 
 import { CLIENT_TYPE_DISTRIBUTEUR_LABELS } from "@/lib/lonaci/client-constants";
 import { findAgenceById } from "@/lib/lonaci/referentials";
+import { soumissionFicheCaisseReference } from "@/lib/lonaci/soumission-circuit";
+import { startSoumissionCircuit } from "@/lib/lonaci/soumission-circuit-service";
 import { SOUMISSION_PAIEMENT_CAISSE_MONTANT_FCFA } from "@/lib/lonaci/soumission-paiement-constants";
 import {
   findSoumissionById,
@@ -26,7 +28,7 @@ export async function buildAndRenderSoumissionFichePaiementPdf(input: {
     : item.agenceId;
 
   const view: SoumissionFichePaiementView = {
-    reference: `SOU-${item.id.slice(-8).toUpperCase()}`,
+    reference: soumissionFicheCaisseReference(item.id),
     nomComplet: item.nomComplet,
     contact: item.contact,
     typeDistributeurLabel:
@@ -44,6 +46,7 @@ export async function buildAndRenderSoumissionFichePaiementPdf(input: {
     actor: input.actor,
     agentName: agentNom,
   });
+  await startSoumissionCircuit({ id: item.id, actor: input.actor });
 
   const pdf = await renderSoumissionFichePaiementPdf(view);
   const filename = `fiche-paiement-caisse-${view.reference}.pdf`;

@@ -32,8 +32,8 @@ async function readPdfText(buffer: Buffer): Promise<{ pageCount: number; text: s
 describe("soumission paiement constants", () => {
   it("fixe le montant caisse à 100 000 FCFA", () => {
     expect(SOUMISSION_PAIEMENT_CAISSE_MONTANT_FCFA).toBe(100_000);
-    expect(formatSoumissionPaiementMontant()).toMatch(/100[\s\u00a0]?000/);
-    expect(formatSoumissionPaiementMontant()).toContain("FCFA");
+    expect(formatSoumissionPaiementMontant()).toBe("100 000 FCFA");
+    expect(formatSoumissionPaiementMontant(1_250_000)).toBe("1 250 000 FCFA");
     expect(SOUMISSION_FICHE_PAIEMENT_TITLE).toMatch(/paiement/i);
   });
 });
@@ -67,6 +67,10 @@ describe("soumission fiche paiement PDF", () => {
     expect(text).toMatch(/cent mille/i);
     expect(text).toMatch(/CONSIGNES CAISSE/i);
     expect(text).toMatch(/Visa caisse/i);
+    expect(text).toMatch(/Visa responsable administratif/i);
+    expect(text).not.toMatch(/Visa agent/i);
+    expect(text).toMatch(/Zone/);
+    expect(text).not.toMatch(/Lieu/);
     expect(text).toMatch(/QR contrôle/i);
   });
 });

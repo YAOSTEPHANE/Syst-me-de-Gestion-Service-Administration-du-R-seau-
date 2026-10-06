@@ -4,6 +4,7 @@ import { notFound, serverError } from "@/lib/api/error-responses";
 import { canReadClientDirectory } from "@/lib/lonaci/access";
 import { findClientById, sanitizeClientPublic, validateClientCreationN1 } from "@/lib/lonaci/clients";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 interface RouteContext {
   params: Promise<{ id: string }>;
@@ -11,7 +12,7 @@ interface RouteContext {
 
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION"],
+    roles: workflowStepRoles("CHEF_SECTION"),
     rbac: { resource: "CLIENTS", action: "VALIDATE_N1" },
   });
   if ("error" in auth) return auth.error;

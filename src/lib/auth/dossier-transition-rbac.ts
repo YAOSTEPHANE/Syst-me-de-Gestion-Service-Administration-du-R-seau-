@@ -63,14 +63,15 @@ export function normalizeDossierWorkflowEtape(
 export function primaryDossierTransitionActionForEtape(
   etape: string | null | undefined,
 ): DossierTransitionAction | null {
+  const approvals = areWorkflowApprovalsEnabled();
   switch (normalizeDossierWorkflowEtape(etape)) {
     case "BROUILLON":
     case "REJETE":
       return "SUBMIT";
     case "SOUMIS":
-      return "VALIDATE_N1";
+      return approvals ? "VALIDATE_N1" : "FINALIZE";
     case "VALIDE_N1":
-      return "VALIDATE_N2";
+      return approvals ? "VALIDATE_N2" : "FINALIZE";
     case "VALIDE_N2":
       return "FINALIZE";
     default:
@@ -85,15 +86,16 @@ export function dossierEtapeAllowsAction(
 ): boolean {
   const step = normalizeDossierWorkflowEtape(etape);
   if (!step) return false;
+  const approvals = areWorkflowApprovalsEnabled();
   switch (action) {
     case "SUBMIT":
       return step === "BROUILLON" || step === "REJETE";
     case "VALIDATE_N1":
-      return step === "SOUMIS";
+      return approvals && step === "SOUMIS";
     case "VALIDATE_N2":
-      return step === "VALIDE_N1";
+      return approvals && step === "VALIDE_N1";
     case "FINALIZE":
-      return step === "VALIDE_N2";
+      return approvals ? step === "VALIDE_N2" : step === "SOUMIS" || step === "VALIDE_N1" || step === "VALIDE_N2";
     case "REJECT":
     case "RETURN_PREVIOUS":
       return step === "SOUMIS" || step === "VALIDE_N1" || step === "VALIDE_N2";
@@ -183,6 +185,7 @@ export function listDossierBulkActionsForUi(
     }
     // Sans filtre d'étape, ne pas proposer une décision de retour ambiguë en lot.
     if (action === "REJECT" || action === "RETURN_PREVIOUS") return false;
+    if (!areWorkflowApprovalsEnabled() && (action === "VALIDATE_N1" || action === "VALIDATE_N2")) return false;
     if (hideDossierN1N2ForChefService(role, action)) return false;
     return userMayPerformDossierTransition(role, action);
   });

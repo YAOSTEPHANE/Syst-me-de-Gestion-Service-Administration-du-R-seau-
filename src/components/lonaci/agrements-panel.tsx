@@ -8,6 +8,7 @@ import ClientSearchPicker, {
 import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { captureByAliases, extractPdfText, normalizeDateToIso } from "@/lib/lonaci/pdf-import";
 import { friendlyErrorMessage } from "@/lib/lonaci/friendly-messages";
+import { canImportAgrements } from "@/lib/lonaci/agrements-roles";
 import type { LonaciRole } from "@/lib/lonaci/constants";
 import {
   getAssignedWorkflowTarget,
@@ -15,6 +16,7 @@ import {
   parseLonaciRole,
   workflowActionLabelForTarget,
 } from "@/lib/lonaci/workflow-ui-policy";
+import { areWorkflowApprovalsEnabled } from "@/lib/lonaci/workflow-approvals";
 import { notify } from "@/lib/toast";
 import { Download, FilePlus2, FileText, Upload } from "lucide-react";
 import { StatusBadge } from "@/components/lonaci/ui/badge";
@@ -67,6 +69,11 @@ function statusPillClass(status: AgrementStatus): string {
     default:
       return "bg-slate-100 text-slate-700";
   }
+}
+
+function statusLabel(status: AgrementStatus): string {
+  if (status === "FINALISE") return "Finalisé";
+  return areWorkflowApprovalsEnabled() ? status : "À finaliser";
 }
 
 function transitionLabel(target: AgrementStatus): string {
@@ -346,7 +353,7 @@ export default function AgrementsPanel() {
       setObservations("");
       setPdfFile(null);
       setCreateOpen(false);
-      notify.success("Agrément enregistré (statut RECU).");
+      notify.success("Agrément enregistré.");
       await load(1);
     } catch (e) {
       const message = friendlyErrorMessage(e instanceof Error ? e.message : "Erreur");
@@ -488,6 +495,8 @@ export default function AgrementsPanel() {
   }
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const canImport = canImportAgrements(meRole);
+  const canCreate = meRole !== null && meRole !== "AUDITEUR" && meRole !== "ASSIST_DGVR";
   const visibleFilterStatuses = getRoleWorkflowFilterStatuses("AGREMENTS", meRole);
   const exportQuery = useMemo(() => {
     const params = new URLSearchParams();
@@ -535,9 +544,6 @@ export default function AgrementsPanel() {
   }, [createOpen]);
 
   useEffect(() => {
-    if (!createOpen) return;
-    if (produits.length || agences.length) return;
-
     let cancelled = false;
     setReferentialsLoading(true);
     setReferentialsError(null);
@@ -567,8 +573,7 @@ export default function AgrementsPanel() {
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [createOpen]);
+  }, []);
 
   function workflowAction(row: AgrementItem) {
     const assigned = getAssignedWorkflowTarget({ workflow: "AGREMENTS", role: meRole, status: row.statut });
@@ -585,7 +590,7 @@ export default function AgrementsPanel() {
     { id: "produit", header: "Produit", cell: (row) => row.produitCode },
     { id: "date", header: "Date de réception", cell: (row) => new Date(row.dateReception).toLocaleString("fr-FR") },
     { id: "officielle", header: "Référence officielle", cell: (row) => row.referenceOfficielle },
-    { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statusPillClass(row.statut)}>{row.statut}</StatusBadge> },
+    { id: "statut", header: "Statut", cell: (row) => <StatusBadge className={statusPillClass(row.statut)}>{statusLabel(row.statut)}</StatusBadge> },
     {
       id: "document",
       header: "Document",
@@ -598,13 +603,15 @@ export default function AgrementsPanel() {
           ) : (
             "—"
           )}
-          <ModuleCourrierPdfActions
-            pdfUrl={moduleCourrierPdfUrl("agrement", row.id)}
-            filename={moduleCourrierDownloadFilename("agrement", row.reference)}
-            layout="inline"
-            tone="violet"
-            className="!mt-0"
-          />
+          {meRole !== "ASSIST_DGVR" ? (
+            <ModuleCourrierPdfActions
+              pdfUrl={moduleCourrierPdfUrl("agrement", row.id)}
+              filename={moduleCourrierDownloadFilename("agrement", row.reference)}
+              layout="inline"
+              tone="violet"
+              className="!mt-0"
+            />
+          ) : null}
         </div>
       ),
     },
@@ -616,7 +623,11 @@ export default function AgrementsPanel() {
       <PageHeader
         eyebrow="Référentiel"
         title="Agréments"
-        description="Contrôle, validation et archivage des agréments produits."
+        description={
+          areWorkflowApprovalsEnabled()
+            ? "Contrôle, validation et archivage des agréments produits."
+            : "Enregistrement et archivage des agréments produits (finalisés dès l’enregistrement)."
+        }
         actions={
           <>
             <input
@@ -627,7 +638,7 @@ export default function AgrementsPanel() {
               className="sr-only"
               onChange={(e) => void onImportFileChange(e)}
             />
-            {meRole !== "AUDITEUR" ? (
+            {canImport ? (
               <Button
                 variant="secondary"
                 leadingIcon={Upload}
@@ -637,7 +648,7 @@ export default function AgrementsPanel() {
                 Importer
               </Button>
             ) : null}
-            {meRole !== "AUDITEUR" ? (
+            {canImport ? (
               <Button
                 variant="secondary"
                 leadingIcon={Download}
@@ -652,7 +663,7 @@ export default function AgrementsPanel() {
             ) : null}
             <Button variant="secondary" leadingIcon={Download} onClick={() => window.open(`/api/agrements/export?format=excel&${exportQuery}`, "_blank")}>Excel</Button>
             <Button variant="secondary" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/export?format=pdf&${exportQuery}`, "_blank")}>PDF</Button>
-            {meRole !== "AUDITEUR" ? <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Créer un agrément</Button> : null}
+            {canCreate ? <Button leadingIcon={FilePlus2} onClick={() => setCreateOpen(true)}>Créer un agrément</Button> : null}
           </>
         }
       />
@@ -681,7 +692,7 @@ export default function AgrementsPanel() {
             getRowLabel={(row) => `Agrément ${row.reference}`}
             mobileCard={(row) => (
               <article className="rounded-2xl border border-orange-100 bg-white p-4 shadow-sm">
-                <div className="flex items-start justify-between gap-3"><div><strong>{row.referenceOfficielle}</strong><p className="mt-1 text-sm text-slate-600">{row.reference} · {row.produitCode}</p></div><StatusBadge className={statusPillClass(row.statut)}>{row.statut}</StatusBadge></div>
+                <div className="flex items-start justify-between gap-3"><div><strong>{row.referenceOfficielle}</strong><p className="mt-1 text-sm text-slate-600">{row.reference} · {row.produitCode}</p></div><StatusBadge className={statusPillClass(row.statut)}>{statusLabel(row.statut)}</StatusBadge></div>
                 <dl className="mt-4 text-sm"><div><dt className="text-slate-500">Date de réception</dt><dd className="mt-1 font-medium">{new Date(row.dateReception).toLocaleString("fr-FR")}</dd></div></dl>
                 <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-3">
                   {row.hasDocument ? <Button variant="secondary" size="sm" leadingIcon={FileText} onClick={() => window.open(`/api/agrements/${row.id}/document`, "_blank")}>PDF</Button> : null}

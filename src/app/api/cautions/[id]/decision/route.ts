@@ -5,6 +5,7 @@ import { badRequest, conflict, notFound, serverError } from "@/lib/api/error-res
 import { zodBadRequest } from "@/lib/api/endpoint-helpers";
 import { finalizeCaution, ensureSprint4Indexes, returnCautionForCorrection } from "@/lib/lonaci/sprint4";
 import { requireApiAuth } from "@/lib/auth/guards";
+import { areWorkflowApprovalsEnabled, workflowStepRoles } from "@/lib/lonaci/workflow-approvals";
 
 const schema = z.object({
   decision: z.enum(["APPROUVER", "REJETER", "RETOURNER_POUR_CORRECTION"]),
@@ -27,7 +28,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         ? "REJECT"
         : "RETURN_FOR_CORRECTION";
   const auth = await requireApiAuth(request, {
-    roles: ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"],
+    roles: areWorkflowApprovalsEnabled() ? ["CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE"] : workflowStepRoles("CHEF_SERVICE"),
     rbac: { resource: "CAUTIONS", action: rbacAction },
   });
   if ("error" in auth) return auth.error;
@@ -71,8 +72,11 @@ export async function POST(request: NextRequest, context: RouteContext) {
         "CAUTION_PAYMENT_REFERENCE_REQUISE",
       );
     }
-    if (code === "ROLE_FORBIDDEN" || code === "CAUTION_WRONG_STATUS") {
+    if (code === "ROLE_FORBIDDEN") {
       return NextResponse.json({ message: "Transition non autorisee." }, { status: 403 });
+    }
+    if (code === "CAUTION_WRONG_STATUS") {
+      return conflict("Statut de la caution incompatible avec cette action.", "CAUTION_WRONG_STATUS");
     }
     return serverError("Decision caution impossible.", "CAUTION_DECISION_FAILED");
   }

@@ -17,6 +17,18 @@ vi.mock("@/lib/lonaci/dossiers", () => ({
   findVisibleDossierById: findVisibleDossierByIdMock,
 }));
 
+vi.mock("@/lib/lonaci/contrat-recapitulatif-data", () => ({
+  buildContratRecapitulatifData: vi.fn(async (dossier: unknown) => ({
+    dossier,
+    titulaire: null,
+    agenceLabel: "Sans agence",
+    produits: [],
+    checklist: null,
+    contrats: [],
+    userNames: new Map(),
+  })),
+}));
+
 import { GET } from "./route";
 
 const actor = { _id: "u1", role: "CHEF_SECTION", agenceId: "ag1" } as const;
@@ -47,6 +59,7 @@ describe("GET /api/contrats/[dossierId]/export", () => {
     expect(res.status).toBe(200);
     expect(res.headers.get("Content-Type")).toBe("application/pdf");
     expect(res.headers.get("Content-Disposition")).toContain("inline");
+    expect(res.headers.get("Content-Disposition")).toContain("recapitulatif-contrat-DOS-001.pdf");
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
     const body = Buffer.from(await res.arrayBuffer());
     expect(body.subarray(0, 5).toString("ascii")).toBe("%PDF-");

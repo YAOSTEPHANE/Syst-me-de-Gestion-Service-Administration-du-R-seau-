@@ -12,6 +12,13 @@ import {
   Trash2,
 } from "lucide-react";
 
+import {
+  ClientTerminauxEditor,
+  clientTerminalFormRowsToPayload,
+  clientTerminauxToFormRows,
+  duplicateClientTerminalCodes,
+  type ClientTerminalFormRow,
+} from "@/components/lonaci/client-terminaux-editor";
 import { StatusBadge, type Tone } from "@/components/lonaci/ui/badge";
 import { Button, IconButton } from "@/components/lonaci/ui/button";
 import { ConfirmDialog, Dialog } from "@/components/lonaci/ui/dialog";
@@ -27,7 +34,6 @@ import {
   CLIENT_CATEGORIES,
   CLIENT_CATEGORIE_LABELS,
   CLIENT_CATEGORIES_FORME_ENTREPRISE,
-  CLIENT_CATEGORIES_FORME_PARTICULIER,
   CLIENT_TYPE_DISTRIBUTEUR,
   CLIENT_TYPE_DISTRIBUTEUR_LABELS,
   clientDisplayName,
@@ -38,6 +44,11 @@ import {
   type ClientStatut,
   type ClientTypeDistributeur,
 } from "@/lib/lonaci/client-constants";
+import {
+  formatClientTerminalCodes,
+  formatClientTerminaux,
+  type ClientTerminal,
+} from "@/lib/lonaci/client-terminaux";
 import type { AgenceZoneGeographique, DossierDocumentChecklistPayload } from "@/lib/lonaci/types";
 import { OTHER_PRODUCT_CODE } from "@/lib/lonaci/produit-constants";
 import {
@@ -67,26 +78,81 @@ function isMostlyEmptyImportRow(row: Record<string, unknown>): boolean {
 const FILTER_SANS_AGENCE = "__SANS_AGENCE__";
 const FILTER_SANS_PRODUIT = "__SANS_PRODUIT__";
 
-type ClientListScope = "tous" | "particuliers" | "entreprises";
+type ClientListScope = "tous" | "particuliers" | "entreprises_canaux" | "entreprises" | "canaux";
+
+/** Catégories couvertes par chaque onglet (vide = toutes). */
+const CLIENT_LIST_SCOPE_CATEGORIES: Record<ClientListScope, readonly ClientCategorie[]> = {
+  tous: [],
+  particuliers: ["PARTICULIER"],
+  entreprises_canaux: CLIENT_CATEGORIES_FORME_ENTREPRISE,
+  entreprises: ["ENTREPRISE"],
+  canaux: ["CANAL_ALTERNATIF"],
+};
+
+const CLIENT_LIST_SCOPE_TABS: ReadonlyArray<{ scope: ClientListScope; label: string }> = [
+  { scope: "tous", label: "Tous les clients" },
+  { scope: "particuliers", label: "Particuliers" },
+  { scope: "entreprises_canaux", label: "Entreprises & canaux alternatifs" },
+  { scope: "entreprises", label: "Entreprises" },
+  { scope: "canaux", label: "Canaux alternatifs" },
+];
+
+const CLIENT_LIST_SCOPE_TEXTS: Record<
+  ClientListScope,
+  { title: string; description: string; newLabel: string; countLabel: string; nameColumn: string }
+> = {
+  tous: {
+    title: "Clients",
+    description: "Liste globale de tous les clients (particuliers, entreprises et canaux alternatifs).",
+    newLabel: "Nouveau client",
+    countLabel: "client(s)",
+    nameColumn: "Nom / Raison sociale",
+  },
+  particuliers: {
+    title: "Clients particuliers",
+    description: "Liste dédiée aux clients particuliers.",
+    newLabel: "Nouveau particulier",
+    countLabel: "particulier(s)",
+    nameColumn: "Nom complet",
+  },
+  entreprises_canaux: {
+    title: "Entreprises & canaux alternatifs",
+    description: "Liste dédiée aux entreprises et canaux alternatifs (raison sociale).",
+    newLabel: "Nouvelle entreprise",
+    countLabel: "entreprise(s) / canal(aux)",
+    nameColumn: "Raison sociale",
+  },
+  entreprises: {
+    title: "Entreprises",
+    description: "Liste dédiée aux entreprises (raison sociale).",
+    newLabel: "Nouvelle entreprise",
+    countLabel: "entreprise(s)",
+    nameColumn: "Raison sociale",
+  },
+  canaux: {
+    title: "Canaux alternatifs",
+    description: "Liste dédiée aux canaux alternatifs (raison sociale).",
+    newLabel: "Nouveau canal alternatif",
+    countLabel: "canal(aux) alternatif(s)",
+    nameColumn: "Raison sociale",
+  },
+};
 
 function applyClientListScopeParams(
   params: URLSearchParams,
   scope: ClientListScope,
   filterCategorie: string,
 ) {
-  if (scope === "tous") {
-    if (filterCategorie) params.set("categorie", filterCategorie);
-    return;
-  }
-  if (scope === "particuliers") {
-    params.set("categorie", "PARTICULIER");
-    return;
-  }
-  if (filterCategorie && (CLIENT_CATEGORIES_FORME_ENTREPRISE as readonly string[]).includes(filterCategorie)) {
+  const scopeCategories = CLIENT_LIST_SCOPE_CATEGORIES[scope];
+  if (
+    filterCategorie &&
+    (scopeCategories.length === 0 || (scopeCategories as readonly string[]).includes(filterCategorie))
+  ) {
     params.set("categorie", filterCategorie);
     return;
   }
-  params.set("categories", CLIENT_CATEGORIES_FORME_ENTREPRISE.join(","));
+  if (scopeCategories.length === 1) params.set("categorie", scopeCategories[0]!);
+  else if (scopeCategories.length > 1) params.set("categories", scopeCategories.join(","));
 }
 
 async function downloadClientsExcelTemplate(opts?: { produitCode?: string; agenceCode?: string }) {
@@ -135,18 +201,6 @@ async function downloadClientsExcelTemplate(opts?: { produitCode?: string; agenc
   XLSX.utils.book_append_sheet(wb, wsPerimetre, "Perimetre");
   XLSX.writeFile(wb, `liste-clients-${agenceSample}-${produitSample}.xlsx`);
 }
-
-const AGENCE_IMPORT_KEYS = [
-  "agence",
-  "Agence",
-  "Agence (zone)",
-  "Agence (Intérieur - Abidjan)",
-  "agenceId",
-  "agenceCode",
-  "codeAgence",
-  "code agence",
-  "zone",
-] as const;
 
 type AgenceListItem = { id: string; code: string; libelle: string };
 
@@ -251,6 +305,7 @@ type ListItem = {
   raisonSociale: string;
   nomComplet: string | null;
   codeMachine: string | null;
+  terminaux: ClientTerminal[];
   cniNumero: string | null;
   nomContact: string | null;
   email: string | null;
@@ -289,6 +344,7 @@ type ClientDetail = {
   raisonSociale: string;
   nomComplet: string | null;
   codeMachine: string | null;
+  terminaux: ClientTerminal[];
   cniNumero: string | null;
   nomContact: string | null;
   email: string | null;
@@ -380,6 +436,7 @@ export default function ClientsPanel() {
   const [filterStatut, setFilterStatut] = useState("");
   const [filterCategorie, setFilterCategorie] = useState("");
   const [listScope, setListScope] = useState<ClientListScope>("tous");
+  const scopeCategories = CLIENT_LIST_SCOPE_CATEGORIES[listScope];
   const [filterAgence, setFilterAgence] = useState("");
   const [filterProduit, setFilterProduit] = useState("");
   const [agences, setAgences] = useState<AgenceRef[]>([]);
@@ -413,7 +470,7 @@ export default function ClientsPanel() {
     clientCodeSuffix: "",
     nomComplet: "",
     raisonSociale: "",
-    codeMachine: "",
+    terminaux: [] as ClientTerminalFormRow[],
     cniNumero: "",
     nomContact: "",
     email: "",
@@ -422,9 +479,7 @@ export default function ClientsPanel() {
     ville: "",
     codePostal: "",
     typeDistributeur: "" as "" | ClientTypeDistributeur,
-    nombreTpm: "",
     numeroDistributeur: "",
-    numeroTpm: "",
     agenceId: "",
     statut: "DOSSIER_EN_COURS" as ClientStatut,
     notes: "",
@@ -451,51 +506,22 @@ export default function ClientsPanel() {
     [],
   );
   const formCategorieOptions = useMemo(() => {
-    const base: ClientCategorie[] =
-      listScope === "entreprises"
-        ? [...CLIENT_CATEGORIES_FORME_ENTREPRISE]
-        : listScope === "particuliers"
-          ? [...CLIENT_CATEGORIES_FORME_PARTICULIER]
-          : [...CLIENT_CATEGORIES];
+    const base: ClientCategorie[] = scopeCategories.length > 0 ? [...scopeCategories] : [...CLIENT_CATEGORIES];
     if (editingId && !(base as readonly string[]).includes(form.categorie)) {
       return [form.categorie, ...base];
     }
     return base;
-  }, [listScope, editingId, form.categorie]);
-  const isEntreprisesList = listScope === "entreprises";
-  const isParticuliersList = listScope === "particuliers";
-  const showCategorieColumn = !isParticuliersList;
-  const showCategorieFilter = listScope === "tous" || isEntreprisesList;
-  const listTitle =
-    listScope === "tous"
-      ? "Clients"
-      : isEntreprisesList
-        ? "Entreprises & canaux alternatifs"
-        : "Clients particuliers";
-  const listDescription =
-    listScope === "tous"
-      ? "Liste globale de tous les clients (particuliers, entreprises et canaux alternatifs)."
-      : isEntreprisesList
-        ? "Liste dédiée aux entreprises et canaux alternatifs (raison sociale)."
-        : "Liste dédiée aux clients particuliers.";
-  const newClientLabel =
-    listScope === "tous"
-      ? "Nouveau client"
-      : isEntreprisesList
-        ? "Nouvelle entreprise"
-        : "Nouveau particulier";
-  const countLabel =
-    listScope === "tous"
-      ? "client(s)"
-      : isEntreprisesList
-        ? "entreprise(s) / canal(aux)"
-        : "particulier(s)";
-  const nameColumnLabel =
-    listScope === "tous"
-      ? "Nom / Raison sociale"
-      : isEntreprisesList
-        ? "Raison sociale"
-        : "Nom complet";
+  }, [scopeCategories, editingId, form.categorie]);
+  const showCategorieColumn = scopeCategories.length !== 1;
+  const showCategorieFilter = showCategorieColumn;
+  const categorieFilterOptions = scopeCategories.length > 0 ? scopeCategories : CLIENT_CATEGORIES;
+  const {
+    title: listTitle,
+    description: listDescription,
+    newLabel: newClientLabel,
+    countLabel,
+    nameColumn: nameColumnLabel,
+  } = CLIENT_LIST_SCOPE_TEXTS[listScope];
   const produitsTries = useMemo(
     () => [...produits].sort((a, b) => a.libelle.localeCompare(b.libelle, "fr")),
     [produits],
@@ -596,14 +622,13 @@ export default function ClientsPanel() {
   }, []);
 
   function resetForm() {
-    const defaultCategorie: ClientCategorie =
-      listScope === "entreprises" ? "ENTREPRISE" : "PARTICULIER";
+    const defaultCategorie: ClientCategorie = scopeCategories[0] ?? "PARTICULIER";
     setForm({
       categorie: defaultCategorie,
       clientCodeSuffix: "",
       nomComplet: "",
       raisonSociale: "",
-      codeMachine: "",
+      terminaux: [],
       cniNumero: "",
       nomContact: "",
       email: "",
@@ -612,9 +637,7 @@ export default function ClientsPanel() {
       ville: "",
       codePostal: "",
       typeDistributeur: "",
-      nombreTpm: "",
       numeroDistributeur: "",
-      numeroTpm: "",
       agenceId: "",
       statut: "DOSSIER_EN_COURS",
       notes: "",
@@ -857,7 +880,7 @@ export default function ClientsPanel() {
         categorie,
         nomComplet: c.nomComplet ?? "",
         raisonSociale: isClientCategorieEntreprise(categorie) ? (c.raisonSociale ?? "") : "",
-        codeMachine: c.codeMachine ?? "",
+        terminaux: clientTerminauxToFormRows(c.terminaux),
         cniNumero: c.cniNumero ?? "",
         nomContact: c.nomContact ?? "",
         email: c.email ?? "",
@@ -868,9 +891,7 @@ export default function ClientsPanel() {
         typeDistributeur: (CLIENT_TYPE_DISTRIBUTEUR as readonly string[]).includes(c.typeDistributeur ?? "")
           ? (c.typeDistributeur as ClientTypeDistributeur)
           : "",
-        nombreTpm: c.nombreTpm != null ? String(c.nombreTpm) : "",
         numeroDistributeur: c.numeroDistributeur ?? "",
-        numeroTpm: c.numeroTpm ?? "",
         agenceId: c.agenceId ?? "",
         statut: (CLIENT_STATUTS as readonly string[]).includes(c.statut) ? (c.statut as ClientStatut) : "ACTIF",
         notes: c.notes ?? "",
@@ -896,6 +917,12 @@ export default function ClientsPanel() {
       setError("Le nom complet est obligatoire pour un particulier.");
       return;
     }
+    const doublonsTpe = duplicateClientTerminalCodes(form.terminaux);
+    if (doublonsTpe.length > 0) {
+      setError(`Code machine saisi plusieurs fois : ${doublonsTpe.join(", ")}.`);
+      return;
+    }
+    const terminaux = clientTerminalFormRowsToPayload(form.terminaux);
     setBusyId(editingId ?? "new");
     setError(null);
     try {
@@ -910,7 +937,7 @@ export default function ClientsPanel() {
             raisonSociale: isEntreprise
               ? form.raisonSociale.trim()
               : form.nomComplet.trim(),
-            codeMachine: form.codeMachine.trim() || null,
+            terminaux,
             cniNumero: form.cniNumero.trim() || null,
             nomContact: form.nomContact.trim() || null,
             email: form.email.trim() || null,
@@ -919,9 +946,7 @@ export default function ClientsPanel() {
             ville: form.ville.trim() || null,
             codePostal: form.codePostal.trim() || null,
             typeDistributeur: form.typeDistributeur || null,
-            nombreTpm: form.nombreTpm.trim() === "" ? null : Number(form.nombreTpm),
             numeroDistributeur: form.numeroDistributeur.trim() || null,
-            numeroTpm: form.numeroTpm.trim() || null,
             agenceId: form.agenceId.trim() || null,
             statut: form.statut,
             notes: form.notes.trim() || null,
@@ -929,7 +954,10 @@ export default function ClientsPanel() {
             documentChecklist: checklistToApiPatch(clientChecklist),
           }),
         });
-        if (!res.ok) throw new Error();
+        if (!res.ok) {
+          const body = (await res.json().catch(() => null)) as { message?: string } | null;
+          throw new Error(body?.message ?? "Enregistrement impossible.");
+        }
       } else {
         if (!form.agenceId.trim()) {
           setError("Sélectionnez une agence de rattachement selon votre zone.");
@@ -957,7 +985,7 @@ export default function ClientsPanel() {
             raisonSociale: isEntreprise
               ? form.raisonSociale.trim() || null
               : form.nomComplet.trim() || null,
-            codeMachine: form.codeMachine.trim() || null,
+            terminaux,
             cniNumero: form.cniNumero.trim(),
             nomContact: form.nomContact.trim() || null,
             email: form.email.trim() || null,
@@ -966,9 +994,7 @@ export default function ClientsPanel() {
             ville: form.ville.trim() || null,
             codePostal: form.codePostal.trim() || null,
             typeDistributeur: form.typeDistributeur || null,
-            nombreTpm: form.nombreTpm.trim() === "" ? null : Number(form.nombreTpm),
             numeroDistributeur: form.numeroDistributeur.trim() || null,
-            numeroTpm: form.numeroTpm.trim() || null,
             agenceId: form.agenceId.trim(),
             notes: form.notes.trim() || null,
             produitsAutorises,
@@ -1087,7 +1113,7 @@ export default function ClientsPanel() {
 
       const XLSX = await import("xlsx");
       const frenchHeaders = CLIENT_IMPORT_COLUMN_ORDER.map((key) => CLIENT_IMPORT_HEADER_LABELS[key]);
-      const exportRows = allRows.map((row) => {
+      const exportRows = allRows.flatMap((row) => {
         const ag = row.agenceId ? agences.find((a) => a.id === row.agenceId) : null;
         const codePrefix = ag ? clientCodePrefixForAgence(ag.code) : "";
         const codeUpper = row.code.trim().toUpperCase();
@@ -1103,7 +1129,7 @@ export default function ClientsPanel() {
             : "";
         const byKey: Record<(typeof CLIENT_IMPORT_COLUMN_ORDER)[number], string | number> = {
           code: codeSuffix,
-          codeMachine: row.codeMachine ?? "",
+          codeMachine: "",
           categorie: row.categorie || "PARTICULIER",
           nomComplet: row.nomComplet ?? clientDisplayName(row),
           raisonSociale: row.raisonSociale ?? "",
@@ -1122,9 +1148,17 @@ export default function ClientsPanel() {
           produitsAutorises: (row.produitsAutorises ?? []).join(";"),
           notes: "",
         };
-        return Object.fromEntries(
-          CLIENT_IMPORT_COLUMN_ORDER.map((key) => [CLIENT_IMPORT_HEADER_LABELS[key], byKey[key]]),
-        );
+        // Une ligne par TPE (même code client) : le réimport cumule les terminaux.
+        const terminalRows: Array<{ codeMachine: string; numeroTpm: string | number }> =
+          row.terminaux.length > 0
+            ? row.terminaux.map((t) => ({ codeMachine: t.codeMachine, numeroTpm: t.numeroTpm ?? "" }))
+            : [{ codeMachine: "", numeroTpm: byKey.numeroTpm }];
+        return terminalRows.map((terminal) => {
+          const line = { ...byKey, ...terminal };
+          return Object.fromEntries(
+            CLIENT_IMPORT_COLUMN_ORDER.map((key) => [CLIENT_IMPORT_HEADER_LABELS[key], line[key]]),
+          );
+        });
       });
 
       const ws = XLSX.utils.json_to_sheet(exportRows, { header: frenchHeaders });
@@ -1342,57 +1376,26 @@ export default function ClientsPanel() {
           aria-label="Type de liste clients"
           aria-orientation="horizontal"
         >
-          <button
-            type="button"
-            role="tab"
-            aria-selected={listScope === "tous"}
-            onClick={() => {
-              setPage(1);
-              setFilterCategorie("");
-              setListScope("tous");
-            }}
-            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
-              listScope === "tous"
-                ? "bg-[#102a43] text-white shadow-md"
-                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
-            }`}
-          >
-            Tous les clients
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={listScope === "particuliers"}
-            onClick={() => {
-              setPage(1);
-              setFilterCategorie("");
-              setListScope("particuliers");
-            }}
-            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
-              listScope === "particuliers"
-                ? "bg-[#102a43] text-white shadow-md"
-                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
-            }`}
-          >
-            Particuliers
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={listScope === "entreprises"}
-            onClick={() => {
-              setPage(1);
-              setFilterCategorie("");
-              setListScope("entreprises");
-            }}
-            className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
-              listScope === "entreprises"
-                ? "bg-[#102a43] text-white shadow-md"
-                : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
-            }`}
-          >
-            Entreprises & canaux alternatifs
-          </button>
+          {CLIENT_LIST_SCOPE_TABS.map((tab) => (
+            <button
+              key={tab.scope}
+              type="button"
+              role="tab"
+              aria-selected={listScope === tab.scope}
+              onClick={() => {
+                setPage(1);
+                setFilterCategorie("");
+                setListScope(tab.scope);
+              }}
+              className={`inline-flex min-h-10 items-center rounded-xl px-3.5 py-2 text-sm font-semibold outline-none transition focus-visible:ring-2 focus-visible:ring-orange-500 focus-visible:ring-offset-2 ${
+                listScope === tab.scope
+                  ? "bg-[#102a43] text-white shadow-md"
+                  : "text-slate-600 hover:bg-orange-50 hover:text-[#102a43]"
+              }`}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
       </Surface>
 
@@ -1568,15 +1571,13 @@ export default function ClientsPanel() {
             className="rounded border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900"
           >
               <option value="">
-                {isEntreprisesList ? "Entreprises & canaux" : "Toutes les catégories"}
+                {listScope === "entreprises_canaux" ? "Entreprises & canaux" : "Toutes les catégories"}
               </option>
-              {(isEntreprisesList ? CLIENT_CATEGORIES_FORME_ENTREPRISE : CLIENT_CATEGORIES).map(
-                (c) => (
-                  <option key={c} value={c}>
-                    {CLIENT_CATEGORIE_LABELS[c]}
-                  </option>
-                ),
-              )}
+              {categorieFilterOptions.map((c) => (
+                <option key={c} value={c}>
+                  {CLIENT_CATEGORIE_LABELS[c]}
+                </option>
+              ))}
           </select>
           ) : null}
             </>
@@ -1658,12 +1659,12 @@ export default function ClientsPanel() {
                 ) : null}
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Contact</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Type distributeur</th>
-                <th className="whitespace-nowrap px-2 py-2 text-center font-semibold">Nb TPM</th>
+                <th className="whitespace-nowrap px-2 py-2 text-center font-semibold">Nb TPE</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold" title="Agence (Intérieur - Abidjan)">
                   Agence
                 </th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">N° Distrib.</th>
-                <th className="whitespace-nowrap px-2 py-2 font-semibold">N° TPM</th>
+                <th className="whitespace-nowrap px-2 py-2 font-semibold">TPE</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Code</th>
                 <th className="whitespace-nowrap px-2 py-2 font-semibold">Statut</th>
                 <th className="whitespace-nowrap px-2 py-2 text-right font-semibold">Actions</th>
@@ -1717,8 +1718,11 @@ export default function ClientsPanel() {
                     <td className="truncate px-2 py-2 font-mono text-[11px] text-slate-700" title={row.numeroDistributeur ?? undefined}>
                       {row.numeroDistributeur?.trim() || "—"}
                     </td>
-                    <td className="truncate px-2 py-2 font-mono text-[11px] text-slate-700" title={row.numeroTpm ?? undefined}>
-                      {row.numeroTpm?.trim() || "—"}
+                    <td
+                      className="truncate px-2 py-2 font-mono text-[11px] text-slate-700"
+                      title={formatClientTerminaux(row.terminaux) || row.numeroTpm || undefined}
+                    >
+                      {formatClientTerminalCodes(row.terminaux) || row.numeroTpm?.trim() || "—"}
                     </td>
                     <td className="truncate px-2 py-2 font-mono text-[11px] text-slate-800" title={row.code}>
                       {row.code}
@@ -1780,7 +1784,7 @@ export default function ClientsPanel() {
                   </dd>
                 </div>
                 <div>
-                  <dt className="font-semibold text-slate-500">Nb TPM</dt>
+                  <dt className="font-semibold text-slate-500">Nb TPE</dt>
                   <dd className="mt-1">{row.nombreTpm != null ? row.nombreTpm : "—"}</dd>
                 </div>
                 <div className="col-span-2">
@@ -1791,9 +1795,11 @@ export default function ClientsPanel() {
                   <dt className="font-semibold text-slate-500">N° Distributeur</dt>
                   <dd className="mt-1 font-mono text-xs">{row.numeroDistributeur?.trim() || "—"}</dd>
                 </div>
-                <div>
-                  <dt className="font-semibold text-slate-500">N° TPM</dt>
-                  <dd className="mt-1 font-mono text-xs">{row.numeroTpm?.trim() || "—"}</dd>
+                <div className="col-span-2">
+                  <dt className="font-semibold text-slate-500">TPE</dt>
+                  <dd className="mt-1 font-mono text-xs">
+                    {formatClientTerminaux(row.terminaux) || row.numeroTpm?.trim() || "—"}
+                  </dd>
                 </div>
               </dl>
               <div className="mt-4 border-t border-slate-100 pt-4">{clientActions(row, true)}</div>
@@ -2014,17 +2020,6 @@ export default function ClientsPanel() {
                   </label>
                   ) : null}
                   <label className="block text-sm">
-                    <span className="text-slate-600">Code machine</span>
-                    <input
-                      value={form.codeMachine}
-                      onChange={(e) => setForm((f) => ({ ...f, codeMachine: e.target.value }))}
-                      placeholder="Ex. TERM-001"
-                      maxLength={64}
-                      className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="block text-sm">
                     <span className="text-slate-600">Identifiant client (N° CNI) *</span>
                     <input
                       required
@@ -2058,17 +2053,6 @@ export default function ClientsPanel() {
                       </select>
                     </label>
                     <label className="block text-sm">
-                      <span className="text-slate-600">Nombre de TPM</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={9999}
-                        value={form.nombreTpm}
-                        onChange={(e) => setForm((f) => ({ ...f, nombreTpm: e.target.value }))}
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 text-sm"
-                      />
-                    </label>
-                    <label className="block text-sm">
                       <span className="text-slate-600">N° Distributeur</span>
                       <input
                         value={form.numeroDistributeur}
@@ -2078,17 +2062,11 @@ export default function ClientsPanel() {
                         autoComplete="off"
                       />
                     </label>
-                    <label className="block text-sm">
-                      <span className="text-slate-600">N° TPM</span>
-                      <input
-                        value={form.numeroTpm}
-                        onChange={(e) => setForm((f) => ({ ...f, numeroTpm: e.target.value }))}
-                        maxLength={64}
-                        className="mt-1 w-full rounded border border-slate-300 bg-white px-3 py-2 font-mono text-sm"
-                        autoComplete="off"
-                      />
-                    </label>
                   </div>
+                  <ClientTerminauxEditor
+                    rows={form.terminaux}
+                    onChange={(terminaux) => setForm((f) => ({ ...f, terminaux }))}
+                  />
                   <div className="rounded-lg border border-slate-200 bg-white px-3 py-2">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
                       Coordonnées de contact
@@ -2196,17 +2174,6 @@ export default function ClientsPanel() {
                     </label>
                   ) : null}
                   <label className="block text-sm">
-                    <span className="text-slate-600">Code machine</span>
-                    <input
-                      value={form.codeMachine}
-                      onChange={(e) => setForm((f) => ({ ...f, codeMachine: e.target.value }))}
-                      placeholder="Ex. TERM-001"
-                      maxLength={64}
-                      className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm"
-                      autoComplete="off"
-                    />
-                  </label>
-                  <label className="block text-sm">
                     <span className="text-slate-600">Identifiant client (N° CNI)</span>
                     <input
                       value={form.cniNumero}
@@ -2238,17 +2205,6 @@ export default function ClientsPanel() {
                       </select>
                     </label>
                     <label className="block text-sm">
-                      <span className="text-slate-600">Nombre de TPM</span>
-                      <input
-                        type="number"
-                        min={0}
-                        max={9999}
-                        value={form.nombreTpm}
-                        onChange={(e) => setForm((f) => ({ ...f, nombreTpm: e.target.value }))}
-                        className="mt-1 w-full rounded border border-slate-300 px-3 py-2 text-sm"
-                      />
-                    </label>
-                    <label className="block text-sm">
                       <span className="text-slate-600">N° Distributeur</span>
                       <input
                         value={form.numeroDistributeur}
@@ -2258,17 +2214,11 @@ export default function ClientsPanel() {
                         autoComplete="off"
                       />
                     </label>
-                    <label className="block text-sm">
-                      <span className="text-slate-600">N° TPM</span>
-                      <input
-                        value={form.numeroTpm}
-                        onChange={(e) => setForm((f) => ({ ...f, numeroTpm: e.target.value }))}
-                        maxLength={64}
-                        className="mt-1 w-full rounded border border-slate-300 px-3 py-2 font-mono text-sm"
-                        autoComplete="off"
-                      />
-                    </label>
                   </div>
+                  <ClientTerminauxEditor
+                    rows={form.terminaux}
+                    onChange={(terminaux) => setForm((f) => ({ ...f, terminaux }))}
+                  />
                   <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
                     <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
                       Coordonnées de contact
@@ -2401,7 +2351,10 @@ export default function ClientsPanel() {
                   ? [{ label: "Contact / représentant", value: viewingClient.nomComplet }]
                   : []),
                 { label: "N° CNI", value: viewingClient.cniNumero },
-                { label: "Code machine", value: viewingClient.codeMachine },
+                {
+                  label: `TPE (${viewingClient.terminaux.length})`,
+                  value: formatClientTerminaux(viewingClient.terminaux) || null,
+                },
                 {
                   label: "Type de distributeur",
                   value:
@@ -2410,12 +2363,16 @@ export default function ClientsPanel() {
                       ? CLIENT_TYPE_DISTRIBUTEUR_LABELS[viewingClient.typeDistributeur as ClientTypeDistributeur]
                       : viewingClient.typeDistributeur,
                 },
-                {
-                  label: "Nombre de TPM",
-                  value: viewingClient.nombreTpm != null ? String(viewingClient.nombreTpm) : null,
-                },
+                ...(viewingClient.terminaux.length === 0
+                  ? [
+                      {
+                        label: "Nombre de TPM (déclaré)",
+                        value: viewingClient.nombreTpm != null ? String(viewingClient.nombreTpm) : null,
+                      },
+                      { label: "N° TPM", value: viewingClient.numeroTpm },
+                    ]
+                  : []),
                 { label: "N° Distributeur", value: viewingClient.numeroDistributeur },
-                { label: "N° TPM", value: viewingClient.numeroTpm },
                 { label: "Contact", value: viewingClient.nomContact },
                 { label: "E-mail", value: viewingClient.email },
                 { label: "Téléphone", value: viewingClient.telephone },

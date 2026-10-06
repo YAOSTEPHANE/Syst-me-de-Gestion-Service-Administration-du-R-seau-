@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { ensureAgrementsIndexes, getAgrementDocumentMeta } from "@/lib/lonaci/agrements";
+import { AGREMENTS_READ_ROLES } from "@/lib/lonaci/agrements-roles";
 import { requireApiAuth } from "@/lib/auth/guards";
 import { createAgrementReadStream } from "@/lib/storage/agrements-files";
 
@@ -9,9 +10,7 @@ interface RouteContext {
 }
 
 export async function GET(request: NextRequest, context: RouteContext) {
-  const auth = await requireApiAuth(request, {
-    roles: ["AGENT", "CHEF_SECTION", "ASSIST_CDS", "CHEF_SERVICE", "AUDITEUR"],
-  });
+  const auth = await requireApiAuth(request, { roles: [...AGREMENTS_READ_ROLES] });
   if ("error" in auth) return auth.error;
   const { id } = await context.params;
   await ensureAgrementsIndexes();

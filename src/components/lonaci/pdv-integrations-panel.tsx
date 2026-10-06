@@ -19,7 +19,13 @@ import { FormField } from "@/components/lonaci/ui/form-field";
 import { PageHeader, SectionHeader } from "@/components/lonaci/ui/headers";
 import { Pagination } from "@/components/lonaci/ui/pagination";
 import { Card, Surface } from "@/components/lonaci/ui/surface";
-import { workflowAdvanceLabel } from "@/lib/lonaci/workflow-approvals";
+import {
+  areWorkflowApprovalsEnabled,
+  autoFinalizeSuffix,
+  roleMayAdvanceWorkflow,
+  workflowAdvanceLabel,
+  type AutoFinalizeOutcome,
+} from "@/lib/lonaci/workflow-approvals";
 
 type PdvStatus = "DEMANDE_RECUE" | "EN_TRAITEMENT" | "INTEGRE_GPR" | "FINALISE";
 
@@ -361,6 +367,7 @@ export default function PdvIntegrationsPanel() {
         const body = (await response.json().catch(() => null)) as { message?: string } | null;
         throw new Error(body?.message ?? "Création impossible");
       }
+      const created = (await response.json().catch(() => null)) as { autoFinalize?: AutoFinalizeOutcome | null } | null;
       setAgenceId("");
       setProduitCode("");
       setNombreDemandes("1");
@@ -370,7 +377,7 @@ export default function PdvIntegrationsPanel() {
       setObservations("");
       setCreateOpen(false);
       await load(1);
-      notify.success("Demande PDV créée.");
+      notify.success(`Demande PDV créée${autoFinalizeSuffix(created?.autoFinalize)}`);
     } catch (err) {
       const message = friendlyErrorMessage(err instanceof Error ? err.message : "Erreur");
       setCreateFormError(message);
@@ -510,7 +517,7 @@ export default function PdvIntegrationsPanel() {
   const canFinalizePdv = useMemo(() => {
     if (!meRbacRole) return false;
     return (
-      meRbacRole === "CHEF_SERVICE" &&
+      roleMayAdvanceWorkflow(meRbacRole, "CHEF_SERVICE") &&
       canRole({ role: meRbacRole, resource: "PDV_INTEGRATIONS", action: "FINALIZE" }).allowed
     );
   }, [meRbacRole]);
@@ -585,6 +592,12 @@ export default function PdvIntegrationsPanel() {
   }, [items]);
 
   function rowAction(row: PdvItem) {
+    if (!areWorkflowApprovalsEnabled()) {
+      if (row.status !== "FINALISE" && canFinalizePdv) {
+        return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "FINALISE")}>{workflowAdvanceLabel()}</Button>;
+      }
+      return row.status === "FINALISE" ? <StatusBadge tone="success">Finalisée</StatusBadge> : null;
+    }
     if (row.status === "DEMANDE_RECUE" && canTransitionPdv) {
       return <Button size="sm" loading={finalizingId === row.id} onClick={() => void transitionIntegration(row.id, "EN_TRAITEMENT")}>Passer en traitement</Button>;
     }
